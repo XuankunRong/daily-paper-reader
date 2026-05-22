@@ -1690,9 +1690,9 @@
           },
           rerankerLLM: providerDraft.reranker
             ? {
-                profile: providerDraft.reranker.profile || 'local-qwen3-0.6b',
-                provider: providerDraft.reranker.provider || providerDraft.reranker.type || 'local',
-                type: providerDraft.reranker.type || providerDraft.reranker.provider || 'local',
+                profile: providerDraft.reranker.profile || DEFAULT_RERANKER_PROFILE.value,
+                provider: providerDraft.reranker.provider || providerDraft.reranker.type || DEFAULT_RERANKER_PROFILE.provider,
+                type: providerDraft.reranker.type || providerDraft.reranker.provider || DEFAULT_RERANKER_PROFILE.provider,
                 apiKey: providerDraft.reranker.apiKey,
                 baseUrl: providerDraft.reranker.baseUrl,
                 model: providerDraft.reranker.model,

@@ -33,6 +33,7 @@ window.DPRWorkflowRunner = (function () {
         top_k: '50',
         rrf_top_n: '200',
         run_rerank: 'true',
+        reranker_profile: 'public-zwwen-rerank',
         run_llm_refine: 'true',
       },
     },
