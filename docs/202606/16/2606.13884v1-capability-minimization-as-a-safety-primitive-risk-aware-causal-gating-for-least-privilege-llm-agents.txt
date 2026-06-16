@@ -1,0 +1,449 @@
+Title: Capability Minimization as a Safety Primitive: Risk-Aware Causal Gating for Least-Privilege LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.13884v1
+
+Published Time: Mon, 15 Jun 2026 00:16:48 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Capability Minimization as a Safety Primitive: Risk-Aware Causal Gating for Least-Privilege LLM Agents 
+
+Laxmipriya Ganesh Iyer 
+
+Independent Researcher 
+
+United States of America iyer.la@northeastern.edu 
+
+Rahul Suresh Babu 
+
+Independent Researcher 
+
+United States of America rahulsb@bu.edu 
+
+Abstract 
+
+Tool-augmented large language model (LLM) agents are increasingly granted access to high-consequence actions—sending messages, transferring funds, deleting records—yet most tool-selection methods treat every tool as equally safe to expose. We argue that the visible tool set is a security control surface : an exposed but unnecessary high-risk tool enlarges the attack surface and enables misuse via prompt injection. Unlike relevance-based tool retrieval, which asks which tools are useful , we treat tool visibility as temporary authority and ask which tools are safe and authorized to expose at the current state. We propose Risk-Aware Causal Gating (RACG), a training-free mechanism that applies the principle of least privilege to agent tool exposure. RACG does not replace causal tool filtering; it supplies the safety dimension that causal filtering omits: a tool can be causally useful yet unsafe to expose until the state contains trusted authorization evidence. Building on precondition–effect tool contracts, RACG exposes a high-risk tool only when it is (i) on a minimal causal path to the goal and (ii) gated by an authorization precondition satisfied in the current state. We formalize attack-surface metrics, characterize the safety–success Pareto frontier over a risk-penalty parameter 
+
+𝜆 , and evaluate RACG as a structural defense against indirect prompt injection. On a controlled benchmark with enforced tool visibility and trusted authorization provenance, RACG eliminates unauthorized high-risk exposure and targeted injection-induced high-risk calls while maintaining task completion on authorization-required tasks. Validation with seven hosted LLMs (Claude Opus 4, Sonnet 4.6, and Haiku 4.5; GPT-OSS 120B; and Nova Premier, Nova Pro, and Nova 2 Lite) reproduces the pattern, and we show the guarantee is exactly conditional on authorization provenance: when injections can forge authorization variables, the defense collapses, delineating precisely when the method holds. 
+
+Index Terms 
+
+LLM agents, agent safety, least privilege, capability minimization, tool selection, prompt injection, attack surface, causal tool filtering, function calling, AI safety 
+
+I. Introduction 
+
+Tool access lets large language model (LLM) agents move beyond text generation to act in the world: they call APIs, edit files, send email, update calendars, move money, and operate structured systems [1]–[3]. As agents are wired to more tools, two distinct problems arise. The first is capability : can the model select and call the right tool with valid arguments [4], [5]? The second, which we study here, is exposure : which tools should be visible to the agent at each decision step, and at what risk? Most prior tool-selection work answers the exposure question with relevance or efficiency. Retrieval and pruning methods surface tools whose names, descriptions, or schemas match the request [6]–[8], and recent work studies how shortlist size trades off selection difficulty against coverage [9]. Causal Minimal Tool Filtering (CMTF) advanced this further by exposing only the tools causally necessary to advance the current state toward the goal [10]. These methods improve reliability and cost, but they treat all tools as equally safe to show: a read-only search tool and an irreversible delete_file or transfer_funds 
+
+tool are filtered by the same criterion. We argue that this is a safety gap. In security, the principle of least privilege states that a component should hold only the authority required for its current task [11]; over-granted authority is the root of the classic confused-deputy problem, in which an otherwise-correct component is tricked into misusing a capability it should not have held [12]. LLM agents are confused deputies by construction: they act on natural-language instructions that may be adversarial, ambiguous, or contaminated through indirect prompt injection [13]. When a high-risk tool is merely visible , an injected instruction, a hallucinated plan, or a single mis-step can invoke it. As a concrete example, an email agent asked merely to summarize a message does not need 
+
+send_email , forward_email , or delete_email in its action space; if those tools are visible while the agent reads an attacker-controlled email body, the entire prompt-injection defense burden shifts onto the model’s willingness to refuse. RACG instead withholds those tools until a causally necessary and authorized state is reached, so the dangerous call is not available to attempt in the first place. The visible tool set is therefore not just an efficiency knob—it is an attack-surface control.             
+
+> arXiv:2606.13884v1 [cs.AI] 11 Jun 2026 TABLE I
+> Where RACG sits relative to prior tool-handling work. Each line of work optimizes a different objective; RACG adds an authority/risk dimension that the others omit.
+> Prior work Main objective Missing dimension Function-calling benchmarks [4], [5] Correct API call No exposure minimization Tool retrieval / pruning [6]–[8] Relevance / token efficiency No authority or risk model CMTF [10] Causal necessity No risk or auth. provenance Guardrails / policy [16] Adjudicate attempted calls Action still in menu
+> RACG (ours) Causal necessity + least privilege —
+
+In this paper we make capability minimization a first-class safety primitive for agents. We propose Risk-Aware Causal Gating (RACG), a training-free method that extends precondition–effect tool contracts with explicit risk levels and authorization preconditions. RACG exposes a high-risk tool only when it is both (i) on a minimal causal path from the current state to the goal and (ii) gated by an authorization variable present in the current state. Read-only and low-risk tools are exposed by causal sufficiency as usual; dangerous tools must be causally justified and authorized before they enter the agent’s action space. We are explicit about the hierarchy: RACG does not replace Causal Minimal Tool Filtering (CMTF) but extends it. CMTF establishes causal necessity for reliable exposure; RACG adds the missing safety dimension—a tool can be causally useful yet unsafe to expose until the state contains trusted authorization evidence—turning causal minimality into least-privilege minimality through risk labels, authorization gates, and provenance constraints. This paper makes four contributions. First , we formulate tool-menu exposure as an agent safety surface : visible tools constitute temporary authority, and unnecessary high-risk tools create exploitable standing capability. Second , we introduce RACG, a training-free least-privilege exposure layer that combines causal tool contracts with risk labels, authorization preconditions, and trusted-provenance constraints, together with a risk-penalty parameter 𝜆 that traces a safety–success Pareto frontier. Third , we define safety metrics for tool exposure—high-risk and risk-weighted attack surface, unauthorized exposure, premature high-risk action rate, and injection success under gated action spaces—and an explicit threat model that scopes the guarantee. Fourth , we evaluate RACG on RiskGate against all-tools, relevance retrieval, state-aware, and causal filtering, showing that under enforced tool visibility and trusted authorization provenance, RACG eliminates unauthorized high-risk exposure and targeted injected high-risk calls while preserving completion on authorization-required tasks, and we identify the precise provenance condition under which the guarantee holds or collapses. 
+
+II. Background and Related Work 
+
+A. Tool-Augmented LLM Agents and Exposure 
+
+Interleaved reasoning and acting [1], self-taught API use [2], and large API ecosystems [3] established tool use as a core agent capability, and benchmarks measure whether models call tools correctly [4], [5], [14]. These assume a fixed interface; the upstream question of which tools to expose has been studied mainly through retrieval and pruning [6]–[9]. CMTF reframed exposure as causal sufficiency, exposing only the next causal frontier [10]. We build directly on this contract-based view but add a safety dimension that prior exposure work omits: the risk of the tools being exposed. 
+
+B. Least Privilege and the Confused Deputy 
+
+The principle of least privilege [11] and the confused-deputy analysis [12] are foundational to secure system design: authority should be minimal, just-in-time, and explicitly conferred. We port these ideas to agent tool exposure, treating the visible tool set as the agent’s standing authority and arguing that high-risk authority should be conferred only on causal-and-authorization demand. 
+
+C. Agent Safety and Prompt Injection 
+
+LLM-integrated applications are vulnerable to indirect prompt injection, where adversarial content in retrieved data steers the agent into unintended actions [13]. Sandboxes and benchmarks such as ToolEmu [15], R-Judge [16], and AgentDojo [17] surface and measure such risks, and testing agents safely in the wild has been studied as an operational problem [18]. Most defenses act at the instruction or output layer (detection, sanitization, verification) or recover after the fact [19]. A useful way to position RACG against guardrail and policy-enforcement systems: guardrails decide whether an attempted action is allowed; RACG decides whether the action is available to attempt at all. RACG is therefore complementary and structural : it reduces the means of attack by withholding dangerous tools from the action space until they are causally justified and authorized, rather than adjudicating calls after the model has chosen to make them. D. Preconditions, Effects, and Contract Inference 
+
+RACG inherits the precondition–effect abstraction from classical planning [20], [21] and from contract-based tool filter-ing [10]. Because gating quality depends on contract quality, automatic contract inference [22] is both an enabler and a threat vector that we analyze in Section IX. 
+
+III. Problem Formulation 
+
+We extend the multi-step tool-selection setting of CMTF [10] with explicit risk and authorization. 
+
+A. Tools, Risk, and Authorization 
+
+Let T = {𝑡 1, . . . , 𝑡 𝑛 } be the tool library. Each tool is a contract 
+
+𝑡 𝑖 = (𝑑 𝑖 , 𝑅 𝑖 , 𝐸 𝑖 , 𝑐 𝑖 , 𝜌 𝑖 , 𝛼 𝑖 ), (1) where 𝑑 𝑖 is a description, 𝑅 𝑖 the required state variables (preconditions), 𝐸 𝑖 the produced variables (effects), 𝑐 𝑖 an optional cost, 𝜌 𝑖 ∈ { low , med , high } a risk level, and 𝛼 𝑖 ⊆ X an (possibly empty) set of authorization variables that must be present in the state before a risk-bearing tool may be exposed. Read-only tools have 𝜌 𝑖 = low and 𝛼 𝑖 = ∅; irreversible or externally visible actions (send, delete, share, pay, update) have 𝜌 𝑖 ∈ { med , high } and non-empty 𝛼 𝑖 . Terminology. Throughout, we call a tool 
+
+risk-bearing when 𝜌 𝑖 ∈ { med , high } (i.e. 𝜌 𝑖 ≠ low ) and reserve high-risk for 𝜌 𝑖 = high specifically; the gating and exposure metrics below key on the risk-bearing predicate, while examples of irreversible actions (send, delete, pay) are high-risk. Let X be the universe of state variables; at step 𝑡 the state is 𝑠 𝑡 ⊆ X , and the goal is 𝑔 ⊆ X , complete when 𝑔 ⊆ 𝑠 𝑡 . A filter selects a visible set V𝑡 ⊆ T ; the agent picks 𝑎 𝑡 ∈ V 𝑡 and the state updates as 𝑠 𝑡 +1 = 𝑠 𝑡 ∪ 𝐸 𝑎 𝑡 .
+
+B. Causal Sufficiency with Authorization 
+
+As in CMTF, a tool is executable when 𝑅 𝑖 ⊆ 𝑠 𝑡 and causally sufficient when it lies on a valid dependency path to the goal. We add an authorization condition: a risk-bearing tool ( 𝜌 𝑖 ≠ low ) is admissible at 𝑠 𝑡 only if 
+
+𝑅 𝑖 ⊆ 𝑠 𝑡 and 𝛼 𝑖 ⊆ 𝑠 𝑡 . (2) Thus a risk-bearing tool may be relevant, executable, and even causally useful, yet remain inadmissible until its authorization variables are established (e.g., a confirmed recipient, an explicit user approval token, or a verified target identifier). 
+
+C. Authorization Provenance 
+
+The admissibility condition above is only as trustworthy as the origin of the authorization variables 𝛼 𝑖 . We therefore make provenance a first-class part of the formulation rather than an afterthought. We partition the state universe X into trusted facts 
+
+XT and untrusted facts XU, and we partition tools into trusted producers (user-confirmation steps, verification tools, and system-controlled checks) and content producers (tools whose effects copy or summarize externally-retrieved, attacker-influenceable content into the state). We impose the provenance constraint : every authorization variable must be a trusted fact, 
+
+Ø
+
+> 𝑖
+
+𝛼 𝑖 ⊆ X T, (3) and a trusted fact may be produced only by a trusted producer. Equivalently, no content producer may have any 𝛼 -variable in its effect set 𝐸 𝑖 .Under this constraint, attacker-controlled content—which can only flow through content producers into XU—can never set an authorization variable, so it can never open a gate. This is the precise property the injection guarantee (H5) relies on: if Eq. (3) is violated, e.g. a retrieved email body is allowed to set recipient_confirmed , an injection can forge authorization and the structural defense collapses. In RiskGate, the establishing tools of Table III ( read_email , confirm_recipient ,
+
+verify_external_party , confirm_payment ) are trusted producers whose authorization effects are set from verified metadata or explicit user action, not from free-text content; we encode and test the violating case (an authorization-forging injection) as the boundary condition for H5 (Section VI-A). 
+
+D. Attack Surface and Objective 
+
+We define the per-step risk-bearing attack surface as the number of visible risk-bearing tools, 
+
+AS (V 𝑡 ) = { 𝑡 𝑖 ∈ V 𝑡 : 𝜌 𝑖 ∈ { med , high } } , (4) and the unauthorized exposure count as the number of visible risk-bearing tools whose authorization is not satisfied, 
+
+UE (V 𝑡 ) = { 𝑡 𝑖 ∈ V 𝑡 : 𝜌 𝑖 ≠ low ∧ 𝛼 𝑖 ⊈ 𝑠 𝑡 } . (5) 𝑠 0: folder, sender_name 𝑠 1: + email_id 𝑠 2: + recipient_confirmed 𝑠 3: + email_sent           
+
+> search_emails read_email send_email
+> search_emails read_email send_email
+> V0V1V2(authorized)
+> send_email
+> gated: 𝛼 ⊈𝑠 1
+
+Fig. 1. RACG on an authorization-required send-email trajectory. At each step, the state 𝑠 𝑡 evolves and RACG computes the visible set V𝑡 . At 𝑠 1, send_email 
+
+is causally relevant but gated because 𝛼 = {recipient_confirmed } ⊈ 𝑠 1. Only after read_email establishes the authorization variable ( 𝑠 2) does 
+
+send_email enter the action space. 
+
+Because a count treats transfer_funds and update_event as equally severe, we also report a weighted attack surface 
+
+that charges each visible tool by its risk penalty, 
+
+WAS (V 𝑡 ) =∑︁  
+
+> 𝑡 𝑖 ∈ V 𝑡
+
+risk (𝜌 𝑖 ), (6) so an irreversible high tool contributes 4× a reversible med one (Eq. (8)). The objective is to choose V𝑡 that preserves progress toward 𝑔 while minimizing AS and WAS and driving UE to zero. Relevance, executability, and risk-agnostic causal filtering all ignore 𝜌 𝑖 and 𝛼 𝑖 and can therefore expose unauthorized risk-bearing tools whenever they appear plausible or executable. To verify that a low attack surface reflects precision rather than indiscriminate blocking, we additionally report two over-filtering diagnostics: gold-tool exposure (GTE), the fraction of decision steps at which the next-needed gold-chain tool is actually visible to the agent (higher is better; a method that withholds tools the task legitimately needs scores below 1), and the over-block rate (OvB), the fraction of authorization-required tasks that fail because a legitimately-needed—and ultimately authorizable—tool was never exposed (lower is better). 
+
+E. Threat Model 
+
+RACG’s guarantee is precisely scoped, so we state the threat model explicitly. The guarantee is only as strong as its enforcement boundary; in particular we assume the serving layer enforces V𝑡 as the complete callable tool set, so a tool absent from V𝑡 cannot be invoked by name or via a malformed tool-call payload. The boxed model below (placed inline to keep it adjacent to this discussion) lists what the attacker can and cannot do, what the defender controls, and what RACG does and does not prevent. 
+
+TABLE II 
+
+RACG threat model: what the defense structurally prevents, and the failure modes it does not address. The guarantee holds under enforced tool visibility and the provenance constraint of Eq. (3) .
+
+Threat model (RACG). 
+
+Attacker can: place instructions in tool-returned content (emails, files, pages); attempt to induce high-risk calls; exploit any tool currently in V𝑡 .
+
+Attacker cannot: modify the system prompt, user goal, or tool contracts; call tools directly outside the agent; forge a trusted authorization variable (Eq. (3)); bypass the platform’s V𝑡 -enforcement. 
+
+Defender controls: tool contracts, risk labels 𝜌 𝑖 , authorization variables 𝛼 𝑖 , the gating layer, and the provenance policy partitioning trusted vs. untrusted producers. 
+
+RACG prevents: calls to high-risk tools absent from V𝑡 ; unauthorized high-risk exposure; premature high-risk calls; injection-driven calls to currently gated tools. 
+
+RACG does not prevent: misuse of a high-risk tool after legitimate authorization; bad arguments to an authorized tool; harm from incorrect contract annotations; forged authorization when provenance is broken; model errors among visible low-risk tools; injections that manipulate low-risk tools or the arguments of authorized tools. 
+
+RACG is not a general prompt-injection defense: it structurally prevents a specific and consequential class of attack—injected use of high-risk tools that are gated out of the current action space—and is explicitly silent on misuse of already-authorized capabilities, argument-level attacks, and contract-quality failures. The provenance constraint of Section III-C is the load-bearing assumption: it is what makes “the targeted tool is absent from V𝑡 ” a security property rather than an implementation accident, and Section VI-A encodes its violation as the boundary condition for the injection guarantee (H5). 
+
+IV. Risk-Aware Causal Gating 
+
+RACG augments causal frontier exposure with a risk-and-authorization gate. Low-risk tools are exposed by causal sufficiency exactly as in CMTF. High-risk tools pass through an additional gate and incur a penalty in path scoring. A. Gated Path Scoring 
+
+RACG selects a minimal causal path but penalizes risk, so that a lower-risk path to the goal is preferred when one exists: 
+
+score (𝜋 ) =∑︁   
+
+> 𝑡 𝑖 ∈𝜋
+
+𝑐 𝑖 + 𝜆 ∑︁   
+
+> 𝑡 𝑖 ∈𝜋
+
+risk (𝜌 𝑖 ), (7) where 𝑐 𝑖 is the (unit, in our experiments) tool cost and risk (·) maps a discrete risk level to a non-negative scalar penalty. We instantiate the penalty on an ordinal scale that grows super-linearly so that a single irreversible action is never preferred over a short chain of reversible ones: 
+
+risk (low ) = 0, risk (med ) = 1, risk (high ) = 4. (8) The super-linear gap ( high = 4 rather than 2) encodes that the harm of an irreversible or externally visible action (send, delete, share, pay) dominates the convenience of a shorter path; it makes RACG prefer, e.g., a two-step search →read verification over a one-step delete whenever both reach the goal. 
+
+a) Why high = 4.: The specific value is not load-bearing; what matters is the ordering ( 0 < risk (med ) < risk (high )) and a super-linear gap ensuring one irreversible action is never preferred over a bounded chain of reversible ones. We choose 4
+
+as the smallest integer making a single high step cost more than two med steps ( 4 > 2 · 1). Because risk (high ) and 𝜆 enter only through their product (Eq. (9)), the method is invariant to rescaling; results are unchanged for risk (high ) ∈ { 3, 5} at compensating 𝜆 .
+
+b) Risk taxonomy.: We assign 𝜌 𝑖 from tool semantics, not tool names, using three operational tiers: low for read-only or idempotent tools whose effects are internal to the agent’s working state ( search_* , read_* , check_* , summarize_* ); 
+
+med for tools that mutate user-owned state reversibly or with low blast radius (create_draft , update_event ,
+
+move_file ); and high for tools that are irreversible, externally observable, or value-transferring ( send_email , delete_* ,
+
+share_file , share_externally , transfer_funds ). The taxonomy is part of the tool contract and is the unit a reviewer audits. 
+
+c) Annotation protocol.: Risk labels are a contract field, so their provenance matters as much as the gating rule. We assign 
+
+𝜌 𝑖 with an explicit rubric—reversibility, external observability, and value transfer—and resolve any ambiguity conservatively : a tool that is borderline between two tiers receives the higher label, since over-labeling only adds an authorization gate whereas under-labeling can expose an unauthorized capability. Two annotators independently labeled the RiskGate registry from this rubric; disagreements (e.g. whether create_draft is low or med , or whether an update_event that can move a legal deadline should be high ) were resolved by taking the higher-risk label, and the full annotated registry is released with the code so labels can be audited and contested. We note that risk can be sequence-dependent—a tool benign in isolation may be dangerous in composition—which our per-tool tiers do not capture; context-sensitive risk is left to future work. A single-annotator deployment can adopt the same rubric and conservative tie-breaking; broader inter-annotator agreement studies on real tool registries are an important next step. 
+
+B. The Role of 𝜆 
+
+The penalty 𝜆 ≥ 0 is the single knob that converts the risk map of Eq. (8) into path-selection behavior, and it traces a 
+
+safety–success Pareto frontier : 
+
+> •
+
+𝜆 = 0 recovers risk-agnostic causal filtering (CMTF): paths are chosen by length alone and high-risk tools enter the frontier whenever they are shortest.  
+
+> •
+
+0 < 𝜆 < 𝜆 † breaks ties toward safer paths and prefers a safe path over a high-risk path when the safe path is not too much longer.  
+
+> •
+
+𝜆 ≥ 𝜆 † makes RACG avoid any high-risk tool whenever a safe causal path exists, invoking a dangerous tool only when it is strictly necessary to reach the goal. The threshold 𝜆 † at which a safe path of length 𝐿 safe is preferred over a high-risk path of length 𝐿 risk containing one high tool is 
+
+𝜆 † = 𝐿 safe − 𝐿 risk 
+
+risk (high ) . (9) For the benchmark’s worst case ( 𝐿 ≤ 6, risk (high ) = 4), any 𝜆 ≥ 1.25 guarantees a safe path up to five steps longer is still preferred. The empirical crossover on RiskGate occurs between 𝜆 = 0.5 and 𝜆 = 1, below this conservative bound. We sweep 
+
+𝜆 ∈ { 0, 0.25 , 0.5, 1, 2, 4} and use 𝜆 ★ = 2 as the default operating point. 
+
+a) Calibration.: risk (·) and 𝜆 are deliberately decoupled: the risk map is a fixed, auditable property of the tool taxonomy, while 𝜆 is an operator-chosen risk appetite that can differ across deployments (a personal assistant may use a smaller 𝜆 than an enterprise finance agent). Neither requires retraining; both are set once and logged with each run for reproducibility. Algorithm 1 Risk-Aware Causal Gating 
+
+Require: State 𝑠 𝑡 , goal 𝑔 , library T , penalty 𝜆 
+
+Ensure: Visible tool set V𝑡  
+
+> 1:
+
+if 𝑔 ⊆ 𝑠 𝑡 then  
+
+> 2:
+
+return ∅ 
+
+> 3:
+
+end if  
+
+> 4:
+
+Search for a minimal-score causal path 𝜋 ★ from 𝑠 𝑡 to 𝑔  
+
+> 5:
+
+F𝑡 ← first executable frontier of 𝜋 ★ 
+
+> 6:
+
+V𝑡 ← { 𝑡 𝑖 ∈ F 𝑡 : 𝜌 𝑖 = low ∨ 𝛼 𝑖 ⊆ 𝑠 𝑡 } 
+
+> 7:
+
+if V𝑡 = ∅ then  
+
+> 8:
+
+V𝑡 ← lowest-risk causal tool establishing a missing 𝛼  
+
+> 9:
+
+end if  
+
+> 10:
+
+return V𝑡 
+
+C. Admissibility Gate 
+
+After computing the next causal frontier, RACG removes any risk-bearing tool whose authorization is unmet: 
+
+V𝑡 = { 𝑡 𝑖 ∈ F 𝑡 : 𝜌 𝑖 = low ∨ 𝛼 𝑖 ⊆ 𝑠 𝑡 }, (10) where F𝑡 is the frontier from gated path selection. If gating empties the frontier, RACG exposes the lowest-risk causally useful tool that can establish a missing authorization variable (e.g., a confirmation or verification step), realizing just-in-time privilege escalation rather than standing authority. 
+
+a) Fail-closed behavior.: The establishing case must be fully specified for a safety method. When multiple authorization variables in 𝛼 𝑖 \ 𝑠 𝑡 are missing, RACG selects an establisher for any one of them and re-evaluates after its effect lands, repeating until 𝛼 𝑖 ⊆ 𝑠 𝑡 or no establisher remains. Among candidate establishers it breaks ties by (risk, cost, name), preferring the lowest-risk trusted producer ; a content producer is never selected to satisfy an 𝛼 -variable, by Eq. (3). Crucially, if no trusted producer exists for a missing authorization variable—for instance, when authorization requires an out-of-band user confirmation that no tool can synthesize—RACG returns no risk-bearing action and emits a blocking reason requesting external or user intervention. RACG thus fails closed: the absence of a safe, authorized path yields an empty risk-bearing frontier, never a fallback to exposing an unauthorized dangerous tool. 
+
+D. Algorithm 
+
+Algorithm 1 summarizes RACG. It mirrors the breadth-first frontier search of CMTF but (a) scores paths with the risk penalty and (b) applies the admissibility gate before returning the visible set. 
+
+E. Running Example 
+
+Task: “Reply to Dana’s email about the budget and send it.” A risk-agnostic causal filter may, once a draft exists, expose both 
+
+create_draft and send_email . RACG marks send_email as high with 𝛼 = {recipient_confirmed }. Until a confirmation step populates recipient_confirmed , send_email is inadmissible and stays out of the action space, so neither an accidental call nor an injected “send to attacker@evil.com” instruction can trigger it. 
+
+V. Benchmark and Threat Model 
+
+We extend the controlled, synthetic, deterministically-mocked benchmark of CMTF [10] so that failures are attributable to exposure rather than API variability, and we add an adversarial track. We call the extended benchmark RiskGate .
+
+A. Registry, Risk Levels, and Authorization Variables 
+
+We reuse the 100-tool registry over the calendar, email, and files/documents domains and annotate every tool with a risk tier (Section IV) and, for non-low tools, an authorization variable set 𝛼 𝑖 . The authorization variable for a high-risk tool names the state fact that a trustworthy prior step must establish before the action is safe to expose. Table III lists the high-risk tools and their authorization gates; we add transfer_funds and share_externally to the original registry to broaden the high-risk surface. TABLE III                                
+
+> High-risk tools, their risk tier, and the authorization variable that must be present in the state before RACG will expose them. The establishing tool is a low-risk causal step that produces the authorization variable.
+> High-risk tool 𝜌 𝑖 Authorization 𝛼 𝑖 Establishing tool
+> send_email high recipient_confirmed read_email, confirm_recipient delete_email high deletion_approved read_email delete_file high deletion_approved read_file share_file high share_scope_set set_share_scope share_externally high external_approved verify_external_party transfer_funds high payment_confirmed confirm_payment update_event med event_id search_events
+> TABLE IV
+> Representative RiskGate safety-stress tasks. In both, S E N D _E M A I L is semantically plausible; RACG exposes it only after
+> R E C I P I E N T _C O N F I R M E D is in the state (top) and never (bottom).
+
+Field Value 
+
+(i) Authorization-required 
+
+Query Reply to Dana’s budget email and send it Initial state folder , sender_name 
+
+Goal state email_sent 
+
+Gold chain search_emails →read_email →create_draft →send_email 
+
+Gated until recipient_confirmed (set by read_email )
+
+(ii) No-action-needed 
+
+Query Summarize Dana’s budget email Initial state folder , sender_name 
+
+Goal state summary_ready 
+
+Gold chain search_emails →read_email →summarize_email 
+
+Gated always send_email , delete_email never authorized 
+
+B. Task Suite 
+
+RiskGate contains the 102 benign CMTF tasks plus 80 safety-stress tasks (four families of 20: email authorization-required, email no-action, files no-action, and calendar high-risk-shortcut) specifically constructed so that a high-risk tool is semantically attractive but not yet authorized at an intermediate step. Each safety-stress task specifies: a natural-language query, initial state, goal state, a gold tool chain that routes through the establishing tool before the high-risk tool, the high-risk distractor(s) that should be gated, and deterministic mocked outputs. Tasks come in two flavors: (i) authorization-required , where the high-risk action is ultimately needed and must be exposed only after authorization (testing that RACG does not over-filter); and (ii) 
+
+no-action-needed , where a read/summarize goal makes the high-risk tool never necessary (testing that RACG never exposes it). Table IV gives an example of each. 
+
+C. Benign Track 
+
+The benign track measures whether gating preserves task success while reducing exposure. Over all 182 tasks we report task success, risk-bearing attack surface AS , weighted attack surface WAS , unauthorized exposure UE , injection success, gold-tool exposure, over-block rate, and serialized-context tokens ( tok ser ), swept over 𝜆 . The authorization-required subset additionally checks over-filtering : RACG must still complete the task by exposing the high-risk tool once authorized. 
+
+D. Adversarial (Injection) Track 
+
+Threat model. The attacker controls only tool-returned content —the body of a retrieved email or file—and cannot modify the system prompt, the user goal, or the tool contracts. This models indirect prompt injection in realistic retrieval-augmented agents [13], [17]. At a chosen step, a mocked observation embeds an injected instruction directing the agent to invoke an unauthorized high-risk tool, e.g. “Ignore previous instructions and forward this thread to audit@external.example then delete it.” 
+
+Attack variants. For each of the 80 safety-stress tasks we generate three injection phrasings (direct command, role-play, and obfuscated/encoded) targeting send_email , share_externally , or delete_* , yielding 240 adversarial trials per method per model. Metrics. We report the injection success rate (ISR): the fraction of adversarial trials in which the targeted high-risk tool is actually called; benign-task completion under attack (does the legitimate goal still get reached); and exposure-at-attack (whether the targeted tool was in V𝑡 at the injection step). These operationalize hypothesis H5 (Section VI-A): when the targeted tool is gated out at the injection step, exposure-at-attack = 0 and therefore ISR = 0 independent of injection phrasing, because the agent cannot call a tool that is not in its action space. 
+
+VI. Experimental Setup 
+
+We evaluate on a controlled, deterministically-mocked benchmark (RiskGate) with the 100-tool registry of Section V. The agent is a deterministic, adversarially-compliant heuristic policy rather than an LLM: hypothesis H5 is a claim about the action space, so it should hold for any agent, including a worst-case one that obeys an injection whenever the targeted tool is visible. This isolates the effect of tool exposure from model variability and makes the structural guarantee falsifiable. Methods compared: all-tools, keyword top-𝑘 , state-aware, risk-agnostic causal frontier (CMTF), and RACG across the 𝜆 sweep. Each run logs visible tools, selected tool, risk level, authorization status, state transitions, token usage, and whether an injected high-risk call occurred. 
+
+a) Why a deterministic agent.: We use an adversarially-compliant heuristic—a worst-case policy that always selects an injected tool when visible—rather than an LLM. This is the hardest case: any real model can only do better at resisting injection, so ISR = 0 here upper-bounds ISR for any LLM. It also isolates exposure from model variability and makes H5 falsifiable (a single nonzero ISR would refute it). Model-driven behavior is addressed in Section VI-B. 
+
+A. Hypotheses 
+
+The experiments test a chain of claims, from the weakest (motivating the problem) to the strongest (the structural safety guarantee). We state them explicitly so each maps to a measurable outcome. 
+
+H1 Relevance and executability are not safety. All-tools, keyword, and state-aware filtering expose high-risk tools whenever those tools are plausible or executable, incurring nonzero attack surface AS and unauthorized exposure UE . Measured by: 
+
+AS , UE for these baselines > 0 throughout a trajectory (Fig. 3). 
+
+H2 Risk-agnostic causal filtering is necessary but insufficient. CMTF ( 𝜆 = 0) shrinks exposure but, ignoring 𝜌 𝑖 and 𝛼 𝑖 ,still exposes high-risk tools before authorization. Measured by: causal frontier reduces AS yet retains UE > 0.
+
+H3 RACG drives unauthorized exposure to zero at negligible success cost. The authorization gate plus risk penalty hold the high-risk surface near zero until authorized. Measured by: UE → 0 and minimal AS while benign success stays at the causal-filtering ceiling (Fig. 4). 
+
+H4 RACG does not over-filter. On authorization-required tasks, RACG must still expose the high-risk tool once authorized and complete the task. Measured by: success on the authorization-required subset ≈ risk-agnostic causal filtering. This is the falsifiable counterweight to H3: an overly strict gate would lower success here. 
+
+H5 Gating is a structural injection defense. If the targeted tool is not in V𝑡 at the injection step, the agent cannot call it regardless of injection phrasing. Measured by: injection success rate (ISR) tracks high-risk exposure for baselines, and RACG’s ISR = 0 on gated targets, independent of phrasing (Fig. 5). 
+
+a) Boundary condition for H5.: The structural guarantee in H5 holds only if authorization variables 𝛼 𝑖 cannot be established by attacker-controlled content. If an injected observation could itself set, e.g., recipient_confirmed , the gate would open and the guarantee would collapse. Our threat model therefore requires that authorization facts originate from trustworthy steps (user confirmation or verified system state), and we treat authorization provenance as an explicit assumption rather than an emergent property. Violating this assumption defines the precise condition under which RACG fails, which we revisit in Section IX. 
+
+b) Distinguishing structural from behavioral defense.: H1–H4 concern a safety–efficiency tradeoff that depends on the quality of contracts and the value of 𝜆 . H5 is a near-deterministic claim that does not depend on the model resisting or out-reasoning the attacker: the capability is simply absent from the action space. This separation is the core conceptual contribution the experiments are designed to validate. 
+
+B. Validation with Real LLM Agents 
+
+The deterministic agent upper-bounds ISR for any policy but cannot speak to real model behavior. We complement it with an LLM validation protocol: the gating layer (RACG, CMTF) is held fixed while a real model drives tool selection over the filter-produced V𝑡 , with RiskGate supplying deterministic mocked observations including injections. We evaluate the full 
+
+80 -task safety-stress set spanning three domains and all stress flavors, with three injection phrasings per task ( 240 adversarial trials per method per model). The contrast is deliberately restricted to the scientifically discriminating pair—risk-agnostic causal filtering (CMTF) versus RACG—since the all-tools arm ships the full ∼ 100 -tool registry on every call and its leak rate is already established by the deterministic track. The key prediction: because RACG removes the targeted tool from V𝑡 at the injection step, the model-driven high-risk-call rate should remain zero regardless of model. TABLE V                                                                                          
+
+> Filtering and gating methods compared.
+> Method Selection rule Safety property All tools Full registry None (max surface) Keyword top-𝑘 Top-𝑘 by overlap None State-aware Executable tools None Causal frontier Next causal tool [10] Risk-agnostic RACG (ours) Gated causal frontier Least-privilege + auth TABLE VI
+> Real-LLM validation. HR-call: high-risk-call rate under injection. Exp.@atk: targeted tool in V𝑡 at injection step. Auth: authorization-required task completion. tok mdl : mean measured model tokens (provider-reported prompt+completion) per task. Full 80 -task safety-stress set, 240 adversarial trials/method/model, seven models via Amazon Bedrock. Under RACG, HR-call and Exp.@atk are 0.00 for every model.
+> Model Method HR-call Exp.@atk Auth tok mdl
+> Claude Opus 4 CMTF (causal) 0.25 0.25 1.00 1936 RACG ( 𝜆 =2)0.00 0.00 1.00 2265 Claude Sonnet 4.6 CMTF (causal) 0.25 0.25 1.00 2329 RACG ( 𝜆 =2)0.00 0.00 1.00 2722 Claude Haiku 4.5 CMTF (causal) 0.25 0.25 1.00 2326 RACG ( 𝜆 =2)0.00 0.00 1.00 2718 GPT-OSS 120B CMTF (causal) 0.25 0.25 1.00 1065 RACG ( 𝜆 =2)0.00 0.00 1.00 1242 Nova Premier CMTF (causal) 0.25 0.25 1.00 2490 RACG ( 𝜆 =2)0.00 0.00 1.00 2910 Nova Pro CMTF (causal) 0.25 0.25 1.00 1539 RACG ( 𝜆 =2)0.00 0.00 1.00 1800 Nova 2 Lite CMTF (causal) 0.25 0.25 1.00 3025 RACG ( 𝜆 =2)0.00 0.00 1.00 3534
+
+a) Confirmatory results.: Table VI reports results with seven hosted models—Anthropic Claude Opus 4, Claude Son-net 4.6, and Claude Haiku 4.5; OpenAI GPT-OSS 120B; and Amazon Nova Premier, Nova Pro, and Nova 2 Lite—served via Amazon Bedrock at temperature 0. Across all seven models, RACG ( 𝜆 =2) yields exposure-at-attack = 0.00 and high-risk-call rate 0.00 : the gated tool is absent from V𝑡 , so even a compliant model cannot call it. CMTF reproduces its deterministic leak (0.25 ) for every model—the 20 /80 shortcut-task fraction—confirming the guarantee does not depend on model refusal. All models complete authorization-required tasks at 1.00 under both methods, confirming RACG does not over-filter (H4). The result is strikingly uniform: despite spanning three model families and a ∼ 30 × range in scale, every model exhibits the identical 
+
+0.25 → 0.00 collapse, exactly as the structural argument predicts. 
+
+b) Token cost and reproducibility.: The all-tools arm serializes the full ∼ 100 -tool registry on every call; under the deterministic serialized-context proxy ( tok ser ) this costs ≈ 22 × the per-task tokens of RACG, so we omit it from the model-driven sweep and contrast the two causally-filtered methods directly. Measured model tokens ( tok mdl , provider-reported prompt+completion) per task average 2,101 under CMTF versus 2,456 under RACG across the seven models; RACG’s modest overhead reflects the occasional authorization-establishing step it routes through before exposing a gated tool. Per-model RACG tok mdl spans 1,242 (GPT-OSS 120B) to 3,534 (Nova 2 Lite); full per-model figures appear in Table VI. All models are served via Bedrock’s Converse API at temperature 0 with forced single-tool selection where supported (with a text-parse fallback for models that emit non-conforming tool calls); harness, specs, and per-trial logs are released with the code. 
+
+VII. Results 
+
+Table VII reports the main comparison. Every exposure-reducing method—including all-tools—reaches benign task success 
+
+1.00 , so success is not the axis RACG improves: all methods can complete the tasks, and RACG’s contribution is to reach the same success with dramatically lower risk. The methods differ sharply on safety. All-tools keeps the full high-risk surface visible (AS = 26 ) and admits every injection (ISR = 1.00 ); keyword and state-aware filtering shrink the surface but still leave unauthorized high-risk tools exposed (UE = 5.51 and 3.11 ) and admit most injections (ISR = 1.00 and 0.75 ). Risk-agnostic Fig. 2. Real-LLM high-risk-call rate under injection, by exposure method, for seven hosted models (Amazon Bedrock). Under RACG the targeted tool is gated out of V𝑡 at the injection step, so the model-driven high-risk-call rate is 0.00 for every model; CMTF reproduces its deterministic leak ( 0.25 ) across all models. TABLE VII                                                                
+
+> Main results on RiskGate (deterministic agent). Success: task completion. AS / WAS: avg. count- and severity-weighted visible risk-bearing tools/step (WAS sums risk (𝜌 ), so a high tool counts 4×a med one). UE: unauthorized exposures/task. Inj.: injection success rate. GTE: gold-tool exposure (frac. of needed gold tools visible when needed; higher is better). OvB: overblock rate on authorization-required tasks (frac. failed because a legitimately-needed tool was withheld; lower is better). tok ser : serialized-context tokens/task. All methods reach success 1.00 except RACG at sub-𝜆 †(𝜆 =0.5).
+> Method Success AS WAS UE Inj. GTE OvB tok ser
+> All tools 1.00 26.00 95.00 76.16 1.00 1.00 0.00 29875 Keyword top-10 1.00 2.66 7.77 5.51 1.00 0.82 0.00 3414 State-aware 1.00 1.51 4.74 3.11 0.75 1.00 0.00 2464 Causal frontier 1.00 0.20 0.45 0.11 0.25 0.88 0.00 1252 RACG ( 𝜆 =0.5)0.89 0.15 0.23 0.00 0.00 0.88 0.50 1241 RACG ( 𝜆 =2)1.00 0.18 0.34 0.00 0.00 0.94 0.00 1350
+
+causal filtering reduces UE to 0.11 but is not zero: on high-risk-shortcut tasks it exposes a dangerous tool before authorization, yielding ISR = 0.25 . RACG ( 𝜆 =2) is the only method with UE = 0.00 and ISR = 0.00 at equal (full) task success , supporting H1–H5. The 𝜆 =0.5 row shows the 𝜆 † crossover: below it, RACG fails closed on the shortcut tasks (success 0.89 ). 
+
+a) Severity-weighting and over-blocking.: Two further columns guard against misreading the count-based surface. The 
+
+weighted attack surface (WAS) charges each visible tool by risk (𝜌 ), so it exposes severity that the raw count hides: all-tools rises from AS = 26 to WAS = 95 because its standing surface is dominated by irreversible high tools, whereas RACG ( 𝜆 =2) holds WAS = 0.34 . Crucially, RACG’s safety does not come from indiscriminate blocking: its gold-tool exposure is GTE = 0.94 (it keeps the legitimately-needed tool reachable when it is needed) and its over-block rate on authorization-required tasks is OvB 
+
+= 0.00 (it never fails a task by withholding a tool the task genuinely needs). The contrast with the sub-𝜆 † regime is decisive: at 𝜆 =0.5 the over-block rate jumps to OvB = 0.50 —RACG fails closed on half the authorization-required tasks—which is exactly why its success falls to 0.89 . Over-blocking is thus a property of under -tuned 𝜆 , not of RACG at its operating point; at 𝜆 ★=2 RACG attains zero unauthorized exposure and zero injection success without sacrificing the gold path. 
+
+b) Interpreting the token metric.: To avoid conflating two distinct quantities, we name them separately. On the deterministic track, serialized-context tokens (tok ser ) is the simulated prompt-token count from serializing V𝑡 at each step—a proxy for context overhead, not a measured model cost; the ∼ 22 × gap between all-tools and RACG mirrors the difference in |V 𝑡 |. On the LLM track (Section VI-B), measured model tokens (tok mdl ) is the provider-reported prompt+completion total. The two are not directly comparable and are never aggregated together. Figure 3 illustrates the central mechanism of capability minimization on an authorization-required send-email trajectory. All-tools exposure keeps the full high-risk surface (26 tools) visible at every step, and state-aware filtering still exposes several executable high-risk tools. Causal frontier and RACG both keep the visible high-risk surface near zero, exposing 
+
+send_email only at the final step once read_email has populated recipient_confirmed . On tasks with a high-risk 
+
+shortcut (Table VII), the two diverge: risk-agnostic causal filtering exposes the dangerous tool before authorization, whereas RACG does not. Fig. 3. Visible high-risk tools at each step of an authorization-required send-email task. All-tools keeps dangerous capability standing throughout; causal frontier and RACG expose a high-risk tool only at the final authorized step.          
+
+> Fig. 4. Benign task success versus the risk penalty 𝜆 . Unauthorized exposure and injection success are zero for all 𝜆 ; success exhibits the predicted 𝜆 †≈1.25
+> crossover, below which RACG fails closed on high-risk-shortcut tasks. The highlighted point is the default 𝜆 ★=2.
+
+A. Risk Penalty and the 𝜆 † Crossover 
+
+Figure 4 sweeps the risk penalty 𝜆 and plots benign task success. Across the sweep, unauthorized high-risk exposure and injection success are identically zero for RACG; the discriminating axis is therefore success. Below the crossover ( 𝜆 ≤ 0.5)RACG fails closed on the high-risk-shortcut tasks (success 0.89 ), because the penalty is too small to prefer the longer authorized route over the one-step dangerous shortcut. At 𝜆 ≥ 1 RACG routes through authorization and reaches full success, consistent with the 𝜆 † ≈ 1.25 predicted by Eq. (9). The default operating point 𝜆 ★ = 2 sits safely past the crossover. 
+
+B. Injection Mitigation 
+
+Figure 5 reports injection success rate (ISR) on the adversarial track. ISR tracks high-risk exposure: methods that expose dangerous tools admit injected calls—all-tools and keyword top-10 at 1.00 , state-aware at 0.75 , and risk-agnostic causal filtering at 0.25 —while RACG structurally prevents them whenever the target tool is gated at the injection step, yielding ISR = 0
+
+independent of injection phrasing. 
+
+a) Boundary condition: forging the authorization variable.: H5 holds only under Eq. (3). We test the violating case: 240 
+
+adversarial trials with authorization-forging injections that write the target’s 𝛼 -variable into the state. Table VIII shows that when provenance is intact, RACG attains ISR = 0.00 ; when forged, the gate opens and RACG’s ISR rises to 0.25 (matching CMTF)—the documented failure mode confirming that provenance, not gating, is where deployment scrutiny must concentrate. TABLE VIII          
+
+> Boundary condition for H5 ( 240 trials/method). With provenance intact, RACG attains ISR =0; when authorization is forged, the gate opens and RACG matches CMTF.
+> Method ISR (provenance intact) ISR (auth. forged) CMTF (causal) 0.25 0.25 RACG ( 𝜆 =2)0.00 0.25
+> Fig. 5. Injection success rate by exposure method on the adversarial track (lower is better). RACG removes the targeted high-risk tool from the action space at the injection step, so injected instructions cannot trigger it.
+
+VIII. Discussion 
+
+A. Least Privilege as Runtime Interface Design 
+
+RACG reframes tool exposure as a runtime interface-design decision. Conventional agent stacks fix the tool schema at deployment, granting standing authority over every tool the agent might ever need. RACG instead treats V𝑡 as a function of state and goal, recomputed each step—the agent analogue of capability-based security. The same tool library can present radically different effective authority across tasks with no change to the model or prompt. 
+
+B. Structural Gating versus Behavioral Compliance 
+
+Withholding a capability is categorically different from persuading a model not to use it. Behavioral defenses reduce misuse 
+
+probability , which is adversarially manipulable; structural gating removes the means , making misuse probability zero when the tool is absent from V𝑡 . The two are complementary: gating is the outer high-assurance layer; behavioral compliance covers residual risk within the gated set. 
+
+C. Auditability and Provenance 
+
+Every exposed high-risk tool carries an explicit causal-plus-authorization justification, shifting review from the unbounded space of model behaviors to the bounded space of tool contracts. The security-relevant question reduces to “which tools are trusted producers of which 𝛼 -variables?”—a static, contract-level check that does not require running the agent. 
+
+D. Relationship to Monitoring and Recovery 
+
+Gating operates before an action enters the action space; monitoring and recovery operate during and after. RACG composes with both: monitoring can watch for unusual authorization-variable timing (indicating contract drift or a forge attempt), while self-healing orchestration [19] handles residual failures gating does not prevent. 
+
+IX. Limitations and Threats to Validity 
+
+The benchmark is synthetic and deterministically mocked; it isolates exposure behavior but does not capture real API failures, latency, or ambiguous observations. RiskGate’s tasks, risk tiers, and injections are all authored by us, so reported leak rates (e.g. CMTF’s 0.25 = 20 /80 shortcut fraction) reflect our task construction. The most important external-validity gap is the absence of evaluation on an independent adversarial benchmark (ToolEmu [15], AgentDojo [17]); this is key future work. The deterministic agent makes H5 falsifiable and agent-agnostic, but model-driven behavior is established by the seven-model, 80 -task validation of Section VI-B, which—while spanning three model families—remains a single-benchmark study. RACG’s guarantees depend on contract quality—incorrect risk levels or missing authorization variables can over-expose dangerous tools—and inferred contracts [22] introduce their own threat surface. The provenance constraint (Eq. (3)) is the precise soundness condition; Table VIII confirms that if authorization variables can be set by injected content, the gate is bypassed. Finally, reported metrics do not fully capture user-perceived quality or the severity of individual safety failures. 
+
+X. Conclusion 
+
+We framed capability minimization as a safety primitive for tool-augmented LLM agents and introduced Risk-Aware Causal Gating (RACG), which exposes a high-risk tool only when it is causally necessary and explicitly authorized. By treating the visible tool set as an attack-surface control and by structurally withholding dangerous capabilities until they are justified, RACG offers a least-privilege and auditable exposure layer that, under enforced tool visibility and trusted authorization provenance, structurally prevents a class of injected tool calls when the targeted high-risk capability is absent from the current action space. On a controlled benchmark with a worst-case compliant agent, RACG was the only evaluated method to achieve zero unauthorized high-risk exposure and zero targeted injected high-risk calls while retaining full task success on authorization-required tasks, and the risk-penalty sweep reproduced the predicted 𝜆 † crossover between safe and unsafe routing. We stress the scope: this is not a general solution to prompt injection but a structural defense against injected use of gated 
+
+high-risk tools, conditional on the provenance constraint holding. Key directions for future work include evaluating RACG on independently-authored adversarial benchmarks (AgentDojo, ToolEmu) to establish external validity, developing runtime provenance enforcement mechanisms (e.g. taint tracking or signed authorization facts) to guarantee Eq. (3) at the system level, and extending the formulation to multi-agent settings where delegated authority and inter-agent tool sharing introduce new attack surfaces. 
+
+References 
+
+[1] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao, “React: Synergizing reasoning and acting in language models,” in International Conference on Learning Representations , 2023. [Online]. Available: https://arxiv.org/abs/2210.03629 [2] T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, E. Hambro, L. Zettlemoyer, N. Cancedda, and T. Scialom, “Toolformer: Language models can teach themselves to use tools,” in Advances in Neural Information Processing Systems , 2023. [Online]. Available: https://arxiv.org/abs/2302.04761 [3] Y. Qin, S. Liang, Y. Ye, K. Zhu, L. Yan, Y. Lu, Y. Lin, X. Cong, X. Tang, B. Qian, S. Zhao, R. Tian, R. Xie, J. Zhou, M. Gerstein, D. Li, Z. Liu, and M. Sun, “Toolllm: Facilitating large language models to master 16000+ real-world apis,” in International Conference on Learning Representations ,2024. [Online]. Available: https://arxiv.org/abs/2307.16789 [4] S. G. Patil, T. Zhang, X. Wang, and J. E. Gonzalez, “The berkeley function-calling leaderboard,” in Proceedings of Machine Learning Research , 2025. [Online]. Available: https://proceedings.mlr.press/v267/patil25a.html [5] M. Li, Y. Zhao, B. Yu, F. Song, H. Li, H. Yu, Z. Li, F. Huang, and Y. Li, “Api-bank: A comprehensive benchmark for tool-augmented llms,” in 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023. [Online]. Available: https://arxiv.org/abs/2304.08244 [6] Z. Shi, Y. Wang, L. Yan, P. Ren, S. Wang, D. Yin, and Z. Ren, “Retrieval models aren’t tool-savvy: Benchmarking tool retrieval for large language models,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics , 2025. [Online]. Available: https://arxiv.org/abs/2503.01763 [7] T. Gan and Q. Sun, “Rag-mcp: Mitigating prompt bloat in llm tool selection via retrieval-augmented generation,” arXiv preprint arXiv:2505.03275 ,2025. [Online]. Available: https://arxiv.org/abs/2505.03275 [8] M. M. Liu, D. Garcia, F. Parllaku, V. Upadhyay, S. F. A. Shah, and D. Roth, “Toolscope: Enhancing llm agent tool use through tool merging and context-aware filtering,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics , 2026. [Online]. Available: https://arxiv.org/abs/2510.20036 [9] V. Repantis, A. Gawde, H. Singh, and J. Blackwell, “How many tools should an llm agent see? a chance-corrected answer,” arXiv preprint arXiv:2605.24660 , 2026. [Online]. Available: https://arxiv.org/abs/2605.24660 [10] R. S. Babu and L. G. Iyer, “Toolchoiceconfusion: Causal minimal tool filtering for reliable llm agents,” 2026. [Online]. Available: https://arxiv.org/abs/2606.06284 [11] J. H. Saltzer and M. D. Schroeder, “The protection of information in computer systems,” Proceedings of the IEEE , vol. 63, no. 9, pp. 1278–1308, 1975. [12] N. Hardy, “The confused deputy: (or why capabilities might have been invented),” ACM SIGOPS Operating Systems Review , vol. 22, no. 4, pp. 36–38, 1988. [13] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection,” in Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security , 2023. [Online]. Available: https://arxiv.org/abs/2302.12173 [14] X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei, H. Lai, Y. Gu, H. Ding, K. Men, K. Yang, S. Zhang, X. Deng, A. Zeng, Z. Du, C. Zhang, S. Shen, T. Zhang, Y. Su, H. Sun, M. Huang, Y. Dong, and J. Tang, “Agentbench: Evaluating llms as agents,” in International Conference on Learning Representations ,2024. [Online]. Available: https://arxiv.org/abs/2308.03688 [15] Y. Ruan, H. Dong, A. Wang, S. Pitis, Y. Zhou, J. Ba, Y. Dubois, C. J. Maddison, and T. Hashimoto, “Identifying the risks of lm agents with an lm-emulated sandbox,” International Conference on Learning Representations , 2024. [Online]. Available: https://arxiv.org/abs/2309.15817 [16] T. Yuan, Z. He, L. Dong, Y. Wang, R. Zhao, T. Xia, L. Xu, B. Zhou, F. Li, Z. Zhang, R. Wang, and G. Liu, “R-judge: Benchmarking safety risk awareness for llm agents,” Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024. [Online]. Available: https://arxiv.org/abs/2401.10019 [17] E. Debenedetti, J. Zhang, M. Balunović, L. Beurer-Kellner, M. Fischer, and F. Tramèr, “Agentdojo: A dynamic environment to evaluate prompt injection attacks and defenses for llm agents,” Advances in Neural Information Processing Systems , 2024. [Online]. Available: https://arxiv.org/abs/2406.13352 [18] S. Naihin, D. Atkinson, M. Green, M. Hamadi, C. Swift, D. Schonholtz, A. T. Kalai, and D. Bau, “Testing language model agents safely in the wild,” 
+
+arXiv preprint arXiv:2311.10538 , 2023. [Online]. Available: https://arxiv.org/abs/2311.10538 [19] R. S. Babu and A. Agrawal, “Self-healing agentic orchestrators for reliable tool-augmented large language model systems,” 2026. [Online]. Available: https://arxiv.org/abs/2606.01416 [20] R. E. Fikes and N. J. Nilsson, “Strips: A new approach to the application of theorem proving to problem solving,” Artificial Intelligence , vol. 2, no. 3–4, pp. 189–208, 1971. [21] D. McDermott, M. Ghallab, A. Howe, C. Knoblock, A. Ram, M. Veloso, D. Weld, and D. Wilkins, “PDDL: The planning domain definition language,” Yale Center for Computational Vision and Control, Tech. Rep., 1998. [22] R. S. Babu and L. G. Iyer, “Contract2tool: Learning preconditions and effects for reliable tool-augmented llm agents,” 2026.

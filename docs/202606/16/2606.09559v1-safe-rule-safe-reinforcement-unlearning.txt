@@ -1,0 +1,957 @@
+Title: Safe-RULE: Safe Reinforcement UnLEarning
+
+URL Source: https://arxiv.org/pdf/2606.09559v1
+
+Published Time: Tue, 09 Jun 2026 02:25:57 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Safe-RULE: Safe Reinforcement UnLEarning 
+
+Shixiong Jiang Taozheng Zhu Fanxin Kong 
+
+Department of Computer Science and Engineering, University of Notre Dame 
+
+sjiang5@nd.edu tzhu2@nd.edu fkong@nd.edu 
+
+Abstract: Offline safe reinforcement learning (Safe RL) enables policy learning without online interactions, making it suitable for safety-critical systems such as robotics systems. However, its reliance on static datasets exposes offline Safe RL to data poisoning attacks, where adversaries inject malicious samples that compromise safety and induce unsafe policy behavior. In this work, we propose a new learning paradigm, named safe reinforcement unlearning (Safe-RULE), used as a defense framework to remove the influence of poisoned data without retraining from scratch or requiring access to the original training environment. We further extend reinforcement unlearning to offline Safe RL by explicitly accounting for both task performance and safety constraints during the unlearning process. Experiments across benchmark Safe RL tasks demonstrate that our approach effectively enhances safety performance against data poisoning attacks. 
+
+## 1 Introduction 
+
+Offline safe reinforcement learning (safe RL) has been widely explored in robotics [ 1 , 2 ], autonomous driving [ 3, 4 ], and industrial manipulation [ 5]. In the typical offline safe RL pipeline, a dataset is first collected from one or more behavior policies. Then, a safe offline RL algorithm is trained on this fixed dataset (no further interaction with the environment during training). Finally, the learned safe policy is evaluated in the environment. This setup avoids unsafe online exploration, but it also incurs vulnerability. Several works have shown that the robustness of an offline-trained “safe” policy can be seriously reduced if part of the dataset is malicious [ 6]. The attack surface is large: an adversary can inject poisoned trajectories [ 7], collect data from a compromised environment [ 8], or insert backdoor-style triggers that bias behavior [9, 10 ]. These poisoned samples can modify the observations, push the policy toward unsafe actions, or tamper with the reward/cost labels. As a result, the final policy may violate safety constraints at deployment, even though it was trained with a nominally safe RL algorithm. However, defense methods for repairing poisoned offline safe RL policies remain underexplored: how do we repair a safe policy that was already trained on poisoned data? A straightforward option is to retrain the whole policy from scratch using only clean data, but it is computationally expensive [ 8, 11 ]. Another common option is to fine-tune the current policy on only the clean subset, but it does not guarantee the removal of the poisoned behavior, since the poisoned behavior has already been encoded in the policy. Overall, there is a need to develop a new method to counter the poison attacks effectively and efficiently. To address this problem, we propose Safe Reinforcement Unlearning (Safe-RULE) , which enables a safe policy to unlearn poisoned samples without retraining from scratch or re-accessing the original training environment, while maintaining comparable performance on the remaining clean data. In this paper, we aim to answer the following questions: (1) How can unlearning be applied to offline safe RL? (2) How can safe reinforcement unlearning balance task performance and safety cost? To the best of our knowledge, we are the first to explore reinforcement unlearning for safe RL policies. Our contributions are summarized as follows: 
+
+> arXiv:2606.09559v1 [cs.LG] 8 Jun 2026
+
+1. We formulate the problem of safe reinforcement unlearning and propose Safe-RULE, an unlearning framework for offline safe RL policies trained on poisoned datasets. 2. We conduct extensive experiments on Safety Gym benchmarks to demonstrate the effectiveness and efficiency of Safe-RULE against various poisoning attacks. 
+
+## 2 Related Work 
+
+Machine unlearning. Machine unlearning aims to remove the influence of specific training data from neural networks. Existing machine unlearning applications mainly target removing harmful knowledge [ 12 , 13 , 14 ], mitigating jailbreaks [ 15 , 16 ], correcting value alignment [ 17 , 18 ], and satisfying privacy [ 19 ]. Current unlearning approaches consist of: (i) gradient ascent [ 20 , 21 ], which maximizes the loss on the samples to be forgotten; (ii) task-vector methods [ 22 , 23 ], which identify an unlearning direction directly in weight space; and (iii) representation misdirection [ 24 , 25 , 26 ], which drives intermediate representations for the forgotten data toward noise or irrelevant features. Despite the broad use of machine unlearning, machine unlearning for reinforcement learning has recently emerged. [ 8] first propose reinforcement unlearning for online RL, in which they propose two methods for unlearning to forget a poisoned environment while keeping substantial performance for other environments. [ 11 ] further proposes Trajdeleter, which focuses on offline RL and unlearning poisoned trajectories instead of a whole environment. However, neither work studies machine unlearning for safe RL policies. 
+
+Poison attacks for RL. Poison attacks refer to the manipulation of the training dataset, resulting in the training RL having compromised performance [ 27 , 28 , 29 , 30 , 31 ]. The poison attacks for RL can be implemented through perturbing the observation, perturbing the action, perturbing the reward function, or a combination of them to compromise the reward of the policy. Instead of degrading the reward, [ 32 ] is the first to propose adversarial attacks that target safe RL. [ 32 ] points out that the adversarial attacks can perturb the observation of safe RL agents by either maximizing the reward or the cost value so that the trained policy gets an increased cumulative cost, which leads to unsafe behavior. Following this work, several works [ 10 , 33 ] have developed various adversarial attack methods to explore the vulnerability of safe RL algorithms. However, the above works lack the discussion of how general defense methods can be developed to prevent various attacks, especially for offline safe RL. 
+
+## 3 Preliminary 
+
+3.1 Offline Safe RL 
+
+We model safe reinforcement learning as a Constrained Markov Decision Process (CMDP) 
+
+M = ( S, A, P, r, c, γ, μ 0),
+
+where S and A are the state and action spaces, P(s′ | s, a ) is the transition kernel, r : S × A → R
+
+is the reward function, and c : S × A → [0 , c max ] is a non-negative cost function bounded by cmax .Here, γ ∈ [0 , 1) is the discount factor, and μ0 is the initial-state distribution. For a stationary policy π, the discounted reward and cost returns are defined as 
+
+Jr (π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+γtrt
+
+#
+
+, Jc(π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+γtct
+
+#
+
+,
+
+where τ ∼ π denotes trajectories generated under μ0, P, and π. The objective of safe RL is to learn a policy that maximizes the expected reward while satisfying a safety constraint on the expected cost: 
+
+π⋆ ∈ arg max  
+
+> π
+
+Jr (π) s.t. Jc(π) ≤ κ, (1) where κ is the cost threshold. We refer to a policy as safe if it satisfies the constraint in (1). In the offline setting, the learner has no access to the environment and must solve (1) using only a fixed dataset 
+
+D = {τi}Ni=1 , τi = ( s0, a 0, r 0, c 0, . . . , s T , a T , r T , c T ),
+
+2collected by an unknown behavior policy. 
+
+3.2 Problem Formulation Threat Model. Let ˜D = Dk ∪ D f be a corrupted offline safe RL dataset. We assume an adversary has injected a subset Df through data poisoning, leaving the remaining data Dk = ˜D \ D f clean. We refer to Df as the forget (poison) dataset and Dk as the keep (clean) dataset . Therefore, the offline safe RL training on the corrupted dataset ˜D produces a policy ˜π such that Jc(˜ π) > κ, indicating a violation of the safety constraint. This typically occurs because the policy underestimates the true cost on the forget dataset, which allows the corrupted policy to select unsafe actions. We assume that the partition (Dk, Df ) is known at unlearning time, which is standard in the unlearning literature where the forget set is identified by an upstream detection or auditing mechanism. 
+
+Unlearning Goal. A straightforward solution against the corrupted policy is to discard the corrupted policy and retrain from scratch using the clean dataset Dk. However, this approach is computationally expensive. Instead, we aim to unlearn the forget set: starting from ˜π, we seek to obtain a new policy 
+
+π that suppresses the influence of Df while preserving performance on Dk.Specifically, starting from the corrupted policy ˜π, we aim to find a new policy π by solving the following constrained optimization problem: 
+
+max  
+
+> π
+
+E(s,a )∼D k [Qπr (s, a )] 
+
+s.t. E(s,a )∼D k [Qπc (s, a )] ≤ κ, 
+
+E(s,a )∼D f [Qπc (s, a )] > κ, 
+
+(2) where Qπr (s, a ) and Qπc (s, a ) are the state-action value functions for reward and cost under policy 
+
+π, respectively. The objective maximizes the expected return on the clean data Dk, subject to two constraints: (1) the policy remains safe on the clean distribution, and (2) the influence of the forget set 
+
+Df is suppressed by ensuring that the cost values on poisoned transitions exceed the safety threshold 
+
+κ, effectively rendering those transitions undesirable. Together, these conditions capture the dual requirement of safety constraint on Dk and forget set suppression on Df .
+
+## 4 Safe-RULE 
+
+In this section, we introduce our safe reinforcement unlearning method Safe-RULE to mitigate poisoned data in the corrupted safe RL policy. To illustrate the intuition behind our unlearning algorithm design, we first revisit state-of-the-art offline safe RL algorithms. We consider a general actor-critic framework with a reward critic Qrϕ, a cost critic Qcψ , and an actor πθ , where ϕ, ψ, θ denote their parameters, respectively. Offline safe RL algorithms such as BCQ-Lag and CPQ follow this structure, where the critics provide reward and safety signals and the actor optimizes a policy under these signals. We build our unlearning method on top of this general formulation. 
+
+Critic Unlearning. We first introduce unlearning for the critic networks, as they provide the value estimates that directly guide the actor updates. If the critic outputs on Df still reflect the poisoned behavior, the actor will continue to recover the corrupted policy regardless of how the actor objective is designed. For the reward critic Qrϕ and cost critic Qcψ , we adopt a dual-objective design that balances knowledge retention on clean data with information removal from poisoned data. On the keep set Dk, we maintain standard temporal difference learning to preserve accurate value estimates: 
+
+Lr
+
+> critic
+
+(Dk) = E(s,a )∼D k
+
+(Qrϕ(s, a ) − yr )2 , (3) 
+
+Lc
+
+> critic
+
+(Dk) = E(s,a )∼D k
+
+(Qcψ (s, a ) − yc)2 , (4) where yr and yc denote the Bellman backup targets defined by the offline safe RL algorithm. 3On the forget set Df , directly applying Bellman regression is not suitable for unlearning. Although one may consider reversing the Bellman update (e.g., minimizing the value), such operations still enforce a consistent value structure on Df . This means the critic continues to encode information from the poisoned data, even if the value magnitude is shifted. In addition, forcing the critic to deviate significantly from its Bellman targets may introduce instability and harm convergence. Therefore, instead of following Bellman regression, we replace it with a value suppression objective. For the reward critic, we push the predicted values toward a lower reference ¯Qr , and for the cost critic, toward a higher reference ¯Qc:
+
+Lr
+
+> critic
+
+(Df ) = E(s,a )∼D f
+
+softplus  Qrϕ(s, a ) − ¯Qr  , (5) 
+
+Lc
+
+> critic
+
+(Df ) = E(s,a )∼D f
+
+softplus  κ + σ − Qcψ (s, a ) . (6) The key intuition is that we only suppress the critic outputs when they are still influenced by the poisoned data. Once the predicted values move past the reference, the penalty gradually diminishes, avoiding unnecessary updates and preventing value collapse. To further improve stability, we select the reference values adaptively from the current training distribution. Specifically, ¯Qr is chosen as a low quantile (we use the 30th percentile) of the reward backup yr computed on Dk. This ensures that the suppressed reward values remain below typical safe returns without collapsing to a trivial constant. For the cost critic, we use the cost threshold κ
+
+with a small margin σ to ensure that forget-state actions are consistently treated as violating the safety constraint, where σ is a positive constant. The combined critic loss is: 
+
+Lr 
+
+> critic
+
+= αkLr
+
+> critic
+
+(Dk) + αf Lr
+
+> critic
+
+(Df ), (7) 
+
+Lc 
+
+> critic
+
+= αkLc
+
+> critic
+
+(Dk) + αf Lc
+
+> critic
+
+(Df ), (8) where αk and αf control the relative importance of keeping and forgetting. 
+
+Actor Unlearning. Given the updated critics, we unlearn the actor πθ using policy gradient updates that combine objectives from both Dk and Df .On the keep data, the actor maximizes reward while respecting the cost constraint and remaining close to safe behavioral actions: 
+
+Lactor (Dk) = − EDk
+
+1[Qcψ ≤ κ] Qrϕ(s, π θ (s)) 
+
++ EDk
+
+softplus( Qcψ (s, π θ (s)) − κ) (9) The first term follows the CPQ algorithm [ 34 ] safety-gated reward objective, where rewards are optimized only for actions that satisfy the cost constraint. The second term provides a smooth penalty when the cost exceeds the threshold, avoiding hard constraints. On the forget set, we suppress the learned behavior by reversing the objective while coordinating with the cost critic: 
+
+Lactor (Df ) = EDf
+
+1[Qcψ ≥ κ] Qrϕ(s, π θ (s)) 
+
++ EDf
+
+softplus  κ + σ − Qcψ (s, π θ (s))  . (10) The first term in Equation 10 is the reward suppression term, which is gated by the cost critic, ensuring that the actor only suppresses reward when the state-action pair is confidently identified as unsafe. This design avoids instability caused by inaccurate cost estimates at the early stage of unlearning. The second term in Equation 10 is the cost suppression term that encourages the actor to move toward actions that are considered unsafe on the forget states, thereby shifting the policy distribution away from poisoned regions. 
+
+Adaptive Forget Weight βf . However, unlearning the forget set trajectory may induce instability by degrading the performance on the keep data. Therefore, we introduce an adaptive forget weight βf in the overall actor loss: 
+
+Ltotal actor = Lactor (Dk) + βf Lactor (Df ), (11) 4Policy Attack Metric PointGoal CarCircle AntVelocity PointPush 5% 15% 5% 15% 5% 15% 5% 15% 
+
+BCQ-Lag Max Cost C 31.1 / 17.5 69.0 / 23.9 88.8 / 10.2 136.2 / 34.4 50.8 / 21.4 74.2 / 10.1 35.7 / 14.4 14.5 / 9.6 R 13.9 / 18.3 15.8 / 14.6 285.2 / 314.0 331.0 / 365.4 2984.9 / 2962.0 2898.4 / 1800.5 4.3 / 2.0 -0.8 / 2.6 
+
+Max Reward C 30.6 / 21.9 32.6 / 24.2 64.9 / 27.8 83.9 / 9.0 89.0 / 19.7 94.8 / 9.3 40.5 / 9.2 27.8 / 10.6 R 19.1 / 19.5 21.4 / 17.4 396.3 / 388.6 322.2 / 414.0 3018.9 / 2787.9 2603.1 / 1829.1 3.6 / 2.9 3.2 / 1.6 Min Reward C 33.6 / 9.4 18.9 / 10.8 62.5 / 22.4 27.1 / 21.7 123.9 / 36.2 5.1 / 6.8 82.8 / 9.8 38.9 / 9.7 R 13.6 / 9.1 2.8 / 10.8 251.1 / 312.8 130.6 / 301.4 2781.7 / 2570.8 2678.4 / 2135.2 3.7 / 3.8 -6.9 / 3.4 
+
+CPQ Max Cost C 42.1 / 4.7 42.1 / 21.9 52.4 / 0.0 195.9 / 0.7 0.0 / 0.4 0.0 / 0.1 3.5 / 1.4 0.0 / 0.0 
+
+R 0.1 / 12.6 0.1 / 0.1 366.7 / 381.3 173.8 / 345.2 -3000.1 / 932.9 -2999.7 / 1966.5 -1.7 / 1.9 -12.0 / 0.1 
+
+Max Reward C 32.0 / 7.2 4.9 / 3.5 0.0 / 0.0 0.0 / 0.0 0.0 / 1.5 0.0 / 1.5 3.9 / 0.0 11.4 / 2.4 R -0.7 / 0.7 -2.1 / 7.9 284.6 / 381.1 364.9 / 380.3 -2998.6 / 1242.3 -2999.4 / 1403.7 -23.6 / 1.5 -1.5 / 1.9 
+
+Min Reward C 52.9 / 9.4 54.6 / 5.3 134.8 / 0.0 73.9 / 4.4 0.0 / 8.2 0.0 / 0.0 0.8 / 6.4 2.0 / 8.5 
+
+R -1.9 / 14.4 0.3 / 0.5 -50.2 / 306.6 -159.3 / 294.2 -2997.2 / 1339.9 -2999.0 / 1188.5 -2.0 / 1.4 -1.2 / 1.4 
+
+BEAR-Lag Max Cost C 208.0 / 8.9 262.1 / 10.4 64.6 / 3.9 94.1 / 2.9 101.3 / 5.8 520.3 / 2.3 31.5 / 7.4 95.6 / 2.5 R 0.0 / 9.5 1.0 / 9.1 447.4 / 352.7 437.5 / 388.5 544.4 / 2517.8 2738.2 / 2534.7 0.6 / 2.2 -3.4 / 0.7 
+
+Max Reward C 69.8 / 8.1 30.8 / 10.1 56.2 / 9.8 58.9 / 2.0 60.5 / 5.7 0.1 / 6.7 13.4 / 8.6 11.8 / 0.0 R -0.6 / 4.9 6.3 / 12.3 333.1 / 356.0 337.9 / 313.8 2660.2 / 2531.5 839.6 / 2493.0 0.4 / 2.2 -18.2 / 2.9 
+
+Min Reward C 27.9 / 4.9 6.8 / 7.3 79.1 / 7.0 68.3 / 5.9 0.0 / 8.5 0.0 / 0.0 11.7 / 4.2 28.5 / 7.6 R 10.5 / 12.1 -26.8 / 8.4 466.6 / 363.9 199.0 / 321.6 -309.4 / 2616.2 -485.4 / 2289.6 -11.2 / 1.8 -10.9 / 1.6 
+
+COptiDICE Max Cost C 64.3 / 17.1 45.3 / 22.7 94.1 / 38.3 90.7 / 10.6 108.0 / 7.3 39.8 / 5.7 31.5 / 5.8 37.7 / 10.3 R 14.2 / 12.7 16.7 / 8.7 190.9 / 175.0 209.8 / 176.9 2941.9 / 2416.0 1260.6 / 2501.5 1.6 / 1.2 0.3 / 0.4 
+
+Max Reward C 60.6 / 10.3 70.3 / 14.9 75.2 / 11.5 97.2 / 19.4 90.2 / 8.9 46.1 / 7.8 28.7 / 8.2 53.0 / 6.0 R 15.6 / 5.9 13.0 / 7.8 262.6 / 167.6 169.9 / 144.9 2942.6 / 2319.1 1533.1 / 2428.2 -0.1 / 0.3 -0.4 / -2.7 Min Reward C 46.4 / 10.4 36.6 / 2.3 69.3 / 13.1 84.4 / 18.6 140.2 / 0.0 43.9 / 2.4 45.3 / 7.5 34.4 / 9.8 R 9.0 / 4.9 -9.1 / 1.6 239.0 / 157.7 -64.7 / 147.0 2997.3 / 2257.8 851.9 / 2380.0 2.2 / 1.2 -11.6 / -1.0 
+
+Table 1: Cost and reward before/after unlearning under different attacks and poison ratios. Each entry reports before/after unlearning. Bold post-unlearning values indicate improvement: lower cost for C,higher reward for R.Where the βf controls the weight assigned to the forget objective. We update the βf based on the remaining forgetting gap, how far the forgotten data is considered not safe: 
+
+∆ = κ + σ − EDf [Qcψ (s, π θ (s))] .
+
+We update βf using a bounded increment: 
+
+βf ← clip( βf + ∆ ∗ τβ , β min , β max ) .
+
+where τβ is the update step size. When the forgetting is incomplete ( ∆ > 0), βf increases to strengthen suppression. Once the gap closes, βf decreases, allowing the optimization to focus on retaining performance. 
+
+Implementation on non actor-critic algorithms . For algorithms without a standard actor-critic structure, such as COptiDICE [ 35 ], we implement unlearning by using the available value networks as proxies: the ν-network provides the reward-side value weight, while the χ-network serves as the cost-side substitution. The detailed implementation is illustrated in the Appendix. 
+
+## 5 EXPERIMENTS 
+
+In this section, we demonstrate our experimental results for evaluating our safe unlearning method on different safe RL benchmarks. 
+
+Benchmarks. Our experiments are conducted on four benchmarks in the Safety-Gymnasium [ 36 ], which provides safe RL benchmarks targeting the challenge of safe RL. For the offline safe RL dataset, we use the OSRL [ 37 ] dataset, which is an open-source offline safe RL dataset. The four benchmarks used in our experiments are CarCircle, PointGoal, AntVelocity, and PointPush. 
+
+Attack Settings. To demonstrate that our unlearning method is effective in mitigating various offline dataset poisoning attacks, we consider the following attack strategies: 5Max Cost and Max Reward attack. Max Cost and Max Reward [ 32 ] are attacks that generate adversarial trajectories by maximizing the cost critic and reward critic values, respectively. To adapt these attacks to the offline setting, we first train an adversarial policy that produces high-cost or high-reward trajectories (the high-reward trajectories discard the cost constraints, which also leads to high cost). 
+
+Min Reward. To illustrate that our unlearning method can also mitigate attacks that do not directly tar-get the cost, we additionally consider a reward-minimization attack. Similar to the Max Cost/Reward setting, we train an adversarial policy that generates trajectories with low rewards. To make these poisoned trajectories appear beneficial during training, we modify their labels by setting the cost to zero while keeping the reward at a high level comparable to the clean data. As a result, these trajectories are treated as highly valuable by the learning algorithm, which misleads the policy toward unsafe behaviors. These trajectories are then injected into the offline dataset to get 
+
+˜D = Dk ∪ D f .
+
+Defense Baselines and Ablations. To evaluate the effectiveness of our safe unlearning method against poisoning attacks, we compare it with the following defense baselines and ablation variants. For simplicity, we use unlearning to present our Safe-RULE method. 
+
+Trajdeleter. We follow Trajdeleter [ 11 ], which removes the influence of poisoned trajectories through a two-phase procedure: a forgetting phase followed by a convergence phase. The original Trajdeleter is designed to unlearn reward-related poisoning effects. In the Appendix, we further adapt Trajdeleter to unlearn cost-related poisoning effects for a fairer comparison with our method. 
+
+Fine-tuning. We evaluate a simple fine-tuning baseline that updates the corrupted policy using only clean data. This baseline examines whether standard clean-data fine-tuning is sufficient to remove the influence of poisoned trajectories. 
+
+Reward-only unlearning. Our safe unlearning method jointly addresses reward and cost corruption. To isolate the effect of cost unlearning, we include a reward-only variant of our method. This variant uses the same unlearning framework but removes the cost-related unlearning terms from both the critic and actor objectives. 
+
+Training from scratch. We also report the performance of clean policies trained from scratch using only the clean dataset. Each policy is trained for 10 7 steps for each algorithm and environment. This setting serves as a clean reference to show how closely the unlearned policy can recover the performance of a policy trained without poisoned data. 
+
+5.1 Experimental Settings Training setup. We follow the OSRL[ 37 ] setup for offline safe RL, including the offline safe RL algorithms and datasets. We train four algorithms: BCQ-Lag [ 38 ], BEAR-Lag [ 39 ], COptiDICE [ 35 ], and CPQ [ 34 ] on the corrupted datasets ˜D produced by the attacks above. Each run uses 10 6
+
+gradient steps, discount factor γ = 0 .99 . The detailed hyperparameter settings, including training and unlearning, are listed in the Appendix. 
+
+Adversary setup. We consider three poisoning strategies to construct the poisoned dataset Df : Max Cost , Max Reward , and Min Reward . We vary the poisoning ratio ρ = |D f |/| ˜D| ∈ { 0.05 , 0.15 }.Each strategy uses a corresponding adversarial policy to generate trajectories (s, a, r, c ) with targeted properties: high cost, high reward, or low reward. Training on this hybrid dataset can therefore cause the safe RL policy to learn undesirable behaviors, leading to degraded reward or increased cost. 
+
+5.2 Results 
+
+We evaluate the effectiveness of our unlearning method in mitigating poison attacks by comparing evaluation cost and reward values across benchmarks and safe RL algorithms. 
+
+Impact of attacks and safe unlearning. In Table 1, we report the evaluation cost and reward of the attacked policies before and after applying our safe unlearning method under three poisoning attacks. 6(a) Evaluation cost under the Max Cost attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15% . The green bars represent the cost after applying our safe unlearning method; lower values indicate better performance.      
+
+> (b) Evaluation reward under the Max Cost attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15% . The green bars represent the reward after applying our safe unlearning method; higher values indicate better performance.
+
+Each entry shows the performance before/after 5000 unlearning steps. The bold post-unlearning value indicates an improvement, i.e., a lower cost for C or a higher reward for R. Overall, safe unlearning reduces cost or improves reward in many settings across different environments, attacks, and safe RL algorithms, demonstrating its general applicability. We also observe that some cases still involve reward-cost trade-offs, indicating that safe unlearning must balance performance recovery and safety recovery. In Figure 1b and Figure 1a, we demonstrate the evaluation cost and reward under the Max Cost attack with four different offline safe RL algorithms. As shown, the Max Cost attack substantially increases the evaluation cost and degrades policy performance. The results show that our safe unlearning algorithm achieves the best performance among all baselines, outperforming both Trajdeleter and fine-tuning approaches, and has a slight performance drop compared with the clean policy. 
+
+Effect of adaptive βf . To balance forgetting and retention during safe unlearning, we use an adaptive 
+
+βf to control the weight of the forget-gradient update. This design prevents the model from overfitting to the forget dataset while preserving useful knowledge from the keep dataset. Table 2 reports the changes in evaluation cost and reward using adaptive βf and a fixed setting βf = 1 . Here, βf = 1 
+
+means that the keep-gradient and forget-gradient terms are assigned the same weight in the actor update. The results show that adaptive βf achieves better performance in most cases, especially in retaining reward while maintaining competitive cost reduction. 7Policy Variant PointGoal CarCircle AntVelocity PointPush                                                                                            
+
+> ∆C↑∆R↑∆C↑∆R↑∆C↑∆R↑∆C↑∆R↑
+> BCQ-Lag adaptive βf13.6 4.4 81.2 10.8 29.4 -22.9 21.3 -2.3
+> βf= 1 8.6 -1.2 81.9 -15.6 31.6 -739.1 26.9 -1.5
+> CPQ adaptive βf37.4 12.5 52.4 14.6 -0.4 3933.0 2.1 3.6
+> βf= 1 33.0 9.5 52.4 14.6 0.0 3910.3 1.0 3.5 BEAR-Lag adaptive βf199.1 9.5 55.8 -202.5 95.5 1973.4 24.1 1.6
+> βf= 1 185.4 0.1 55.8 -253.3 101.3 300.4 29.1 0.4 COptiDICE adaptive βf47.2 -1.6 55.8 -16.0 100.7 -525.9 25.7 -0.4
+> βf= 1 49.8 -6.9 67.9 -20.4 108.0 -632.7 23.4 -0.5
+
+Table 2: Effect of adaptive forget-gradient weight under Max Cost attack with 5% poison. Each entry reports the improvement relative to the poisoned policy, where ∆C = Cpoisoned − Cunlearn and 
+
+∆R = Runlearn − Rpoisoned . Bold values indicate the better variant between adaptive and fixed βf .                        
+
+> Method Task
+> PointGoal CarCircle AntVelocity PointPush Retraining 132.0 276.1 252.4 212.3 Safe Unlearning 5.5 9.2 7.3 6.3 Trajdeleter 3.1 6.6 5.4 3.4 Reward-only 3.1 6.4 5.3 3.2 Fine-tuning 3.6 7.0 6.2 5.5
+
+Table 3: Computation overhead in minutes using CPQ. 
+
+Time cost of unlearning. In Table 3, we compare the runtime of our safe unlearning method with baseline defenses and training from scratch on clean data. Since both unlearning and the baseline defenses require only a small number of update steps, they are much more efficient than retraining a clean policy from scratch. This computational efficiency is a key advantage of unlearning-based defenses, especially when the original training process requires a large number of environment or optimization steps. 
+
+## 6 Limitations 
+
+Although Safe-RULE provides an effective defense for offline safe RL against poisoning attacks, it still has several limitations. First, our method assumes that the keep dataset Dk and forget dataset 
+
+Df can be identified or separated. If poisoned samples cannot be detected or isolated, Safe-RULE cannot directly remove their influence. Second, while Safe-RULE can reduce the impact of poisoning attacks, the unlearned policy may not fully recover the reward and cost performance of a clean policy trained only on clean data. Third, our current experiments are conducted in simulation environments, and further evaluation on real robotic or autonomous systems is needed to validate the practical effectiveness of the method. 
+
+## 7 Conclusion 
+
+In this paper, we proposed Safe Reinforcement Unlearning (Safe-RULE) to mitigate poisoning attacks in offline safe reinforcement learning. Safe-RULE jointly unlearns the critic and actor networks to remove the influence of poisoned data while preserving useful knowledge from the keep dataset. To balance forgetting and retention, we introduce an adaptive forget weight that controls the forget-gradient update and reduces over-forgetting. Different from standard unlearning, safe reinforcement unlearning must recover task performance while satisfying the safety constraint on the clean distribution. Experiments on offline safe RL benchmarks show that Safe-RULE effectively reduces poisoning effects and recovers safer policy behavior without retraining from scratch. 8References 
+
+[1] S. Sinha, A. Mandlekar, and A. Garg. S4rl: Surprisingly simple self-supervision for offline reinforcement learning in robotics. In Conference on Robot Learning , pages 907–917. PMLR, 2022. [2] J. Li, X. Liu, B. Zhu, J. Jiao, M. Tomizuka, C. Tang, and W. Zhan. Guided online distillation: Promoting safe reinforcement learning by offline demonstration. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 7447–7454. IEEE, 2024. [3] T. Shi, D. Chen, K. Chen, and Z. Li. Offline reinforcement learning for autonomous driving with safety and exploration enhancement. arXiv preprint arXiv:2110.07067 , 2021. [4] X. Fang, Q. Zhang, Y. Gao, and D. Zhao. Offline reinforcement learning for autonomous driving with real world driving data. In 2022 IEEE 25th International Conference on Intelligent Transportation Systems (ITSC) , pages 3417–3422. IEEE, 2022. [5] S. Gu, L. Yang, Y. Du, G. Chen, F. Walter, J. Wang, and A. Knoll. A review of safe reinforcement learning: Methods, theories and applications. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2024. [6] C. Gong, Z. Yang, Y. Bai, J. He, J. Shi, K. Li, A. Sinha, B. Xu, X. Hou, D. Lo, et al. Baffle: Hiding backdoors in offline reinforcement learning datasets. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 2086–2104. IEEE, 2024. [7] C. Gong, Z. Yang, Y. Bai, J. He, J. Shi, K. Li, A. Sinha, B. Xu, X. Hou, D. Lo, et al. Baffle: Backdoor attack in offline reinforcement learning. arXiv preprint arXiv:2210.04688 , 2022. [8] D. Ye, T. Zhu, C. Zhu, D. Wang, K. Gao, Z. Shi, S. Shen, W. Zhou, and M. Xue. Reinforcement unlearning. arXiv preprint arXiv:2312.15910 , 2023. [9] P. Kiourti, K. Wardega, S. Jha, and W. Li. Trojdrl: evaluation of backdoor attacks on deep reinforcement learning. In 2020 57th ACM/IEEE Design Automation Conference (DAC) , pages 1–6. IEEE, 2020. [10] S. Jiang, M. Liu, and F. Kong. Backdoor attacks on safe reinforcement learning-enabled cyber– physical systems. IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems , 43(11):4093–4104, 2024. [11] C. Gong, K. Li, J. Yao, and T. Wang. Trajdeleter: Enabling trajectory forgetting in offline reinforcement learning agents. arXiv preprint arXiv:2404.12530 , 2024. [12] X. Wu, J. Li, M. Xu, W. Dong, S. Wu, C. Bian, and D. Xiong. Depn: Detecting and editing privacy neurons in pretrained language models. arXiv preprint arXiv:2310.20138 , 2023. [13] E. Farrell, Y.-T. Lau, and A. Conmy. Applying sparse autoencoders to unlearn knowledge in language models. arXiv preprint arXiv:2410.19278 , 2024. [14] A. Deeb and F. Roger. Do unlearning methods remove information from language model weights? arXiv preprint arXiv:2410.08827 , 2024. [15] A. Sheshadri, A. Ewart, P. Guo, A. Lynch, C. Wu, V. Hebbar, H. Sleight, A. C. Stickland, E. Perez, D. Hadfield-Menell, et al. Latent adversarial training improves robustness to persistent harmful behaviors in llms. arXiv preprint arXiv:2407.15549 , 2024. [16] M. Isonuma and I. Titov. Unlearning traces the influential training data of language models. 
+
+arXiv preprint arXiv:2401.15241 , 2024. [17] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al. Training language models to follow instructions with human feedback. 
+
+Advances in neural information processing systems , 35:27730–27744, 2022. 9[18] À. P. Vidal, A. S. Johansen, M. N. Jahromi, S. Escalera, K. Nasrollahi, and T. B. Moeslund. Verifying machine unlearning with explainable ai. In International Conference on Pattern Recognition , pages 458–473. Springer, 2024. [19] N. Sula, A. Kumar, J. Hou, H. Wang, and R. Tourani. Silver linings in the shadows: Harnessing membership inference for machine unlearning. arXiv preprint arXiv:2407.00866 , 2024. [20] K. Gu, M. R. U. Rashid, N. Sultana, and S. Mehnaz. Second-order information matters: Revisiting machine unlearning for large language models. arXiv preprint arXiv:2403.10557 ,2024. [21] J. Jang, D. Yoon, S. Yang, S. Cha, M. Lee, L. Logeswaran, and M. Seo. Knowledge unlearning for mitigating privacy risks in language models. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14389–14408, 2023. [22] G. Ilharco, M. T. Ribeiro, M. Wortsman, S. Gururangan, L. Schmidt, H. Hajishirzi, and A. Farhadi. Editing models with task arithmetic. arXiv preprint arXiv:2212.04089 , 2022. [23] J. Zhang, J. Liu, J. He, et al. Composing parameter-efficient modules with arithmetic operation. 
+
+Advances in Neural Information Processing Systems , 36:12589–12610, 2023. [24] D. Huu-Tien, T.-T. Pham, H. Thanh-Tung, and N. Inoue. On effects of steering latent represen-tation for large language model unlearning. arXiv preprint arXiv:2408.06223 , 2024. [25] D. Rosati, J. Wehner, K. Williams, L. Bartoszcze, R. Gonzales, S. Majumdar, H. Sajjad, F. Rudzicz, et al. Representation noising: A defence mechanism against harmful finetuning. 
+
+Advances in Neural Information Processing Systems , 37:12636–12676, 2024. [26] N. Li, A. Pan, A. Gopal, S. Yue, D. Berrios, A. Gatti, J. D. Li, A.-K. Dombrowski, S. Goel, L. Phan, et al. The wmdp benchmark: Measuring and reducing malicious use with unlearning. 
+
+arXiv preprint arXiv:2403.03218 , 2024. [27] V. Behzadan and A. Munir. Vulnerability of deep reinforcement learning to policy induction attacks. In Machine Learning and Data Mining in Pattern Recognition: 13th International Conference, MLDM 2017, New York, NY, USA, July 15-20, 2017, Proceedings 13 , pages 262–275. Springer, 2017. [28] Y. Huang and Q. Zhu. Deceptive reinforcement learning under adversarial manipulations on cost signals. In Decision and Game Theory for Security: 10th International Conference, GameSec 2019, Stockholm, Sweden, October 30–November 1, 2019, Proceedings 10 , pages 217–237. Springer, 2019. [29] A. Rakhsha, G. Radanovic, R. Devidze, X. Zhu, and A. Singla. Policy teaching via environment poisoning: Training-time adversarial attacks against reinforcement learning. In International Conference on Machine Learning , pages 7974–7984. PMLR, 2020. [30] G. Liu and L. Lai. Provably efficient black-box action poisoning attacks against reinforcement learning. Advances in Neural Information Processing Systems , 34:12400–12410, 2021. [31] Y.-C. Lin, Z.-W. Hong, Y.-H. Liao, M.-L. Shih, M.-Y. Liu, and M. Sun. Tactics of adversarial attack on deep reinforcement learning agents. arXiv preprint arXiv:1703.06748 , 2017. [32] Z. Liu, Z. Guo, Z. Cen, H. Zhang, J. Tan, B. Li, and D. Zhao. On the robustness of safe reinforcement learning under observational perturbations. arXiv preprint arXiv:2205.14691 ,2022. [33] W. Guo, G. Liu, Z. Zhou, and L. Wang. Pnact: Crafting backdoor attacks in safe reinforcement learning. arXiv preprint arXiv:2507.00485 , 2025. 10 [34] H. Xu, X. Zhan, and X. Zhu. Constraints penalized q-learning for safe offline reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 36, pages 8753–8760, 2022. [35] J. Lee, C. Paduraru, D. J. Mankowitz, N. Heess, D. Precup, K.-E. Kim, and A. Guez. Coptidice: Offline constrained reinforcement learning via stationary distribution correction estimation. 
+
+arXiv preprint arXiv:2204.08957 , 2022. [36] J. Ji, B. Zhang, J. Zhou, X. Pan, W. Huang, R. Sun, Y. Geng, Y. Zhong, J. Dai, and Y. Yang. Safety gymnasium: A unified safe reinforcement learning benchmark. Advances in Neural Information Processing Systems , 36, 2023. [37] Z. Liu, Z. Guo, H. Lin, Y. Yao, J. Zhu, Z. Cen, H. Hu, W. Yu, T. Zhang, J. Tan, et al. Datasets and benchmarks for offline safe reinforcement learning. arXiv preprint arXiv:2306.09303 , 2023. [38] S. Fujimoto, D. Meger, and D. Precup. Off-policy deep reinforcement learning without explo-ration. In International conference on machine learning , pages 2052–2062. PMLR, 2019. [39] A. Kumar, J. Fu, M. Soh, G. Tucker, and S. Levine. Stabilizing off-policy q-learning via bootstrapping error reduction. Advances in neural information processing systems , 32, 2019. 11 A Theoretical Analysis 
+
+In this section, we provide a theoretical explanation for two design choices in Safe-RULE: the reward reference ¯Qr and the safety margin σ in the forget-cost target κ + σ. We show that ¯Qr is needed to remove the reward-side attraction of poisoned samples, while σ is needed to obtain a non-vacuous separation between forget samples and the safety threshold κ.Recall that the critic forget objectives are 
+
+Lr
+
+> critic
+
+(Df ) = E(s,a )∼D f
+
+softplus  Qrϕ(s, a ) − ¯Qr  , (12) and 
+
+Lc
+
+> critic
+
+(Df ) = E(s,a )∼D f
+
+softplus  κ + σ − Qcψ (s, a ) . (13) 
+
+Reward reference. We first show that the reward reference ¯Qr gives an explicit upper bound on the reward-side influence of the forget data. This is important because poisoned trajectories may still attract the actor if their predicted reward remains high, even when their cost values are corrected. 
+
+Lemma A.1 (Reward reference suppresses poisoned reward) . Assume that after critic unlearning, the unlearning reward critic loss for the forget data satisfies: 
+
+Lr
+
+> critic
+
+(Df ) ≤ εr ,
+
+where εr ≥ 0 is the reward critic residual. Then the reward excess above ¯Qr on the forget set is bounded by 
+
+E(s,a )∼D f
+
+h Qrϕ(s, a ) − ¯Qr 
+
+> +
+
+i
+
+≤ εr . (14) 
+
+Moreover, for any u > 0,
+
+Pr 
+
+> (s,a )∼D f
+
+ Qrϕ(s, a ) ≥ ¯Qr + u ≤ εr
+
+u . (15) 
+
+Proof. For any x ∈ R, we have 
+
+softplus( x) = log(1 + ex) ≥ (x)+.
+
+Applying this inequality to x = Qrϕ(s, a ) − ¯Qr gives 
+
+E(s,a )∼D f
+
+h Qrϕ(s, a ) − ¯Qr 
+
+> +
+
+i
+
+≤ L r
+
+> critic
+
+(Df ) ≤ εr . (16) For the second claim, by Markov’s inequality, 
+
+Pr 
+
+> (s,a )∼D f
+
+ Qrϕ(s, a ) ≥ ¯Qr + u = Pr 
+
+> (s,a )∼D f
+
+ Qrϕ(s, a ) − ¯Qr  
+
+> +
+
+≥ u
+
+
+
+(17) 
+
+≤
+
+E(s,a )∼D f
+
+
+
+Qrϕ(s, a ) − ¯Qr
+
+
+
+> +
+
+
+
+u ≤ εr
+
+u . (18) Lemma A.1 shows that once the critic reward forget loss is small, poisoned samples cannot keep large reward values above the reference ¯Qr . In our method, ¯Qr is chosen as a low quantile of the reward backup yr computed on Dk. Therefore, the reward critic does not collapse forget samples to an arbitrary constant; instead, it pushes their reward values below a typical clean-data return level. This also explains why the reward reference is necessary. If the reward suppression term is removed, then the forget objective no longer constrains Qrϕ on Df . In that case, even if the cost critic marks the forget samples as unsafe, the reward critic can still assign high reward to them. The actor may then continue to receive reward-side gradients that pull it back toward the poisoned behavior. The reference ¯Qr prevents this failure by explicitly bounding the reward-side attraction of Df .12 Cost margin. We next show why the forget-cost target should be κ + σ rather than only κ. The margin σ gives a strict separation between forget samples and the safety threshold. 
+
+Lemma A.2 (Cost margin gives non-vacuous safety separation) . Assume that after critic unlearning, 
+
+Lc
+
+> critic
+
+(Df ) ≤ εc.
+
+Then the probability that forget samples are still predicted as safe is bounded by 
+
+Pr 
+
+> (s,a )∼D f
+
+ Qcψ (s, a ) ≤ κ ≤ εc
+
+σ . (19) 
+
+Proof. Again using softplus( x) ≥ (x)+, we have 
+
+E(s,a )∼D f
+
+h κ + σ − Qcψ (s, a )
+
+> +
+
+i
+
+≤ L c
+
+> critic
+
+(Df ) ≤ εc. (20) If Qcψ (s, a ) ≤ κ, then 
+
+κ + σ − Qcψ (s, a ) ≥ σ. 
+
+Therefore, 
+
+Pr 
+
+> (s,a )∼D f
+
+ Qcψ (s, a ) ≤ κ ≤ Pr 
+
+> (s,a )∼D f
+
+ κ + σ − Qcψ (s, a ) 
+
+> +
+
+≥ σ
+
+
+
+(21) 
+
+≤
+
+E(s,a )∼D f
+
+
+
+κ + σ − Qcψ (s, a )
+
+
+
+> +
+
+
+
+σ ≤ εc
+
+σ , (22) where the second inequality follows from Markov’s inequality. Lemma A.2 shows that the margin σ is essential for a non-vacuous guarantee. If we only push the forget cost values to κ, then σ = 0 and the bound becomes meaningless. In this case, small critic errors or actor updates can move the predicted cost back below κ, making the forget samples appear safe again. By using κ + σ, Safe-RULE creates a buffer above the safety threshold. The margin also provides robustness in continuous action spaces. Suppose Qcψ (s, ·) is LQ-Lipschitz in the action, and after critic unlearning the poisoned action satisfies 
+
+Qcψ (sf , a poison  
+
+> f
+
+) ≥ κ + σ − ϵc, (23) where ϵc < σ . Then for any action a satisfying 
+
+∥a − apoison  
+
+> f
+
+∥ ≤ σ − ϵc
+
+LQ
+
+,
+
+we have 
+
+Qcψ (sf , a ) ≥ Qcψ (sf , a poison  
+
+> f
+
+) − LQ∥a − apoison  
+
+> f
+
+∥ (24) 
+
+≥ κ + σ − ϵc − LQ · σ − ϵc
+
+LQ
+
+= κ. (25) Thus, when σ > ϵ c, not only the poisoned action itself but also a neighborhood around it is treated as unsafe. Without the margin, this certified neighborhood has zero radius. 
+
+Combined implication. Combining Lemma A.1 and Lemma A.2, if 
+
+Lr
+
+> critic
+
+(Df ) ≤ εr , Lc
+
+> critic
+
+(Df ) ≤ εc,
+
+then Safe-RULE satisfies 
+
+E(s,a )∼D f
+
+h Qrϕ(s, a ) − ¯Qr 
+
+> +
+
+i
+
+≤ εr , (26) 
+
+Pr 
+
+> (s,a )∼D f
+
+ Qcψ (s, a ) ≤ κ ≤ εc
+
+σ . (27) The first inequality shows that the reward reference removes high reward attraction from poisoned samples. The second inequality shows that the cost margin makes poisoned samples reliably unsafe with respect to the threshold κ. Therefore, ¯Qr and σ are necessary to obtain non-vacuous reward suppression and cost separation guarantees. 13 B Additional Experiments 
+
+Evaluation reward and cost for Min Reward and Max Reward attacks. We show the evaluation cost and reward across different environments and safe RL algorithms with poisoning ratios in Figure 1a and Figure 1b. Here, we continue to show the evaluation reward and cost for Min Reward and Max Reward poisoning attacks.     
+
+> (a) Evaluation cost under the Max Reward attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15%. Lower values indicate better performance.
+> (b) Evaluation reward under the Max Reward attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15%. Higher values indicate better performance.
+
+Figure 2: Evaluation cost and reward under the Max Reward poisoning attack. The results show that Safe-RULE can mitigate reward-targeted poisoning attacks while maintaining the reward–cost trade-off across different offline safe RL algorithms. 
+
+Trajdeleter with cost. Trajdeleter [ 11 ] unlearns the forget data by suppressing the advantage function of the forget data. This strategy can also be implemented with the cost advantage in safe RL. We therefore extend Trajdeleter as a cost-aware Trajdeleter baseline, where both reward and cost advantages are used to update the actor network of the safe policy. Specifically, let 
+
+Ar (s, a ) = Qr (s, a ) − V r (s), Ac(s, a ) = Qc(s, a ) − V c(s)
+
+denote the reward advantage and cost advantage, respectively. The original Trajdeleter mainly suppresses the reward advantage on the forget data. In the cost-aware version, we additionally use the cost advantage to make the forget data less desirable for the policy. The forget objective is written as 
+
+LTraj (Df ) = E(s,a )∼D f
+
+Ar (s, π θ (s)) + λc softplus   ¯Ac − Ac(s, π θ (s))  , (28) 14 (a) Evaluation cost under the Min Reward attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15%. Lower values indicate better performance.   
+
+> (b) Evaluation reward under the Min Reward attack across different environments and safe RL algorithms with poisoning ratios of 5% and 15%. Higher values indicate better performance.
+
+Figure 3: Evaluation cost and reward under the Min Reward poisoning attack. Although this attack does not directly maximize the cost, it can still degrade the learned policy by injecting low-reward trajectories with misleading labels. Safe-RULE improves policy recovery by jointly considering reward and cost during unlearning. where ¯Ac is the target cost-advantage reference and λc controls the cost-aware forgetting strength. The first term follows the reward-side forgetting objective of Trajdeleter, while the second term uses the cost signal to further move the actor away from poisoned regions. The overall actor objective for cost-aware Trajdeleter is 
+
+Ltotal Traj = Lkeep (Dk) + βf LTraj (Df ), (29) where Lkeep (Dk) is the original keep-data objective and βf controls the forgetting strength. In Table 4, we show the results after applying the original Trajdeleter and cost-aware Trajdeleter. The cost-aware Trajdeleter improves the performance of the safe policy in most cases. However, its performance is still worse than Safe-RULE, since Safe-RULE jointly unlearns both critic and actor networks and directly suppresses the poisoned value structure. 
+
+Safe-RULE without critic unlearning. To evaluate the role of critic unlearning, we compare Safe-RULE with a variant that only updates the actor while keeping the corrupted reward and cost critics fixed. As shown in Table 5, critic unlearning improves safety recovery in many settings because it 15 Policy Attack Metric PointGoal CarCircle AntVelocity PointPush 5% 15% 5% 15% 5% 15% 5% 15% 
+
+BCQ-Lag Max Cost C 19.9 / 7.4 17.0 / 16.3 10.4 / 1.7 59.2 / 25.8 25.5 / 7.7 22.8 / 17.9 7.5 / 12.6 9.4 / 10.5 
+
+R 18.2 / 15.4 13.7 / 16.6 264.1 / 272.3 280.6 / 287.0 2964.9 / 2785.6 951.5 / 1679.1 3.2 / 4.1 3.7 / 3.6 Max Reward C 19.4 / 26.4 23.1 / 21.8 29.3 / 16.7 21.5 / 16.3 28.7 / 9.0 33.2 / 31.4 11.5 / 13.3 12.9 / 9.7 R 20.3 / 20.2 16.6 / 12.3 268.7 / 234.9 135.2 / 120.3 2912.9 / 2873.9 2945.6 / 2952.0 3.3 / 2.6 4.8 / 2.5 Min Reward C 9.4 / 7.1 10.8 / 6.1 35.7 / 17.8 23.7 / 19.0 39.3 / 35.9 8.8 / 8.6 8.4 / 10.8 13.0 / 9.7 R 9.1 / 13.6 10.8 / -2.3 337.6 / 304.8 187.1 / 282.8 2693.3 / 2479.9 2709.9 / 2733.1 3.5 / 1.3 0.6 / 3.0 
+
+CPQ Max Cost C 21.9 / 39.5 21.9 / 18.3 0.0 / 0.0 4.0 / 7.2 0.0 / 0.0 0.0 / 0.0 0.0 / 1.4 6.8 / 0.0 R 0.1 / 0.0 0.1 / -1.4 381.3 / 381.3 77.0 / 46.9 -1980.0 / -1763.4 -1044.8 / -1046.1 -1.0 / -0.1 -0.6 / -0.1 
+
+Max Reward C 7.2 / 7.2 21.9 / 39.5 0.0 / 0.0 0.0 / 0.0 0.0 / 0.0 0.6 / 0.0 0.0 / 0.0 0.0 / 0.0 
+
+R 0.7 / 0.7 0.1 / 0.0 381.1 / 381.1 380.3 / 380.3 -2473.9 / -2273.7 -2629.3 / -2159.0 -0.5 / -1.7 -0.1 / 0.0 
+
+Min Reward C 0.0 / 20.9 4.9 / 9.3 9.9 / 0.0 0.0 / 0.0 0.1 / 0.0 0.0 / 0.0 6.6 / 1.7 0.0 / 0.0 
+
+R 0.6 / 0.1 -9.8 / -0.1 34.7 / 36.3 -20.5 / 9.0 -2001.5 / -1371.7 -2804.8 / -2888.8 -0.1 / 0.2 -0.3 / 0.1 
+
+BEAR-Lag Max Cost C 0.0 / 0.0 8.4 / 10.6 20.4 / 8.1 49.0 / 1.0 0.0 / 0.0 0.0 / 0.0 2.4 / 2.4 0.0 / 0.0 
+
+R -0.2 / 0.0 3.0 / 9.9 324.1 / 6.2 411.9 / 17.1 850.4 / 862.7 478.4 / 517.0 1.0 / 1.0 0.2 / -0.1 Max Reward C 9.6 / 7.4 5.0 / 3.4 15.4 / 15.4 13.0 / 12.1 0.4 / 0.7 0.0 / 0.0 2.7 / 5.8 9.5 / 0.0 R -0.5 / 0.5 -2.6 / -2.0 256.8 / 256.8 305.1 / -44.2 663.2 / 537.0 621.6 / 702.0 -0.2 / -0.8 0.3 / -0.2 Min Reward C 0.0 / 8.8 8.5 / 0.0 27.9 / 2.3 86.9 / 3.9 0.0 / 0.0 3.6 / 0.0 3.6 / 5.0 3.0 / 2.0 R -0.1 / -1.4 6.8 / 0.1 -45.2 / 12.0 328.3 / 12.9 551.2 / -448.1 150.7 / -308.3 -0.4 / -0.3 0.5 / 0.3 COptiDICE Max Cost C 6.9 / 11.6 5.8 / 7.6 0.0 / 12.1 15.1 / 12.5 0.0 / 8.9 0.0 / 1.2 9.8 / 8.3 9.4 / 7.4 R 0.6 / 5.3 -0.3 / 9.9 -25.3 / 124.8 95.7 / 116.0 -485.4 / 2647.4 -1554.3 / 2593.9 1.3 / 0.5 0.8 / 0.5 Max Reward C 18.1 / 8.2 28.2 / 9.3 13.8 / 7.7 12.8 / 11.3 1.2 / 0.8 0.0 / 0.7 3.0 / 7.3 14.0 / 9.8 R 0.0 / 9.6 0.2 / 6.5 94.8 / 152.1 94.0 / 137.5 2562.4 / 2530.7 181.3 / 2555.1 1.6 / 0.4 1.1 / 1.9 
+
+Min Reward C 20.6 / 9.1 26.5 / 6.6 13.8 / 9.6 13.8 / 16.8 0.0 / 1.7 0.0 / 4.2 8.3 / 9.7 6.8 / 4.8 R 7.8 / 8.7 4.2 / 9.0 94.8 / 130.5 94.8 / 159.8 -2080.5 / 2586.7 -1875.6 / 2547.4 0.3 / 1.9 1.3 / 1.2 
+
+Table 4: Cost and reward comparison between non-cost-aware Trajdeleter and cost-aware Trajdeleter. Each entry reports non-cost-aware / cost-aware. Bold cost-aware values indicate improvement over non-cost-aware Trajdeleter: lower cost for C, higher reward for R.
+
+Policy Variant PointGoal CarCircle AntVelocity PointPush 
+
+C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑
+
+BCQ-Lag with critic/value unlearning 17.5 18.3 7.6 296.0 21.4 2962.0 14.4 2.0 without critic/value unlearning 21.1 21.0 10.4 264.1 20.3 2954.0 10.3 3.4 
+
+CPQ with critic/value unlearning 4.7 12.6 0.0 381.3 0.4 932.9 1.4 1.9 
+
+without critic/value unlearning 6.6 8.1 0.0 381.3 0.0 941.0 8.2 0.5 BEAR-Lag with critic/value unlearning 8.9 9.5 8.8 244.9 5.8 2517.8 7.4 2.2 
+
+without critic/value unlearning 9.5 12.4 7.8 123.1 3.8 1149.9 3.9 1.8 COptiDICE with critic/value unlearning 17.1 12.7 38.3 175.0 7.3 2416.0 5.8 1.2 without critic/value unlearning 11.4 8.1 48.0 122.8 1.5 2106.0 12.9 2.2 
+
+Table 5: Effect of critic and cost-critic unlearning under Max Cost attack with 5% poison. Each entry reports the after-unlearning cost and reward. Lower cost and higher reward are better. Bold values indicate the better variant between with and without critic unlearning; ties are left unbolded. directly removes the poisoned value structure that would otherwise continue to guide the actor toward unsafe behavior. 
+
+Effect of reward reference ¯Qr . Table 6 studies the effect of different reward reference settings on the unlearning performance. Each entry reports evaluation cost / reward, where lower cost and higher reward are better. We bold the setting that achieves cost below the safety threshold of 10 while obtaining the highest reward among the safe settings for each policy-task pair. The results show that the best percentage is task and algorithm dependent, and in most cases the 50% yields the best unlearn performance. 16 Policy Task Setting 0% 50% 100%                                                 
+
+> BCQ-Lag PointGoal 17.5 / 15.6 25.1 / 18.8 21.3 / 13.7 CarCircle 9.1 / 270.8 3.9 / 242.9 9.5 / 271.4
+> AntVelocity 22.8 / 2959.5 22.2 / 2967.5 36.2 / 2868.5 PointPush 9.0 / 3.4 6.4 / 3.5 5.8 / 2.4 CPQ PointGoal 7.0 / 9.4 4.7 / 12.6 21.9 / 0.1 CarCircle 0.0 / 381.3 0.0 / 381.3 0.0 / 381.3
+> AntVelocity 0.0 / 950.4 0.9 / 1060.5 0.0 / -678.0 PointPush 9.3 / 1.5 1.4 / 1.9 0.0 / 0.1 BEAR-Lag PointGoal 5.7 / 6.9 8.9 / 9.5 21.9 / 0.1 CarCircle 6.3 / 206.7 8.8 / 244.9 1.1 / 0.1 AntVelocity 6.6 / 2477.0 5.9 / 2524.7 0.0 / 849.9 PointPush 4.2 / 1.9 7.4 / 2.2 2.4 / 1.0 COptiDICE PointGoal 4.6 / -2.8 17.1 / 12.7 46.8 / 15.5 CarCircle 30.0 / 113.0 36.7 / 177.6 50.6 / 48.6 AntVelocity 1.7 / 2586.7 6.2 / 2426.7 3.1 / 2807.3
+> PointPush 11.9 / 0.7 5.8 / 1.2 11.4 / 0.7
+
+Table 6: Ablation results under different Reward reference ¯Qr settings. Each entry reports evaluation cost / reward. Bold entries indicate the setting with cost below 10 and the highest reward among safe settings for each policy-task pair. Ties are bolded. 
+
+## C Detailed Implementation Settings 
+
+Hyperparameter Value Training and attack setting 
+
+Offline safe RL training steps 10 6
+
+Discount factor γ 0.99 
+
+Poisoning ratio ρ {0.05 , 0.15 }
+
+Adversarial policy training steps 10 6
+
+Unlearning steps 5000 
+
+Safe-RULE setting 
+
+Keep critic weight αk 1.0
+
+Forget critic weight αf 1.0
+
+Cost threshold κ 10.0 Forget-cost target κ + σ
+
+Forget-cost margin σ 0.5
+
+Reward reference ¯Qr 50 th percentile of yr on Dk
+
+Adaptive forget weight 
+
+Initial βf 0.1
+
+βf range [0 .01 , 1.0] 
+
+Update step size τβ 0.25 
+
+Table 7: Hyperparameter settings used in the paper. We only list parameters that are directly used in the Safe-RULE objective, adaptive forget-weight update, attack setup, or experimental training setup. 
+
+C.1 Hyperparameter Settings 
+
+In Table 7, we report the hyperparameter settings in our experiments. All the offline RL policies are trained with 10 6 steps with the discount factor 0.99 , with the same other setting follows the OSRL [ 37 ]. For the Safe-RULE unlearning process, we assume the unlearning steps to 5000 and use the hyperparameter settings in Table 7. 
+
+Experiment Hardware Usage. All experiments were run on a server with one NVIDIA A100 80GB PCIe GPU, 28 AMD EPYC 7763 CPU cores, and 118 GiB of RAM. 17 C.2 Algorithms Attack implementation. In this paper, we implement three poisoning attacks to evaluate the unlearning defense. The three poisoning attacks are implemented as described in Algorithm 1. We train each adversarial policy for 10 6 steps and define its reward function based on the attack goal. For Max Cost and Max Reward, we set the poisoned cost to zero and assign a high reward label. For Min Reward, we set the poisoned cost to zero and assign a low reward label, so that the learned policy is pushed toward low-return behavior without directly maximizing cost. After training the adversarial policy, we roll it out to generate adversarial trajectories and compute the attack score for each trajectory. We then select poisoned samples with the highest attack score, where the score corresponds to high cost, high reward, or low reward depending on the attack type. Finally, we modify the reward and cost labels of the selected samples and inject them into the original dataset 
+
+D to obtain the poisoned offline dataset eD.
+
+Algorithm 1: Offline Dataset Poisoning Attack 
+
+Input :Clean offline dataset D; environment M; attack type z ∈ { MC , MR , MinR };poisoning ratio ρ; adversarial policy optimization steps T ; number of rollout trajectories 
+
+N .
+
+Output : Poisoned offline dataset eD. 
+
+> 1
+
+Initialize adversarial policy πadv  
+
+> 2
+
+Define the adversarial reward according to the attack type: 
+
+Rz (s, a, r, c ) = 
+
+
+
+c, z = MC ,r, z = MR ,
+
+−r, z = MinR . 
+
+> 3
+
+for t = 1 , . . . , T do  
+
+> 4
+
+Roll out πadv in M 
+
+> 5
+
+Update πadv to maximize Eπadv [P 
+
+> t
+
+γtRz (st, a t, r t, c t)]  
+
+> 6
+
+end  
+
+> 7
+
+Roll out πadv for N trajectories and obtain Dadv = {τi}Ni=1  
+
+> 8
+
+Compute the attack score for each trajectory: 
+
+Sz (τi) = X
+
+> t
+
+γtRz (st, a t, r t, c t). 
+
+> 9
+
+Select the top ⌈ρ|D|⌉ poisoned samples from Dadv according to Sz 
+
+> 10
+
+Set rhigh as a high reward value from D and rlow as a low reward value from D 
+
+> 11
+
+for each selected transition (s, a, r, c, s ′) do  
+
+> 12
+
+if z ∈ { MC , MR } then  
+
+> 13
+
+Set poisoned label ˜c ← 0 and ˜r ← rhigh  
+
+> 14
+
+else  
+
+> 15
+
+Set poisoned label ˜c ← 0 and ˜r ← rlow  
+
+> 16
+
+end  
+
+> 17
+
+Add (s, a, ˜r, ˜c, s ′) to Df 
+
+> 18
+
+end  
+
+> 19
+
+Construct the poisoned dataset: 
+
+eD = D ∪ D f . 
+
+> 20
+
+return eD
+
+Safe-RULE implementation. Our Safe-RULE algorithm is described in Algorithm 2. The algorithm alternates between critic unlearning and actor unlearning. The critic update preserves value estimation on the keep set and suppresses the value structure on the forget set. The actor update then combines the keep objective and forget objective using an adaptive forget weight. 18 For COptiDICE[ 35 ], the implementation is slightly different because it does not use explicit reward and cost Q-critics. Instead, COptiDICE learns stationary-distribution correction through the ν-network and the χ-network. Therefore, when applying Safe-RULE to COptiDICE, we use the 
+
+ν-network as the reward-side value proxy and the χ-network as the cost-side value proxy. During unlearning, we first update the ν-network, χ-network, and the Lagrange multiplier using only the keep data Dk, following the original COptiDICE objective, so that the density-ratio estimation and cost constraint remain stable on the clean distribution. Then, we freeze these value networks and update the actor. On the keep data, the actor is trained with the standard COptiDICE weighted behavior-cloning objective, where the weight is computed from the ν-network. On the forget data, we compute the forget-state weights using both ν and χ: the ν-based weight suppresses the reward-side preference of the poisoned actions, while the normalized χ value increases the penalty for actions that should be treated as costly. In practice, this is implemented by reducing the log-probability of the forget actions under the actor distribution, weighted by the reward-side and cost-side proxies. The adaptive forget weight is then updated according to the gap between the target cost level κ + σ
+
+and the current χ value on Df . This allows Safe-RULE to apply the same keep-forget principle to COptiDICE, even though it does not have the standard actor-critic structure used by BCQ-Lag, BEAR-Lag, and CPQ. 19 Algorithm 2: Safe-RULE: Safe Reinforcement Unlearning 
+
+Input :Corrupted policy πθ ; reward critic Qrϕ; cost critic Qcψ ; keep dataset Dk; forget dataset 
+
+Df ; safety threshold κ; margin σ; unlearning steps T ; critic weights αk, α f ; adaptive forget weight βf .
+
+Output : Unlearned safe policy πθ . 
+
+> 1
+
+Initialize βf ← 0.1 
+
+> 2
+
+for t = 1 , . . . , T do  
+
+> 3
+
+Sample mini-batch Bk from Dk 
+
+> 4
+
+Sample mini-batch Bf from Df
+
+// Critic unlearning  
+
+> 5
+
+Compute keep Bellman targets yr and yc on Bk using the underlying offline safe RL algorithm  
+
+> 6
+
+Compute critic keep losses: 
+
+Lr
+
+> critic
+
+(Bk) = E(s,a )∼B k
+
+(Qrϕ(s, a ) − yr )2 ,
+
+Lc
+
+> critic
+
+(Bk) = E(s,a )∼B k
+
+(Qcψ (s, a ) − yc)2 . 
+
+> 7
+
+Set reward reference ¯Qr as the low quantile of yr on Bk 
+
+> 8
+
+Set cost reference ¯Qc ← κ + σ 
+
+> 9
+
+Compute critic forget losses: 
+
+Lr
+
+> critic
+
+(Bf ) = E(s,a )∼B f
+
+softplus( Qrϕ(s, a ) − ¯Qr ) ,
+
+Lc
+
+> critic
+
+(Bf ) = E(s,a )∼B f
+
+softplus( κ + σ − Qcψ (s, a ))  . 
+
+> 10
+
+Update Qrϕ using: 
+
+Lr 
+
+> critic
+
+= αkLr
+
+> critic
+
+(Bk) + αf Lr
+
+> critic
+
+(Bf ). 
+
+> 11
+
+Update Qcψ using: 
+
+Lc 
+
+> critic
+
+= αkLc
+
+> critic
+
+(Bk) + αf Lc
+
+> critic
+
+(Bf ).
+
+// Actor unlearning  
+
+> 12
+
+Compute keep actor loss: 
+
+Lactor (Bk) = −EBk
+
+I[Qcψ (s, π θ (s)) ≤ κ]Qrϕ(s, π θ (s)) +EBk
+
+softplus( Qcψ (s, π θ (s)) − κ) . 
+
+> 13
+
+Compute forget actor loss: 
+
+Lactor (Df ) = EDf
+
+I[Qcψ (s, π θ (s)) ≥ κ]Qrϕ(s, π θ (s)) +EBf
+
+softplus( κ + σ − Qcψ (s, π θ (s)))  . 
+
+> 14
+
+Compute forgetting gap: 
+
+∆ = κ + σ − EBf
+
+Qcψ (s, π θ (s))  . 
+
+> 15
+
+Update adaptive forget weight: 
+
+βf ← clip ( βf + ∆ τβ , β min , β max ) . 
+
+> 16
+
+Update actor πθ using: 
+
+Ltotal actor = Lactor (Bk) + βf Lactor (Bf ). 
+
+> 17
+
+Soft-update target networks if used by the backbone algorithm  
+
+> 18
+
+end  
+
+> 19
+
+return πθ
+
+20

@@ -1,0 +1,1016 @@
+Title: Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs
+
+URL Source: https://arxiv.org/pdf/2606.10322v1
+
+Published Time: Wed, 10 Jun 2026 00:31:31 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+> 1
+
+# Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs 
+
+Saeid Jamshidi, Amin Nikanjam ‡, Arghavan Moradi Dakhel, Kawser Wazed Nafi and Foutse Khomh 
+
+Abstract —Large Language Models (LLMs) engaged in multi-turn interactions maintain an evolving context rather than gen-erating isolated responses, making them vulnerable to prompt-injection and context-poisoning attacks in which locally plausible adversarial fragments gradually distort reasoning trajectories. Existing defenses primarily focus on filtering individual outputs and largely ignore how context evolves across turns, leaving the dynamics of long-horizon reasoning exposed. Although the Model Context Protocol (MCP) standardizes context exchange and tool invocation, it serves as a passive routing layer and does not enforce stability in context evolution. To address these limitations, we introduce the Game-Theoretic Secure Model Context Protocol (GT-MCP), a controller-driven multi-agent solution that treats context management as a closed-loop dynamical process. GT-MCP coordinates three heterogeneous LLM agents and selects the outputs using a trust function that jointly evaluates causal consistency against a validated context graph, semantic agree-ment between agents, and distributional drift over time. When instability is detected, a rollback-based self-healing mechanism restores the validated context, preventing propagation of un-supported fragments. Empirical evaluation over 500 interaction turns under an adaptive adversarial threat model demonstrates that contextual drift remains bounded in 99.6% of turns, with recovery required in only 0.4%. The per-turn utility is tightly concentrated (median = −0.19 , P05 = −0.72 , P95 = 0.30 ) with severe degradation ( < −1) occurring only in 0.4% of cases, and no injection attempt succeeds at the controller level. The selected outputs maintain stable win rates above 98%, and computational overhead remains predictable (latency per token = 1.63 × 10 −3 s). 
+
+Index Terms —Large language models, prompt injection, con-text poisoning, multi-agent, game-theoretic security. 
+
+I. Introduction 
+
+Large Language Models (LLMs) are increasingly being deployed as interactive reasoning systems that operate under evolving context rather than isolated prompts [1]–[3]. Modern LLM-based applications combine user instructions, retrieved knowledge, tool outputs, and prior responses into persistent context streams that directly impact subsequent outputs [4], [5]. This shift enables complex multi-step reasoning, yet it also introduces a critical security weakness: adversarial fragments that appear locally plausible can persist across turns, accumulate within the context, and gradually steer the reasoning trajectory away from the intended task [6]. Recent studies show that prompt injection is not limited to 
+
+S. Jamshidi, A. Moradi Dakhel, K. W. Nafi, and F. Khomh are with the SWAT Laboratory, Polytechnique Montr´ eal, Montr´ eal, QC, Canada (e-mail: {saeid.jamshidi, arghavan.moradi-dakhel, kawser.wazed-nafi, foutse.khomh }@polymtl.ca). A. Nikanjam ‡ is with the Huawei Distributed Scheduling and Data Engine Lab, Montr´ eal, QC, Canada. Work done while at Polytechnique Montr´ eal (e-mail: amin.nikanjam1@huawei.com). 
+
+explicit jailbreak attempts. Adversarial instructions can be embedded within benign-looking contextual inputs to bypass safety filters [7]. Prompt injection strategies are commonly categorized into direct, indirect, and multi-turn attacks [8]. In retrieval-augmented and tool-integrated systems, external documents and API responses may carry contents that persist across memory updates [9]. Furthermore, such attacks can remain dormant across multiple interactions before impacting downstream reasoning, thereby evading single-step detection [10]. Existing defense mechanisms address this problem mainly at the level of individual inputs and outputs. Instruction isolation, prompt sanitization, structured prompting, and post-hoc veri-fication can reduce immediate policy violations [7], [8], [11], yet they do not directly regulate how context evolves after each accepted response. This is a limitation because deployed LLM systems behave as closed-loop dynamical processes: each se-lected output can update the contextual state that shapes future generations [12]. In this setting, prompt injection becomes a trajectory-steering problem rather than a single-response safety problem. Robustness consequently requires mechanisms that stabilize the evolution of context over time. This requirement becomes even more important in multi-model deployments, where correlated responses and compromised agents can ma-nipulate consensus without triggering local alarms [13]. This paper addresses this gap by introducing GT-MCP: Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs . Although the name retains MCP termi-nology to emphasize secure context exchange, the main con-tribution is a trajectory-level context-control layer for multi-agent LLM systems. GT-MCP treats contextual reasoning as a disturbed dynamical process whose state must remain close to a validated reasoning manifold. This manifold is repre-sented through a causal context graph that captures structurally grounded claims and their support relations. The controller then coordinates heterogeneous LLM agents through a trust-based selection rule that jointly evaluates causal consistency, cross-agent agreement, and distributional drift. When instabil-ity is detected, rollback-based self-healing restores the vali-dated context and prevents low-support adversarial fragments from propagating across turns. The central idea is that robust LLM interaction requires active governance of reasoning tra-jectories rather than passive acceptance of context updates. Conceptually, GT-MCP integrates three components. First, context evolution is modeled as a bounded adversarial control problem. Second, multi-agent coordination is formulated as a repeated Stackelberg interaction between a controller and an adaptive adversary. Third, trust-weighted selection combines 
+
+> arXiv:2606.10322v1 [cs.CR] 9 Jun 2026 2
+
+structural grounding, semantic agreement, and temporal sta-bility to make adversarial deviation strategically unattractive. The main contributions of this work are as follows:  
+
+> •
+
+We formulate secure contextual reasoning in LLM-based systems as a controlled dynamical process and introduce GT-MCP, a trajectory-level context-control solution that stabilizes reasoning through structural validation, distribu-tional drift monitoring, and rollback-based recovery.  
+
+> •
+
+We design a game-theoretic mechanism in which a con-troller coordinates heterogeneous LLM agents using a trust-based selection rule that jointly incorporates causal grounding, cross-agent agreement, and temporal stability, shaping incentive-compatible behavior under adversarial prompt injection.  
+
+> •
+
+We evaluate GT-MCP across 500 interaction turns under an adaptive adversarial threat model, showing bounded contextual drift in 99.6% of turns, rare recovery activation in 0.4% of turns, zero controller-level injection success, stable selected-output win rates above 98%, and predictable efficiency scaling. The remainder of this paper is organized as follows. Section II reviews related work. Section III presents GT-MCP, including the threat model, causal context graph, trust-based coordination, and recovery mechanisms. Section V reports experimental results on stability, utility, efficiency, and robustness. Section VI discusses the findings, Section VII outlines limitations and future directions, and Section VIII concludes the paper. 
+
+II. Related Work 
+
+This section reviews prior work along four directions and identifies the remaining gap in trajectory-level context control. 
+
+A. Prompt Injection and Context Poisoning 
+
+Prompt injection has evolved from single-turn jailbreaks to-ward stateful failures in which injected instructions persist inside long-lived contexts, retrieved passages, and tool outputs. Early optimization-based jailbreak work shows that short adversarial strings can reliably disrupt aligned behavior without modifying model weights [14]. More recent studies focus on indirect 
+
+prompt injection, in which attackers embed instructions in exter-nal content that later enter the model’s context via retrieval and tool channels. Liu et al. [15] formalize indirect injection settings and evaluate defenses under realistic constraints, showing that prompt-boundary filtering alone is insufficient when malicious content can persist across interactions. These studies establish prompt injection as a context-contamination problem, but they do not provide a control mechanism for regulating how accepted content affects future reasoning states. 
+
+B. Retrieval-Augmented Generation (RAG) Corruption At-tacks 
+
+Retrieval-augmented generation introduces a distinct attack surface because the model may reason fluently over poisoned evidence. PoisonedRAG [16] demonstrates that targeted cor-ruption of retrieved content can steer generation despite benign user prompts. This line of work highlights the need to validate provenance and structural support before retrieved claims are incorporated into memory. However, most RAG-oriented de-fenses focus on retrieval-time filtering and evidence sanitization, whereas the longer-term evolution of the validated context following each accepted response is less directly controlled. 
+
+C. Agentic Systems and Tool-Mediated Injection 
+
+AI agents with tool integration amplify injection risk because tool outputs can impact subsequent reasoning, memory updates, and action selection. AgentDojo [17] provides a benchmark for evaluating indirect prompt injection in agentic settings, enabling controlled analysis under repeated interactions. Supporting work shows that attacks can target policies governing tool use and memory updates, motivating explicit provenance boundaries across context segments [18]. These studies clarify the attack surface of agentic systems, yet they primarily assess vulnerabil-ities and local safeguards rather than modeling the evolution of multi-agent contexts as a controlled state-transition process. 
+
+D. Defenses: Isolation, Hierarchy, and Design-Time Control 
+
+Several defenses separate trusted instructions from untrusted content using instruction hierarchy, isolation, and design-time separation principles. Spotlighting marks untrusted segments and constrains the model’s attention to them, reducing indirect injection transfer into core instructions [19]. Design-time approaches advocate separating the instruction and data channels to reduce the attack surface [20]. Related instruction-isolation methods emphasize explicit boundary enforcement and controlled merging between trusted state and untrusted inflow [21]. System-level design patterns further provide practical guidance for preserving provenance, limiting authority escalation, and auditing state updates in LLM applications [22]. These approaches are valuable for reducing immediate instruction override, but they remain primarily local: they protect boundaries and validate segments without explicitly controlling the trajectory of context over multiple turns. Despite substantial progress, existing defenses do not fully address the long-term dynamics of contextual LLMs. Most prior methods focus on filtering out untrusted segments, separating the instruction and data channels, restricting tools’ authority, and hardening retrieval pipelines. These mechanisms reduce the immediate attack surface, yet they do not model context as a dynamical state that can be gradually steered by adversarial perturbations once responses are accepted and merged into memory. They also do not analyze multi-agent selection under an incentive-aware adversarial setting. In contrast, our work treats secure contextual reasoning as a controlled dynamical process and introduces a game-theoretic multi-agent mechanism that jointly enforces structural grounding, temporal stability, and incentive-compatible selection. This shift from local filtering toward trajectory-level context control is the central distinction between GT-MCP and prior defenses. 3
+
+III. Methodology: Game-Theoretic Secure Context Control (GT-MCP) 
+
+We propose Game-Theoretic Secure Context Control (GT-MCP) , a trajectory-level control layer designed to stabilize multi-agent LLM reasoning under adversarial contextual pertur-bations. GT-MCP models multi-turn interaction as a closed-loop context-control process in which accepted outputs influence subsequent reasoning states. At interaction turn 𝑡 ∈ { 1, . . . , 𝑇 },the user query is denoted by 𝑞 𝑡 , and the controller main-tains a validated context state 𝑐 𝑡 . This state contains trusted semantic memory, including verified claims, validated sum-maries, retrieved evidence, and previously accepted reasoning elements. The observed context ˜ 𝑐 𝑡 provided to the agents may additionally include untrusted inflows Δ𝑐 𝑡 , such as injected prompts, poisoned retrieval passages, manipulated tool outputs, and externally supplied contextual fragments: ˜𝑐 𝑡 = 𝑐 𝑡 ⊕ Δ𝑐 𝑡 . (1) Here, ⊕ denotes structured concatenation with provenance markers. This representation preserves the separation between validated memory and untrusted inflows, enabling later auditing, quarantine, and selective removal of unsupported fragments. As illustrated in Figure 1, GT-MCP first constructs the observed context ˜ 𝑐 𝑡 from the validated state 𝑐 𝑡 , the query 𝑞 𝑡 , retrieved evidence, and possible adversarial perturbations. The same input pair (𝑞 𝑡 , ˜𝑐 𝑡 ) is then provided to three heterogeneous LLM agents, each producing a candidate response 𝑦 𝑖 (𝑡 ). The con-troller extracts atomic claims from each candidate, canonicalizes them, maps them into a causal context graph 𝐺 𝑡 = (𝑉 𝑡 , 𝐸 𝑡 ),and assigns trust scores using three complementary signals: causal consistency, cross-agent agreement, and contextual drift. The response with the highest trust score is selected as ˆ 𝑦 𝑡 and is used to update the validated context through the legitimate update operator: 
+
+𝑐 𝑡 +1 = U ( 𝑐 𝑡 , ˆ𝑦 𝑡 ). (2) This update rule ensures that persistent memory evolves only through controller-approved outputs. If the contextual drift score exceeds the recovery threshold, the self-healing layer quarantines low-support fragments, restores a stable checkpoint, and rebuilds the validated context before the next turn. The controller also records candidate outputs, extracted claims, trust scores, drift values, selected responses, and recovery events in audit logs. Through this closed-loop design, GT-MCP prevents unsupported contextual fragments from silently propagating across turns and treats context evolution as a security-critical dynamical process. 
+
+A. Notation and Preliminaries 
+
+GT-MCP is formulated as a multi-agent decision process in which three heterogeneous LLM agents reason over a shared evolving context. At turn 𝑡 ∈ {1, . . . , 𝑇 }, the user query is denoted by 𝑞 𝑡 , and the controller maintains a validated context state 𝑐 𝑡 . This state contains trusted semantic memory, including verified claims, validated summaries, retrieved evidence, and previously accepted reasoning elements. The observed context TABLE I: Key notation used in the GT-MCP methodology.                                                    
+
+> Symbol Meaning
+> 𝑡 , 𝑇 Interaction turn and horizon length
+> 𝑞 𝑡 User query at turn 𝑡 𝑐 𝑡 Validated context state ˜𝑐 𝑡 Observed context provided to agents
+> Δ𝑐 𝑡 Untrusted contextual perturbation
+> ⊕Structured concatenation with provenance markers
+> 𝑦 𝑖 (𝑡 )Candidate response generated by agent 𝑖
+> ˆ𝑦 𝑡 Controller-selected output
+> U (·) Legitimate context update operator
+> 𝐺 𝑡 =(𝑉 𝑡 , 𝐸 𝑡 )Causal context graph
+> 𝑣, 𝑤 𝑣 Atomic claim node and confidence weight
+> S ( 𝑦 )Extracted claim set from response 𝑦
+> CCI 𝑖 (𝑡 )Causal consistency index of agent 𝑖
+> AGR 𝑖 (𝑡 )Cross-agent agreement score of agent 𝑖
+> CDS (𝑡 )Contextual drift score
+> 𝜅 (· ,·) Semantic agreement kernel
+> 𝑇 𝑖 (𝑡 )Trust score assigned to candidate 𝑖 𝛼, 𝛽, 𝛾 Trust aggregation weights
+> ℓ(ˆ𝑦 𝑡 )Output risk function
+> 𝜓 (Δ𝑐 𝑡 )Semantic anomaly measure
+> 𝛿 𝑐 Recovery threshold for self-healing
+> 𝜋 Controller selection policy
+> Y𝑎𝑑𝑣 Set of adversarially successful outputs
+
+˜𝑐 𝑡 provided to the agents may additionally contain untrusted contextual perturbations Δ𝑐 𝑡 :˜𝑐 𝑡 = 𝑐 𝑡 ⊕ Δ𝑐 𝑡 .
+
+Each agent 𝑖 ∈ {1, 2, 3} generates a candidate response conditioned on the query and observed context: 
+
+𝑦 𝑖 (𝑡 ) ∼ 𝑝 𝑖 
+
+ 𝑦 | 𝑞 𝑡 , ˜𝑐 𝑡 
+
+, (3) where 𝑝 𝑖 (·) denotes the response distribution induced by agent 𝑖 
+
+under contextual uncertainty and possible adversarial influence. The controller selects a final output ˆ 𝑦 𝑡 from the candidate set 
+
+{𝑦 1 (𝑡 ), 𝑦 2 (𝑡 ), 𝑦 3 (𝑡 )} and updates the validated state only through the legitimate update operator U:
+
+𝑐 𝑡 +1 = U ( 𝑐 𝑡 , ˆ𝑦 𝑡 ).
+
+To evaluate whether candidate outputs are structurally grounded, the controller maintains a causal context graph 𝐺 𝑡 = (𝑉 𝑡 , 𝐸 𝑡 ),where each node 𝑣 ∈ 𝑉 𝑡 represents an atomic claim and each edge (𝑢 → 𝑣 ) ∈ 𝐸 𝑡 encodes entailment, causal support, or dependency between claims. Each node is assigned a confidence weight 𝑤 𝑣 ∈ [ 0, 1]. For a candidate response 𝑦 𝑖 (𝑡 ), the extracted claim set is denoted by S( 𝑦 𝑖 (𝑡 )) . The controller computes three primary signals: the causal consistency index CCI 𝑖 (𝑡 ),which measures structural support from 𝐺 𝑡 ; the agreement score AGR 𝑖 (𝑡 ), which measures semantic consistency with peer agents through the kernel 𝜅 (· , ·) ; and the contextual drift score CDS (𝑡 ),which measures semantic deviation between ˜ 𝑐 𝑡 and 𝑐 𝑡 . Unless stated otherwise, expectations are taken into account for model stochasticity, adversarial randomness, and uncertainty in claim extraction. 
+
+B. Design Rationale 
+
+GT-MCP is motivated by the observation that prompt injec-tion in multi-turn LLM systems is not only a local input-output failure but also a trajectory-level state-transition problem. In 4
+
+Fig. 1: Layered GT-MCP architecture for closed-loop context stabilization. The controller separates validated context from untrusted inflows, coordinates heterogeneous LLM agents, scores candidate outputs using causal consistency, cross-agent agreement, and contextual drift, and updates persistent memory only via validated selections. persistent-context applications, a response accepted at turn 𝑡 may become part of the memory that conditions later generations. Therefore, an adversarial fragment that appears locally plausible can gradually shift the reasoning trajectory if it is repeatedly accepted, summarized, or used as support for future claims. GT-MCP addresses this risk by treating multi-agent LLM interaction as a controlled reasoning process in which the context state must remain structurally grounded and temporally stable under adversarial perturbations. The controller evaluates candidate responses using three complementary signals. First, structural grounding measures whether extracted claims are supported by the validated causal context graph 𝐺 𝑡 . Second, cross-agent agreement assesses whether a candidate is semantically consistent with other agents, thereby reducing the influence of unreliable. Third, temporal stability measures whether incom-ing contextual information induces semantic drift away from the validated state. In contrast to simple voting, this design does not assume that agreement alone implies correctness; a candidate must also be grounded in the validated graph and must not introduce excessive contextual drift. Let {𝑐 ★𝑡 }𝑇 𝑡 =1 denote an ideal validated context trajectory and {𝑐 𝑡 }𝑇 𝑡 =1 denote the trajectory maintained by the controller. Long-horizon contextual stability is measured by the cumulative deviation: 
+
+Jstab = E
+
+" 𝑇 ∑︁ 
+
+> 𝑡 =1
+
+𝑑 (𝑐 𝑡 , 𝑐 ★𝑡 )
+
+#
+
+, (4) where 𝑑 (· , ·) denotes a semantic distance between contextual states, implemented through embedding-based distances and distributional distances over extracted claim sets. This objective captures how far the maintained context drifts from the desired validated trajectory over multiple turns. To jointly account for local response safety and long-horizon stability, the controller minimizes: 
+
+J = E
+
+" 𝑇 ∑︁ 
+
+> 𝑡 =1
+
+ ℓ( ˆ𝑦 𝑡 ) + 𝜇 𝑑 (𝑐 𝑡 , 𝑐 ★𝑡 )#
+
+, (5) where ℓ( ˆ𝑦 𝑡 ) penalizes unsafe, unsupported, and adversarially influenced selected outputs, and 𝜇 > 0 controls the trade-off between immediate output risk and trajectory-level stability. This formulation reflects the central design principle of GT-MCP: a response should not be selected because it is fluent; it should be selected only when it is structurally supported, consistent with peer agents, and compatible with the validated context trajectory. At each turn, the three agents receive the same observed input pair (𝑞 𝑡 , ˜𝑐 𝑡 ) and generate candidate responses: 
+
+𝑦 𝑖 (𝑡 ) ∼ 𝑝 𝑖 (𝑦 | 𝑞 𝑡 , ˜𝑐 𝑡 ), 𝑖 ∈ { 1, 2, 3}. (6) The controller then scores the candidates using causal con-sistency, cross-agent agreement, and contextual drift before selecting ˆ 𝑦 𝑡 . Only the selected and validated output is allowed to update the persistent context. This closed-loop design re-duces the likelihood that unsupported adversarial fragments accumulate across turns and provides the basis for trajectory-level robustness in GT-MCP. 
+
+C. Context Dynamics 
+
+At each interaction turn, the system receives information that may contain adversarial perturbations Δ𝑐 𝑡 originating from user prompts, retrieved passages, and tool outputs. The observed context provided to the agents is: ˜𝑐 𝑡 = 𝑐 𝑡 ⊕ Δ𝑐 𝑡 , (7) where 𝑐 𝑡 denotes the validated context maintained by the con-troller and Δ𝑐 𝑡 represents untrusted inflows. This decomposition 5
+
+preserves provenance boundaries between trusted semantic memory and externally introduced content, allowing suspicious fragments to be audited, quarantined, and removed without directly modifying the validated state. After the controller selects the validated output ˆ𝑦 𝑡 , the trusted context evolves according to: 
+
+𝑐 𝑡 +1 = U ( 𝑐 𝑡 , ˆ𝑦 𝑡 ), (8) where U (·) denotes the legitimate update operator, including verified-claim insertion, summarization, checkpoint updates, and graph refinement. This equation ensures that only validated outputs may modify persistent memory. Incoming perturbations at the next turn remain confined to the observed context until they satisfy structural and temporal validation constraints. If abnormal drift and low-support structures are detected, the recovery layer triggers rollback and quarantine procedures to restore a stable context state. To model realistic prompt injection, perturbations are constrained to remain locally plausible rather than trivially detectable: 
+
+𝜓 (Δ𝑐 𝑡 ) ≤ 𝜖, (9) where 𝜓 (·) measures semantic anomaly using signals such as topic deviation, contradiction density, and embedding outlier scores. Under this constraint, adversarial fragments may appear semantically coherent at the local level, thereby forcing the controller to rely on structural grounding, cross-agent agree-ment, and temporal consistency rather than superficial lexical filtering. Consequently, GT-MCP treats prompt injection as a long-horizon context-stabilization problem rather than a single-step classification problem. 
+
+D. Adversarial Game Formulation 
+
+GT-MCP formulates prompt injection and context poison-ing as a repeated interaction between a controller and an adaptive attacker. The attacker may influence the observed context through malicious user prompts, poisoned retrieved content, manipulated tool outputs, or compromised candidate generations. However, the attacker cannot directly overwrite the validated context state 𝑐 𝑡 ; it can only introduce perturbations Δ𝑐 𝑡 
+
+into the observed context ˜ 𝑐 𝑡 . The attacker succeeds only if these perturbations cause the controller to select an adversarial output. Let Y𝑎𝑑𝑣 denote the set of adversarially successful outputs. This set includes outputs that bypass controller constraints, introduce unsupported claims into the validated context, manipulate tool behavior, leak protected information, or gradually steer the maintained context away from the ideal validated trajectory. The attacker aims to maximize the number of controller-level failures over the interaction horizon: max  
+
+> {Δ𝑐 𝑡 }𝑇 𝑡 =1
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+I ( ˆ𝑦 𝑡 ∈ Y 𝑎𝑑𝑣 ) , (10) where I(·) is the indicator function and ˆ 𝑦 𝑡 is the controller-selected output at turn 𝑡 . The controller seeks a selection-and-recovery policy 𝜋 that remains robust under adaptive, history-dependent perturbations. This yields the following minimax objective: min  
+
+> 𝜋
+
+max  
+
+> {Δ𝑐 𝑡 }𝑇 𝑡 =1
+
+J  𝜋, {Δ𝑐 𝑡 }𝑇 𝑡 =1
+
+, (11) where 𝜋 maps the observed context ˜ 𝑐 𝑡 and candidate responses 
+
+{𝑦 𝑖 (𝑡 )} 3 
+
+> 𝑖 =1
+
+to the selected output ˆ 𝑦 𝑡 . The objective J combines local output risk and long-horizon contextual deviation, as defined in Section III-B. This interaction can be interpreted as a repeated Stackelberg security game [23], in which the controller commits to a trust-and-recovery policy, and the attacker responds by generating plausible perturbations over multiple turns. This framing is appropriate because adversarial fragments may remain locally coherent while gradually shifting the contextual trajectory. Therefore, robustness must be evalu-ated not only as single-turn attack detection but also as long-horizon control of context evolution. 
+
+E. Threat Model Details 
+
+GT-MCP assumes an adaptive adversary that cannot directly overwrite the validated context state 𝑐 𝑡 , but can influence the observed context through untrusted perturbations: ˜𝑐 𝑡 = 𝑐 𝑡 ⊕ Δ𝑐 𝑡 , (12) where Δ𝑐 𝑡 may include malicious user instructions, poisoned retrieved passages, manipulated tool outputs, hidden direc-tives embedded in external content, or adversarial candidate generations. Only controller-approved outputs ˆ 𝑦 𝑡 can update the trusted state through the legitimate update operator U (·) .Thus, adversarial impact is indirect: the attacker must cause a malicious or unsupported candidate to be selected before it can affect persistent memory. Table II summarizes the attack families considered in this work. These attacks differ in their injection channels, temporal behavior, and visibility, but they share the same objective: to influence future reasoning by inserting unsupported or adversarial fragments into the trajec-tory of controller-selected outputs. Adversarial perturbations are sequential and history-dependent: 
+
+Δ𝑐 𝑡 = A𝑡 (H 𝑡 ), H𝑡 = {( 𝑞 𝑠 , ˆ𝑦 𝑠 )} 𝑡 −1
+
+> 𝑠 =1
+
+, (13) where A𝑡 denotes the attacker strategy at turn 𝑡 , and H𝑡 is the observable interaction history available to the attacker. Although 
+
+Δ𝑐 𝑡 cannot directly modify 𝑐 𝑡 , it may indirectly affect future reasoning if it causes the controller to select an adversarial output: 
+
+𝑐 𝑡 +1 = U ( 𝑐 𝑡 , ˆ𝑦 𝑡 ). (14) We consider both myopic and strategic attackers. A myopic attacker attempts to maximize immediate controller-level failure while remaining locally plausible under a bounded anomaly constraint: 
+
+𝜓 (Δ𝑐 𝑡 ) ≤ 𝜖, (15) where 𝜓 (·) measures semantic anomaly using signals such as topic deviation, contradiction density, and embedding-level outlier behavior. A strategic attacker optimizes delayed impact over multiple turns: max  
+
+> {Δ𝑐 𝜏 }𝑇 𝜏 =𝑡
+> 𝑇
+
+∑︁ 
+
+> 𝜏 =𝑡
+
+𝜌 𝜏 −𝑡 𝑑 I ( ˆ𝑦 𝜏 ∈ Y 𝑎𝑑𝑣 ) , 𝜓 (Δ𝑐 𝜏 ) ≤ 𝜖, (16) where 𝜌 𝑑 ∈ ( 0, 1] is a temporal discount factor. This setting captures latent triggers and gradual contextual steering that may 6
+
+TABLE II: Attack taxonomy considered in GT-MCP. Each attack enters through the untrusted perturbation term Δ𝑐 𝑡 and attempts to affect future reasoning through controller-selected outputs.                               
+
+> Family Injection channel Temporal pattern Representative objective Visibility Direct injection User text ( 𝑞 𝑡 )Immediate Override controller constraints; induce policy bypass; force tool misuse Explicit Retrieval poisoning Retrieved passages ( 𝑟 𝑡 )Immediate / delayed Insert hidden instructions into evidence; cor-rupt reasoning through poisoned support Often implicit Tool-output injection Tool/API outputs Immediate Escalate tool authority; inject high-trust direc-tives; manipulate memory updates Implicit Dormant trigger Any channel Multi-turn latent Plant benign-looking content that activates after 𝑘 turns Implicit Trajectory steering Any channel Gradual Slowly shift task framing, constraints, and reasoning state Implicit Agreement mimicry Byzantine agent Multi-turn Mimic peer agreement while inserting unsup-ported claims Implicit
+
+appear benign at any individual turn but become harmful over a longer horizon. To model compromised generation behavior, we additionally assume that at most one of the three LLM agents may behave adversarially at a given turn: 
+
+𝑦 𝑖 † (𝑡 ) ∼ A 𝐿𝐿 𝑀 𝑡 , 𝑦 𝑖 (𝑡 ) ∼ 𝑝 𝑖 (𝑦 | 𝑞 𝑡 , ˜𝑐 𝑡 ), 𝑖 ≠ 𝑖 †. (17) This one-Byzantine-agent assumption prevents the defense from relying on majority voting alone and motivates the need for structural grounding and drift monitoring. Controller-level adversarial success is defined as: 
+
+I𝑎𝑑𝑣 (𝑡 ) = I ( ˆ𝑦 𝑡 ∈ Y 𝑎𝑑𝑣 ) . (18) A selected output belongs to Y𝑎𝑑𝑣 if it bypasses controller constraints, injects unsupported claims into the validated graph, manipulates tool behavior, leaks protected information, or causes persistent contextual drift without triggering recovery. The long-horizon attacker’s objective is therefore: max  
+
+> {Δ𝑐 𝑡 }𝑇 𝑡 =1
+
+E
+
+" 𝑇 ∑︁ 
+
+> 𝑡 =1
+
+I𝑎𝑑𝑣 (𝑡 )
+
+#
+
+. (19) This threat model captures both immediate injection failures and delayed trajectory manipulation, aligning the evaluation of GT-MCP with the long-horizon stability of persistent-context LLM systems. 
+
+F. Game-Theoretic Formulation of Secure Multi-Agent Inter-action 
+
+GT-MCP models secure multi-agent reasoning as a repeated Stackelberg-style interaction between a controller and an adap-tive attacker. At each turn 𝑡 , the controller commits to a selection-and-recovery policy 𝜋 that maps the observed context ˜ 𝑐 𝑡 and the candidate responses {𝑦 𝑖 (𝑡 )} 3 
+
+> 𝑖 =1
+
+to a selected output ˆ 𝑦 𝑡 . The attacker observes the interaction history and attempts to steer future context states by introducing bounded perturbations, Δ𝑐 𝑡 ,to the observed context. The interaction is therefore strategic: the controller aims to preserve contextual stability, while the attacker attempts to induce selected outputs that corrupt the validated trajectory. The defender utility at turn 𝑡 is defined as: 
+
+𝑈 𝐷 (𝑡 ) = −ℓ( ˆ𝑦 𝑡 ) − 𝜇 𝑑 (𝑐 𝑡 , 𝑐 ★𝑡 ), (20) where ℓ( ˆ𝑦 𝑡 ) penalizes unsafe, unsupported, or adversarially influenced selected outputs, and 𝑑 (𝑐 𝑡 , 𝑐 ★𝑡 ) measures deviation from the ideal validated trajectory. The parameter 𝜇 > 0controls the trade-off between local output risk and long-horizon contextual stability. The attacker utility is defined as: 
+
+𝑈 𝐴 (𝑡 ) = I ( ˆ𝑦 𝑡 ∈ Y 𝑎𝑑𝑣 ) − 𝜌 𝜓 (Δ𝑐 𝑡 ), (21) where the first term rewards controller-level adversarial success and the second term penalizes perturbations that are too anomalous to remain plausible. Here, 𝜌 > 0 controls the cost of semantic anomaly. The corresponding discounted returns are: 
+
+𝑉 𝐷 =
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+𝜌 𝑡 −1 
+
+> 𝐷
+
+𝑈 𝐷 (𝑡 ), (22) 
+
+𝑉 𝐴 =
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+𝜌 𝑡 −1 
+
+> 𝐴
+
+𝑈 𝐴 (𝑡 ), (23) where 𝜌 𝐷 , 𝜌 𝐴 ∈ (0, 1] are defender and attacker discount factors. These returns capture the fact that both the defender and the attacker optimize over trajectories rather than isolated responses. The controller selects the output with the highest trust score: ˆ𝑦 𝑡 = 𝑦 ˆ𝑖 (𝑡 ), ˆ𝑖 = arg max  
+
+> 𝑖 ∈ { 1,2,3}
+
+𝑇 𝑖 (𝑡 ), (24) where 𝑇 𝑖 (𝑡 ) combines causal consistency, cross-agent agree-ment, and contextual drift penalties. This selection rule creates an incentive structure in which adversarial candidates must satisfy multiple constraints simultaneously: they must appear structurally supported by the causal context graph, remain semantically consistent with peer agents, and avoid introducing excessive contextual drift. A candidate that is fluent but weakly grounded receives a low causal consistency score; a candidate that mimics agreement without structural support remains vul-nerable to graph-based validation; and a candidate that gradually shifts the trajectory is penalized through contextual drift. Under the one-Byzantine-agent assumption and bounded perturbation constraint 𝜓 (Δ𝑐 𝑡 ) ≤ 𝜖 , agreement alone is insufficient for adversarial success. The compromised agent cannot achieve pairwise agreement on its own, and unsupported claims cannot attain high trust unless they are also structurally grounded in 
+
+𝐺 𝑡 . Consequently, the controller reduces the expected payoff of adversarial deviation by assigning lower trust to candidates that lack causal support, contradict high-confidence graph nodes, or induce abnormal drift. In operational terms, this means that adversarial success requires simultaneous evasion of the causal 7
+
+consistency, agreement, and drift-monitoring components. This formulation establishes the GT-MCP’s incentive-alignment principle. Structurally grounded and agreement-consistent can-didates are rewarded with higher selection probability, whereas adversarial candidates incur structural, semantic, and temporal penalties. The controller, therefore, acts not only as an output selector but also as a strategic regulator of long-horizon context evolution. 
+
+G. Causal Context Graph 
+
+To enforce structural grounding, GT-MCP maintains a di-rected causal context graph :
+
+𝐺 𝑡 = (𝑉 𝑡 , 𝐸 𝑡 ), (25) where each node 𝑣 ∈ 𝑉 𝑡 represents an atomic claim extracted from the validated context or from candidate outputs, and each directed edge (𝑢 → 𝑣 ) ∈ 𝐸 𝑡 represents entailment, dependency, or causal support between claims. The graph provides a structured memory of validated reasoning elements and allows the controller to distinguish supported claims from plausible but unsupported adversarial fragments. Each node is assigned a confidence weight 𝑤 𝑣 ∈ [ 0, 1]:
+
+𝑤 𝑣 = 𝜎  support (𝑣 ), (26) where 𝜎 (·) maps aggregated support evidence into a bounded confidence score. The support of claim 𝑣 is computed as: support (𝑣 ) = 𝜔 1 1[persist (𝑣 )] + 𝜔 2
+
+1
+
+|Pa (𝑣 )| + 𝜖 ∑︁ 𝑢 ∈Pa (𝑣 )
+
+𝑤 𝑢 
+
++ 𝜔 3 agree (𝑣 ) − 𝜔 4 contradict (𝑣 ).
+
+(27) where 𝜔 1, 𝜔 2, 𝜔 3, 𝜔 4 ≥ 0 are weighting coefficients, 𝜖 > 0prevents division by zero, and Pa (𝑣 ) denotes the parent claims supporting 𝑣 . The persistence term 1[persist (𝑣 )] indi-cates repeated appearance across validated checkpoints. The normalized parent-support term measures how strongly 𝑣 
+
+is supported by previously validated claims. The agreement term agree (𝑣 ) captures claim-level consistency across agents, whereas contradict (𝑣 ) penalizes conflicts with high-confidence nodes. Under the one-Byzantine-agent assumption, agreement is counted only when supported by at least two structurally grounded agents, preventing a single compromised model from inflating the confidence of an unsupported claim. Atomic claims are extracted using a controller-side operator: 
+
+S( 𝑦 ) = E ( 𝑦 ), (28) where E (·) maps a candidate response into a set of canonical claims. Each claim is represented as a normalized subject– predicate–object proposition and assigned a modality tag, such as fact, hypothesis, recommendation, or constraint. GT-MCP enforces a fixed claim budget: 
+
+|S( 𝑦 )| ≤ 𝐵, (29) which prevents verbosity-based manipulation, repeated para-phrasing, and artificial inflation of graph support. Claims are canonicalized through entity normalization, lemmatization, lowercasing, deduplication, and hedging normalization, pro-ducing stable identifiers id (𝑣 ). Non-groundable claims, includ-ing meta-instructions, self-referential directives, unverifiable tool claims, and unsupported policy-changing statements, are tagged and assigned a low default support level. This prevents instruction-like fragments from entering the validated graph merely because they are fluent or repeated. Edges are constructed in two stages. First, the controller retrieves candidate parent nodes using embedding similarity and shared entities, selecting the top-𝑘 potential parents for each extracted claim. Second, a natural language inference module N (· , ·) evaluates entailment, neutrality, and contradiction between the candidate claim and its potential parents. An edge is inserted only when entail-ment exceeds a predefined threshold, and no high-confidence contradiction is detected. Explicit causal markers, such as “because”, “therefore”, and mechanism-oriented phrasing, are used as auxiliary signals for edge directionality. Only claims with confidence weight 𝑤 𝑣 ≥ 𝜏 𝑤 are eligible for insertion into the next validated graph 𝐺 𝑡 +1. Claims linked to quarantined fragments retain provenance pointers, enabling fine-grained rollback of affected subgraphs during self-healing. In this way, the causal context graph acts as the structural memory of GT-MCP: it supports validated reasoning, suppresses unsupported adversarial fragments, and provides the controller with an auditable basis for trust scoring and recovery. 
+
+H. CCI 
+
+For each candidate response 𝑦 𝑖 (𝑡 ), let S( 𝑦 𝑖 (𝑡 )) denote the set of extracted atomic claims. The CCI measures the extent to which these claims are structurally supported by the validated causal context graph 𝐺 𝑡 . It is defined as: CCI 𝑖 (𝑡 ) = 1
+
+|S( 𝑦 𝑖 (𝑡 ))| + 𝜖 ∑︁ 𝑣 ∈ S ( 𝑦 𝑖 (𝑡 ) ) 
+
+𝜙 (𝑣, 𝐺 𝑡 ), (30) where 𝜖 > 0 prevents numerical instability when no extractable claim is available. The claim-level support score 𝜙 (𝑣, 𝐺 𝑡 ) is computed as: 
+
+𝜙 (𝑣, 𝐺 𝑡 ) = min ©«
+
+1, 1
+
+|Pa (𝑣 )| + 𝜖 ∑︁ 𝑢 ∈Pa (𝑣 )
+
+𝑤 𝑢 ª®¬
+
+, (31) where Pa (𝑣 ) denotes the parent set of claim 𝑣 in 𝐺 𝑡 , and 𝑤 𝑢 is the confidence weight of parent claim 𝑢 . The CCI therefore lies in the interval [0, 1] and assigns higher scores to claims supported by high-confidence, validated parents. Unsupported, isolated, or contradictory claims receive low support and reduce the candidate’s overall causal consistency. This metric is especially useful for detecting adversarial fragments that are fluent and locally plausible but lack structural support within the validated reasoning trajectory. Because CCI is computed after claim extraction and graph matching, it assesses whether a candidate can be integrated into the existing validated context rather than merely whether it appears semantically coherent. 
+
+I. Distributional Stability Metric 
+
+Although CCI evaluates local structural support at the claim level, GT-MCP also monitors global semantic stability across 8
+
+interaction turns. Let 𝑃 𝑡 denote the semantic distribution of the validated context 𝑐 𝑡 , and let ˜𝑃 𝑡 denote the semantic distribu-tion induced by the observed context ˜ 𝑐 𝑡 . These distributions are estimated over embedding clusters and topic-level claim representations. The CDS measures the distributional deviation between the observed and validated contexts. To obtain a bounded and symmetric stability measure, CDS is defined using Jensen–Shannon divergence: CDS (𝑡 ) = 𝐷 JS 
+
+  ˜𝑃 𝑡 ∥ 𝑃 𝑡 
+
+ , (32) where 
+
+𝐷 JS 
+
+  ˜𝑃 𝑡 ∥ 𝑃 𝑡 
+
+ = 12 𝐷 KL 
+
+  ˜𝑃 𝑡 ∥ 𝑀 𝑡 
+
+ + 12 𝐷 KL (𝑃 𝑡 ∥ 𝑀 𝑡 ) , (33) and 
+
+𝑀 𝑡 = 12
+
+  ˜𝑃 𝑡 + 𝑃 𝑡 
+
+ . (34) Small smoothing constants are applied to the empirical dis-tributions before normalization to avoid zero-probability bins. A low CDS indicates that the observed context remains semantically aligned with the validated state, whereas a high CDS indicates that incoming information deviates from the established reasoning trajectory. In GT-MCP, CDS complements CCI: CCI assesses whether individual claims are structurally grounded in the causal context graph, whereas CDS assesses whether the overall context distribution remains stable across turns. This combination enables the controller to detect both abrupt contradiction-based perturbations and gradual trajectory-steering attacks that may appear locally coherent but become destabilizing over multiple interactions. 
+
+J. Strategic Trust Aggregation 
+
+After computing structural grounding and semantic stability signals, the controller assigns each candidate response a trust score. In contrast to simple majority voting, the trust score evaluates whether a candidate can be safely integrated into the validated context. For each candidate 𝑦 𝑖 (𝑡 ), the controller first constructs a tentative context update: 
+
+𝑐 (𝑖 ) 
+
+> 𝑡 +1
+
+= U ( 𝑐 𝑡 , 𝑦 𝑖 (𝑡 )) , (35) and computes a candidate-specific drift score: CDS 𝑖 (𝑡 ) = 𝐷 JS 
+
+
+
+𝑃 (𝑖 ) 
+
+> 𝑡 +1
+
+∥ 𝑃 𝑡 
+
+
+
+, (36) where 𝑃 𝑡 is the semantic distribution of the current validated context and 𝑃 (𝑖 ) 
+
+> 𝑡 +1
+
+is the distribution induced by the tentative update associated with candidate 𝑦 𝑖 (𝑡 ). This candidate-specific drift term allows the controller to penalize outputs that would move the persistent context away from the validated reasoning trajectory. The trust score for candidate 𝑖 is then defined as: 
+
+𝑇 𝑖 (𝑡 ) = 𝛼 CCI 𝑖 (𝑡 ) + 𝛽 AGR 𝑖 (𝑡 ) − 𝛾 CDS 𝑖 (𝑡 ), (37) where 𝛼, 𝛽, 𝛾 > 0 control the relative importance of structural support, cross-agent agreement, and contextual drift penalty. The agreement score is computed as: AGR 𝑖 (𝑡 ) = 12∑︁ 𝑗 ≠𝑖 
+
+𝜅 (𝑦 𝑖 (𝑡 ), 𝑦 𝑗 (𝑡 )) , (38) where 𝜅 (· , ·) is a semantic agreement kernel that com-bines entailment similarity, embedding cosine similarity, and contradiction-aware penalties. Candidates that contradict peer agents or high-confidence graph nodes receive lower agreement scores. The controller selects the highest-trust candidate: ˆ𝑖 = arg max  
+
+> 𝑖 ∈ { 1,2,3}
+
+𝑇 𝑖 (𝑡 ), ˆ𝑦 𝑡 = 𝑦 ˆ𝑖 (𝑡 ). (39) This aggregation rule integrates three complementary signals. Causal consistency evaluates whether the candidate’s claims are structurally supported by the validated causal graph. Cross-agent agreement reduces the influence of unreliable or compromised generations. Candidate-specific drift penalizes responses that would destabilize the persistent context if accepted. As a result, a candidate must be structurally grounded, semantically compatible with peer agents, and temporally stable to obtain high trust. This makes GT-MCP more robust than selection based on fluency, raw confidence, and majority agreement. 
+
+K. Temporal Stability Objective 
+
+GT-MCP extends per-turn trust aggregation by introducing a long-horizon temporal objective that penalizes the cumulative destabilization of the validated context. While the trust score selects the best candidate at a single turn, the temporal objective evaluates whether the sequence of selected outputs preserves structural grounding, cross-agent consistency, and contextual stability over the full interaction horizon. Let ˆ 𝑖 𝑡 denote the selected agent index at turn 𝑡 . The temporal stability objective is defined as: 
+
+𝑉 𝑇 =
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+𝜌 𝑡 −1
+
+> 𝑇
+
+
+
+CCI ˆ𝑖 𝑡 (𝑡 ) + 𝛽 𝑇 AGR ˆ𝑖 𝑡 (𝑡 ) − 𝛾 𝑇 CDS ˆ𝑖 𝑡 (𝑡 )− 𝜒 𝑇 I𝑎𝑑𝑣 (𝑡 ) − 𝜁 𝑇 I𝑟 𝑒𝑐 (𝑡 )
+
+
+
+.
+
+(40) where 𝜌 𝑇 ∈ (0, 1] is the temporal discount factor, 
+
+𝛽 𝑇 , 𝛾 𝑇 , 𝜒 𝑇 , 𝜁 𝑇 ≥ 0 are weighting coefficients, I𝑎𝑑𝑣 (𝑡 ) indi-cates controller-level adversarial success, and I𝑟 𝑒𝑐 (𝑡 ) indicates whether self-healing recovery is triggered at turn 𝑡 . The term CDS ˆ𝑖 𝑡 (𝑡 ) denotes the candidate-specific contextual drift associated with the selected output. This objective favors trajec-tories in which selected outputs remain structurally supported, semantically consistent with peer agents, and close to the validated reasoning trajectory. It penalizes outputs that introduce adversarial impact, create excessive drift, or require recovery. Separating I𝑎𝑑𝑣 (𝑡 ) from I𝑟 𝑒𝑐 (𝑡 ) is important because recovery activation does not necessarily imply a successful attack; rather, it indicates that the controller detected instability and intervened to prevent persistence. The temporal objective complements per-turn trust scoring by providing a trajectory-level criterion for evaluating controller behavior. Locally plausible responses that repeatedly introduce small deviations receive cumulative penalties through the drift and recovery terms, making gradual trajectory-steering attacks less likely to persist across turns. Thus, GT-MCP promotes stable reasoning not only by selecting high-trust outputs at each turn, but also by discouraging long-horizon accumulation of unsupported contextual changes. 9
+
+L. Self-Healing Recovery 
+
+When the selected output introduces excessive contextual drift, GT-MCP triggers a self-healing recovery procedure. Recovery is activated when the candidate-specific drift of the selected response exceeds the predefined threshold: CDS ˆ𝑖 𝑡 (𝑡 ) > 𝛿 𝑐 , (41) where ˆ 𝑖 𝑡 denotes the selected agent at turn 𝑡 , and 𝛿 𝑐 is the recovery threshold. This condition ensures that recovery is triggered only when the accepted output would move the persistent context away from the validated reasoning trajectory. Rather than resetting the entire context, GT-MCP performs targeted rollback and selective reintegration. The controller first identifies low-support claims and fragments associated with abnormal drift, then restores a prior validated checkpoint as needed. The rollback depth is chosen by minimizing a trade-off between structural risk and information loss: 
+
+𝑑 ★ = arg min   
+
+> 𝑑 ∈ { 0,...,𝐷 }
+
+ bL( 𝐺 𝑡 −𝑑 ) + 𝜆 𝑅 𝑑 
+
+
+
+, (42) where 𝐷 is the maximum rollback depth, bL( 𝐺 𝑡 −𝑑 ) estimates structural vulnerability in the causal context graph at checkpoint 
+
+𝑡 − 𝑑 , and 𝜆 𝑅 > 0 penalizes excessive rollback. A larger rollback depth may remove more suspicious structure, but it may also discard validated information; the objective, therefore, selects the shallowest checkpoint that sufficiently reduces structural risk. After rollback, GT-MCP reintegrates only fragments that remain structurally grounded in the causal graph and are not linked to quarantined low-support nodes. This prevents cumulative poisoning, where an unsupported fragment accepted in one turn later becomes artificial evidence for future claims. By pruning low-support substructures while preserving validated memory, self-healing breaks this feedback loop and restores the context to a stable trajectory. Thus, self-healing functions as a trajectory-level recovery mechanism rather than a full context reset. It preserves continuity where possible, removes unsupported fragments where necessary, and maintains causal grounding, structural integrity, and trust evaluation across extended multi-turn interactions. 
+
+M. Secure Multi-Agent Pipeline Algorithm 
+
+The GT-MCP controller operates as a modular closed-loop pipeline that coordinates three heterogeneous LLM agents and regulates how candidate outputs update the validated context. At each turn 𝑡 , the controller receives the validated context 
+
+𝑐 𝑡 and user query 𝑞 𝑡 , constructs an observed context with provenance markers, obtains candidate responses from the agents, evaluates each candidate through causal consistency, cross-agent agreement, and candidate-specific contextual drift, then either accepts the selected output or triggers self-healing recovery. Algorithm 1 summarizes the complete control loop. Algorithm 1 makes the control logic explicit. The key dis-tinction from majority voting and prompt filtering is that GT-MCP evaluates whether each candidate can safely modify persistent memory. Candidate-specific drift is computed after a tentative context update, allowing the controller to penalize responses that would destabilize future reasoning even when 
+
+Algorithm 1 GT-MCP Secure Multi-Agent Context-Control Pipeline                                                                                                                                                                                                  
+
+> Require: Validated context 𝑐 𝑡 , query 𝑞 𝑡 , checkpoint store H𝑡
+> Require: Agents {𝐴 𝑖 }3
+> 𝑖 =1, trust weights 𝛼, 𝛽, 𝛾 , recovery threshold 𝛿 𝑐
+> Ensure: Selected output ˆ 𝑦 𝑡 , updated context 𝑐 𝑡 +1, audit record R𝑡
+> 1: Assemble observed context
+> 2: Receive untrusted inflows Δ𝑐 𝑡
+> 3: ˜𝑐 𝑡 ←𝑐 𝑡 ⊕Δ𝑐 𝑡
+> 4: Build structural memory
+> 5: 𝐺 𝑡 ←build_or_update_graph (𝑐 𝑡 )
+> 6: for 𝑖 =1 to 3 do
+> 7: Generate candidate
+> 8: 𝑦 𝑖 (𝑡 ) ← 𝐴 𝑖 (𝑞 𝑡 ,˜𝑐 𝑡 )
+> 9: Extract and canonicalize claims
+> 10: S𝑖 ← E ( 𝑦 𝑖 (𝑡 ) )
+> 11: S𝑖 ←canonicalize ( S 𝑖 )
+> 12: Compute causal consistency
+> 13: CCI 𝑖 (𝑡 ) ← causal_consistency ( S 𝑖 , 𝐺 𝑡 )
+> 14: Construct tentative update
+> 15: 𝑐 (𝑖 )
+> 𝑡 +1← U ( 𝑐 𝑡 , 𝑦 𝑖 (𝑡 ) )
+> 16: Compute candidate-specific drift
+> 17: CDS 𝑖 (𝑡 ) ← drift (𝑐 (𝑖 )
+> 𝑡 +1, 𝑐 𝑡 )
+> 18: end for
+> 19: for 𝑖 =1 to 3 do
+> 20: Compute cross-agent agreement
+> 21: AGR 𝑖 (𝑡 ) ← 12
+> Í𝑗 ≠𝑖 𝜅 (𝑦 𝑖 (𝑡 ), 𝑦 𝑗 (𝑡 ) )
+> 22: Aggregate trust
+> 23: 𝑇 𝑖 (𝑡 ) ← 𝛼 CCI 𝑖 (𝑡 ) + 𝛽 AGR 𝑖 (𝑡 ) − 𝛾 CDS 𝑖 (𝑡 )
+> 24: end for
+> 25: Select highest-trust candidate
+> 26: ˆ 𝑖 𝑡 ←arg max 𝑖 ∈{ 1,2,3}𝑇 𝑖 (𝑡 )
+> 27: ˆ𝑦 𝑡 ←𝑦 ˆ𝑖 𝑡 (𝑡 )
+> 28: 𝑐 ′
+> 𝑡 +1← U ( 𝑐 𝑡 ,ˆ𝑦 𝑡 )
+> 29: Apply recovery gate
+> 30: if CDS ˆ𝑖 𝑡 (𝑡 )> 𝛿 𝑐 then
+> 31: (𝑐 𝑡 +1,Q𝑡 +1, 𝑑 ★) ← self_heal (𝑐 ′
+> 𝑡 +1, 𝐺 𝑡 ,H𝑡 )
+> 32: I𝑟𝑒𝑐 (𝑡 ) ← 133: else
+> 34: 𝑐 𝑡 +1←𝑐 ′
+> 𝑡 +1
+> 35: Q𝑡 +1← ∅
+> 36: 𝑑 ★←037: I𝑟𝑒𝑐 (𝑡 ) ← 038: end if
+> 39: Store audit record
+> 40: R𝑡 ← { 𝑦 𝑖 (𝑡 ),S𝑖 ,CCI 𝑖 (𝑡 ),AGR 𝑖 (𝑡 ),CDS 𝑖 (𝑡 ), 𝑇 𝑖 (𝑡 ),ˆ𝑖 𝑡 ,ˆ𝑦 𝑡 ,I𝑟𝑒𝑐 (𝑡 ),Q𝑡 +1, 𝑑 ★}3
+> 𝑖 =1
+> 41: return ˆ𝑦 𝑡 , 𝑐 𝑡 +1,R𝑡
+
+they appear locally fluent. If the selected candidate exceeds the recovery threshold, the self-healing mechanism restores a validated checkpoint, quarantines low-support fragments, and prevents unsupported claims from propagating across turns. The audit record preserves all candidate outputs, extracted claims, scores, selection decisions, and recovery metadata, supporting reproducibility, ablation analysis, and forensic inspection of adversarial trajectories. 
+
+N. Self-Healing Algorithm 
+
+The self-healing module is activated when the selected output introduces contextual drift above the recovery threshold. Its objective is to restore a stable, validated context without discarding previously grounded reasoning. Instead of resetting the entire memory, the controller identifies low-support graph regions, quarantines associated fragments, evaluates rollback candidates, and rebuilds the causal graph from the recovered context. Algorithm 2 summarizes this recovery procedure. Algorithm 2 performs recovery at the fragment and subgraph level rather than through a full context reset. Low-support and 10 
+
+Algorithm 2 Context Self-Healing with Quarantine and Roll-back                                                                                                         
+
+> Require: Tentative context 𝑐 ′
+> 𝑡 +1, causal graph 𝐺 𝑡 , checkpoint store H𝑡 ,maximum rollback depth 𝐷
+> Require: Structural-risk estimator bL (·) , rollback penalty 𝜆 𝑅
+> Ensure: Healed context 𝑐 𝑡 +1, quarantine set Q𝑡 +1, rollback depth 𝑑 ★
+> 1: Identify weak graph regions
+> 2: Z ← low_support_nodes (𝐺 𝑡 )
+> 3: Z ← Z ∪ contradictory_nodes (𝐺 𝑡 )
+> 4: Quarantine linked fragments
+> 5: Q𝑡 +1←fragments_linked_to ( Z)
+> 6: Q𝑡 +1← Q 𝑡 +1∪unverified_fragments (𝑐 ′
+> 𝑡 +1)
+> 7: Prune tentative context
+> 8: 𝑐 prune ←remove_fragments (𝑐 ′
+> 𝑡 +1,Q𝑡 +1)
+> 9: Evaluate rollback candidates
+> 10: for 𝑑 =0 to 𝐷 do
+> 11: 𝐺 𝑡 −𝑑 ←graph_at_checkpoint ( H 𝑡 , 𝑡 −𝑑 )
+> 12: risk (𝑑 ) ← bL ( 𝐺 𝑡 −𝑑 )
+> 13: loss (𝑑 ) ← 𝑑
+> 14: score (𝑑 ) ← risk (𝑑 ) + 𝜆 𝑅 loss (𝑑 )
+> 15: end for
+> 16: Select rollback depth
+> 17: 𝑑 ★←arg min 𝑑 ∈{ 0,...,𝐷 }score (𝑑 )
+> 18: Restore checkpoint
+> 19: 𝑐 base ←context_at_checkpoint ( H 𝑡 , 𝑡 −𝑑 ★)
+> 20: Reintegrate grounded fragments
+> 21: 𝑐 safe ←grounded_fragments (𝑐 prune , 𝐺 𝑡 ,Q𝑡 +1)
+> 22: 𝑐 𝑡 +1←𝑐 base ⊕𝑐 safe
+> 23: Rebuild graph and update checkpoints
+> 24: 𝐺 𝑡 +1←build_causal_graph (𝑐 𝑡 +1)
+> 25: H𝑡 +1←update_checkpoints ( H 𝑡 , 𝑐 𝑡 +1, 𝐺 𝑡 +1)
+> 26: return 𝑐 𝑡 +1,Q𝑡 +1, 𝑑 ★
+
+contradictory nodes are used to identify potentially unstable fragments, while provenance links determine which parts of the tentative context should be quarantined. The rollback depth is selected by minimizing 
+
+𝑑 ★ = arg min   
+
+> 𝑑 ∈ { 0,...,𝐷 }
+
+ bL( 𝐺 𝑡 −𝑑 ) + 𝜆 𝑅 𝑑 
+
+
+
+,
+
+which balances structural risk against information loss. After restoring the selected checkpoint, GT-MCP reintegrates only fragments that remain structurally grounded and are not linked to the quarantine set. This prevents unsupported claims from becoming upstream evidence for future responses, while pre-serving validated memory and maintaining continuity of the reasoning trajectory. 
+
+O. MCP Packet Structure and Controller Interfaces 
+
+To operationalize context control, GT-MCP represents each interaction turn through a structured controller packet. The packet defines the information exchanged between the context manager, retrieval layer, LLM agents, trust evaluator, and recovery module. At turn 𝑡 , the controller constructs: 
+
+pkt 𝑡 = ⟨𝑞 𝑡 , 𝑐 𝑡 , 𝑟 𝑡 , P𝑡 , 𝜏 𝑡 , Ω𝑡 ⟩ , (43) where 𝑞 𝑡 is the user query, 𝑐 𝑡 is the validated context state, 𝑟 𝑡 
+
+denotes retrieved evidence or tool outputs when available, P𝑡 
+
+stores provenance metadata for trusted and untrusted fragments, 
+
+𝜏 𝑡 contains timestamps and checkpoint identifiers, and Ω𝑡 stores controller-side configuration parameters. These parameters in-clude trust weights (𝛼, 𝛽, 𝛾 ), the recovery threshold 𝛿 𝑐 , claim budget 𝐵 , graph insertion threshold 𝜏 𝑤 , isolation flags, and recovery settings. The packet is used to construct the observed context: ˜𝑐 𝑡 = assemble  pkt 𝑡 
+
+ , (44) where assemble preserves the separation between validated memory, retrieved evidence, tool outputs, and untrusted inflows. This separation is essential because GT-MCP does not treat all contextual content as equally trusted. Instead, each fragment is associated with provenance metadata, confidence scores, and update permissions. After candidate generation and trust evaluation, the controller appends decision metadata to the packet: 
+
+pkt + 
+
+> 𝑡
+
+= pkt 𝑡 , {𝑦 𝑖 (𝑡 )} 3
+
+> 𝑖 =1
+
+, {S 𝑖 }3
+
+> 𝑖 =1
+
+, {𝑇 𝑖 (𝑡 )} 3
+
+> 𝑖 =1
+
+, ˆ𝑖 𝑡 , Q𝑡 +1, 𝑑 ★ ,
+
+(45) where S𝑖 is the extracted claim set for candidate 𝑦 𝑖 (𝑡 ), 𝑇 𝑖 (𝑡 )
+
+is its trust score, ˆ 𝑖 𝑡 is the selected agent index, Q𝑡 +1 is the quarantine set, and 𝑑 ★ is the rollback depth if recovery is triggered. This packetized interface makes GT-MCP auditable and reproducible. It allows the controller to trace which fragments entered the observed context, which claims were extracted, how trust scores were assigned, which output was selected, and whether recovery was activated. Therefore, the MCP packet acts as the operational bridge between multi-agent generation, causal graph validation, trust aggregation, and self-healing recovery. 
+
+P. Controller Parameter Calibration 
+
+The behavior of GT-MCP is governed by a set of controller parameters: 
+
+𝜃 = (𝛼, 𝛽, 𝛾, 𝜇, 𝛿 𝑐 , 𝜆 𝑅 , 𝜏 𝑤 , 𝐵 ) , (46) where 𝛼, 𝛽, 𝛾 weight causal consistency, cross-agent agreement, and candidate-specific drift in the trust score; 𝜇 controls the stability penalty in the global objective; 𝛿 𝑐 is the recovery threshold; 𝜆 𝑅 controls the rollback penalty during self-healing; 
+
+𝜏 𝑤 is the graph insertion threshold; and 𝐵 is the maximum claim budget per candidate response. These parameters determine how aggressively the controller accepts candidate outputs, penalizes drift, inserts claims into the causal graph, and activates recovery. Calibration is performed over simulated adversarial interaction episodes subject to the bounded anomaly constraint: 
+
+𝜓 (Δ𝑐 𝑡 ) ≤ 𝜖 . (47) For 𝑁 calibration episodes, the empirical objective is: 
+
+bJ ( 𝜃 ) = 1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑛 =1
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+h
+
+ℓ
+
+
+
+ˆ𝑦 (𝑛 )
+
+> 𝑡
+
+
+
++ 𝜇 𝑑 
+
+
+
+𝑐 (𝑛 ) 
+
+> 𝑡
+
+, (𝑐 ★𝑡 ) (𝑛 ) 
+
++ 𝛾 𝐶 CDS (𝑛 )
+
+> ˆ𝑖 𝑡
+
+(𝑡 ) + 𝜁 𝐶 I(𝑛 ) 
+
+> 𝑟 𝑒𝑐
+
+(𝑡 )
+
+i
+
+.
+
+(48) where ℓ( ˆ𝑦 (𝑛 ) 
+
+> 𝑡
+
+) penalizes unsafe, unsupported, or adversarially influenced selected outputs; 𝑑 (𝑐 (𝑛 ) 
+
+> 𝑡
+
+, (𝑐 ★𝑡 ) (𝑛 ) ) measures devia-tion from the ideal validated trajectory; CDS (𝑛 )
+
+> ˆ𝑖 𝑡
+
+(𝑡 ) measures candidate-specific drift for the selected output; and I(𝑛 ) 
+
+> 𝑟 𝑒𝑐
+
+(𝑡 )
+
+indicates whether recovery is triggered. The coefficients 𝛾 𝐶 and 
+
+𝜁 𝐶 control the calibration-level penalties for drift and recovery frequency. Because candidate selection, graph insertion, and 11 
+
+rollback decisions are discrete and nondifferentiable, gradient-based optimization is not directly suitable. GT-MCP therefore uses gradient-free calibration, such as robust grid refinement, Bayesian optimization, or evolutionary search, depending on the available compute budget. In practice, calibration should favor parameter settings that reduce controller-level adversarial success, limit contextual drift, avoid excessive rollback, and preserve useful validated context. This calibration process balances structural grounding, agreement enforcement, drift sensitivity, and recovery behavior, producing a controller that remains stable under diverse perturbation patterns without relying solely on majority voting. 
+
+Q. Component-Level Evaluation and Statistical Robustness Analysis 
+
+To assess the contribution of individual GT-MCP modules, we define ablated variants of the full controller. Let M denote the complete GT-MCP pipeline, and let M (− 𝑥 ) denote the variant in which component 𝑥 is removed while the remaining controller structure is preserved. The evaluated components are causal consistency scoring (No-CCI), candidate-specific contextual drift monitoring (No-CDS), cross-agent agreement aggregation (No-AGR), and self-healing recovery (No-Heal). For run 𝑟 , the injection success rate is defined as: ISR (𝑟 ) = 1
+
+𝑇 
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+I(𝑟 ) 
+
+> 𝑎𝑑𝑣
+
+(𝑡 ), (49) where I(𝑟 ) 
+
+> 𝑎𝑑𝑣
+
+(𝑡 ) indicates controller-level adversarial success at turn 𝑡 . To isolate the effect of component 𝑥 , the paired difference is computed as: 
+
+Δ(𝑟 ) 
+
+> 𝑥
+
+= ISR (𝑟 )M (− 𝑥 ) − ISR (𝑟 )M . (50) The mean component effect is then: 
+
+Δ𝑥 = 1
+
+𝑅 
+
+> 𝑅
+
+∑︁ 
+
+> 𝑟 =1
+
+Δ(𝑟 ) 
+
+> 𝑥
+
+. (51) For standardized comparison, the effect size is computed as: 
+
+𝑑 𝑥 = Δ𝑥 
+
+𝑠 Δ𝑥 + 𝜖 , (52) where 𝑠 Δ𝑥 is the sample standard deviation of the paired dif-ferences and 𝜖 prevents numerical instability. For non-Gaussian metrics, the same paired comparisons can be complemented with nonparametric tests, such as the Wilcoxon signed-rank test, and with rank-based effect sizes. The same evaluation logic applies to additional trajectory-level metrics, including mean causal consistency, candidate-specific contextual drift, recovery frequency, rollback depth, and utility. This component-level analysis quantifies the contributions of each GT-MCP mechanism to structural grounding, semantic stability, recovery behavior, and long-horizon robustness. 
+
+R. Formal Claim Extraction and Uncertainty Modeling 
+
+GT-MCP represents each candidate output as a set of canon-ical atomic claims extracted from the generated text. Formally, claim extraction is defined as a controller-side mapping: 
+
+E : Y → 2V , (53) where Y denotes the space of candidate outputs, V denotes the universe of canonical claim types, and 
+
+S( 𝑦 ) = E ( 𝑦 ) (54) is the extracted claim set for candidate response 𝑦 . Because claim extraction may be affected by ambiguity, paraphrasing, incomplete grounding, and modality differences, GT-MCP models extract uncertainty probabilistically: 
+
+S( 𝑦 ) ∼ 𝑝 (S | 𝑦 ). (55) Accordingly, causal consistency can be interpreted as an expectation over possible extracted claim sets: CCI 𝑖 (𝑡 ) = ES∼ 𝑝 ( S | 𝑦 𝑖 (𝑡 ) ) 
+
+"
+
+1
+
+|S| + 𝜖 ∑︁ 𝑣 ∈ S 
+
+𝜙 (𝑣, 𝐺 𝑡 )
+
+#
+
+, (56) where 𝜖 > 0 prevents numerical instability when few or no extractable claims are available, and 𝜙 (𝑣, 𝐺 𝑡 ) denotes the bounded structural support of claim 𝑣 in the validated causal context graph. To reduce manipulation through verbosity, repetition, and paraphrase inflation, GT-MCP enforces a fixed claim budget: 
+
+|S( 𝑦 )| ≤ 𝐵. (57) Before graph insertion and trust scoring, extracted claims are canonicalized and deduplicated through entity normaliza-tion, lemmatization, modality tagging, and semantic equiv-alence checks. Claims that cannot be grounded, such as meta-instructions, self-referential directives, unsupported pol-icy changes, or unverifiable tool claims, are retained for auditing but assigned a low default structural support rating. This uncertainty-aware extraction process ensures that CCI reflects genuine structural grounding rather than surface-level fluency and excessive claim volume. It also prevents adversarial candidates from artificially inflating trust scores by generating numerous redundant or semantically equivalent claims. 
+
+IV. Experimental Setup 
+
+We evaluate GT-MCP in a closed-loop multi-turn adversarial setting designed to test whether malicious contextual pertur-bations can persist across turns, alter the validated context, and affect future reasoning. The primary evaluation horizon consists of 𝑇 = 500 interaction turns per run. Each turn contains one user query, one observed context assembly step, three candidate LLM responses, one controller selection decision, one tentative context update, and, when needed, one self-healing recovery decision. To support paired comparisons, all methods are evaluated under the same query sequence, attack schedule, and random seeds. Unless otherwise stated, each method is repeated across 𝑅 = 10 independent seeds, yielding 5 ,000 turn-level observations per method. For paired ablation analysis, the full GT-MCP pipeline and each ablated variant are evaluated 12 
+
+TABLE III: Turn-level evaluation schedule per run.                   
+
+> Condition / Attack family Turns Fraction (%) Benign interaction 328 65.6 Direct prompt injection 30 6.0 Retrieval poisoning 40 8.0 Tool-output injection 30 6.0 Dormant trigger injection 22 4.4 Trajectory steering 30 6.0 Agreement mimicry 20 4.0 Total 500 100.0
+
+TABLE IV: Controller and agent configuration.                                
+
+> Component Configuration Interaction horizon 𝑇 =500 turns per run Repeated runs 𝑅 =10 seeds per method Total observations 5,000 turns per method LLM agents GPT-5.3, Llama-3.1-70B, DeepSeek-R1 Candidate responses Three responses per turn Selection rule ˆ𝑖 𝑡 =arg max 𝑖 𝑇 𝑖 (𝑡 )
+> Trust signals CCI, AGR, candidate-specific CDS Recovery trigger CDS ˆ𝑖 𝑡 (𝑡 )> 𝛿 𝑐
+> Context update Only ˆ 𝑦 𝑡 updates 𝑐 𝑡 through U (·)
+> Audit logs Candidates, claims, CCI, AGR, CDS, trust, selected agent, recovery status
+
+using identical seeds and identical adversarial perturbation schedules. The evaluation contains both benign and adversarial turns. Out of the 𝑇 = 500 turns in each run, 328 turns are benign and 172 turns contain adversarial perturbations, corresponding to 65 .6% benign exposure and 34 .4% adversarial exposure. The adversarial turns are distributed across six attack families: direct prompt injection, retrieval poisoning, tool-output injection, dormant trigger injection, gradual trajectory steering, and agree-ment mimicry. Table III summarizes the turn-level evaluation schedule. The GT-MCP controller uses three heterogeneous LLM agents: GPT-5.3, Llama-3.1-70B, and DeepSeek-R1. At each turn, all agents receive the same input pair (𝑞 𝑡 , ˜𝑐 𝑡 ) and generate one candidate response. The controller then extracts claims, computes causal consistency, cross-agent agreement, and candidate-specific contextual drift, and selects the candidate with the highest trust score. Only the selected output is eligible to update the validated context state. We compare the full GT-MCP pipeline against representative baselines and ablated variants. The baseline methods include a single-agent LLM, majority voting across agents, prompt filtering, and a retrieval-oriented defense. The ablation variants remove one GT-MCP component at a time: causal consistency scoring, cross-agent agreement, candidate-specific drift monitoring, and self-healing recovery. Table V summarizes the evaluated methods. The primary outcome is controller-level injection success rate (ISR). At turn 
+
+𝑡 , adversarial success is recorded when the selected output belongs to Y𝑎𝑑𝑣 , meaning that it bypasses controller constraints, inserts unsupported claims into the validated graph, manipulates tool behavior, leaks protected information, or causes persistent contextual drift without recovery. ISR is computed as: ISR = 1
+
+𝑇 
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+I𝑎𝑑𝑣 (𝑡 ). (58) TABLE V: Evaluated methods and ablated variants.                   
+
+> Method Description Single-agent LLM One LLM response is directly accepted without multi-agent control Majority voting Three agents generate responses; output is selected by semantic majority agreement Prompt filtering Candidate outputs are filtered using surface-level injection detection before up-date RAG defense Retrieved or contextual evidence is sani-tized before candidate generation No-CCI GT-MCP without causal consistency scor-ing No-AGR GT-MCP without cross-agent agreement scoring No-CDS GT-MCP without candidate-specific drift monitoring No-Heal GT-MCP without rollback and quarantine recovery Full GT-MCP Complete controller with CCI, AGR, CDS, and self-healing
+
+TABLE VI: Evaluation metrics.                   
+
+> Metric Definition ISR Fraction of turns with controller-level ad-versarial success CDS Candidate-specific contextual drift after tentative update CCI Structural support of extracted claims in 𝐺 𝑡
+> AGR Semantic agreement between candidate outputs Utility Per-turn controller utility combining safety and stability terms Recovery frequency Fraction of turns triggering self-healing Rollback depth Number of checkpoints reverted during recovery Quarantine size Number of fragments removed or isolated Stable turns Fraction of turns without persistent adver-sarial impact Latency/token Inference and controller latency normal-ized by token count
+
+We also report contextual drift, causal consistency, cross-agent agreement, utility, recovery frequency, rollback depth, quaran-tine size, stable-turn percentage, token usage, and latency per token. Stable turns are defined as turns in which no controller-level adversarial success occurs, the selected response remains below the recovery threshold, and no persistent unsupported fragment is inserted into the validated context. For ablation and baseline comparisons, we compute paired differences under identical seeds. For each seed 𝑟 , the component effect of removing module 𝑥 is: 
+
+Δ(𝑟 ) 
+
+> 𝑥
+
+= ISR (𝑟 )M (− 𝑥 ) − ISR (𝑟 )M . (59) We report the mean paired difference across seeds and use nonparametric paired tests when metric distributions are non-Gaussian. Turn-level metrics are summarized using the mean, median, standard deviation, percentiles, and tail-risk indicators. This setup allows us to evaluate both immediate injection failures and long-horizon trajectory instability under controlled adversarial exposure. 13 
+
+Fig. 2: Distribution of selected-output contextual drift across 500 interaction turns. TABLE VII: Drift severity, utility impact, and recovery activa-tion.              
+
+> Category Count Fraction (%) Median Drift Mean Utility Min Utility Heal (%) Near-zero drift 498 99.6 0.000 -0.18 -2.10 0.0 Nonzero drift 20.4 27.63 -23.46 -24.93 100.0
+
+V. Experimental Results 
+
+All evaluations are conducted under the full closed-loop GT-MCP pipeline described in Section III. All experiments use identical seeds across runs to ensure paired comparisons and reproducibility. 
+
+A. Context Stability and Drift Behavior 
+
+We first examine whether GT-MCP preserves contextual stability across the 𝑇 = 500-turn closed-loop evaluation horizon defined in Section IV. Contextual drift is measured after the controller selects a candidate response and forms the corre-sponding tentative context update. Therefore, the reported value corresponds to the selected-output drift CDS ˆ𝑖 𝑡 (𝑡 ) rather than a global input-level divergence. This metric captures whether the selected response would move the persistent context away from the validated reasoning trajectory. Near-zero drift indicates compatibility with the validated context, whereas large drift indicates a trajectory deviation that requires recovery. Figure 2 shows the empirical drift distribution. GT-MCP maintains near-zero drift in 498 out of 500 turns, corresponding to 99.6% of the interaction horizon. Only two turns, representing 0.4%, produce high-magnitude drift. This pattern demonstrates that contextual instability does not accumulate gradually over the course of the interaction. Instead, the controller keeps almost all selected outputs aligned with the validated reasoning manifold, while rare destabilizing updates are isolated as recovery-triggering events. Table VII summarizes drift severity, utility impact, and recovery activation. The 498 near-zero-drift turns maintain a median drift of 0 .000 and a mean utility of −0.18, indicating stable operation around the validated trajectory. In contrast, the two high-drift turns reach a median drift of 27 .63 and a mean utility of −23 .46, with a minimum utility of −24 .93. Both high-drift events activate self-healing, while no recovery is triggered for near-zero-drift turns. Thus, recovery is required in only 0 .4% of all turns, showing that intervention is rare and reserved for severe contextual deviations. Figure 3 shows the 
+
+Fig. 3: Relationship between selected-output contextual drift and utility. TABLE VIII: Drift, utility, and recovery outcomes across stable and high-drift turns.                   
+
+> Category Count Fraction (%) Median Drift Mean Utility Near-zero drift 498 99.6 0.00 -0.18 Nonzero drift 20.4 27.63 -23.46 Category Min Utility Heal (%) Near-zero drift -2.10 0.0 Nonzero drift -24.93 100.0
+
+relationship between drift magnitude and utility. Utility remains tightly concentrated when drift is near zero, but it collapses sharply during the two high-drift events. This confirms that utility degradation is strongly coupled to departure from the validated context trajectory. Importantly, these severe deviations remain localized because the recovery gate prevents high-drift updates from becoming persistent memory. Table VIII reports the same behavior in a compact two-block format. The absence of intermediate drift levels suggests that GT-MCP produces a sharply separated stability profile: selected outputs are either compatible with the validated context or are detected as high-risk updates requiring recovery. This separation is important for long-horizon security because gradual context poisoning typically relies on small, unsupported fragments persisting across multiple turns. In GT-MCP, such fragments fail to accumulate because unsupported updates are either assigned low trust before selection or removed through recovery after selection. Controller intervention remains minimal and local-ized. Table IX reports a mean drift value of 0 .11 and a median of 0 .00, confirming that high drift is exceptional rather than representative of normal operation. The mean rollback depth is 0.008, with a median of zero, reflecting the rarity of rollback. The mean quarantine size is 1 .32, indicating that the controller isolates small sets of suspicious fragments rather than discarding large portions of context. Table X summarizes percentile and worst-case behavior. The 95th percentile of drift remains zero, demonstrating that even the upper tail of ordinary operation stays aligned with the validated context. The maximum rollback depth is two checkpoints, and the maximum quarantine size is four fragments. These results show that self-healing behaves as a bounded subgraph-level correction mechanism rather than a 14 
+
+TABLE IX: Controller intervention statistics across 500 turns.             
+
+> Metric Mean Median Std Drift value 0.11 0.00 0.90 Rollback depth 0.008 0.00 0.11 Quarantine size 1.32 1.00 0.64
+
+TABLE X: Turn-level stability and worst-case intervention summary.             
+
+> Metric Mean P95 Max Drift value 0.11 0.00 27.63 Rollback depth 0.008 0.00 2Quarantine size 1.32 24
+
+full context reset. Robustness checks confirm that this stability pattern is not an artifact of a single distance formulation. Alternative measures, including Jensen–Shannon divergence CDS 𝐽𝑆 and 2-Wasserstein distance CDS 𝑊 , reproduce the same qualitative structure: dominant near-zero drift with two isolated high-deviation events. The correlations between the operational drift score and the alternative measures remain high, exceeding 0.98 for CDS 𝐽𝑆 and 0 .95 for CDS 𝑊 . These findings indicate that GT-MCP stabilizes context evolution by preventing unsupported fragments from becoming persistent memory updates, rather than merely filtering individual outputs. 
+
+B. Multi-Agent Behavior and Selection Dynamics 
+
+We next analyze how the three heterogeneous LLM agents contribute to GT-MCP selection behavior across the 𝑇 = 500-turn evaluation horizon. The evaluated agents are GPT-5.3, Llama-3.1-70B, and DeepSeek-R1. All agents receive the same observed input pair (𝑞 𝑡 , ˜𝑐 𝑡 ) at each turn, but their candi-date responses are selected only after controller-side evalu-ation through causal consistency, cross-agent agreement, and candidate-specific contextual drift. This design allows GT-MCP to exploit model diversity without assuming that any single agent is consistently superior. Figure 4 shows the utility distribution associated with selected outputs from each agent. The distribu-tions overlap substantially, indicating that the controller does not operate as a static model-ranking mechanism. Instead, selection depends on context-specific alignment with the validated causal graph and the current reasoning trajectory. GPT-5.3 and Llama-3.1-70B show wider utility dispersion because they are selected more frequently and therefore face broader contextual exposure. DeepSeek-R1 has lower variance, suggesting a stabilizing role in cases where structurally conservative responses are preferred. The controller assigns trust according to: 
+
+𝑇 𝑖 (𝑡 ) = 𝛼 CCI 𝑖 (𝑡 ) + 𝛽 AGR 𝑖 (𝑡 ) − 𝛾 CDS 𝑖 (𝑡 ),
+
+where CDS 𝑖 (𝑡 ) is the candidate-specific drift induced by the tentative update associated with agent 𝑖 . This formulation is important because drift must affect the ranking of candidate outputs; a global drift term shared by all agents would not in-fluence the selection decision. Trust, therefore, reflects whether a candidate is structurally grounded, semantically compatible with peer agents, and safe to integrate into a persistent context. 
+
+Fig. 4: Utility distribution of selected outputs by agent. 
+
+Fig. 5: Trust-score distributions by agent. Differences in dis-persion show that the agents contribute distinct structural and semantic signals to the controller, enabling context-adaptive selection rather than fixed model preference. Figure 5 reports the trust-score distributions. Llama-3.1-70B ex-hibits the widest trust dispersion, indicating sensitivity to graph structure and contextual variation. GPT-5.3 shows moderate trust variance with the highest selection frequency, suggesting frequent alignment with the controller’s combined structural and semantic criteria. DeepSeek-R1 shows the narrowest distribu-tion, consistent with stable but less frequently selected behavior. This heterogeneity is beneficial: it creates separable trust profiles that allow the controller to avoid reducing multi-agent selection to simple voting. Figure 6 summarizes the multi-objective agent profiles, including selection frequency, latency, utility, structural stability, and cost efficiency. GPT-5.3 contributes the highest selection frequency and strong utility alignment, Llama-3.1-70B provides broader variability and fast responses in favorable contexts, and DeepSeek-R1 contributes the most stable low-variance profile. The key observation is that GT-MCP benefits from controlled heterogeneity: agents differ enough to provide useful alternatives, but selection remains constrained by causal grounding and drift control. Table XI provides quantitative support for these observations. GPT-5.3 is selected in 50.0% of turns, followed by Llama-3.1-70B in 33.8% and DeepSeek-R1 in 16.2%. Despite this imbalance in selection frequency, the mean CCI and AGR values remain close across agents. This indicates that selection is not driven by raw agent identity, but 15 
+
+Fig. 6: Normalized multi-objective profile of the three LLM agents. TABLE XI: Per-agent utility, selection frequency, and structural scores.                         
+
+> Agent Mean Utility Median Utility Std Sel(%) GPT-5.3 -0.331 -0.201 1.60 50.0 Llama-3.1-70B -0.318 -0.178 1.71 33.8 DeepSeek-R1 -0.131 -0.171 0.37 16.2 Agent Mean CCI Mean AGR GPT-5.3 0.103 0.428 Llama-3.1-70B 0.097 0.432 DeepSeek-R1 0.092 0.424
+
+TABLE XII: Agent-level instability indicators across the 500-turn horizon.                
+
+> Agent Utility <−1(%) Drift-trigger (%) Heal-after-selection (%) GPT-5.3 0.2 0.2 0.2 Llama-3.1-70B 0.2 0.2 0.2 DeepSeek-R1 0.0 0.0 0.0
+
+by local compatibility with the validated context. DeepSeek-R1 has the least negative mean utility and the lowest utility variance, supporting its role as a conservative stabilizing con-tributor. Table XII reports instability indicators. Severe utility degradation and drift-triggered recovery occur only for GPT-5.3 and Llama-3.1-70B, with one event each across the 500-turn horizon. This corresponds to 0.2% per affected agent and 0.4% in total, matching the overall recovery frequency reported in Section V-A. DeepSeek-R1 shows no severe degradation, no drift-trigger event, and no post-selection recovery. These results suggest that risk exposure is associated with selection frequency and contextual coverage, rather than with inherent model unreliability. Selection confidence is summarized in Table XIII. Mean trust gaps remain below 0.05 for all agents, showing that GT-MCP often operates in a narrow decision band rather than selecting trivially dominant candidates. Stable win rates exceed 98% for all agents, confirming that selected outputs usually remain aligned with the validated context and do not require recovery. DeepSeek-R1 has the smallest mean trust gap but the highest stable win rate, reflecting conservative selection under highly stable conditions. Additionally, these results show that GT-MCP converts heterogeneous model behavior into coordinated context control. The controller does not merely choose the most fluent or most frequently agreeing model; it selects the response that best satisfies structural grounding, peer TABLE XIII: Selection confidence and stable-win behavior.             
+
+> Agent Mean Trust Gap Win Margin Stable Win (%) GPT-5.3 0.042 0.018 98.8 Llama-3.1-70B 0.039 0.017 98.6 DeepSeek-R1 0.028 0.011 99.4
+
+Fig. 7: Distribution of per-turn utility across the 500-turn GT-MCP evaluation. TABLE XIV: Global utility distribution statistics.       
+
+> Statistic Value Min -24.93 P05 -0.72 Median -0.19 P95 0.30 Max 0.78
+
+consistency, and candidate-specific drift constraints. Stability, therefore, emerges from controlled model diversity and trust-based regulation of context updates, rather than from reliance on a single dominant LLM. 
+
+C. Global Performance Distribution 
+
+We characterize long-horizon performance by analyzing the marginal distribution of per-turn utility across the full GT-MCP pipeline. In contrast to single-output evaluation, this analysis captures the cumulative effect of repeated trust-based selection, causal validation, candidate-specific drift control, and self-healing recovery over the 𝑇 = 500-turn evaluation horizon. Figure 7 shows that utility is strongly concentrated around a compact central range, with a median of −0.19 and a 90% interval from −0.72 to 0 .30. This concentration indicates that typical GT-MCP operation remains stable and predictable, even under adversarial exposure. The distribution is left-skewed because the only severe deviations occur in the harmful tail. As shown in Table XIV, the minimum utility reaches −24 .93, whereas the upper tail remains bounded with a maximum of 0 .78. This asymmetry is consistent with the drift analysis in Section V-A: severe utility degradation is not a persistent operating state, but a rare event associated with high contextual drift. The central utility mass remains compact, indicating that recovery events do not distort the controller’s dominant long-horizon behavior. Table XV confirms that tail risk is highly localized. Only two turns fall below each severe 16 
+
+TABLE XV: Tail risk indicators for severe utility degradation.               
+
+> Threshold Count Fraction (%) Utility <−120.4 Utility <−520.4 Utility <−10 20.4
+
+TABLE XVI: Utility dispersion indicators across the full evaluation horizon.      
+
+> Metric Value Variance 0.169 IQR 0.41 Skewness -3.8 Kurtosis 21.4
+
+utility threshold, corresponding to 0 .4% of the evaluation horizon. Because the same two events account for all thresholds below −1, −5, and −10, the results indicate isolated severe shocks rather than repeated moderate degradation. This is important for trajectory-level security: adversarial perturbations may create rare local failures, but they do not produce sustained deterioration of the validated context trajectory. The dispersion indicators in Table XVI further support this interpretation. The interquartile range is only 0 .41, showing that normal operation is tightly bound. The negative skewness reflects the rare harmful tail, while the elevated kurtosis indicates that extreme deviations are concentrated in a small number of observations rather than spread across the full interaction horizon. Thus, GT-MCP exhibits a stable central performance profile with sparse, recoverable tail events. Table XVII summarizes the distributional robustness interpretation without introducing un-supported placeholder statistics. The utility profile is dominated by a single compact central mass, central dispersion remains bounded, and severe tail events are limited to 0 .4% of turns. Together, these diagnostics show that GT-MCP maintains stable utility under normal operation while containing adversarially induced degradation to isolated events that do not reshape the long-horizon performance distribution. In addition, the global utility distribution demonstrates that GT-MCP produces a stable long-horizon performance profile. The controller keeps most turns within a compact utility band, while severe degradation is confined to two high-drift events that are handled by the recovery mechanism. This supports the central claim that GT-MCP stabilizes contextual reasoning not by eliminating every perturbation, but by preventing rare destabilizing events from becoming persistent context corruption. 
+
+D. Latency and Compute Efficiency 
+
+We evaluate whether the stability gains of GT-MCP are achieved with a predictable computational cost. Figure 8 shows the relationship between latency and per-turn utility across the 
+
+𝑇 = 500-turn evaluation horizon. Utility remains concentrated within the same compact band observed in Section V-C, while the latency-utility trend shows only a weak negative slope. This indicates that additional inference and controller processing do not amplify instability; instead, the closed-loop pipeline preserves validated context alignment across a wide range of TABLE XVII: Global distribution robustness diagnostics.                        
+
+> Diagnostic Observation Interpretation Central concentration Median =−0.19 , IQR =
+> 0.41
+> Stable typical behavior Tail localization Severe events =0.4% Rare isolated degradation Left-tail asymmetry Skewness =−3.8Harmful shocks are sparse Tail sharpness Kurtosis =21 .4Extremes are concentrated, not persis-tent Upper-tail bound P95 =0.30 , Max =0.78 Positive deviations remain limited
+
+Fig. 8: Latency–utility relationship across 500 interaction turns. Utility remains concentrated across latency levels, indicating that increased processing time does not substantially degrade the quality of selected output. 
+
+Fig. 9: Token usage versus median utility. latency values. Table XVIII summarizes latency-normalized indicators. Latency per token remains tightly concentrated, with a mean of 0 .00163 s and a standard deviation of 0 .00021 s. Utility per second remains close to zero, consistent with the earlier bounded utility distribution. Stability per second remains positive, suggesting that additional computation is primarily directed toward structural validation and agreement checking rather than unstable output expansion. Token-level scaling is shown in Figure 9. Median utility decreases mildly as token usage increases, but the curve flattens at higher token counts. This behavior is consistent with diminishing marginal utility rather than instability amplification. In other words, longer gen-erations do not lead to a proportional increase in contextual risk because the controller filters out unsupported claims before they can update persistent memory. Table XIX partitions token usage 17 
+
+TABLE XVIII: Latency-normalized efficiency indicators. 
+
+Metric Mean Median Std Latency per token 0.00163 0.00159 0.00021 Utility per second -0.0092 -0.0071 0.012 Stability per second 0.0041 0.0038 0.002 
+
+TABLE XIX: Token usage groups and associated performance indicators.                 
+
+> Category Fraction (%) Median Tokens Lower token usage 33.4 7,814 Moderate token usage 33.2 20,008 Higher token usage 33.4 32,019 Category Median Utility Latency (s) Lower token usage -0.01 31.4 Moderate token usage -0.19 32.2 Higher token usage -0.22 32.6
+
+into three approximately equal groups. Median utility shifts from 
+
+−0.01 in the lower-token group to −0.22 in the higher-token group, while latency increases only from 31 .4 s to 32 .6 s. The small utility shift and narrow latency range indicate predictable scaling: higher token usage slightly increases processing cost but does not introduce threshold-driven degradation. Normalized compute indicators in Table XX show that utility per token remains close to zero, whereas CCI and AGR per token remain positive and stable. This indicates that additional tokens contribute more to structural grounding and inter-agent agreement signals than to marginal utility gain. Moreover, this is desirable: increased reasoning depth strengthens validation evidence without materially widening the utility distribution. Table XXI summarizes the scaling interpretation without relying on placeholder statistical estimates. The observed relationship between token count and utility is weak, the marginal utility cost remains small, and latency does not independently drive degradation after accounting for token usage. These results indicate that GT-MCP scales predictably: additional compu-tation increases validation depth while preserving structural consistency and bounded utility dispersion. Furthermore, GT-MCP maintains predictable compute–performance behavior. Longer outputs and higher latency introduce mild efficiency costs, but they do not destabilize the reasoning trajectory. The controller converts additional computation into causal validation and inter-agent consistency checks, preventing token growth from becoming a channel for cumulative contextual drift. 
+
+E. Reasoning Structure and Manifold Properties 
+
+We next examine whether GT-MCP merely filters unsafe outputs or whether it shapes the structure of the reasoning space itself. The controller evaluates each selected response through causal consistency, cross-agent agreement, and candidate-specific drift. As a result, accepted outputs are expected to occupy a constrained region of the semantic space where claims are structurally grounded and mutually coherent. Figure 10 shows the joint distribution of CCI and AGR. The points concentrate within a narrow band rather than spreading across the full CCI-AGR plane. This indicates that GT-MCP does TABLE XX: Normalized compute efficiency indicators. 
+
+Metric Mean Median Std Utility per token −1.4×10 −5 −9.1×10 −6 2.3×10 −5
+
+CCI per token 5.1×10 −6 4.7×10 −6 1.2×10 −6
+
+AGR per token 2.1×10 −5 2.0×10 −5 3.2×10 −6
+
+TABLE XXI: Efficiency scaling diagnostics.           
+
+> Diagnostic Observation Interpretation Token–utility association Weak negative trend No strong monotonic degradation Marginal utility cost Small across token groups Bounded cost of longer outputs Latency effect Near-flat latency–utility curve Runtime alone does not drive failure Validation density Positive CCI/token and AGR/token Extra tokens support verification signals Scaling behavior Smooth across token groups No threshold-driven collapse
+
+Fig. 10: Empirical reasoning space defined by causal consistency and cross-agent agreement. not accept arbitrary fluent outputs; instead, it favors responses that satisfy both graph-based support and inter-agent semantic compatibility. In this sense, the controller induces a structured reasoning manifold: a restricted subset of candidate responses that remain compatible with the validated context trajectory. Table XXII quantifies this structure. CCI and AGR remain bound with moderate dispersion across the full evaluation horizon. The trust score has a negative mean because it incorporates drift penalties and serves as a relative selection potential rather than an absolute measure of correctness. Therefore, its value should be interpreted comparatively across candidates at each turn, not as a standalone quality measure. The bounded dispersion of CCI and AGR supports the observation that GT-MCP repeatedly selects outputs from a stable structural region of the reasoning space. Figure 11 links this structural organization to performance. Utility increases as manifold alignment improves, showing that responses closer to the structurally grounded re-gion tend to produce better outcomes. Low-alignment responses are associated with negative utility, whereas higher-alignment responses compress outcomes toward neutral or positive values. This pattern indicates that the manifold is not only a geometric artifact of the scoring function; it is predictive of downstream utility. Table XXIII reports percentile-level structural stability. The 95th percentile values of CCI and AGR remain bounded, and the trust score increases smoothly across percentiles. This suggests that GT-MCP performs continuous trust-weighted selection rather than abrupt threshold-based switching. The controller, therefore, stabilizes reasoning by gradually favoring 18 
+
+TABLE XXII: Structural reasoning metrics across all interaction turns.             
+
+> Metric Mean Median Std CCI 0.098 0.091 0.052 AGR 0.419 0.420 0.062 Trust -0.294 -0.187 0.411
+
+Fig. 11: Manifold alignment score versus utility. TABLE XXIII: Percentile-level stability of structural reasoning indicators.             
+
+> Metric 50th percentile 75th percentile 95th percentile CCI 0.091 0.135 0.198 AGR 0.420 0.470 0.502 Trust -0.187 0.050 0.320
+
+TABLE XXIV: Manifold-utility coupling diagnostics.            
+
+> Metric Estimate Spearman 𝜌 (manifold, utility) 0.82 Theil–Sen slope 0.47 Cliff’s 𝛿 (low vs high bins) 0.68 Interpretation Purpose Strong monotonic association Alignment–utility coupling Positive robust slope Marginal utility gain Large practical separation Low vs. high alignment effect
+
+candidates that are more structurally supported, more seman-tically consistent, and less likely to destabilize the validated context. Table XXIV further quantifies the relationship between manifold alignment and utility. The Spearman correlation of 0.82 indicates monotonic coupling, while the Theil-Sen slope of 0 .47 shows a positive robust trend even under heavy-tailed utility behavior. Cliff’s 𝛿 = 0.68 indicates a substantial separation between low- and high-alignment outputs. Together, these diagnostics show that alignment with the structural rea-soning manifold is strongly associated with improved controller outcomes. Moreover, these results show that GT-MCP shapes the reasoning process into a constrained structural subspace rather than simply filtering individual outputs. Responses aligned with this subspace achieve higher utility, while responses farther from it are penalized through lower trust and increased drift risk. This supports the trajectory-level interpretation of GT-MCP: stability arises from maintaining reasoning within validated structural bounds, not merely from rejecting isolated unsafe generations. TABLE XXV: Game-theoretic outcomes under benign and adversarial exposure.                              
+
+> Condition Fraction (%) NMean 𝑈 𝐷 Mean 𝑈 𝐴
+> No attack 65.6 328 -12.09 –Attack 34.4 172 -11.78 0.001 Condition Utility Heal (%) Drift >0(%) Rollback No attack -0.16 0.00 0.00 0.000 Attack -0.56 1.16 1.16 0.023
+
+TABLE XXVI: Strategic selection and stability indicators.                
+
+> Metric Mean Median Std Utility gap (selected vs. alternative) 0.021 0.014 0.019 Trust margin 0.038 0.031 0.024 Injection success rate 0.000 0.000 0.000 Fallback rate 0.000 0.000 0.000
+
+F. Game-Theoretic Outcomes 
+
+We evaluate whether the trust-based controller changes the strategic payoff of adversarial perturbation. In GT-MCP, the controller commits to a selection policy based on causal consis-tency, cross-agent agreement, and candidate-specific contextual drift, while the attacker attempts to induce selected outputs that corrupt the validated context. The key question is therefore not only whether attacks reduce utility but also whether they create a persistent advantage for the attacker over the interaction horizon. Table XXV summarizes outcomes under benign and adversarial exposure. The evaluation contains 328 benign turns and 172 adversarial turns, matching the exposure schedule defined in Section IV. Adversarial turns show lower mean utility than benign turns ( −0.56 versus −0.16), indicating that attacks increase local difficulty. However, the attacker’s payoff remains near zero, and the two recovery-triggering drift events are isolated within the adversarial subset. Thus, adversarial perturbations can cause rare local shocks but do not produce persistent controller-level compromise. The strategic stability of the controller is further reflected in Table XXVI. The utility gap between the selected response and the closest alternative remains small, with a mean trust margin of only 0 .038. This indicates that GT-MCP does not operate through a dominant-agent strategy; instead, it performs fine-grained selection over closely competing candidates. Despite this narrow decision band, the injection success rate remains zero, showing that small trust margins do not translate into successful adversarial takeover. The fallback rate is also zero, indicating that stability is achieved through continuous trust-based control rather than emergency rejection. Table XXVII summarizes the distribution-level in-terpretation without using unsupported placeholder statistics. The benign and adversarial utility distributions differ primarily in localized tail degradation rather than in broad distributional displacement. Attacker profitability remains negligible because successful long-horizon manipulation requires simultaneous evasion of structural grounding, peer-agreement checks, and candidate-specific drift control. This supports the incentive-alignment interpretation of GT-MCP: adversarial perturbations may increase local cost, but they do not create a systematic payoff advantage. Component isolation results in Table XXVIII 19 
+
+TABLE XXVII: Strategic distribution diagnostics.               
+
+> Diagnostic Observation Interpretation Benign vs. attack utility Attack utility lower, but bounded Local difficulty increases under attack Attacker payoff Mean 𝑈 𝐴 =0.001 under attack No systematic adversarial gain Injection success ISR =0.0% No controller-level compromise observed Recovery localization 2 events among 172 attack turns Rare drift shocks are contained Distributional shift No broad displacement observed Stability remains trajectory-level
+
+TABLE XXVIII: Component isolation analysis under identical adversarial exposure ( 𝑇 = 500).                                        
+
+> Variant ISR (%) Drift >0(%) Mean CDS No-Causal Consistency 3.8 7.4 1.18 No-Agreement Score 2.9 6.1 0.97 No-CDS 4.5 12.8 2.07 No-Heal 1.6 3.2 0.61
+> Full GT-MCP 0.0 0.4 0.11
+> Variant Std CDS ES 5% Mean Utility No-Causal Consistency 2.41 -2.94 -0.91 No-Agreement Score 2.08 -2.61 -0.78 No-CDS 3.84 -5.12 -1.47 No-Heal 1.12 -1.84 -0.41
+> Full GT-MCP 0.90 -0.72 -0.19
+
+show that the strategic stability of GT-MCP depends on the joint action of its control components. Removing candidate-specific drift monitoring causes the largest degradation, increasing mean CDS to 2 .07 and ISR to 4 .5%. Removing causal consistency also substantially increases adversarial success, confirming that structural grounding is essential for suppressing unsupported claims. Removing agreement weakens protection against unre-liable or compromised generations, while disabling self-healing mainly increases residual drift and tail risk. The full GT-MCP pipeline achieves zero observed injection success, the lowest mean CDS, and the best mean utility. Table XXIX positions GT-MCP relative to representative prompt-injection defenses. Existing methods mainly address local instruction separation, prompt filtering, inference-time verification, or benchmark-level agent evaluation. These mechanisms are valuable, but they generally do not combine multi-agent selection, causal graph grounding, drift-aware trajectory control, rollback, and incentive modeling in a single closed-loop controller. GT-MCP differs in that it regulates whether selected outputs are allowed to update the persistent context, thereby directly targeting the state-transition mechanism exploited by long-horizon context poisoning. Overall, the game-theoretic results show that GT-MCP reshapes the adversarial payoff landscape. Attacks increase local difficulty and can produce rare, high-drift events, but they do not cause persistent context corruption. Stability arises from the joint effect of structural penalties, cross-agent consistency, candidate-specific drift monitoring, and recovery. In this sense, GT-MCP acts not only as a response selector but as a strategic regulator of long-horizon context evolution. 
+
+G. Baseline Comparison and Comparative Robustness Evalu-ation 
+
+We compare GT-MCP against representative LLM defense and orchestration baselines under the same 𝑇 = 500-turn adversarial evaluation protocol. The baselines include a single-agent LLM, majority voting across agents, prompt filtering, TABLE XXIX: Functional comparison between GT-MCP and representative prompt-injection defenses.                                                       
+
+> Method Multi-Agent Causal Graph Drift Monitoring StruQ [11] No No No Spotlighting [24] No No No Task Shield [25] Yes No Partial SecInfer [26] No No Partial AgentDojo [17] Yes No No Multi-Agent Defense Pipeline [27] Yes Partial Partial Survey Analysis [28] No No No
+> GT-MCP (Ours) Yes Yes Yes Method Rollback Trajectory Control Incentive Modeling StruQ [11] No No No Spotlighting [24] No No No Task Shield [25] No Partial No SecInfer [26] No Partial No AgentDojo [17] No No No Multi-Agent Defense Pipeline [27] Partial Partial No Survey Analysis [28] No No No
+> GT-MCP (Ours) Yes Yes Yes
+
+and a retrieval-oriented defense. We also include ablated GT-MCP variants to show how partial removal of core mechanisms affects robustness. All methods are evaluated under the same interaction horizon, attack families, and contextual perturbation structure defined in Section IV. Table XXX shows that local defenses reduce immediate injection success compared with the single-agent baseline, but they remain vulnerable to contextual drift because they do not regulate how accepted outputs update persistent memory. Majority voting improves stability relative to the single-agent setting, yet it still allows agreement-based failures when semantically similar responses share unsupported assumptions. Prompt filtering and retrieval-oriented defense further reduce injection success, but they primarily operate before or during candidate generation and therefore provide limited control over long-horizon context evolution. Full GT-MCP achieves the strongest robustness profile, with zero ob-served controller-level injection success, the lowest mean drift, and the highest stable-turn percentage. This improvement comes with a moderate computational overhead, as per-token latency increases relative to simpler baselines. However, the additional cost supports causal graph validation, candidate-specific drift estimation, trust aggregation, and self-healing. The ablated variants confirm that both structural grounding and recovery are necessary: removing causal consistency substantially increases injection success and drift, while disabling self-healing reduces the controller’s ability to contain residual tail events. Overall, the comparison shows that GT-MCP improves robustness not by filtering prompts alone, but by controlling whether selected outputs are allowed to alter the validated context trajectory. 
+
+H. Real-World MCP Ecosystem Analysis 
+
+To contextualize the applicability of GT-MCP, we analyze rep-resentative agentic LLM ecosystems in which persistent context, tool outputs, retrieval modules, and multi-agent communication can create trajectory-level attack surfaces. This analysis is not intended as a vulnerability audit of specific implementations; rather, it identifies common architectural patterns through which untrusted information can enter the reasoning loop and later influence persistent context updates. Table XXXI shows that 20 
+
+TABLE XXX: Comparative robustness evaluation under adaptive adversarial interaction. Lower values are better for injection success, drift, utility degradation, and latency; higher values are better for stable turns.                                                               
+
+> Method Injection Success (%) Mean Drift Utility Recovery Trigger (%) Stable Turns (%) Latency / token (s)
+> Single-Agent LLM 17.8 8.91 -3.84 –71.6 7.9×10 −4
+> Majority Voting 9.6 5.37 -2.21 –84.4 1.18 ×10 −3
+> Prompt Filtering 7.4 4.82 -1.96 –86.8 9.6×10 −4
+> RAG Defense 5.8 3.77 -1.41 –90.2 1.05 ×10 −3
+> GT-MCP (No-Heal) 1.6 0.61 -0.41 –96.8 1.49 ×10 −3
+> GT-MCP (No-CCI) 3.8 1.18 -0.91 1.8 92.6 1.55 ×10 −3
+> Full GT-MCP 0.0 0.11 -0.19 0.4 99.6 1.63 ×10 −3
+
+TABLE XXXI: Representative agentic LLM orchestration ecosystems and their trajectory-level context-control risks.                    
+
+> Framework Primary Capability Representative Risk Surface Trajectory-Level Risk
+> LangChain Tool-integrated chained reasoning Tool-output injection and memory contamination Progressive contextual poison-ing AutoGen Multi-agent conversational orches-tration Agent-agreement manipulation Consensus hijacking CrewAI Persistent collaborative task agents Shared-memory contamination Long-horizon semantic drift RAG Pipelines Retrieval-augmented reasoning Poisoned retrieved evidence Delayed contextual steering OpenAI Agent Systems Persistent tool-based execution Instruction persistence across turns Hidden policy override Toolformer-style systems Autonomous API interaction API-response manipulation Tool-authority escalation
+
+many agentic LLM ecosystems share a common structural weakness: untrusted content can enter through retrieval, tools, shared memory, or inter-agent messages, and may later influence future reasoning if accepted into persistent context. These risks are trajectory-level rather than purely prompt-level, because the main failure pathway is not only the immediate generation of an unsafe response but the gradual incorporation of unsupported fragments into the state that conditions later outputs. GT-MCP addresses this class of risk by regulating context updates through causal graph validation, candidate-specific drift monitoring, trust-based selection, and rollback-based recovery. Therefore, its main relevance to real-world MCP-style ecosystems is as a context-control layer that governs whether generated, retrieved, or tool-derived content may become persistent memory. 
+
+I. Extended Adversarial Attack Taxonomy 
+
+To evaluate GT-MCP under realistic trajectory-level threats, we include attack families that differ in injection surface, timing, and adversarial objective. Unlike single-turn jailbreaks, these attacks are designed to test whether unsupported or malicious fragments can persist across context updates and gradually influence future reasoning. Table XXXII summarizes the adversarial patterns used during evaluation. The attack schedule is randomized across the 500-turn evaluation horizon, while perturbations are constrained to remain locally plausible under the bounded anomaly condition 𝜓 (Δ𝑐 𝑡 ) ≤ 𝜖 . This design evaluates subtle context-poisoning behavior rather than only explicit jailbreak attempts. The taxonomy complements the threat model by illustrating how adversarial perturbations enter the interaction loop and attempt to influence the persistent context via selected outputs. 
+
+J. Benchmark-Based Adversarial Evaluation 
+
+To improve external validity, the adversarial portion of the evaluation is organized according to benchmark-inspired attack styles commonly used in prompt-injection and agent-security research. These include PromptInject-style direct instruction override, PoisonedRAG-style retrieval poisoning, AgentDojo-style tool and agent interaction attacks, delayed-trigger attacks, and agreement-mimicry attacks. The goal is not to reproduce each benchmark verbatim, but to align the evaluation with their dominant threat patterns while preserving the closed-loop GT-MCP setting. As shown in Table XXXIII, the two high-drift events occur under direct prompt injection and retrieval poisoning, which are the most immediate pathways for inserting adversarial instructions into the observed context. No high-drift event is observed for AgentDojo-style tool interaction, delayed-trigger, or agreement-mimicry patterns under the evaluated schedule. Both high-drift events are recovered by the self-healing layer, and neither results in a persistent controller-level compromise. These results support the trajectory-level robust-ness of GT-MCP: benchmark-inspired attacks may introduce localized instability, but they do not persist as validated context updates. 
+
+K. Failure Cases and Residual Vulnerabilities 
+
+Although GT-MCP prevents persistent controller-level com-promise in the evaluated setting, the two high-drift events reveal residual vulnerability patterns that remain important to address in deployment. Table XXXIV summarizes these cases. Both observed failures are localized and recovered by the self-healing layer, and neither results in persistent memory corruption. This indicates that GT-MCP does not eliminate all adversarial perturbations at the point of entry; rather, it prevents destabilizing fragments from becoming durable components of the validated context. The retrieval poisoning case corresponds to adversarial evidence that remained semantically close to the task while introducing unsupported claims. The semantic paraphrase drift case reflects a subtler perturbation in which the adversarial fragment did not appear as an explicit instruction, but shifted the framing of the response through paraphrased 21 
+
+TABLE XXXII: Extended adversarial attack taxonomy used to evaluate trajectory-level context robustness.                           
+
+> Attack Family Injection Surface Temporal Pattern Representative Objective
+> Direct Prompt Injection User query stream Immediate Override controller constraints and induce unsafe generation Indirect Retrieval Poison-ing Retrieved evidence Delayed Insert hidden instructions within semantically relevant documents Tool-Output Manipulation API/tool responses Immediate Escalate authority through fabricated tool outputs Dormant Trigger Injection Any contextual source Multi-turn latent Activate adversarial instructions after delayed interaction depth Trajectory Steering Persistent context memory Gradual Slowly shift constraints, objectives, and se-mantic framing Agreement Mimicry Byzantine agent output Multi-turn Imitate peer agreement while injecting unsup-ported claims Semantic Drift Amplifica-tion Cross-turn summarization Progressive Increase divergence from the validated rea-soning trajectory
+
+TABLE XXXIII: Benchmark-inspired adversarial evaluation across the 172 attack turns.               
+
+> Benchmark Style Attack Turns High-Drift Events
+> PromptInject-style 42 1PoisonedRAG-style 48 1AgentDojo-style 34 0Delayed Trigger 24 0Agreement Mimicry 24 0Total 172 2
+
+TABLE XXXIV: Residual vulnerability patterns observed during adversarial evaluation.             
+
+> Failure Pattern Occurrences Recovered
+> Retrieval poisoning chain 1Yes Semantic paraphrase drift 1Yes Consensus mimicry 0–Delayed trigger activation 0–Persistent memory corruption 0–
+
+content. In both cases, the controller detected abnormal drift after a tentative update and activated rollback and quarantine. These results suggest that future work should focus on stronger semantic-collusion attacks, uncertainty-aware claim extraction, and scalable paraphrase verification. 
+
+VI. Discussion 
+
+The results show that the main contribution of GT-MCP is not limited to improving the quality of isolated responses; rather, it stabilizes the evolution of reasoning across multi-turn interactions. This distinction is central to persistent-context LLM systems, where adversarial fragments can become harmful not only when they produce an immediate unsafe output, but also when they are retained in memory and later reused as part of the reasoning state. By treating context evolution as a controlled trajectory, GT-MCP shifts the defense objective from local prompt filtering to long-horizon regulation of state transitions. The stability results demonstrate that the controller keeps almost all selected outputs close to the validated context trajectory. Contextual drift remains near zero for 99.6% of turns, while the two high-drift events are isolated and recovered before they can persist. This behavior indicates that causal grounding and candidate-specific drift monitoring act together as a trajectory-stabilization mechanism. Unsupported fragments may enter the observed context, but they do not automatically become part of the validated state. Instead, they must pass structural, semantic, and temporal checks before they can influence future turns. The manifold analysis further clarifies how GT-MCP shapes reasoning behavior. Selected outputs concentrate within a constrained region defined by causal consistency and cross-agent agreement. This suggests that the controller not only rejects unsafe outputs but also biases selection toward structurally grounded, semantically coherent responses that are consistent with the validated context. The positive association between manifold alignment and utility supports this interpretation: responses closer to the structural reasoning subspace produce better outcomes, whereas responses farther from it incur lower trust and higher drift risk. At the agent level, robustness arises from controlled heterogeneity rather than from dependence on a single dominant model. GPT-5.3, Llama-3.1-70B, and DeepSeek-R1 contribute different utility, trust, and stability profiles. GT-MCP converts these differences into a selection advantage by evaluating each candidate relative to the current context state. As a result, agent diversity becomes useful only when mediated by causal validation and drift-aware trust aggregation. This is important because simple voting can amplify shared errors or agreement mimicry, whereas GT-MCP requires agreement to be supported by a validated graph structure. The game-theoretic results indicate that GT-MCP reduces the strategic value of adversarial perturbation. Attacks increase local difficulty and produce rare, high-drift events, but they do not yield persistent controller-level compromise or a positive adversarial payoff in the evaluated setting. This outcome is consistent with the incentive-alignment design: an adversarial response must simultaneously appear structurally grounded, agree with peer agents, and avoid inducing excessive contextual drift. Failing any of these conditions lowers its trust score or activates recovery. Thus, the controller reshapes the payoff landscape by making unsupported deviations less likely to be selected and to persist. The efficiency results show that these robustness gains are achieved with predictable computational overhead. Latency per token remains tightly bounded, and increased token usage does not produce threshold-driven degra-dation. Additional computation primarily contributes to claim extraction, causal validation, agreement estimation, and drift 22 
+
+monitoring. This suggests that GT-MCP scales by increasing verification depth rather than by amplifying contextual noise. For deployment, this trade-off is important: the controller incurs moderate overhead, but the added computation directly supports stability of the persistent reasoning state. Additionally, the findings support the view that prompt injection in agentic and persistent-context LLM systems should be treated as a trajectory-control problem. GT-MCP addresses this problem by combining causal graph grounding, candidate-specific drift monitoring, trust-weighted multi-agent selection, and rollback-based self-healing. The resulting system does not rely on any sin-gle defense layer; its robustness emerges from the interaction of structural validation, temporal stability, and strategic selection. This makes GT-MCP a suitable control layer for adversarially aware multi-agent LLM systems in which maintaining the integrity of evolving context is as important as generating safe individual responses. 
+
+VII. Limitations and Future Directions 
+
+Although our experiments demonstrate bounded contextual drift, stable reasoning manifolds, and incentive-aligned multi-agent interaction under the evaluated configuration, several limitations remain. First, the studies employ a fixed set of LLM agents and architectures; broader model heterogeneity, including multimodal and domain-specialized systems, may alter the geometry of the reasoning manifold and the efficacy of trust-weighted selection. Second, structural grounding and cross-agent agreement serve as operational proxies for reasoning validity and do not guarantee epistemic correctness when the validated context is incomplete and noisy, highlighting the need for external verification signals, causal auditing, and uncertainty calibration. Third, the threat model assumes contextual perturbations with at most one compromised agent; more aggressive adversarial scenarios, including coordinated multi-agent compromise and agreement mimicry, require fur-ther investigation. Fourth, evaluation is performed over finite interaction horizons, and long-term deployments may reveal slower drift accumulation and novel trajectory instabilities not captured in bounded experiments. Additionally, GT-MCP incurs computational overhead due to claim extraction, causal graph maintenance, and trust computation. Future research will focus on developing more efficient validation mechanisms, theoretical guarantees of convergence, and scalable deployment strategies, with the aim of formalizing context control as a principled and practical layer for secure, multi-agent LLM systems. 
+
+VIII. Conclusion 
+
+In this work, we introduced GT-MCP, a game-theoretic con-text control mechanism for securing multi-agent LLM reasoning against prompt injection and context poisoning attacks. Unlike filtering-based defenses that operate mainly at the input or output level, GT-MCP regulates how selected responses update persis-tent context. It combines causal graph grounding, cross-agent agreement, candidate-specific drift monitoring, trust-weighted selection, and rollback-based self-healing to stabilize reasoning trajectories over multiple turns. The empirical results show that GT-MCP maintains bounded contextual drift, confines reason-ing to a structurally grounded subspace, leverages heterogeneous LLM agents without relying on a single dominant model, limits adversarial payoff, and scales predictably with token usage and latency. Across the evaluated 500-turn adversarial setting, the controller prevents observed controller-level injection success while containing rare high-drift events through recovery. These findings support the view that prompt injection in persistent-context and agentic LLM systems should be treated as a trajectory-control problem rather than only a single-turn filtering problem. By embedding structural validation, temporal stability, and incentive-aware selection into the interaction layer, GT-MCP provides a practical foundation for robust and secure context management in multi-agent LLM architectures. 
+
+References                                                                            
+
+> [1] H. Naveed, A. U. Khan, S. Qiu, M. Saqib, S. Anwar, M. Usman, N. Akhtar, N. Barnes, and A. Mian, “A comprehensive overview of large language models,” ACM Transactions on Intelligent Systems and Technology , vol. 16, no. 5, pp. 1–72, 2025. [2] J. Chen, Z. Liu, X. Huang, C. Wu, Q. Liu, G. Jiang, Y. Pu, Y. Lei, X. Chen, X. Wang et al. , “When large language models meet personalization: Perspectives of challenges and opportunities,” World wide web , vol. 27, no. 4, p. 42, 2024. [3] Z.-Z. Li, D. Zhang, M.-L. Zhang, J. Zhang, Z. Liu, Y. Yao, H. Xu, J. Zheng, P.-J. Wang, X. Chen et al. , “From system 1 to system 2: A survey of reasoning large language models,” arXiv preprint arXiv:2502.17419 ,2025. [4] X. Hou, Y. Zhao, and H. Wang, “Llm applications: Current paradigms and the next frontier,” arXiv preprint arXiv:2503.04596 , 2025. [5] P. P. Ray, “A survey on model context protocol: Architecture, state-of-the-art, challenges and future directions,” Authorea Preprints , 2025. [6] D. C. Asimopoulos, P. Radoglou-Grammatikis, G. T. Papadopoulos, and P. Sarigiannidis, “Beyond vulnerabilities: A comprehensive survey of adversarial attacks across domains.” [7] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and benchmarking prompt injection attacks and defenses,” in USENIX Security Symposium , 2024. [8] T. Geng, Z. Xu, and Y. Qu, “Prompt injection attacks on large language models: A survey of attack methods and defense strategies,” Computers, Materials & Continua , vol. 87, no. 1, pp. 1–10, 2025. [9] M. A. Ferrag et al. , “From prompt injections to protocol exploits: Threats in retrieval-augmented and llm-agent systems,” arXiv preprint arXiv:2502.XXXX , 2025. [10] T. Jiang, Y. Wang, J. Liang, and T. Wang, “Agentlab: Benchmarking llm agents against long-horizon attacks,” Technical Report , 2025. [11] S. Chen, J. Piet, C. Sitawarin, and D. Wagner, “Struq: Defending against prompt injection with structured queries,” in USENIX Security Symposium , 2025. [12] X. Hou, Y. Zhao, S. Wang, and H. Wang, “Model context protocol (mcp): Landscape, security threats, and future research directions,” ACM Transactions on Software Engineering and Methodology , 2025. [13] S. Sasal et al. , “Prompt injection attacks in large language models and their defense mechanisms,” in Proceedings of the 17th International Joint Conference on Knowledge Discovery, Knowledge Engineering and Knowledge Management (IC3K) , 2025. [14] A. Zou et al. , “Universal and transferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 , 2023. [Online]. Available: https://arxiv.org/abs/2307.15043 [15] Y. Liu et al. ,“Benchmarking and defending against indirect prompt injection attacks on large language models,” arXiv preprint arXiv:2312.14197 , 2023. [Online]. Available: https://arxiv.org/abs/2312. 14197 [16] W. Shi et al. ,“Poisonedrag: Knowledge corruption attacks to retrieval-augmented generation of large language models,” arXiv preprint arXiv:2402.07867 , 2024. [Online]. Available: https://arxiv.org/abs/2402. 07867 [17] F. Debenedetti et al. ,“Agentdojo: Adynamic environment to evaluate prompt injection attacks and defenses for llm agents,”
+> arXiv preprint arXiv:2406.13352 ,2024. [Online]. Available: https: //arxiv.org/abs/2406.13352 23
+
+[18] X. Liu et al. , “Targeting the core: Understanding attacks on retrieval-augmented agents,” arXiv preprint arXiv:2412.04415 , 2024. [Online]. Available: https://arxiv.org/abs/2412.04415 [19] J. Wei et al. , “Defending against indirect prompt injection attacks with spotlighting,” arXiv preprint arXiv:2403.14720 , 2024. [Online]. Available: https://arxiv.org/abs/2403.14720 [20] S. Williams et al. , “Defeating prompt injections by design,” 
+
+arXiv preprint arXiv:2503.18813 , 2025. [Online]. Available: https: //arxiv.org/abs/2503.18813 [21] J. Schutera et al. , “Defending against indirect prompt injection by instruction isolation,” arXiv preprint arXiv:2505.06311 , 2025. [Online]. Available: https://arxiv.org/abs/2505.06311 [22] L. Beurer-Kellner et al. , “Design patterns for securing llm applications against prompt injections,” arXiv preprint arXiv:2506.08837 , 2025. [Online]. Available: https://arxiv.org/abs/2506.08837 [23] A. ˙ Zychowski, A. Gupta, Y.-S. Ong, and J. Ma´ ndziuk, “Scalability via sparsity in stackelberg security games: An augmented decision space approach,” ACM Transactions on Evolutionary Learning , 2026. [24] K. Hines, G. Lopez, M. Hall, and E. Kiciman, “Defending against indirect prompt injection attacks with spotlighting,” arXiv preprint arXiv:2403.14720 , 2024. [25] F. Jia, T. Wu, X. Qin, and A. Squicciarini, “The task shield: Enforcing task alignment to defend against indirect prompt injection in llm agents,” 
+
+arXiv preprint arXiv:2412.16682 , 2024. [26] Y. Liu, Y. Wang, Y. Jia, and N. Z. Gong, “Secinfer: Preventing prompt injection via inference-time scaling,” arXiv preprint arXiv:2509.24967 ,2025. [27] S. M. A. Hossain, R. K. Shayoni, M. R. Ameen et al. , “A multi-agent llm defense pipeline against prompt injection attacks,” arXiv preprint arXiv:2509.14285 , 2025. [28] P. H. B. Correia, R. W. Achjian, D. E. G. Caetano de Oliveira et al. , “A systematic literature review on llm defenses against prompt injection and jailbreaking,” arXiv preprint arXiv:2601.22240 , 2026.

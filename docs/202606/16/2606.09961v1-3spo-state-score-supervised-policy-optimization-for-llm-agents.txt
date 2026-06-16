@@ -1,0 +1,1269 @@
+Title: 3SPO: State-Score-Supervised Policy Optimization for LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.09961v1
+
+Published Time: Wed, 10 Jun 2026 00:04:31 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# 3SPO: State-Score-Supervised Policy Optimization for LLM Agents 
+
+Yu Han ∗1, Kailing Li ∗1, Yang Jiao 2, Yulin Dai 1,Yuqian Fu 3, Linhai Zhuo 4, Tianwen Qian †11School of Computer Science and Technology, East China Normal University 
+
+> 2
+
+Fudan University, 3KAUST, 4Fuzhou University 
+
+10245102432@stu.ecnu.edu.cn, twqian@cs.ecnu.edu.cn 
+
+## Abstract 
+
+Training large language models (LLMs) as autonomous agents via reinforcement learning (RL) has enabled frontier models to achieve superhuman performance in long-horizon tasks. However, existing RL algorithms operate at the trajectory level, performing policy optimization only after collecting complete episode rollouts. This coarse-grained approach faces fundamental challenges in multi-turn agent settings where rewards are sparse, delayed, and credit assignment across individual steps is critical. In this work, we propose State-Score-Supervised Policy Opti-mization (3SPO) , a novel RL algorithm that performs post-step policy optimization with dynamic state score supervision. At each step, 3SPO computes the state score based on historical success rates, supervising step-wise credit assignment, adaptive rollout and post-step policy optimization without requiring value function estima-tion or additional auxiliary models. Theoretically, under a per-state bandit abstrac-tion, we show that the proposed score-supervised allocation mechanism achieves logarithmic allocation regret and provide sample-complexity guarantees for action identification, score distinguishability, and filtering stability. Experiments on ALF-World and WebShop with Qwen2.5-1.5B/7B-Instruct show that 3SPO consistently outperforms GRPO by +22 .6% on ALFWorld and +15 .6 points on WebShop, while using comparable resources to achieve 2.4× more state exploration and 1.8×
+
+faster convergence. Code is available at https://github.com/genalyu/3SPO .
+
+## 1 Introduction 
+
+Large language models (LLMs) Achiam et al. [2023], Team et al. [2023], Yang et al. [2024], Guo et al. [2025] have demonstrated remarkable capabilities as autonomous agents across diverse interactive environments. In embodied task planning Shridhar et al. [2020], agents navigate household spaces and complete multi-step goals; in web interaction Yao et al. [2022a], they browse, filter, and purchase items matching complex queries; in code generation Roziere et al. [2023], they synthesize programs from natural-language specifications. In these multi-turn settings, agents must perceive states, reason over history, and perform long-horizon planning and decision. Group-based reinforcement learning has emerged as a primary approach for training LLM agents through environment interaction. Critic-free methods such as GRPO Shao et al. [2024], RLOO Ah-madian et al. [2024], and their variants Hu [2025], Yu et al. [2025] compute relative advantages within groups of rollouts, avoiding the memory overhead and estimation errors of learned value functions. However, when applied to long-horizon agent tasks, these methods typically operate at the trajectory level: a single episode-level return is assigned to all actions in a rollout, regardless 
+
+> ∗These authors contributed equally to this work.
+> †Corresponding author. Preprint.
+> arXiv:2606.09961v1 [cs.LG] 8 Jun 2026
+
+Figure 1: Comparison of multi-turn LLM agent training. Left : Rollout of GRPO is a group of trajectories. Middle : GiGPO introduces state-level grouping but still performs post-trajectory policy optimization. Right : 3SPO computes a continuous state score from historical interaction statistics that simultaneously supervises step-wise credit assignment and adaptive rollout allocation, enabling post-step policy optimization. of their individual contribution. This uniform advantage signal obscures fine-grained distinctions across episodes spanning dozens of steps, while sparse terminal rewards provide little guidance on whether intermediate decisions make progress or lead the agent into failure modes. Recent attempts address this issue through experience replay Lu et al. [2025a], semi-online RL Lu et al. [2025b], self-refinement loops Madaan et al. [2023], or step-wise credit assignment methods such as GiGPO Feng et al. [2025] and HGPO Jiang et al. [2025]. While these approaches recover more informative training signals than trajectory-level baselines, they either require domain-specific engineering or still defer policy updates until complete trajectories are collected. As a result, incorrect intermediate decisions may propagate through subsequent steps before the policy receives any corrective signal, making optimization inefficient and unstable in multi-turn agent environments. A key observation is that, in multi-turn agent tasks, environment states are not merely transient contexts but reusable decision points whose historical outcomes reveal how well the current policy has mastered the task. States that frequently lead to successful completion are likely mastered, whereas states with low but non-zero success probability often indicate learnable bottlenecks where exploration are most needed. This motivates using state interaction statistics as an online proxy for task completion status and learning potential, enabling step-wise credit assignment and training. To instantiate this idea, we propose State-Score-Supervised Policy Optimization (3SPO) , a novel RL algorithm that performs step-wise credit assignment, adaptive rollout and post-step policy optimization with dynamic state-score-supervision. The state score measures how unresolved a state remains under the current policy: states with high historical success rates receive lower scores because they are likely mastered, whereas states with low but still recoverable success rates receive higher scores because they expose difficult yet learnable bottlenecks. In this sense, S(st) converts sparse trajectory-level outcomes into an online step-level training signal. As illustrated in Fig. 1, 3SPO simultaneously: (i) governs adaptive rollout allocation, concentrating computation on unresolved states; and (ii) enables post-step policy optimization with a composite reward that balances exploration, credit assignment, and task performance. Both components arise naturally from different uses of the state score. Specifically, the score difference S(st) − S(st+1 ) provides transition-level credit, the magnitude of S(st) determines sampling priority, and the online availability of the score enables policy updates immediately after each step rather than after trajectory completion. We provide both theoretical and empirical validation of 3SPO. Theoretically, we analyze 3SPO under a per-state bandit abstraction and establish convergence guarantees for the state score mechanism. Empirically, we evaluate 3SPO on ALFWorld and WebShop with Qwen2.5-1.5B/7B-Instruct. Our contributions are as follows: • We introduce a dynamic state score derived from historical interaction statistics, which mea-sures task computation status and learning potential and provides an online step-level signal for agent training. We also provide theoretical guarantees for the state score mechanism. • We propose 3SPO , a step-level RL algorithm that uses the state score to supervise reward construction, adaptive rollout allocation, and post-step policy optimization for LLM agents. • Experiments on ALFWorld and WebShop show that 3SPO consistently outperforms strong prompting and RL baselines, achieving state-of-the-art results on the evaluated benchmarks. 22 Related Work 
+
+LLMs as Agents. LLMs have been deployed as agents across diverse interactive environments. Prompting-based methods such as ReAct Yao et al. [2022b] and Reflexion Shinn et al. [2023] operate with frozen parameters, interleaving reasoning traces with action execution and using self-generated feedback for iterative improvement. Tool-augmented LLMs Qin et al. [2023], Shen et al. [2023] connect to external APIs and services, enabling information retrieval and service invocation, while memory-augmented architectures Packer et al. [2023], Park et al. [2023] address long-term context management through hierarchical memory and social simulation. Despite their breadth of applications, these methods share a fundamental limitation: without parameter updates, the policy cannot adapt its behavior based on accumulated experience, making them brittle in environments requiring systematic exploration or recovery from failure modes not covered by pretraining. 
+
+Reinforcement Learning for LLMs. PPO Schulman et al. [2017] has served as the backbone of RLHF pipelines Ouyang et al. [2022], Bai et al. [2022], building on trust region theory Schulman et al. [2015a], Kakade [2001] and GAE Schulman et al. [2015b], though its learned value function increases memory overhead and introduces estimation errors. Critic-free group-based methods such as GRPO Shao et al. [2024], RLOO Ahmadian et al. [2024], Kool et al. [2019], REINFORCE++ Hu [2025], and DAPO Yu et al. [2025] compute relative advantages within rollout groups, eliminating the need for a value network while maintaining training stability. These methods have been primarily demonstrated on single-turn tasks such as mathematical reasoning Cobbe et al. [2021], Hendrycks et al. [2021], Guo et al. [2025] and code generation Roziere et al. [2023]. However, extending group-based RL to multi-turn agent settings requires per-step credit assignment, as trajectory-level advantages collapse fine-grained distinctions across long decision sequences. 
+
+Step-Wise Credit Assignment for LLM Agents. Credit assignment in long-horizon tasks with sparse rewards has been addressed through temporal difference learning Sutton [1988], Sutton and Barto [1998], GAE Schulman et al. [2015b], count-based exploration Bellemare et al. [2016], Ostro-vski et al. [2017], curiosity-driven methods Burda et al. [2018], Pathak et al. [2017], Fu et al. [2017], counterfactual baselines Foerster et al. [2018], Lowe et al. [2017] and value decomposition Rashid et al. [2020], Sunehag et al. [2017]. In LLM agent settings, STEP Chen et al. [2025] maintains a smoothed success-rate record per state to guide adaptive trajectory resampling and decompose trajec-tories into step-level training samples. GiGPO Feng et al. [2025] introduces anchor state grouping for step-level advantage computation, retroactively clustering identical states across completed trajecto-ries. Hierarchical methods He et al. [2026], Kulkarni et al. [2016] structure credit across temporal abstraction levels, while process-supervised rewards Lightman et al. [2023], Zheng et al. [2025] provide step-level feedback at the cost of additional training data and model components. 3SPO’s key innovation lies in post-step policy updates rather than deferred trajectory-level optimization. 
+
+## 3 Method 
+
+In this section, we first formulate the multi-turn LLM agent training problem (Sec. 3.1) and then introduce 3SPO, a state-score-supervised policy optimization framework for long-horizon agentic tasks. As illustrated in Fig. 2, 3SPO maintains a dynamic state score computed from historical interaction statistics and uses it as a unified supervisory signal throughout training. The frame-work consists of three key components: Dynamic State Score Function (Sec. 3.2) quantifies the difficulty and learning potential of each state; Step-Wise Reward Model (Sec. 3.3) converts sparse trajectory-level outcomes into fine-grained transition-level rewards; Adaptive Rollout and Post-Step Policy Optimization (Sec. 3.4) allocates more rollouts to informative states and updates the policy immediately after each step. Finally, we provide theoretical insights into the state-score-supervised allocation mechanism in Sec. 3.5. 
+
+3.1 Problem Formulation 
+
+The state s ∈ S comprises the current environment observation. At each step t, the agent πθ
+
+parameterized by θ observes the state st and generates a textual action at ∈ V n, where V denotes the token vocabulary and n is the maximum generation length. Upon execution, the environment returns a scalar reward rt ∈ R and the next state st+1 . This process repeats until the task is completed or a terminal state is reached, yielding a trajectory τ T = {(s1, a 1, r 1), (s2, a 2, r 2), . . . , (sT , a T , r T )}.
+
+3𝑠 !
+
+𝑠 "
+
+𝑠 #
+
+𝑠 $
+
+𝑠 %
+
+✓
+
+𝑠 &
+
+𝑠 $
+
+✕
+
+✓
+
+𝑠 $
+
+𝑠 '
+
+𝑠 $ ✓
+
+✓
+
+𝑠 %
+
+𝑠 $
+
+𝑠 $ ✓
+
+✓
+
+✕
+
+> State
+> Rollout
+> Group
+> Comp.
+
+Update State History Agent -Env Interaction  
+
+> Agent Env
+
+①
+
+② ③
+
+④ ⑤
+
+> State
+> Score
+
+𝑠 # 𝑠 ! 𝑠 % 𝑠 $
+
+𝑠 # 𝑠 ! 𝑠 % 𝑠 &
+
+𝑠 # 𝑠 " 𝑠 '
+
+𝑠 # 𝑠 " 𝑠 '
+
+𝑠 # 𝑠 " 𝑠 ' 𝑠 %
+
+𝑠 $
+
+𝑠 $
+
+Group Comp. 
+
+𝑠 !
+
+𝑠 "
+
+𝑟 !
+
+𝑟 "
+
+𝐴 !
+
+𝐴 "
+
+> >
+> >
+
+𝑠 #        
+
+> 𝑛 𝑠 !=G"#$ ∗𝑆 𝑠 !=2
+
+Adaptive Rollout 
+
++ 𝑅 ()*+, + ✓/✕
+
++ 𝑅 ()*+, + ✓/✕
+
+Step -Wise Reward Model 𝑅 "-./ 
+
+①
+
+> Success/Failure
+
+Post -Step 
+
+Policy Opt. 
+
+(𝑆 𝑠 # − 𝑆 𝑠 ! )     
+
+> History
+> 𝑆 𝑠 !=0.2
+> (G!"# =8)
+
+𝑆 𝑠 #
+
+𝑆 𝑠 !
+
+𝑆 𝑠 "
+
+𝑆 𝑠 %
+
+𝑆 𝑠 '
+
+(𝑆 𝑠 # − 𝑆 𝑠 " )Figure 2: Overview of 3SPO. The agent interacts with the environment to produce state transitions. A dynamic state score S(st) computed from historical visit statistics simultaneously supervises: (i) step-wise reward R3SPO , (ii) adaptive rollout allocation n(st), and (iii) post-step policy optimization. State history is updated at the end of each trajectory, forming a closed loop learning pipeline. 
+
+3.2 Dynamic State Score Function 
+
+To quantify the difficulty and learning potential of each interaction state st in real time, we propose a dynamic state-score function S(st), which is updated smoothly based on the agent’s historical interaction statistics on st:
+
+S(st) = exp 
+
+
+
+−λ(t) · Nsuccess (st)
+
+Ntotal (st) + ϵ
+
+
+
+· 1
+
+
+
+Nfail (st) < ξ ∨ Nsuccess (st)
+
+Ntotal (st) + ϵ > ζ 
+
+
+
+, (1) where Ntotal (st) denotes the total number of completed trajectories passing state st, Nsuccess (st) is the number of successful outcomes from st and Nfail (st) = Ntotal (st) − Nsuccess (st) is the number of failures. λ(t) = α log t is a time-varying annealing coefficient that balances exploration at early step and exploitation at later step (the choice of α is detailed in Sec. 3.5), ξ, ζ > 0 are threshold hyperparameters that define the valid range of states, and ϵ is a small constant to avoid division by zero. The state-score function exhibits two key properties: (i) difficulty-aware learning potential quantification . The exponential term assigns higher scores to states with lower historical success rates, prioritizing learning on challenging states; (ii) exploration truncation . States too difficult to learn are assigned zero score, preventing the algorithm from wasting resources on intractable states that are unlikely to yield meaningful progress. 
+
+3.3 Step-Wise Reward Model 
+
+To resolve the sparse credit assignment problem in long-horizon agent tasks, we propose a step-wise reward model R3SPO (st, s t+1 ), which integrates three complementary reward components: 
+
+R3SPO (st, s t+1 ) = ω(Ntotal (st)) · Rnovel (st+1 )+ (0 .5 − ω(Ntotal (st))) · (S(st) − S(st+1 )) + 0 .5 · Rsuccess (st+1 ).
+
+(2) Specifically: (i) novelty reward Rnovel (st+1 ) = 1 {st+1 /∈ τ t} encourages the agent to perform actions that induce observable state changes rather than repetitive or ineffective operations that leave the interface unchanged; (ii) state score difference reward S(st) − S(st+1 ) provides credit assignment by rewarding transitions from high-difficulty to low-difficulty states; and (iii) terminal task reward Rsuccess (st+1 ), a score signal indicating task completion. These components remain 4dynamically balanced via the weight function ω(Ntotal (st)) = 0 .5 · exp( −γN total (st)) , which decays exponentially with state visit count (the choice of γ is detailed in Sec. 3.5). It prioritizes the novelty reward for rarely visited states to encourage exploration, while emphasizes the state score difference reward for frequently visited states to facilitate the exploitation of learned knowledge. 
+
+3.4 Adaptive Rollout and Post-Step Policy Optimization 
+
+We propose an adaptive rollout rule that dynamically adjusts the number of rollout based on state score to address the inefficiency of uniform sampling. The number of rollout n(st) for state st is defined as: 
+
+n(st) = ⌈Gmax · S(st)⌉, (3) where Gmax is the maximum number of rollout ( n(st) = 1 proceeds to the next state without policy optimization, and n(st) = 0 truncates the trajectory immediately). This rollout rule enables adaptive resource allocation: states with higher scores receive more rollout, maximizing the informativeness of each sampling step while reducing waste on mastered states. Leveraging the adaptive rollout mechanism together with the state score function and the reward model, we design a post-step policy optimization pipeline without waiting for full trajectory comple-tion. The core optimization objective is: 
+
+J3SPO (θ) = E st∼S {ai}n(st) 
+
+> i=1 ∼πθold
+
+(
+
+1
+
+n(st)
+
+> n(st)
+
+X
+
+> i=1
+
+1
+
+|ai|
+
+> |ai|
+
+X
+
+> k=1
+
+min 
+
+h
+
+ri,k (θ) ˆAi,k , clip  ri,k (θ), 1 − ϵ, 1 + ϵ ˆAi,k 
+
+i
+
+− βDKL [πθ ∥ πref ]
+
+)
+
+,
+
+(4) where ri,k (θ) = πθ (ai,k |ai,<k ,s t)    
+
+> πθold (ai,k |ai,<k ,s t)
+
+is the policy ratio and ˆAi = R3SPO i−mean( {R3SPO i})std( {R3SPO i}) is the group-normalized relative advantage computed using R3SPO . Unlike trajectory-level GRPO variants that aggregate rewards across entire trajectories before updating, 3SPO performs policy optimization immediately after collecting rollouts from the current state st. Instead of committing to a single greedy trajectory, 3SPO employs ranked backtracking DFS. This mechanism not only accelerates state score convergence in the early stages by prioritizing high reward branches but also allows the agent to systematically explore alternative paths whenever a path reaches a termination. The complete pipeline is summarized in Algorithm 1 (Appendix B). 
+
+3.5 Theoretical Insights 
+
+We analyze 3SPO under a finite-arm bandit abstraction at each decision state. Each action a at state st corresponds to an arm with unknown success probability p∗(a) ∈ [0 , 1] , representing the probability of eventual task completion. Given the one-to-one correspondence between each action a and its subsequent state st+1 , the state score S(a) ≜ S(st+1 ) = exp( −λ(t)ˆ p(a)) with 
+
+λ(t) = α log t assigns higher scores to actions with lower empirical success rates ˆp(a), supervising rollout allocation toward unresolved states. Let A = {1, . . . , A } denote the finite action set, N (a)
+
+the cumulative samples of action a, and ∆a = p∗(a) − p∗(aw) the gap relative to the lowest-success action aw = arg min a p∗(a). Full proofs of all results are deferred to Appendix A. Experimental validation is presented in Sec. 4.3. 
+
+Concentration of Empirical Estimates. Define the “good event” at iteration i as Ei = {∀ a ∈ A :
+
+|ˆp(a) − p∗(a)| ≤ 
+
+q log AN (a) }. The empirical success rate concentrates around its true value under Ei
+
+with probability at least 1 − O(i−2). By the Borel–Cantelli lemma, Ei holds almost surely for all but finitely many iterations; its complement Eci (the “bad event”) has probability decaying as O(i−2).This guarantees that historical statistics converge to true success rates . 
+
+Score Separation. On the concentration event, for any pair of actions a, b with ∆a,b = p∗(b) −
+
+p∗(a) > 0 and N (a), N (b) ≥ Ta, the score difference satisfies S(a)−S(b) ≥ λ(t) exp( −λ(t)) · ∆a,b  
+
+> 2
+
+,where Ta = 16 log i
+
+> ∆2
+> a,b
+
+is the exploration threshold. This proves that the state score reliably distinguishes actions with different success probabilities. 5Non-worst Action Allocation. For any non-worst action a̸ = aw with N (a), N (aw) ≥ Ta, the fraction of rollouts allocated satisfies ni(a)P  
+
+> a′ni(a′)
+
+≤ exp( −λ(t) · ∆a 
+
+> 2
+
+) = t− α∆a 
+
+> 2
+
+. This ensures that computational resources are preferentially directed toward harder states. 
+
+Allocation Regret. We now formally bound the training-time allocation regret of 3SPO’s score-supervised rollout allocation. Building on the allocation bound above, the allocation regret over I
+
+rounds is: 
+
+R(I) = E
+
+
+
+> I
+
+X
+
+> i=1
+
+X
+
+> a̸=aw
+
+ni(a) · ∆a
+
+ = O(log I). (5) This logarithmic bound shows that 3SPO incurs only O(log I) allocation overhead relative to an oracle unresolved-state sampler under the per-state bandit abstraction. No algorithm can achieve asymptotically smaller regret under the same bandit setting without prior knowledge of the gaps ∆a.The regret decomposes per action: R(I) = P 
+
+> a̸=aw
+
+∆a · E[MI (a)] , where MI (a) = PIi=1 ni(a).Each MI (a) splits into exploration ( N (a) < T a) and exploitation ( N (a) ≥ Ta) phases. The exploration phase contributes at most Gmax · Ta per action. In the exploitation phase, we invoke the non-worst action allocation bound: the rollout fraction is bounded by ρi(a) = exp( −α log t · ∆a/2) 
+
+under the good event Ei defined above. With α ≥ 2 log I  
+
+> ∆min log 2
+
+and t ≥ 2, this gives ρi(a) ≤ 1/I . The expectation splits into the good event term ( O(1) ) and the bad event Eci term ( ni(a) ≤ Gmax with probability O(i−2), also O(1) ). 
+
+Weight Schedule. The composite reward uses ω(N ) = 0 .5 exp( −γN ) to balance novelty and score-difference rewards. At the exploration threshold Ta = 16 log I
+
+> ∆2
+> a
+
+, setting the two weights equal (ω = 0 .5 − ω = 0 .25 ) yields γ = log 2  
+
+> Ta
+
+= ∆2min log 2 16 log I . Before Ta, ω(N ) > 0.25 prioritizes novelty; after Ta, the score-difference term dominates. 
+
+## 4 Experiments 
+
+4.1 Experiment Setup Benchmarks. We train the LLM agents on ALFWorld Shridhar et al. [2020] and WebShop Yao et al. [2022a], which are designed to assess the ability of LLM agents to solve long-history tasks. Benchmark details are provided in Appendix C.2. 
+
+Baselines. We compare against: (1) Closed-source LLMs: GPT-4o Achiam et al. [2023] and Gemini-2.5-Pro Team et al. [2023]. (2) Prompting agents: ReAct Yao et al. [2022b] and Reflexion Shinn et al. [2023]. (3) RL training methods: PPO Schulman et al. [2017], RLOO Kool et al. [2019], Ahmadian et al. [2024], GRPO Shao et al. [2024], GiGPO Feng et al. [2025] and HGPO Jiang et al. [2025]. 
+
+Training Details. We adopt Qwen2.5-1.5B/7B-Instruct Yang et al. [2024] as our base models. Group-based RL methods use group size G = 8 . For 3SPO, we set α = 50 , ξ = 10 , ζ = 0 .1 and 
+
+Gmax = 8 . The sensitivity analysis of parameters is presented in Appendix C.4. Full training settings and hyperparameter details are provided in Appendix C.1. 
+
+4.2 Experimental Results 
+
+Table 1 shows results across closed models, prompting baselines, and RL training methods. RL training consistently outperforms prompting-only approaches (Qwen2.5, ReAct, Reflexion), with the gap widening on more complex tasks. A pronounced gap exists between trajectory-level meth-ods (PPO, RLOO, GRPO) and step-level methods (GiGPO, HGPO, 3SPO). On both ALFWorld and WebShop, step-level RL-trained methods substantially outperform trajectory-level baselines, confirming that fine-grained credit assignment is crucial for these long-horizon tasks. With Qwen2.5-1.5B-Instruct, 3SPO consistently improves over HGPO by +2 .65% on ALFWorld In-Success and 
+
++3 .02% on Out-Success. On WebShop, 3SPO achieves +5 .81% over HGPO in task scores and 
+
++7 .92% in task success rates. With Qwen2.5-7B-Instruct, 3SPO remains superior, achieving 96 .81% 
+
+on ALFWorld and 80 .45% on WebShop. The gains over HGPO are +1 .37% / + 2 .98% on ALFWorld (In/Out-Success) and +1 .94% on WebShop. These suggest that 3SPO’s state score supervision scales favorably with model capacity, and enhances model’s generalization ability (achieving higher 6Table 1: Performance comparison on ALFWorld and WebShop. For ALFWorld, we report the overall success rate ( ↑) for both in-distribution (In-Success) and out-of-distribution tasks (Out-Success). For WebShop, we report the average task score ( ↑) and the average task success rate ( ↑). Most results are averaged over 3 random seeds during testing. The best results are highlighted in bold , and the second-best results are underlined. 
+
+Model Type Method ALFWorld WebShop 
+
+In-Success Out-Success Task Scores Task Success Rates Closed Prompting GPT-4o 48.0 46.0 31.8 23.7 Prompting Gemini-2.5-Pro 60.3 50.5 42.5 35.9 Qwen2.5-1.5B-Instruct  Prompting Qwen2.5 4.1 – 23.1 5.2 Prompting ReAct 12.8 – 40.1 11.3 Prompting Reflexion 21.8 – 55.8 21.9 RL Training PPO (with critic) 54.4 ±3.1 – 73.8 ±3.0 51.5 ±2.9
+
+RL Training RLOO 69.7 ±2.5 68.7 ±10 .7 73.9 ±5.6 52.1 ±6.7
+
+RL Training GRPO 72.8 ±3.6 70.1 ±2.5 75.8 ±3.5 56.8 ±3.8
+
+RL Training GiGPO 90.16 ±0.22 84.76 ±2.83 84.95 ±2.57 66.53 ±1.92 
+
+RL Training HGPO 92.77 ±1.08 90.16 ±0.78 85.56 ±2.86 71.54 ±4.00 
+
+RL Training 3SPO 95.42 ±0.58 93.18 ±1.21 91.37 ±0.82 79.46 ±1.73 
+
+> Qwen2.5-7B-Instruct
+
+Prompting Qwen2.5 14.8 – 26.4 7.8 Prompting ReAct 31.2 – 46.2 19.5 Prompting Reflexion 42.7 – 58.1 28.8 RL Training PPO (with critic) 77.08 ±1.12 76.23 ±1.46 81.4 ±3.1 68.7 ±5.1
+
+RL Training RLOO 77.86 ±0.03 73.95 ±0.05 80.3 ±3.2 65.7 ±4.0
+
+RL Training GRPO 78.64 ±0.73 76.82 ±1.47 79.3 ±2.8 66.1 ±3.7
+
+RL Training GiGPO 93.29 ±0.40 92.18 ±0.39 88.93 ±1.49 77.60 ±1.68 
+
+RL Training HGPO 95.44 ±0.62 92.05 ±0.22 88.96 ±1.04 78.51 ±1.40 
+
+RL Training 3SPO 96.81 ±0.35 95.93 ±0.67 90.28 ±0.53 80.45 ±0.89 1.0    
+
+> 0. 8
+> 0. 6
+> 100 200 300 400
+> epoch
+> Success Rate
+> 0. 4
+> 0. 2
+
+(a) 0 50 100 150 200 250 300 350 400  
+
+> Epoch
+> 0.0
+> 0.5
+> 1.0
+> Mean Score
+
+(b) 0 50 100 150 200 250 300 350 400   
+
+> Epoch
+> 0.0
+> 0.5
+> 1.0
+> State Score  S(st)
+> TaEasy
+> Medium
+> Hard
+
+(c) 0.0 0.5 1.0 1.5 2.0  
+
+> Rollouts (×10 5)
+> 0.0
+> 0.5
+> 1.0
+> Success Rate
+> Adaptive
+> Uniform
+
+(d) 
+
+Figure 3: Training and state score dynamics on ALFWorld (Qwen2.5-1.5B). (a) 3SPO (Blue) converges faster than GRPO (Red), GiGPO (Purple) and HGPO (Pink). (b) Mean state score decays monotonically as the policy improves. (c) Score distributions shift from high to low as states are mastered across easy/medium/hard tasks. (d) Adaptive rollout converges to > 90% success within 
+
+2.0 × 10 5 rollouts, while uniform rollout remains at ∼ 66% and still rising. out-success performance compared to other methods). We further observe that 3SPO brings greater gains on the smaller Qwen2.5-1.5B-Instruct model, as its limited agentic capability tends to produce longer and more redundant rollouts that introduce greater bias in advantage estimation. In this case, the state score mechanism becomes more important for refining and stabilizing the credit signal, rollout allocation, and policy optimization. These results suggest that 3SPO is particularly well-suited to challenging long-horizon agentic tasks where rollouts are lengthy and credit signals are noisy. Fig. 3(a) shows success rate training curves on ALFWorld. 3SPO (Blue) converges 1.8× faster than GRPO (Red) and 1.3× faster than HGPO (Pink) and GiGPO (Purple) to reach 60% success rate. The performance gap between 3SPO and HGPO converges to approximately 6%, suggesting that state score supervision not only enables faster initialization but also provides sustained benefits throughout training. 7Table 2: Ablation study on ALFWorld and WebShop. Ablation ALFWorld WebShop In-Suc. Out-Suc. Task Sco. Task Suc.                                                              
+
+> 3SPO 95.42 ±0.693.18 ±1.291.37 ±0.879.46 ±1.7
+> w/o Rnovel 88.42 ±1.785.70 ±2.185.12 ±2.272.06 ±2.2
+> w/o ∆S(st)87.34 ±2.183.58 ±2.582.43 ±2.672.46 ±2.6
+> w/o Ada. ω(N)92.94 ±1.491.02 ±1.890.20 ±1.977.82 ±1.0
+> w/o Ada. n(st)95.88 ±1.393.42 ±1.691.56 ±1.779.82 ±1.9
+> w/o Backtrack 88.98 ±1.487.00 ±1.985.32 ±1.974.18 ±2.0
+> Table 3: Computational efficiency on ALFWorld.
+> Method Rollouts Unique States Ratio
+> GRPO 3.4 ×10 54,020 1.2 ×10 −2
+> HGPO 3.4 ×10 53,890 1.1 ×10 −2
+> GiGPO 3.4 ×10 54,150 1.2 ×10 −2
+> 3SPO 4.5 ×10 59,720 2.2 ×10 −2
+> w/o Ada. n3.3 ×10 610284 3.1 ×10 −3050 100 150 200 250 300 350 400
+> Epochs
+> 20
+> 40
+> 60
+> 80
+> High-Score Ratio (%)  3SPO
+> GRPO
+> HGPO
+> GiGPO
+> Figure 4: High-score ratio during training.
+
+4.3 State Score Analysis 
+
+The state st is defined as the complete textual observation at step t. Taking ALFWorld as an example, 
+
+st includes the current room description, visible objects, and inventory status. Fig. 3 (b–d) examines how the state score mechanism evolves during training: (b) The mean state score remains high during the initial 70 epochs of exploration, then decays monotonically from ≈ 0.92 to ≈ 0.35 by epoch 400. The early plateau reflects the agent discovering new states faster than it masters them; once exploration stabilizes, the score declines as previously ambiguous states are resolved. (c) We categorize some ALFWorld tasks into easy (Pick & Place), medium (Examine in Light), and hard (Pick Two & Place). Easy tasks converge to low scores rapidly, indicating mastery; medium tasks exhibit a slower decay; hard tasks remain elevated throughout training, demonstrating that the score automatically prioritizes harder states. (d) Adaptive 3SPO reaches > 80% success within 1.0 × 10 5
+
+rollouts and converges to > 90% , whereas uniform rollout ( n(st) = Gmax ) only reaches ∼ 66% at 
+
+2.0 × 10 5 rollouts with no sign of convergence. This demonstrates that allocating more rollouts to unresolved states yields a substantially more sample-efficient learning trajectory. 
+
+4.4 Ablation Study 
+
+In this section, we conduct an ablation study to evaluate the effectiveness of each component in 3SPO. As shown in Table 2 and 3, “w/o” denotes removing a specific component. 
+
+Reward Components. First, “w/o Rnovel ” removes the novelty reward, degrading performance by 7.0% on ALFWorld and 6.8% on WebShop. This validates that encouraging observable state changes prevents repetitive loops. Second, “w/o ∆S(st)” removes the state score difference reward, causing the largest drop ( −8.1% on ALFWorld, −9.0% on WebShop). This confirms that credit assignment through state score transitions is the dominant factor in 3SPO’s effectiveness. Finally, “w/o Ada. ω(N )” replaces the adaptive weight with a fixed ω = 0 .5. Performance drops −2.5% on ALFWorld and −1.6% on WebShop, suggesting that the adaptive schedule progressively shifts from novelty-driven exploration to score-based exploitation as states are visited more. 
+
+Adaptive Rollout. “w/o Ada. n(st)” replaces adaptive rollout with uniform allocation n(st) = Gmax .Performance is slightly higher by +0 .5% on ALFWorld and +0 .2% on WebShop, but at 7.3× the computational cost and with an extremely low state exploration ratio of only 3.1 × 10 −3, which is nearly 7× lower than that of the full 3SPO ( 2.2 × 10 −2). The adaptive mechanism allocates computation to states that most need learning signals while avoiding waste on easy states. 
+
+Ranked Backtracking DFS. “w/o Backtrack” disables the backtracking mechanism, dropping performance by −6.4% on ALFWorld and −6.0% on WebShop. This confirms that the ranked backtracking strategy is important for thorough state coverage, without which the agent commits to locally optimal early actions and cannot recover. 84.5 Computational Efficiency 
+
+Table 3 compares computational efficiency on state coverage. A state is counted as unique if it has not been encountered in any previous rollout across the entire training process, and this exact-string matching provides a reliable measure of state space coverage. 3SPO visits ∼ 2.4× more unique states than other methods. Based on the quantitative ratio of unique states to total rollouts, 3SPO achieves an exploration ratio of 2.2 × 10 −2, nearly doubling that of GRPO, HGPO and GiGPO (around 1.1–1.2 × 10 −2). The backtracking mechanism continuously exposes the agent to previously unvisited states, and adaptive rollout concentrates exploration on unresolved regions. Fig. 4 compares the high-score ratio ( S(st) > 0.5) trajectory of 3SPO against other RL methods. 3SPO maintains a substantially higher proportion of high-score states throughout training ( ∼ 75% at early epochs vs. ∼ 55 –60% for GRPO/GiGPO/HGPO). GRPO, GiGPO, and HGPO exhibit similar high-score ratio levels since none of them employ an adaptive rollout mechanism to concentrate sampling on unresolved states. In contrast, 3SPO’s adaptive rollout n(st) allocates more rollouts to states with higher scores, ensuring that unresolved states receive more learning signals per training step. This elevated high-score ratio in 3SPO reflects a more data-efficient sampling strategy: the agent repeatedly explores unresolved states rather than distributing its budget uniformly. 
+
+4.6 Case Study 𝑆 𝑠 ! = 1, 𝑛 𝑠 ! = 8                         
+
+> 1st to 𝑠 !Find Barbecue
+> (Novel, 𝑆 𝑠 "
+> #=1)
+> Go to Bathroom
+> (Novel, 𝑆 𝑠 "
+> $=1)
+> Pick up Fork
+> (Novel, 𝑆 𝑠 "
+> %=1)
+> Pick up Apple
+> (Novel , 𝑆 𝑠 "
+> &=1)
+> Nothing Changed
+> (Visited, 𝑆 𝑠 !=1)Compute
+> Group Relative
+> Advantage
+> Post -step
+> Policy
+> Optimization
+> 𝑠 !: Standing in kitchen, cabinet open.
+
+. . .                              
+
+> 𝑠 !: Standing in kitchen, cabinet open.
+> 𝑆 𝑠 !=0.3,𝑛 𝑠 !=3
+> 10 th to 𝑠 !
+> Compute
+> Group Relative
+> Advantage
+> Post -step
+> Policy
+> Optimization
+> Pick up Apple
+> (Visited, 𝑆 𝑠 "
+> %=0.2)
+> Pick up Apple
+> (Visited ,𝑆 𝑠 "
+> #=0.2)
+> Pick up Fork
+> (Visited, 𝑆 𝑠 "
+> $=0.6)
+> 𝑅 !"#$% 𝑆 𝑠 &−𝑆 (𝑠 ')
+> 𝜔 (𝑁 ("()% (𝑠 &)
+> 𝑅 !"#$% 𝑆 𝑠 &−𝑆 (𝑠 ')
+> 𝜔 (𝑁 ("()% (𝑠 &)
+
+Figure 5: Case study of early and late visits to the same state s7.As illustrated in Fig. 5, consider a “Pick & Place” task where the agent must navigate between rooms and manipulate multiple objects. When the agent first visits a state 
+
+s7 (e.g., standing in the kitchen after open-ing a cabinet and finding a dirty apple and a fork), the state score S(s7) = 1 due to zero prior visits. The adaptive rollout rule allocates n(s7) = ⌈Gmax · S(s7)⌉ = 8 
+
+rollouts from this state. Each rollout pro-duces next state s(i)8 : some proceed to pick up the apple, some process other ob-jects, and some incorrectly go to a dif-ferent room. R3SPO (s7, s (i)8 ) is computed for each transition. Rnovel is dominant be-cause it indicates whether s(i)8 is a novel state, while S(s7) − S(s(i)8 ) remains sub-ordinate due to insufficient data (controlled by ω(Ntotal (st)) ). Policy optimization updates πθ immediately after this step. On the agent’s 10th visit to the same state s7, the accumulated statistics have shifted: several rollouts from s7 have led to success (the apple was picked and placed on the dining table). Consequently, S(s7) has dropped to ≈ 0.3, and the adaptive rollout allocates only n(s7) = 3 rollouts. These fewer rollouts lead to a smaller set of next states s(i)8 , most of which have also been visited before, diminishing the importance of Rnovel . S(s7) − S(s(i)8 ) becomes the dominant signal, reinforcing the transitions that lead to the lowest-difficulty successors. The complete reasoning behavior is presented in Appendix F. 
+
+## 5 Conclusion 
+
+We presented 3SPO, a reinforcement learning algorithm for multi-turn LLM agents. The key innovation is the continuous state score mechanism derived from visit counts and success rates during training, enabling step-wise reward computation, adaptive rollout and post-step policy update. Theoretically, we establish that 3SPO optimally achieves O(log T ) regret under a per-state bandit abstraction and provide sample complexity guarantees for optimal action identification, score dis-tinguishability, and filtering stability. Experiments on ALFWorld and WebShop show that 3SPO outperforms GRPO while using comparable resources to achieve more state exploration and faster convergence. In general, every module in 3SPO is indispensable to its overall performance. 9References 
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. 
+
+arXiv preprint arXiv:2303.08774 , 2023. Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Üstün, and Sara Hooker. Back to basics: Revisiting reinforce-style optimization for learning from human feedback in llms. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 12248–12267, 2024. Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, et al. Constitutional ai: Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073 , 2022. Marc Bellemare, Sriram Srinivasan, Georg Ostrovski, Tom Schaul, David Saxton, and Remi Munos. Unifying count-based exploration and intrinsic motivation. Advances in neural information processing systems , 29, 2016. Yuri Burda, Harrison Edwards, Amos Storkey, and Oleg Klimov. Exploration by random network distillation. arXiv preprint arXiv:1810.12894 , 2018. Yuhan Chen, Yuxuan Liu, Long Zhang, Pengzhi Gao, Jian Luan, and Wei Liu. Step: Success-rate-aware trajectory-efficient policy optimization. arXiv preprint arXiv:2511.13091 , 2025. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 , 2025. Jakob Foerster, Gregory Farquhar, Triantafyllos Afouras, Nantas Nardelli, and Shimon Whiteson. Counterfactual multi-agent policy gradients. In Proceedings of the AAAI conference on artificial intelligence , volume 32, 2018. Justin Fu, John Co-Reyes, and Sergey Levine. Ex2: Exploration with exemplar models for deep reinforcement learning. Advances in neural information processing systems , 30, 2017. Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Shuo He, Lang Feng, Qi Wei, Xin Cheng, Lei Feng, and Bo An. Hierarchy-of-groups policy optimization for long-horizon agentic tasks. arXiv preprint arXiv:2602.22817 , 2026. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 , 2021. Jian Hu. Reinforce++: A simple and efficient approach for aligning large language models. arXiv e-prints , pages arXiv–2501, 2025. Lingjie Jiang, Xun Wu, Shaohan Huang, Qingxiu Dong, Zewen Chi, Li Dong, Xingxing Zhang, Tengchao Lv, Lei Cui, and Furu Wei. Think only when you need with large hybrid-reasoning models. arXiv preprint arXiv:2505.14631 , 2025. Sham M Kakade. A natural policy gradient. Advances in neural information processing systems , 14, 2001. Wouter Kool, Herke van Hoof, and Max Welling. Buy 4 reinforce samples, get a baseline for free! In 
+
+ICLR 2019 Deep Reinforcement Learning meets Structured Prediction Workshop , 2019. 10 Tejas D Kulkarni, Karthik Narasimhan, Ardavan Saeedi, and Josh Tenenbaum. Hierarchical deep reinforcement learning: Integrating temporal abstraction and intrinsic motivation. Advances in neural information processing systems , 29, 2016. Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In The twelfth international conference on learning representations , 2023. Ryan Lowe, Yi I Wu, Aviv Tamar, Jean Harb, OpenAI Pieter Abbeel, and Igor Mordatch. Multi-agent actor-critic for mixed cooperative-competitive environments. Advances in neural information processing systems , 30, 2017. Fanbin Lu, Zhisheng Zhong, Shu Liu, Chi-Wing Fu, and Jiaya Jia. Arpo: End-to-end policy optimization for gui agents with experience replay. arXiv preprint arXiv:2505.16282 , 2025a. Zhengxi Lu, Jiabo Ye, Fei Tang, Yongliang Shen, Haiyang Xu, Ziwei Zheng, Weiming Lu, Ming Yan, Fei Huang, Jun Xiao, et al. Ui-s1: Advancing gui automation via semi-online reinforcement learning. arXiv preprint arXiv:2509.11543 , 2025b. Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. Self-refine: Iterative refinement with self-feedback. Advances in neural information processing systems , 36:46534–46594, 2023. Georg Ostrovski, Marc G Bellemare, Aäron Oord, and Rémi Munos. Count-based exploration with neural density models. In International conference on machine learning , pages 2721–2730. PMLR, 2017. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35:27730– 27744, 2022. Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G Patil, Ion Stoica, and Joseph E Gonzalez. Memgpt: Towards llms as operating systems. arXiv preprint arXiv:2310.08560 , 2023. Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and Michael S Bernstein. Generative agents: Interactive simulacra of human behavior. In Proceedings of the 36th annual acm symposium on user interface software and technology , pages 1–22, 2023. Deepak Pathak, Pulkit Agrawal, Alexei A Efros, and Trevor Darrell. Curiosity-driven exploration by self-supervised prediction. In International conference on machine learning , pages 2778–2787. PMLR, 2017. Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, et al. Toolllm: Facilitating large language models to master 16000+ real-world apis. In The twelfth international conference on learning representations , 2023. Tabish Rashid, Mikayel Samvelyan, Christian Schroeder De Witt, Gregory Farquhar, Jakob Foerster, and Shimon Whiteson. Monotonic value function factorisation for deep multi-agent reinforcement learning. Journal of Machine Learning Research , 21(178):1–51, 2020. Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, et al. Code llama: Open foundation models for code. arXiv preprint arXiv:2308.12950 , 2023. John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region policy optimization. In International conference on machine learning , pages 1889–1897. PMLR, 2015a. John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438 ,2015b. 11 John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathemat-ical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Yongliang Shen, Kaitao Song, Xu Tan, Dongsheng Li, Weiming Lu, and Yueting Zhuang. Hugginggpt: Solving ai tasks with chatgpt and its friends in hugging face. Advances in Neural Information Processing Systems , 36:38154–38180, 2023. Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652, 2023. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 , 2020. Peter Sunehag, Guy Lever, Audrunas Gruslys, Wojciech Marian Czarnecki, Vinicius Zambaldi, Max Jaderberg, Marc Lanctot, Nicolas Sonnerat, Joel Z Leibo, Karl Tuyls, et al. Value-decomposition networks for cooperative multi-agent learning. arXiv preprint arXiv:1706.05296 , 2017. Richard S Sutton. Learning to predict by the methods of temporal differences. Machine learning , 3 (1):9–44, 1988. R.S. Sutton and A.G. Barto. Reinforcement learning: An introduction. IEEE Transactions on Neural Networks , 9(5):1054–1054, 1998. doi: 10.1109/TNN.1998.712192. Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 , 2023. An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 ,2024. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems , 35:20744–20757, 2022a. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629 ,2022b. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 , 2025. Chujie Zheng, Zhenru Zhang, Beichen Zhang, Runji Lin, Keming Lu, Bowen Yu, Dayiheng Liu, Jingren Zhou, and Junyang Lin. Processbench: Identifying process errors in mathematical reason-ing. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 1009–1024, 2025. 12 A Complete Proofs 
+
+This appendix contains the full proofs of all results stated in Section 3.5. 
+
+A.1 Concentration of Empirical Estimates 
+
+Proof. Each sample of action a yields a reward in {0, 1}. Given N (a) independent samples with mean p∗(a), Hoeffding’s inequality for random variables bounded in [0 , 1] gives: 
+
+P  ˆp(a) − p∗(a) > ϵ  ≤ 2 exp  −2N (a)ϵ2.
+
+Setting ϵ(a) = 
+
+q log iN (a) yields the per-action bound: 
+
+P ˆp(a) − p∗(a) >
+
+s
+
+log iN (a)
+
+!
+
+≤ 2i−2.
+
+Taking a union bound over A = |A| actions: 
+
+P max  
+
+> a∈A
+
+ˆp(a) − p∗(a) >
+
+s
+
+log iN (a)
+
+!
+
+≤ Ai −2.
+
+Summing over all i ≥ 1: ∞X
+
+> i=1
+
+P(Eci ) ≤ A
+
+> ∞
+
+X
+
+> i=1
+
+i−2 = A · π2
+
+6 < ∞.
+
+By the Borel–Cantelli lemma, Ei occurs for all but finitely many i, almost surely. 
+
+A.2 Score Separation 
+
+Proof. For any pair of actions a, b with ∆a,b = p∗(b) − p∗(a) > 0, the score difference is: 
+
+S(a) − S(b) = exp  −λ(t)ˆ p(a) − exp  −λ(t)ˆ p(b). (6) By the mean value theorem applied to f (x) = exp( −λ(t)x), there exists r between ˆp(a) and ˆp(b)
+
+such that: 
+
+S(a) − S(b) = f ′(r) ·  ˆp(b) − ˆp(a) = λ(t) exp  −λ(t)r ·  ˆp(b) − ˆp(a). (7) On the good event Ei, the empirical estimates satisfy: 
+
+ˆp(a) ≤ p∗(a) + ϵ(a), (8) 
+
+ˆp(b) ≥ p∗(b) − ϵ(b), (9) where ϵ(a′) = 
+
+q log iN (a′) .For the empirical gap: 
+
+ˆp(b) − ˆp(a) ≥ p∗(b) − p∗(a) − ϵ(b) − ϵ(a) (10) 
+
+= ∆ a,b − ϵ(b) − ϵ(a). (11) With N (a), N (b) ≥ Ta = 16 log i
+
+> ∆2
+> a,b
+
+:
+
+ϵ(a) ≤ ∆a,b 
+
+4 . (12) Similarly ϵ(b) ≤ ∆a,b /4. Therefore: 
+
+ˆp(b) − ˆp(a) ≥ ∆a,b − ∆a,b 
+
+4 − ∆a,b 
+
+4 = ∆a,b 
+
+2 . (13) For the derivative term: since 0 ≤ ˆp(a) ≤ r ≤ ˆp(b) ≤ 1 and λ(t) ≥ 0, the function x 7 → λ(t)e−λ(t)x
+
+is decreasing in x, so its minimum on [0 , 1] is attained at r = 1 :
+
+λ(t) exp  −λ(t)r ≥ λ(t) exp  −λ(t). (14) Combining: 
+
+S(a) − S(b) ≥ λ(t) exp  −λ(t) · ∆a,b 
+
+2 . (15) 13 A.3 Non-Worst Action Allocation Bound 
+
+Proof. Let aw = arg min a p∗(a) and consider any action a̸ = aw. Define ∆a = p∗(a)−p∗(aw) > 0.Following the same derivation as in Appendix A.2, under the good event Ei with N (a), N (aw) ≥ Ta,the empirical gap satisfies ˆp(a) − ˆp(aw) ≥ ∆a 
+
+> 2
+
+.The rollout allocation is ni(a′) = Gmax · S(a′) = Gmax · exp( −λ(t)ˆ p(a′)) for each action a′
+
+(omitting the ceiling function for ⌈x⌉ = x + O(1) ). The ratio of scores for any non-worst action a
+
+relative to aw is: 
+
+S(a)
+
+S(aw) = exp  −λ(t)(ˆ p(a) − ˆp(aw))  ≤ exp 
+
+
+
+−λ(t) · ∆a
+
+2
+
+
+
+. (16) Since P 
+
+> a′
+
+ni(a′) ≥ S(aw)Gmax :
+
+ni(a)
+
+P 
+
+> a′
+
+ni(a′) ≤ S(a)
+
+S(aw) ≤ exp 
+
+
+
+−λ(t) · ∆a
+
+2
+
+
+
+. (17) Substituting λ(t) = α log t:
+
+ni(a)
+
+P 
+
+> a′
+
+ni(a′) ≤ exp 
+
+
+
+−α log t · ∆a
+
+2
+
+
+
+= t− α∆a 
+
+> 2
+
+. (18) 
+
+A.4 Allocation Regret Bound 
+
+Proof. The allocation regret measures the loss from allocating rollouts to actions other than aw (the highest-score, lowest-success-rate action). Formally: 
+
+R(I) = E
+
+
+
+> I
+
+X
+
+> i=1
+
+X
+
+> a̸=aw
+
+ni(a) · ∆a
+
+ , (19) where ni(a) is the number of rollouts allocated to action a at iteration i, and ∆a = p∗(a)−p∗(aw) ≥ 0
+
+is the gap. By linearity of expectation, we decompose the regret per action. Let MI (a) = PIi=1 ni(a) denote the total rollouts to action a over I iterations. Then R(I) = P 
+
+> a̸=aw
+
+∆a · E[MI (a)] .For each action a̸ = aw, define the exploration threshold Ta = 16 log I
+
+> ∆2
+> a
+
+. We split MI (a) into two phases: 
+
+MI (a) = 
+
+> I
+
+X
+
+> i=1
+
+ni(a) · 1{N (a)<T a}
+
+| {z }
+
+> Phase 1: exploration
+
++
+
+> I
+
+X
+
+> i=1
+
+ni(a) · 1{N (a)≥Ta}
+
+| {z }
+
+> Phase 2: exploitation
+
+. (20) 
+
+Phase 1: Exploration. Since ni(a) ≤ Gmax and action a is sampled at most Ta times before score separation is established: 
+
+E
+
+" IX
+
+> i=1
+
+ni(a) · 1{N (a)<T a}
+
+#
+
+≤ Gmax · Ta = Gmax · 16 log I
+
+∆2
+
+> a
+
+. (21) 
+
+Phase 2: Exploitation. For iterations where N (a) ≥ Ta, Appendix A.3 gives the rollout fraction bound: ni(a)
+
+P 
+
+> a′
+
+ni(a′) ≤ exp 
+
+
+
+−α log t · ∆a
+
+2
+
+
+
+, (22) which we denote as ρi(a). Since each ni(a′) ≤ Gmax , we have P 
+
+> a′
+
+ni(a′) ≤ A · Gmax , so 
+
+ni(a) ≤ A · Gmax · ρi(a) on the good event Ei. On the bad event Eci , we use the trivial bound 
+
+ni(a) ≤ Gmax per action. We decompose the expectation: 
+
+E
+
+" IX
+
+> i=1
+
+ni(a) · 1{N (a)≥Ta}
+
+#
+
+≤
+
+> I
+
+X
+
+> i=1
+
+A G max ρi(a)
+
+| {z } 
+
+> Eiholds
+
++
+
+> I
+
+X
+
+> i=1
+
+Gmax · P(Eci )
+
+| {z } 
+
+> Eifails
+
+. (23) 14 On the good event, since λ(t) = α log t is constant for a fixed trajectory depth t, the bound ρi(a) = exp( −α log t · ∆a/2) = t−α∆a/2 holds uniformly across all iterations. For t ≥ 2 and α ≥ 2 log I  
+
+> ∆min log 2
+
+,we have ρi(a) ≤ I−1, so PIi=1 A G max ρi(a) ≤ A G max 
+
+PIi=1 I−1 = A G max = O(1) . On the bad event, Appendix A.1 gives P(Eci ) ≤ Ai −2, so the second term is at most Gmax A P∞ 
+
+> i=1
+
+i−2 =
+
+Gmax A · π2/6 = O(1) .Summing over all a̸ = aw:
+
+R(I) ≤ X
+
+> a̸=aw
+
+∆a
+
+
+
+Gmax · 16 log I
+
+∆2
+
+> a
+
++ O(1) 
+
+
+
+= X
+
+> a:∆ a>0
+
+16 Gmax log I
+
+∆a
+
++ O(A) = O(log I).
+
+(24) This logarithmic rate shows that 3SPO incurs only O(log I) allocation overhead relative to an oracle unresolved-state sampler under the per-state bandit abstraction. 
+
+## B Algorithm Pseudocode 
+
+Algorithm 1: State-Score-Supervised Policy Optimization (3SPO) 
+
+Input: Policy πθ , task set D, Gmax , max step Tmax 
+
+Output: Optimized policy π∗ 
+
+> θ
+> 1
+
+Initialize Ntotal (s), N success (s) ← 0, S (s) ← 1 for all s 
+
+> 2
+
+foreach epoch e do  
+
+> 3
+
+foreach task x ∈ D do  
+
+> 4
+
+Observe s0, frontier ← [ ] , cur ← 0 
+
+> 5
+
+while true do  
+
+> 6
+
+Update Ntotal (scur ), N success (scur ) 
+
+> 7
+
+Update S(scur ) via Eq. (1)  
+
+> 8
+
+Generate n = ⌈Gmax · S(scur )⌉ rollouts from scur  
+
+> 9
+
+Compute Ri = R3SPO (scur , s next ,i ) for each rollout i ∈ Icur  
+
+> 10
+
+Rank: Icur ← argsort (R) descending  
+
+> 11
+
+Update θ via Eq. (4)  
+
+> 12
+
+if Icur = ∅ or S(scur ) = 0 then  
+
+> 13
+
+if frontier = [ ] then  
+
+> 14
+
+break  
+
+> 15
+
+else  
+
+> 16
+
+cur ← frontier.pop()  
+
+> 17
+
+end  
+
+> 18
+
+else  
+
+> 19
+
+i∗ ← Icur .pop ()  
+
+> 20
+
+if |Icur | > 0 then  
+
+> 21
+
+frontier.push (Icur ) 
+
+> 22
+
+end  
+
+> 23
+
+cur ← cur + 1  
+
+> 24
+
+if cur ≥ Tmax or snext ,i ∗ is terminal then  
+
+> 25
+
+if frontier = [ ] then  
+
+> 26
+
+break  
+
+> 27
+
+else  
+
+> 28
+
+cur ← frontier.pop()  
+
+> 29
+
+end  
+
+> 30
+
+else  
+
+> 31
+
+scur ← snext ,i ∗ 
+
+> 32
+
+end  
+
+> 33
+
+end  
+
+> 34
+
+end  
+
+> 35
+
+end  
+
+> 36
+
+end 
+
+15 Algorithm 1 outlines the full 3SPO training procedure. For each task, the agent maintains a frontier stack that stores branching points encountered during trajectory execution. At each state scur , the algorithm first updates the visit and success counters, then computes the state score S(scur ) via Eq. (1) .The number of rollouts n = ⌈Gmax · S(scur )⌉ is allocated adaptively: high-score (unresolved) states generate more rollouts, while low-score (mastered or intractable) states generate fewer or none. The resulting rollouts are ranked by their 3SPO reward R3SPO , and the policy parameters θ are updated using the ranked objective in Eq. (4) . The best-ranked transition determines the next state; all other ranked transitions are pushed onto the frontier for later exploration. When no valid transitions remain at the current state or the score drops to zero, the agent backtracks by popping from the frontier, enabling systematic exploration of alternative branches. The episode terminates when both the current state has no successors and the frontier is empty. 
+
+## C Experiment Details 
+
+C.1 Hyperparameters 
+
+Table 4: Hyperparameters for 3SPO and baselines. 
+
+Parameter Value 
+
+Learning rate 1 × 10 −6
+
+Group size 8
+
+Max rollouts per state Gmax 8
+
+Max prompt length (ALFWorld) 2048 
+
+Max prompt length (WebShop) 4096 
+
+Max response length 512 
+
+Max steps per episode (ALFWorld) 50 
+
+Max steps per episode (WebShop) 30 
+
+KL coefficient βKL 0.01 
+
+Invalid action penalty coef 0.1
+
+Discount factor γ 0.95 
+
+vLLM GPU memory util. 0.6
+
+Temperature (eval) 0.4
+
+Total epochs (GRPO/PPO/GiGPO/HGPO/3SPO) 400 
+
+HGPO: mode (ALFWorld) mean_std_norm 
+
+HGPO: mode (WebShop) mean_norm 
+
+HGPO: weight_type length 
+
+HGPO: αlength 1.0
+
+HGPO: base_group False 
+
+3SPO: α 50 
+
+3SPO: ξ (failure threshold) 10 
+
+3SPO: ζ (success threshold) 0.1
+
+3SPO: ωk (weight decay rate) 0.1
+
+C.2 Environments ALFWorld. We use the TextWorld-inspired subset with 3,553 training tasks and 274 validation tasks (140 in-distribution valid_seen and 134 out-of-distribution valid_unseen ). Each task involves a goal such as “put a hot apple on the dining table.” The agent receives a textual observation and must produce actions until task completion or episode termination (50 steps max). 
+
+WebShop. We use the full WebShop benchmark with 12,087 human-annotated shopping instructions. Each task provides a user query such as “I want a leather wallet under 30 dollars with free shipping.” We evaluate on the first 500 instructions and train on the remaining. 16 C.3 Prompt Templates 
+
+All agents use a consistent ReAct-style prompt format across both environments, instructing the model to reason within <think>...</think> tags and output actions within <action>...</action> 
+
+tags. The prompt templates are defined in the verl-agent codebase and include the task description, recent interaction history, current observation, and admissible actions. 
+
+ALFWorld. The prompt includes the task description, recent interaction history, current observation, and admissible actions: 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags. 
+
+WebShop. The prompt follows the same structure with environment-specific descriptions: 
+
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to: {task_description}. Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation}. Your admissible actions of the current situation are: [{available_actions}]. Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags. 
+
+C.4 Sensitivity Analysis Score thresholds ξ and ζ. The state score function S(st) in Eq. (1) includes an indicator gate controlled by two thresholds: the failure count threshold ξ and the success rate threshold ζ. These thresholds determine which states are considered “learnable” — states with Nfail (st) ≥ ξ (too many accumulated failures) and Nsuccess /N total ≤ ζ (success rate too low) are filtered out with zero score, preventing the algorithm from wasting computation on intractable states. 17 Table 5: Sensitivity of ξ and ζ.
+
+ξ ζ Suc. Rate 5 0.05 90.1 10 0.1 95.4 
+
+20 0.2 93.3 50 0.3 92.1 Table 6: Sensitivity of α.
+
+α In-Suc. Out-Suc. 35 93.0 86.9 50 95.4 93.2 
+
+70 91.8 86.3 Table 5 shows the results. The default configuration ( ξ = 10 , ζ = 0 .1) performs best. When thresholds are too restrictive ( ξ = 5 , ζ = 0 .05 ), states are filtered out prematurely — some states with moderate learning potential are incorrectly classified as intractable, losing −5.3% performance. When thresholds are too permissive ( ξ = 50 , ζ = 0 .3), the gate fails to prune genuinely intractable states, and the algorithm wastes rollout budget on them, losing −3.3% . The moderate values ( ξ = 10 ,
+
+ζ = 0 .1) strike a balance: states that have failed 10+ times with success rate below 10% are unlikely to yield meaningful progress even with additional rollouts, so truncating them frees computation for more learnable states. 
+
+Annealing rate α. The annealing rate α controls the depth-dependent factor λ(t) = α log t in the state score, governing how aggressively the score discriminates between actions at different trajectory depths. Larger α amplifies the exponential gap between high- and low-success-rate actions, sharpening the rollout allocation. Table 6 shows the results. When α is too small (35), the score contrast between actions is weak — the ratio S(a)/S (aw) = exp( −α log t · ∆a/2) is too close to 1 for early trajectory steps, leading to nearly uniform rollout allocation and losing −2.4% on In-Success. When α is too large (70), the allocation becomes overly aggressive: actions with slightly lower success rates are almost entirely starved of rollouts even when they still have learning potential, losing −3.6% . The default ( α = 50 )provides the best balance between exploration depth and allocation discrimination. 
+
+C.5 Compute Resources 
+
+All experiments were conducted on a server equipped with 4 NVIDIA H200 GPUs. Table 7 summa-rizes the per-experiment and total compute requirements. Table 7: Compute resources and experiment runtime. 
+
+Configuration Value 
+
+GPU 4× NVIDIA H200 Peak GPU memory usage ∼564 GB total (141 GB/GPU) CPU 64-core AMD EPYC System memory 256 GB DDR5 
+
+Environment Epochs Runtime (per method) 
+
+ALFWorld (Qwen2.5-1.5B) 400 ∼6 days WebShop (Qwen2.5-1.5B) 400 ∼6 days Total (5 methods × 2 envs) – ∼60 GPU-days Each experimental run trains one method (3SPO, GRPO, PPO, HGPO, or GiGPO) on one environment (ALFWorld or WebShop) from scratch to convergence. The total reported compute covers all main results (Table 1), ablation studies (Table 2), and efficiency comparisons (Table 3). Preliminary experiments—including hyperparameter sweeps for α, ξ, ζ and architecture ablations—required an additional ∼30 GPU-days, which is roughly half of the reported total. 
+
+## D Limitations 
+
+Despite its strengths, 3SPO has several limitations: 18 Requires exact state matching. The state score mechanism relies on identifying identical envi-ronment states across rollouts. In continuous or high-dimensional state spaces where exact state matching is infeasible, approximate state hashing or embedding-based clustering would be needed, which introduces additional complexity and potential hash collisions. 
+
+Limited to discrete action spaces. The current formulation assumes a discrete set of admissible actions at each state. Extending 3SPO to continuous control or large-scale language generation settings would require modifications to the state-score computation and rollout allocation mechanism. 
+
+## E Broader Impact 
+
+3SPO enables more efficient training of LLM agents, reducing the number of environment interactions needed to achieve strong performance. By improving sample efficiency, 3SPO makes it more feasible to train capable agents on commodity hardware, potentially democratizing access to agent-building tools for researchers with limited computational resources. The adaptive rollout mechanism substantially reduces energy consumption compared to uniform sampling strategies, as computation is concentrated on states with genuine learning potential rather than wasted on already-mastered configurations. The step-level credit assignment mechanism also improves the interpretability of agent decision-making: the state score provides a transparent, statistically grounded signal that explains why certain states receive more attention and rollout budget. Beyond efficiency gains, 3SPO contributes to the broader understanding of credit assignment in sequential decision making, offering a principled framework that bridges trajectory-level supervision and fine-grained step-level learning. The improved generalization capability demonstrated on out-of-distribution tasks suggests potential for educational applications, such as training more robust AI tutors that can handle diverse student interaction patterns. Finally, the deterministic nature of state-score computation enhances reproducibility compared to methods relying on learned value functions, as the score depends only on observable interaction statistics rather than stochastic network initialization. 
+
+## F Reasoning Behavior 
+
+We next present the complete trajectory and reasoning behavior of multi-turn interaction between agent and ALFWorld as discussed in Sec 4.6. 
+
+Environment (Step 1) 
+
+-= Welcome to TextWorld, ALFRED! =-Your task is to: put the dirty apple on the dining table. You are in the middle of a room. Looking quickly around you, you see a cabinet 9, a cabinet 8, a cabinet 7, a cabinet 6, a cabinet 5, a cabinet 4, a cabinet 3, a cabinet 2, a cabinet 1, a coffeemachine 1, a countertop 2, a countertop 1, a drawer 13, a drawer 12, a drawer 11, a drawer 10, a drawer 9, a drawer 8, a drawer 7, a drawer 6, a drawer 5, a drawer 4, a drawer 3, a drawer 2, a drawer 1, a fridge 1, a garbagecan 1, a microwave 1, a sinkbasin 1, a stoveburner 6, a stoveburner 5, a stoveburner 4, a stoveburner 3, a stoveburner 2, a stoveburner 1, a toaster 1, and a diningtable 1. 
+
+Agent (Step 1) 
+
+<think>To put the dirty apple on the dining table, I need to first locate the apple. Apples are commonly stored in cabinets or countertops. I will check the cabinets first, as they are a common place to keep fruits.</think> 
+
+<action> go to cabinet 1 </action> 
+
+Environment (Step 2) 
+
+You arrive at cabinet 1. The cabinet 1 is closed. 19 Agent (Step 2) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I am currently at cabinet 1, and the cabinet is closed. This means I need to open the cabinet to check if there is a dirty apple inside. 3. If there is a dirty apple in the cabinet, I will take it out and then go to the dining table to place it. 4. If there is no dirty apple in the cabinet, I will need to check other locations such as other cabinets, the counter top, or the sink basin, but cabinet 1 is the most likely place to find the apple right now. </think> 
+
+<action> open cabinet 1 </action> 
+
+Environment (Step 3) 
+
+You open the cabinet 1. The cabinet 1 is open. In it, you see nothing. 
+
+Agent (Step 3) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I opened cabinet 1 and found it empty. There is no apple here. 3. I need to check the next cabinet, cabinet 2, to continue searching for the apple. </think> 
+
+<action> go to cabinet 2 </action> 
+
+Environment (Step 4) 
+
+You arrive at cabinet 2. The cabinet 2 is closed. 
+
+Agent (Step 4) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I am currently at cabinet 2, and the cabinet is closed. This means I need to open the cabinet to check if there is a dirty apple inside. 3. If there is a dirty apple in the cabinet, I will take it out and then go to the dining table to place it. 4. If there is no dirty apple in the cabinet, I will need to check other locations such as other cabinets, the counter top, or the sink basin, but cabinet 2 is the most likely place to find the apple right now. </think> 
+
+<action> open cabinet 2 </action> 
+
+Environment (Step 5) 
+
+You open the cabinet 2. The cabinet 2 is open. In it, you see nothing. 
+
+Agent (Step 5) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I opened cabinet 1 and 2 and found nothing. I need to continue searching other cabinets. 3. I will go to cabinet 3 next to check for the apple. 
+
+20 </think> 
+
+<action> go to cabinet 3 </action> 
+
+Environment (Step 6) 
+
+You arrive at cabinet 3. The cabinet 3 is closed. 
+
+Agent (Step 6) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I am currently at cabinet 3, and the cabinet is closed. This means I need to open the cabinet to check if there is a dirty apple inside. 3. If there is a dirty apple in the cabinet, I will take it out and then go to the dining table to place it. 4. If there is no dirty apple in the cabinet, I will need to check other locations such as other cabinets, the counter top, or the sink basin, but cabinet 3 is the most likely place to find the apple right now. </think> 
+
+<action> open cabinet 3 </action> 
+
+Environment (Step 7) 
+
+You open the cabinet 3. The cabinet 3 is open. In it, you see a dirty apple 1 and a fork 1. 
+
+Agent (Step 7) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I have just opened the cabinet 3 and found a dirty apple 1 inside. This is the item I need. 3. Since I have found the dirty apple, my next step is to pick it up from the cabinet. 4. After picking up the apple, I will need to go to the dining table to place it. </think> 
+
+<action> pick up dirty apple 1 from cabinet 3 </action> 
+
+Environment (Step 8) 
+
+You pick up the dirty apple 1 from the cabinet 3. 
+
+Agent (Step 8) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I have just picked up the dirty apple 1 from cabinet 3. 3. My next step is to go to the dining table to place the apple. 4. The dining table is dining table 1 in the environment, so I will head there now. </think> 
+
+<action> go to dining table 1 </action> 
+
+Environment (Step 9) 
+
+You arrive at dining table 1. 
+
+21 Agent (Step 9) 
+
+<think> 1. The task is to put the dirty apple on the dining table. 2. I am now at dining table 1, holding the dirty apple 1. 3. My next step is to place the dirty apple 1 on the dining table to complete the task. </think> 
+
+<action> place dirty apple 1 on dining table 1 </action> 
+
+Environment (Step 10) 
+
+You place the dirty apple 1 on the dining table 1. The task is completed. 
+
+22
