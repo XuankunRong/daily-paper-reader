@@ -1,0 +1,891 @@
+Title: UniIntervene: Agentic Intervention for Efficient Real-World Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.12372v1
+
+Published Time: Thu, 11 Jun 2026 01:28:20 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+Preprint June 11, 2026 
+
+# UniIntervene: Agentic Intervention for Efficient Real-World Reinforcement Learning 
+
+Haoyuan Deng 1, Yitong Gao 1, Yudong Lin 1, Haichao Liu 1, Zhenyu Wu 2, and Ziwei Wang †1
+
+> 1
+
+Nanyang Technological University 
+
+> 2
+
+Beijing University of Posts and Telecommunications 
+
+> †
+
+Corresponding author. 
+
+Abstract 
+
+Human-in-the-loop reinforcement learning (HiL-RL) has emerged as an effective paradigm for real-world robotic manipulation, enabling online policy improvement with human guidance. However, current HiL-RL frameworks remain intervention-intensive, relying on frequent human corrections to redirect the policy out of unproductive exploration, which incurs high labor cost and limits real-world scalability. To address this, we propose UniIntervene , an agentic intervention model that detects unproductive exploration and autonomously recovers the policy toward high-value states, taking over the bulk of interventions from human operators. Specifically, UniIntervene first performs future-conditioned action-value estimation, predicting the latent consequence of the current action and evaluating its induced value, which provides a more stable progress signal. Building on this, a temporal value-risk critic aggregates recent value dynamics and triggers intervention when the estimated value exhibits sustained stagnation or degradation. When intervention is required, UniIntervene retrieves a high-value recovery target from a memory of past intervention episodes and produces executable corrective actions through a goal-conditioned recovery policy. In this way, UniIntervene turns intervention from passive human correction into a value-aware recovery process for efficient real-world RL. Extensive experiments on diverse real-world manipulation tasks demonstrate that UniIntervene improves the average success rate by 8.6% while reducing human interventions by 57% relative to state-of-the-art HiL-RL baselines. 
+
+Project page: https://denghaoyuan123.github.io/UniIntervene-project/ 
+
+Correspondence: ziwei.wang@ntu.edu.sg 
+
+Keywords: Human-in-the-loop reinforcement learning, robotic manipulation. 
+
+# 1 Introduction 
+
+Robotic manipulation is essential for robots in industrial assembly, household service, and unstructured real-world environments [ 5 , 47 ]. Recent imitation learning advances have produced general manipulation policies trained from large-scale demonstrations [ 7, 22 ], but offline-trained policies still struggle with out-of-distribution states, contact-rich dynamics, and failure recovery behaviors rarely covered by demonstrations [ 10 , 12 ]. Real-world reinforcement learning (RL) addresses these gaps by improving policies through online interaction, yet remains constrained by sparse rewards, unsafe exploration, and low sample efficiency [ 8, 28 , 46 ]. Human-in-the-loop reinforcement learning (HiL-RL) mitigates these issues by injecting online human intervention and corrective guidance into the learning loop [ 9, 27 , 43 ]. However, current HiL-RL frameworks remain intervention-intensive: the human operator is repeatedly required to 1  
+
+> arXiv:2606.12372v1 [cs.RO] 10 Jun 2026 Figure 1. UniIntervene replaces human intervention in HiL-RL with a value-aware critic that detects unproductive rollouts and a recovery policy that restores progress, yielding higher success with fewer human interventions on real-world manipulation.
+
+redirect the policy out of unproductive exploration before convergence, which incurs substantial labor cost and limits real-world scalability [11, 27]. Existing efforts to reduce this human burden mainly follow two directions. The first line improves how intervention data is exploited, reusing takeovers, corrective actions, and recovery trajectories as demonstrations or off-policy supervision to accelerate policy learning [ 11 , 30 , 40 , 43 ]. While effective in improving sample efficiency per intervention, these methods leave the underlying online rollout process unchanged, so the policy still spends substantial interactions in low-value states before a human is solicited. The second line reduces manual assistance through more autonomous exploration, including reset-free learning, recovery policies, safety critics, and data-efficient policy optimization [ 14 , 37 –39 ]. These methods improve training safety and continuity, but remain primarily defensive, avoiding irreversible failures or restoring resettable states without reasoning about whether ongoing exploration is making task progress. Consequently, neither line addresses the dominant source of human cost in HiL-RL: rollouts that are not unsafe yet fail to progress, leaving human takeover as the only resort. What is missing is an intervention mechanism that detects unproductive exploration online and autonomously recovers the policy toward high-value states, reserving human supervision for the residual cases. To address this gap, we propose UniIntervene , an agentic intervention model that takes over the bulk of online interventions from human operators during HiL-RL training. Instead of waiting for failures to occur or for a human to step in, UniIntervene continuously monitors whether the ongoing rollout is making productive task progress, and autonomously redirects the policy when it is not. At the core of UniIntervene is a future-conditioned action-value estimator that predicts the latent consequence of the current action and evaluates the value induced by this predicted future state, providing a more stable progress signal under sparse rewards than estimating value directly from the current observation. Built on this estimator, a temporal value-risk critic aggregates recent value dynamics over a sliding window and flags unproductive exploration in which the estimated value exhibits sustained stagnation or degradation. Once triggered, UniIntervene retrieves a high-value recovery target from a memory of past intervention episodes and produces executable corrective actions via a goal-conditioned recovery policy, returning the rollout to a productive state without human takeover. In this way, UniIntervene 
+
+redirects unproductive interactions into recoverable and informative trajectories, turning intervention into an internal recovery process driven by value-aware decisions. Our contributions are summarized as follows: 
+
+• We formulate online intervention in HiL–RL as a future-conditioned value-risk decision problem, and propose a temporal value-risk critic that detects unproductive exploration from the dynamics of action-conditioned future value. 
+
+> 2
+
+• We develop a memory-guided goal-conditioned recovery policy that retrieves high-value targets from past intervention episodes and produces corrective actions, enabling autonomous recovery without human takeover. 
+
+• Extensive real-world experiments on diverse manipulation tasks show that UniIntervene achieves 8.6% higher success rate with 57% fewer human interventions than state-of-the-art HiL-RL baselines. 
+
+# 2 Related Work 
+
+Human-in-the-loop Reinforcement Learning. Human-in-the-loop reinforcement learning (HiL-RL) injects human guidance into the online learning loop to reduce unsafe or unproductive exploration, and existing methods fall into two complementary lines. The first treats human input as a supervision signal, reusing takeovers and corrective transitions through imitation learning [ 19 , 20 , 29 ], replay buffers [ 28 , 32 ], residual policy heads [ 2, 43 ], or off-policy RL updates [ 9 , 18 , 27 ] to improve sample efficiency, yet still rely on the human operator to decide when intervention is required, treating the trigger as an exogenous event rather than a learnable quantity. The second treats human input as a continuity mechanism, invoking resets, recovery demonstrations, or proactive help-seeking to keep training tractable after failures [ 17 , 21 , 33 , 39 , 44 ]; while some explicitly model when assistance should be solicited [ 16 , 25 , 41 ], their criterion is typically tied to safety violations or terminal failures, decoupled from a forward-looking estimate of whether the ongoing rollout is making task progress. UniIntervene instead unifies trigger and recovery within a single value-aware decision process: it learns a future-conditioned value estimator that turns visual rollouts into a progress-aligned signal, derives an intervention trigger from the temporal dynamics of this signal, and grounds recovery in retrieved high-value targets from experience. 
+
+Autonomous Exploration for Real-world RL. Beyond human-in-the-loop supervision, a parallel line of work seeks to make real-world RL more self-sufficient by reducing reliance on human resets and unsafe exploration, and can be grouped into reset-free recovery and safety-constrained exploration. Reset-free recovery methods aim to remove manual resets by learning reversible behaviors [ 13 ], recovery policies [ 24 , 26 ], forward-backward task pairs [ 14 , 42 ], or self-induced subgoal curricula [ 34 , 49 ] that let the robot keep interacting with limited human assistance, yet recovery is typically driven by reachability or reset distance rather than by an explicit estimate of task value, leaving the robot unable to tell apart being resettable from being on a productive path. Safety-constrained exploration methods instead confine learning to safe regions using safety critics [ 4 , 35 , 39 ], constrained policy optimization [ 1, 36 , 45 ], or preference-aligned action priors [ 15 , 48 ]; while effective at curbing unsafe behaviors, their constraints are defined over state safety, providing no mechanism to detect rollouts that remain feasible yet make no progress. UniIntervene targets precisely this blind spot, asking not whether the robot is resettable or the next state is safe, but whether the ongoing rollout is gaining value, and uses the temporal dynamics of a future-conditioned value estimator to detect stagnation and retrieve high-value recovery targets. 
+
+# 3 Methodology 
+
+We first formulate the autonomous intervention problem in real-world HiL-RL (Sec. 3.1), then introduce future-conditioned action-value estimation as the basis for evaluating ongoing actions (Sec. 3.2). On top of this estimator, a temporal value-risk critic determines when intervention should be triggered (Sec. 3.3), and a memory-guided goal-conditioned recovery policy generates corrective actions to return the rollout to a productive state (Sec. 3.4). The overall pipeline is shown in Fig. 2. 
+
+3.1 Problem Statement 
+
+We consider real-world human-in-the-loop reinforcement learning for language-conditioned manipulation. At each step 𝑡 , the robot observes 𝑜 𝑡 ∈ O , receives a task instruction ℓ ∈ L , and executes an action 
+
+𝑎 𝑡 ∈ A from a policy 𝜋 𝜃 (𝑎 𝑡 | 𝑜 𝑡 , ℓ ). A human operator may intervene when the robot is unlikely to make meaningful task progress. The objective is to maximize task return while minimizing the number of 
+
+> 3
+
+Figure 2. Overview of UniIntervene . (a) A Qwen-VL backbone feeds a Latent Future Head with twin-critic and temporal value-risk supervision, and a Recovery Action Head producing corrective actions 𝑎 rec . (b) A memory buffer pairs past intervention states with retrieved high-value goals. (c) The temporal value-risk 𝑅 𝑡 triggers intervention upon sustained stagnation. (d) UniIntervene plugs into the real-world RL loop, overriding 𝑎 𝑡 with 𝑎 rec when triggered and contributing recovery transitions to the replay buffer. 
+
+human interventions during training: 
+
+max 
+
+> 𝜋 𝜃
+
+E𝜏 ∼ 𝜋 𝜃 
+
+" 𝑇 ∑︁ 
+
+> 𝑡 =0
+
+𝛾 𝑡 𝑟 (𝑜 𝑡 , 𝑎 𝑡 , ℓ ) − 𝜆 int 𝑦 𝑡 
+
+#
+
+, (1) where 𝑇 is the episode horizon, 𝑦 𝑡 ∈ { 0, 1} indicates whether a human intervention occurs at step 𝑡 , 𝑟 (·) is the task reward, 𝛾 is the discount factor, and 𝜆 int penalizes intervention cost. In existing HiL-RL pipelines, 𝑦 𝑡 is determined exogenously by the human operator: the human decides when to intervene and supplies the corrective actions, leaving the policy itself with no mechanism to recognize unproductive rollouts. We instead make this decision endogenous to the learning system. Concretely, we introduce a learned intervention module 
+
+I𝜓 : (𝑜 𝑡 , ℓ, 𝑎 𝑡 ) ↦ →   ˆ𝑞 𝑡 , 𝑠 int  
+
+> 𝑡
+
+, 𝐴 rec 
+
+> 𝑡
+
+, (2) which jointly predicts the value ˆ𝑞 𝑡 of continuing the current action, an intervention score 𝑠 int  
+
+> 𝑡
+
+∈ [ 0, 1], and a corrective action chunk 𝐴 rec  
+
+> 𝑡
+
+= {𝑎 rec  
+
+> 𝑡
+
+, . . . , 𝑎 rec  
+
+> 𝑡 +𝐻
+
+}. At deployment, the executed action follows 𝜋 𝜃 (𝑜 𝑡 , ℓ )
+
+when 𝑠 int  
+
+> 𝑡
+
+< 𝜏 int and 𝑎 rec  
+
+> 𝑡
+
+otherwise, with 𝜏 int a fixed threshold. This formulation turns intervention into an internal decision of the policy stack, with I𝜓 jointly resolving when to interrupt the current action and how to recover. 
+
+3.2 Future-conditioned Action-Value Estimation 
+
+The first component of I𝜓 asks a single question: if the policy continues the current action, will the rollout move toward task completion? A model-free critic 𝑄 (𝑜 𝑡 , ℓ, 𝑎 𝑡 ) answers this only weakly in real-world manipulation, where rewards are sparse and a single frame reveals little about the action’s downstream effect. We instead take a model-based view, predicting the action-conditioned latent consequence and evaluating it with a value head trained against a robust offline target. 
+
+Latent consequence prediction. A vision-language backbone encodes the current observation, instruc-tion, and action into a joint representation ℎ𝑡 = 𝑓 vlm (𝑜 𝑡 , ℓ, 𝑎 𝑡 ), from which a future head predicts the latent 
+
+4consequence one step ahead, supervised against a frozen visual encoder 𝐸 vis :
+
+ˆ𝑧 𝑡 +1 = 𝑓 fut (ℎ𝑡 ), Lfut = 𝑑 ( ˆ𝑧 𝑡 +1, 𝐸 vis (𝑜 𝑡 +1)) , (3) where 𝑑 (· , ·) is a latent distance, with 𝐸 vis instantiated as V-JEPA2 [ 3]. This yields a forward-looking representation that aggregates progress-relevant cues over the action horizon, which is particularly informative under sparse rewards where instantaneous observations carry little task signal. 
+
+Value head and proxy supervision. A twin value head 𝑓 Q maps ˆ𝑧 𝑡 +1 to ˆ𝑞 𝑡 = min ( ˆ𝑞 1,𝑡 , ˆ𝑞 2,𝑡 ) and is trained with a Smooth-𝐿 1 loss against a target 𝑞 ★𝑡 :
+
+LQ =
+
+> 2
+
+∑︁ 
+
+> 𝑘 =1
+
+𝜌 𝛽 
+
+  ˆ𝑞 𝑘,𝑡 − 𝑞 ★𝑡 
+
+ . (4) Since the value head drives both the trigger (Sec. 3.3) and the recovery-target retrieval (Sec. 3.4), we obtain 𝑞 ★𝑡 from a proxy value function pre-trained offline on successful and failed trajectories with 
+
+Lproxy = LTD + L prog + 0.05 LCQL , combining Bellman consistency, monotonic progress regression, and a small CQL term [ 23 ] to suppress out-of-distribution overestimation, yielding a progress-aligned signal decoupled from the online loop (see Appendix for details). 
+
+3.3 Temporal Value-Risk Intervention Trigger 
+
+The second component of I𝜓 maps the estimated value into an intervention score 𝑠 int  
+
+> 𝑡
+
+. A naive rule that triggers whenever ˆ𝑞 𝑡 is low is unreliable, because real-world manipulation frequently traverses transient low-value states during contact, alignment, or regrasping that do not warrant intervention. The decision should therefore depend not on the instantaneous value but on its temporal trend : an intervention is warranted only when the policy is failing to accumulate value over time, a pattern that a single-step estimate cannot capture but that recent value dynamics reveal. 
+
+Temporal value-risk. We formalize this trend as the cumulative shortfall of recent value progress relative to an expected progress rate 𝜖 . Let Δ𝑉 𝑖 = 𝑉 𝑖 − 𝑉 𝑖 −1 denote the one-step value change; a healthy rollout maintains Δ𝑉 𝑖 ≥ 𝜖 , whereas a stagnating one accumulates a positive shortfall 𝜖 − Δ𝑉 𝑖 . We aggregate this over a window of length 𝐾 and modulate by the distance to success: 
+
+𝑅 𝑡 = (1 − 𝑉 𝑡 )
+
+| {z } 
+
+> progress remaining
+> 𝐾 −1
+
+∑︁ 
+
+> 𝑖 =0
+
+𝛾 𝑖 𝑟 
+
+ 𝜖 − Δ𝑉 𝑡 −𝑖 
+
+| {z }
+
+> per-step shortfall
+
+, (5) where 𝛾 𝑟 ∈ ( 0, 1) discounts older transitions so that 𝑅 𝑡 reflects the recent trend. This yields a principled risk signal: 𝑅 𝑡 grows large only when value increments persistently fall below 𝜖 across the window, while 
+
+(1 −𝑉 𝑡 ) attenuates the risk near task completion, so 𝑅 𝑡 responds to sustained stagnation rather than isolated value drops. 
+
+Risk critic. To enable online prediction without recomputing the window at every step, a risk head 
+
+𝑓 risk regresses 𝑅 𝑡 from the predicted future latent and an encoding of the recent value sequence V𝑡 =
+
+[𝑉 𝑡 −𝐾 , . . . , 𝑉 𝑡 ]:
+
+ˆ𝑅 𝑡 = 𝑓 risk ( ˆ𝑧 𝑡 +1, 𝑓 hist (V 𝑡 )) , Lrisk = 𝜌 𝛽 ( ˆ𝑅 𝑡 − 𝑅 𝑡 ). (6) We obtain the intervention score as 𝑠 int  
+
+> 𝑡
+
+= 𝜎 ( ˆ𝑅 𝑡 ) and trigger recovery when 𝑠 int  
+
+> 𝑡
+
+≥ 𝜏 int , so that the decision is grounded in the predicted trend of task progress rather than the instantaneous value. 
+
+53.4 Memory-guided Goal-conditioned Recovery 
+
+The third component of I𝜓 produces the action chunk 𝐴 rec  
+
+> 𝑡
+
+when intervention is triggered. Generating corrective actions from a low-value state is under-specified: the critic indicates that the rollout is unproductive, but not which productive state to return to. We resolve ambiguity by decomposing recovery into target selection and target-conditioned control, grounding the former in experience. 
+
+Recovery memory. We maintain an offline memory M = {( 𝑜 fail  
+
+> 𝑗
+
+, 𝑠 fail  
+
+> 𝑗
+
+, ℓ 𝑗 , 𝑜 𝑔 𝑗 , 𝑠 𝑔 𝑗 )} 𝑗 aggregated from prior rollouts, where each entry pairs an intervention state (observation 𝑜 fail  
+
+> 𝑗
+
+and state 𝑠 fail  
+
+> 𝑗
+
+) with a high-value future state ( 𝑜 𝑔 𝑗 , 𝑠 𝑔 𝑗 ) reached later in the same rollout, under instruction ℓ𝑗 . We admit an entry only when the proxy value of the future state exceeds a threshold, so that retrieval targets are guaranteed to be high-value under the same criterion that governs the trigger. This makes M a repository of verified recovery targets rather than arbitrary past states. Further details on memory construction and threshold selection are provided in Appendix. 
+
+Target retrieval and goal-conditioned recovery. Recovery from semantically similar failures should aim at similar productive states; we therefore retrieve a target by matching the current context to memory keys in a shared embedding space 𝜙 (·) :
+
+𝑗 ★ = arg max  
+
+> 𝑗
+
+sim 
+
+
+
+𝜙 (𝑜 𝑡 , ℓ ), 𝜙 (𝑜 fail  
+
+> 𝑗
+
+, ℓ 𝑗 )
+
+
+
+, 𝑔 𝑡 = (𝑜 𝑔 𝑗 ★ , 𝑠 𝑔 𝑗 ★ ), (7) where sim (· , ·) denotes cosine similarity in the normalized embedding space, and 𝑔 𝑡 = (𝑜 𝑔 𝑡 , 𝑠 𝑔 𝑡 ) denotes the retrieved goal observation and state. Since 𝑔 𝑡 rarely coincides with the current state, the past trajectory toward 𝑔 𝑡 cannot be replayed directly; we instead train a goal-conditioned policy 𝜋 rec that generalizes to the current state, supervised by behavior cloning on rollout segments connecting each 𝑜 fail  
+
+> 𝑗
+
+to its goal state. The recovery actions are decoded with a FAST tokenizer [ 31 ], representing the corrective chunk as discrete frequency-domain tokens trained by per-token classification: 
+
+Lrec = −
+
+> 𝐻
+
+∑︁ 
+
+> 𝑖 =0
+
+log 𝜋 rec 
+
+ 𝑎 rec  
+
+> 𝑡 +𝑖
+
+𝑜 𝑡 , 𝑔 𝑡 , ℓ, 𝑎 rec 
+
+> 𝑡 :𝑡 +𝑖 −1
+
+ . (8) Conditioning on 𝑔 𝑡 converts the ill-posed recovery into a goal-reaching task: memory supplies where to recover, while the policy learns how to reach it. 
+
+# 4 Experimental Results 
+
+We evaluate UniIntervene on robotic manipulation tasks to answer three key questions: (1) Can 
+
+UniIntervene improve task success while reducing human interventions compared with SOTA HiL-RL baselines (Sec. 4.2)? (2) How much does each key component contribute to performance (Sec. 4.4)? (3) Does UniIntervene learn intervention and recovery behaviors, including detecting sustained low-value stagnation and retrieving recovery targets (Sec. 4.3)? 
+
+4.1 Experiment Setup 
+
+Real-world Benchmark. We evaluate UniIntervene on five real-world manipulation tasks with a UR7e robotic arm, where human interventions are provided via a SpaceMouse. The benchmark covers multi-object interaction, contact-rich manipulation, and non-rigid object manipulation, including Pick Eggplant , Tube Insertion , RAM Insertion , Wipe Whiteboard , and Fold Towel . These tasks require robust handling of pose variation, precise contact, long-horizon correction, and recovery from low-value states. Detailed settings are provided in Appendix. 
+
+Baselines. We compare UniIntervene with three baselines for human-in-the-loop manipulation. First, we use imitation learning (IL) as the policy baseline, where a 𝜋 0.5 [ 6] policy is fine-tuned with                                                                               
+
+> 6Table 1. Real-world Manipulation Results. UniIntervene achieves the best success rate on every task and the lowest intervention rate overall, improving average success by 8.6% while cutting human interventions by 57% relative to HiL-SERL. SR: success rate (%); IR: human intervention rate (%). Best results in bold .
+> Method Multi-object Contact-rich Non-rigid Average Pick Eggplant Tube Insertion RAM Insertion Wipe Whiteboard Fold Towel SR ↑IR ↓SR ↑IR ↓SR ↑IR ↓SR ↑IR ↓SR ↑IR ↓SR ↑IR ↓
+> 𝜋 0.5(SFT) 95 –30 –10 –65 –70 –54 –HiL-SERL 90 28.7 60 30.2 85 32.3 85 30.5 85 49.8 81 34.3 HiL-SERL + FA-RL 85 20.4 60 22.1 75 27.9 80 21.9 85 30.9 77 24.6 HiL-SERL + UniIntervene 95 10.0 70 15.8 95 12.1 90 10.9 90 24.1 88 14.6
+
+supervised fine-tuning (SFT) using 20 demonstrations per task. Second, we adopt HIL-SERL [ 27 ], which trains manipulation policies with corrective interventions and off-policy RL updates. Third, we compare with Failure-aware RL [ 24 ], which combines failure prediction and recovery learning to reduce unsafe or unproductive exploration. All baselines and UniIntervene are evaluated under the same robot platform, task initialization protocol, and SpaceMouse-based intervention interface. Detailed baseline settings are provided in Appendix. 
+
+Evaluation Metrics. We report two main metrics: final success rate (SR) and human intervention rate (IR). SR is measured over 20 evaluation episodes per task after training and reported as the percentage of successful episodes. IR is computed over three independent training runs as the ratio between the total number of intervention steps and the total number of robot interaction steps. 
+
+4.2 Comparisons with the State-of-the-Art 
+
+As shown in Table 1, UniIntervene achieves a comprehensive win, attaining the best success rate (SR) on every task (88% on average) while requiring the fewest human interventions (IR of 14.6%, less than half that of HiL-SERL), improving task performance and training efficiency simultaneously. The offline 
+
+𝜋 0.5 (SFT) policy performs reasonably on simple pick-and-place but degrades sharply on contact-rich insertion (30% and 10% on Tube and RAM Insertion), confirming that demonstrations alone do not cover the fine-grained corrections these tasks require. HiL-SERL recovers this gap through online intervention, but at a high cost: its average IR reaches 34.3%, peaking at 49.8% on Fold Towel where deformable dynamics demand frequent corrections. FA-RL reduces intervention by predicting failures, yet its trigger is tied to explicit failure signals and is therefore unreliable when failures are visually subtle. This is most evident on RAM Insertion and Wipe Whiteboard, where small inter-frame appearance changes make failure hard to detect, leaving SR at 75% and 80%, below HiL-SERL’s 85%, while still consuming substantial intervention. UniIntervene 
+
+instead triggers on the temporal trend of estimated value rather than on discrete failure events, detecting stagnation more sensitively and redirecting the rollout toward a retrieved high-value target. As a result, 
+
+UniIntervene attains the best SR on every task while lowering IR to 14.6%, less than half of HiL-SERL’s 34.3% and below FA-RL’s 24.6%. The gains are largest on the contact-rich tasks where prior triggers struggle, indicating that value-trend monitoring provides a more robust intervention signal than failure prediction. 
+
+4.3 Analysis of Learned Intervention and Recovery Behaviors 
+
+To examine whether UniIntervene learns meaningful behavior beyond aggregate metrics, we visualize the predicted value over two successful episodes in Fig. 3. Both follow a consistent stagnation-trigger-recovery pattern. Early on, the predicted value stays low and flat, reflecting genuine stagnation rather than frame-level noise; UniIntervene waits until the stagnation is sustained before triggering, confirming      
+
+> 7Figure 3. UniIntervene enables value-aware recovery in real-world tasks. Case studies on RAM Insertion and Fold Towel show that UniIntervene detects sustained low-value stagnation, triggers corrective recovery, and restores task progress toward successful completion.
+
+that the trigger responds to a low-value trend rather than instantaneous fluctuations. Notably, the trigger fires at the local value minimum (step 13 on RAM Insertion, step 8 on Fold Towel) rather than at the first low-value frame, indicating that the temporal aggregation in 𝑅 𝑡 correctly distinguishes the bottom of stagnation from incidental dips. After triggering, the goal-conditioned policy steers the rollout toward a retrieved high-value target, and the value rises smoothly and monotonically to completion without secondary triggering, indicating that a single retrieved goal is sufficient to restore productive progress and that the targets provide feasible intermediate goals. The two tasks differ in horizon (42 vs. 95 steps) yet share the same structure, suggesting the learned behavior generalizes across manipulation types. 
+
+4.4 Ablation Studies                               
+
+> Table 2. Ablation Study. We ablate the key components of
+> UniIntervene on Pick Eggplant and RAM Insertion .
+> Variant Value-Risk Critic Online RL
+> 𝑄 -Loss
+> ↓
+> Int. F1
+> ↑SR (%) ↑IR (%) ↓
+> w/o Future Pred. 0.005 0.878 90 15.8 w/o Value Pred. –0.845 85 18.7 w/o TVR 0.004 0.832 85 16.9 w/o Memory Goal 0.004 0.882 85 16.1
+> UniIntervene 0.004 0.882 95 11.1
+
+Table 2 ablates the key components of 
+
+UniIntervene on two representative tasks, Pick Eggplant and RAM Insertion ,using both offline metrics ( 𝑄 -loss, interven-tion F1) and online performance (SR, IR). The Value-Risk Critic is the most critical module: removing value prediction yields the lowest F1 (0.845) and highest IR (18.7%); the absent 𝑄 -loss entry in the table reflects that no value head is trained, confirming that reliable value estimation is essential for inter-vention triggering. Removing the temporal value-risk (TVR) trigger causes a comparable drop (F1 0.832 , IR 16 .9% ), as the model no longer aggregates value dynamics over time and instead reacts to transient value drops. In contrast, removing future prediction or the memory goal keeps offline F1 nearly intact ( 0.878 and 0.882 ), but still lowers online SR from 95% to 90% and 85% , indicating that these components mainly affect recovery quality rather than trigger classification. This also suggests that offline intervention F1 alone is insufficient to characterize recovery effectiveness, since memory-guided goal selection can substantially affect online success without changing trigger accuracy. Overall, on these two ablation tasks, the full model achieves the best results across all metrics ( 95% SR, 11 .1% IR), showing that value-risk estimation drives intervention decisions while future prediction and memory-guided recovery improve online recovery. 
+
+> 8
+
+# 5 Conclusion 
+
+We presented UniIntervene , an agentic intervention model that internalizes the intervention decision in real-world human-in-the-loop reinforcement learning. Rather than relying on human operators to recognize unproductive rollouts after the fact, UniIntervene couples future-conditioned action-value estimation with temporal value-risk modeling to detect stagnation as it emerges, and resolves the recovery ambiguity by retrieving high-value targets from past intervention episodes and producing goal-conditioned corrective actions. Across diverse real-world manipulation tasks, this design improves task success while substantially reducing the human interventions consumed during online training. More broadly, our results suggest that the dominant cost in real-world HiL-RL is not catastrophic failure but slow, unproductive exploration, and that this cost can be absorbed by a learned value-aware recovery process, pointing toward a path in which human supervision is reserved for the residual cases that learned recovery cannot resolve. 
+
+# 6 Limitations 
+
+Despite its effectiveness, UniIntervene has several limitations. First, the intervention trigger depends on the quality of the proxy value function; if the value estimate is poorly calibrated or fails to reflect task progress, the temporal value-risk critic may trigger recovery too early or too late. Second, the goal-conditioned recovery policy relies on a memory of past intervention episodes, so retrieval-based recovery may be less reliable for failure modes not covered by the memory. Third, our experiments focus on tabletop manipulation with a single robot embodiment; scaling UniIntervene to diverse robots, long-horizon mobile manipulation, and multi-task deployment will require richer recovery memories and more robust value estimation. Finally, UniIntervene reduces but does not eliminate the need for human supervision, which remains important for rare, unsafe, or out-of-distribution failures that the learned recovery policy cannot resolve. 
+
+# References 
+
+[1] Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In 
+
+International conference on machine learning , pages 22–31. Pmlr, 2017. [2] Lars Ankile, Anthony Simeonov, Idan Shenfeld, and Pulkit Agrawal. Juicer: Data-efficient imitation learning for robotic assembly. In 2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 5096–5103. IEEE, 2024. [3] Mido Assran, Adrien Bardes, David Fan, Quentin Garrido, Russell Howes, Matthew Muckley, Ammar Rizvi, Claire Roberts, Koustuv Sinha, Artem Zholus, et al. V-jepa 2: Self-supervised video models enable understanding, prediction and planning. arXiv preprint arXiv:2506.09985 , 2025. [4] Homanga Bharadhwaj, Aviral Kumar, Nicholas Rhinehart, Sergey Levine, Florian Shkurti, and Animesh Garg. Conservative safety critics for exploration. arXiv preprint arXiv:2010.14497 , 2020. [5] Aude Billard and Danica Kragic. Trends and challenges in robot manipulation. Science ,364(6446):eaat8414, 2019. [6] Kevin Black, Noah Brown, James Darpinian, Karan Dhabalia, Danny Driess, Adnan Esmail, Michael Robert Equi, Chelsea Finn, Niccolo Fusai, Manuel Y Galliker, et al. 𝜋 0.5: a vision-language-action model with open-world generalization. In 9th Annual Conference on Robot Learning ,2025. [7] Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, et al. 𝜋 0: A vision-language-action flow model for general robot control. arXiv preprint arXiv:2410.24164 , 2024. 
+
+> 9
+
+[8] Liangliang Chen, Yutian Lei, Shiyu Jin, Ying Zhang, and Liangjun Zhang. Rlingua: Improving reinforcement learning sample efficiency in robotic manipulations with large language models. IEEE Robotics and Automation Letters , 9(7):6075–6082, 2024. [9] Yuhui Chen, Shuai Tian, Shugao Liu, Yingting Zhou, Haoran Li, and Dongbin Zhao. Conrft: A reinforced fine-tuning method for vla models via consistency policy. Proceedings of Robotics: Science and Systems (RSS) , 2025. [10] Cheng Chi, Zhenjia Xu, Siyuan Feng, Eric Cousineau, Yilun Du, Benjamin Burchfiel, Russ Tedrake, and Shuran Song. Diffusion policy: Visuomotor policy learning via action diffusion. The International Journal of Robotics Research , 44(10-11):1684–1704, 2025. [11] Haoyuan Deng, Yudong Lin, Yuanjiang Xue, Haoyang Du, Qianzhun Wang, Boyang Zhou, Zhenyu Wu, and Ziwei Wang. E2hil: Entropy-guided sample selection for efficient real-world human-in-the-loop reinforcement learning. IEEE Robotics and Automation Letters , 2026. [12] Haoyuan Deng, Zhenyu Wu, Haichao Liu, Wenkai Guo, Yuquan Xue, Ziyu Shan, Chuanrui Zhang, Bofang Jia, Yuan Ling, Guanxing Lu, et al. A survey on reinforcement learning of vision-language-action models for robotic manipulation. Authorea Preprints , 2025. [13] Benjamin Eysenbach, Shixiang Gu, Julian Ibarz, and Sergey Levine. Leave no trace: Learning to reset for safe and autonomous reinforcement learning. arXiv preprint arXiv:1711.06782 , 2017. [14] Abhishek Gupta, Justin Yu, Tony Z Zhao, Vikash Kumar, Aaron Rovinsky, Kelvin Xu, Thomas Devlin, and Sergey Levine. Reset-free reinforcement learning via multi-task learning: Learning dexterous manipulation behaviors without human intervention. In Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , pages 6664–6671. IEEE, 2021. [15] Joey Hejna, Rafael Rafailov, Harshit Sikchi, Chelsea Finn, Scott Niekum, W Bradley Knox, and Dorsa Sadigh. Contrastive preference learning: Learning from human feedback without rl. URL https://arxiv. org/abs/2310.13639 , 2024. [16] Ryan Hoque, Ashwin Balakrishna, Ellen Novoseller, Albert Wilcox, Daniel S Brown, and Ken Goldberg. Thriftydagger: Budget-aware novelty and risk gating for interactive imitation learning. In 
+
+Conference on Robot Learning , pages 598–608. PMLR, 2022. [17] Hengyuan Hu, Suvir Mirchandani, and Dorsa Sadigh. Imitation bootstrapped reinforcement learning. 
+
+arXiv preprint arXiv:2311.02198 , 2023. [18] Zheyuan Hu, Aaron Rovinsky, Jianlan Luo, Vikash Kumar, Abhishek Gupta, and Sergey Levine. Reboot: Reuse data for bootstrapping efficient real-world dexterous manipulation. In Conference on Robot Learning , pages 1930–1949. PMLR, 2023. [19] Yunfan Jiang, Chen Wang, Ruohan Zhang, Jiajun Wu, and Li Fei-Fei. Transic: Sim-to-real policy transfer by learning from online correction. Conference on Robot Learning , 2025. [20] Michael Kelly, Chelsea Sidrane, Katherine Driggs-Campbell, and Mykel J Kochenderfer. Hg-dagger: Interactive imitation learning with human experts. In 2019 International Conference on Robotics and Automation (ICRA) , pages 8077–8083. IEEE, 2019. [21] Jigang Kim, J Hyeon Park, Daesol Cho, and H Jin Kim. Automating reinforcement learning with example-based resets. IEEE Robotics and Automation Letters (RAL) , 7(3):6606–6613, 2022. [22] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan P Foster, Pannag R Sanketi, Quan Vuong, et al. Openvla: An open-source vision-language-action model. In Conference on Robot Learning , pages 2679–2713. PMLR, 2025. 
+
+> 10
+
+[23] Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for offline reinforcement learning. Advances in neural information processing systems , 33:1179–1191, 2020. [24] Huanyu Li, Kun Lei, Sheng Zang, Kaizhe Hu, Yongyuan Liang, Bo An, Xiaoli Li, and Huazhe Xu. Failure-aware rl: Reliable offline-to-online reinforcement learning with self-recovery for real-world manipulation. arXiv preprint arXiv:2601.07821 , 2026. [25] Huihan Liu, Shivin Dass, Roberto Martín-Martín, and Yuke Zhu. Model-based runtime monitoring with interactive imitation learning. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 4154–4161. IEEE, 2024. [26] Kevin Lu, Aditya Grover, Pieter Abbeel, and Igor Mordatch. Reset-free lifelong learning with skill-space planning. arXiv preprint arXiv:2012.03548 , 2020. [27] J Luo, C Xu, J Wu, and S Levine. Precise and dexterous robotic manipulation via human-in-the-loop reinforcement learning. Science Robotics , pages 1–54, 2025. [28] Jianlan Luo, Zheyuan Hu, Charles Xu, You Liang Tan, Jacob Berg, Archit Sharma, Stefan Schaal, Chelsea Finn, Abhishek Gupta, and Sergey Levine. Serl: A software suite for sample-efficient robotic reinforcement learning. In Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , pages 16961–16969, 2024. [29] Ajay Mandlekar, Danfei Xu, Roberto Martín-Martín, Yuke Zhu, Li Fei-Fei, and Silvio Savarese. Human-in-the-loop imitation learning using remote teleoperation. arXiv preprint arXiv:2012.06733 ,2020. [30] Mingjie Pan, Siyuan Feng, Qinglin Zhang, Xinchen Li, Jianheng Song, Chendi Qu, Yi Wang, Chuankang Li, Ziyu Xiong, Zhi Chen, et al. Sop: A scalable online post-training system for vision-language-action models. arXiv preprint arXiv:2601.03044 , 2026. [31] Karl Pertsch, Kyle Stachowicz, Brian Ichter, Danny Driess, Suraj Nair, Quan Vuong, Oier Mees, Chelsea Finn, and Sergey Levine. Fast: Efficient action tokenization for vision-language-action models, 2025. [32] Stéphane Ross, Geoffrey Gordon, and Drew Bagnell. A reduction of imitation learning and structured prediction to no-regret online learning. In Proceedings of the fourteenth international conference on artificial intelligence and statistics , pages 627–635. JMLR Workshop and Conference Proceedings, 2011. [33] Archit Sharma, Rehaan Ahmad, and Chelsea Finn. A state-distribution matching approach to non-episodic reinforcement learning. In International Conference on Machine Learning , pages 19645–19657. PMLR, 2022. [34] Archit Sharma, Abhishek Gupta, Sergey Levine, Karol Hausman, and Chelsea Finn. Autonomous reinforcement learning via subgoal curricula. Proceedings of Advances in Neural Information Processing Systems , 34:18474–18486, 2021. [35] Krishnan Srinivasan, Benjamin Eysenbach, Sehoon Ha, Jie Tan, and Chelsea Finn. Learning to be safe: Deep rl with a safety critic. arXiv preprint arXiv:2010.14603 , 2020. [36] Adam Stooke, Joshua Achiam, and Pieter Abbeel. Responsive safety in reinforcement learning by pid lagrangian methods. In International conference on machine learning , pages 9133–9143. PMLR, 2020. [37] Zhian Su, Weijie Kong, Haonan Dong, and Huixu Dong. Ig-rft: An interaction-guided rl framework for vla models in long-horizon robotic manipulation. arXiv preprint arXiv:2602.20715 , 2026. 
+
+> 11
+
+[38] GigaBrain Team, Boyuan Wang, Bohan Li, Chaojun Ni, Guan Huang, Guosheng Zhao, Hao Li, Jie Li, Jindi Lv, Jingyu Liu, et al. Gigabrain-0.5 m*: a vla that learns from world model-based reinforcement learning. arXiv preprint arXiv:2602.12099 , 2026. [39] Brijen Thananjeyan, Ashwin Balakrishna, Suraj Nair, Michael Luo, Krishnan Srinivasan, Minho Hwang, Joseph E Gonzalez, Julian Ibarz, Chelsea Finn, and Ken Goldberg. Recovery rl: Safe reinforcement learning with learned recovery zones. IEEE Robotics and Automation Letters (RAL) ,6(3):4915–4922, 2021. [40] Yi Wang, Xinchen Li, Pengwei Xie, Pu Yang, Buqing Nie, Yunuo Cai, Qinglin Zhang, Chendi Qu, Jeffrey Wu, Jianheng Song, et al. Learning while deploying: Fleet-scale reinforcement learning for generalist robot policies. arXiv preprint arXiv:2605.00416 , 2026. [41] Annie Xie, Fahim Tajwar, Archit Sharma, and Chelsea Finn. When to ask for help: Proactive interventions in autonomous reinforcement learning. Proceedings of Advances in Neural Information Processing Systems , 35:16918–16930, 2022. [42] Kelvin Xu, Siddharth Verma, Chelsea Finn, and Sergey Levine. Continual learning of control primitives: Skill discovery via reset-games. Advances in Neural Information Processing Systems ,33:4999–5010, 2020. [43] Xiaomeng Xu, Yifan Hou, Zeyi Liu, and Shuran Song. Compliant residual dagger: Improving real-world contact-rich manipulation with human corrections. arXiv preprint arXiv:2506.16685 ,2025. [44] Wenye Yu, Jun Lv, Zixi Ying, Yang Jin, Chuan Wen, and Cewu Lu. Armada: Autonomous online failure detection and human shared control empower scalable real-world deployment and adaptation. 
+
+arXiv preprint arXiv:2510.02298 , 2025. [45] Borong Zhang, Yuhao Zhang, Jiaming Ji, Yingshan Lei, Juntao Dai, Yuanpei Chen, and Yaodong Yang. Safevla: Towards safety alignment of vision-language-action model via constrained learning. 
+
+Advances in Neural Information Processing Systems , 38:153335–153373, 2026. [46] Tengteng Zhang and Hongwei Mo. Reinforcement learning for robot research: A comprehensive review and open issues. International Journal of Advanced Robotic Systems , 2021. [47] Tianle Zhang, Dongjiang Li, Yihang Li, Zecui Zeng, Lin Zhao, Lei Sun, Yue Chen, Xuelong Wei, Yibing Zhan, Lusong Li, et al. Empowering embodied manipulation: A bimanual-mobile robot manipulation dataset for household tasks. arXiv preprint arXiv:2405.18860 , pages 1–24, 2024. [48] Zijian Zhang, Kaiyuan Zheng, Zhaorun Chen, Joel Jang, Yi Li, Siwei Han, Chaoqi Wang, Mingyu Ding, Dieter Fox, and Huaxiu Yao. Grape: Generalizing robot policy via preference alignment. 
+
+arXiv preprint arXiv:2411.19309 , 2024. [49] Henry Zhu, Justin Yu, Abhishek Gupta, Dhruv Shah, Kristian Hartikainen, Avi Singh, Vikash Kumar, and Sergey Levine. The ingredients of real-world robotic reinforcement learning. arXiv preprint arXiv:2004.12570 , 2020. 
+
+> 12
+
+# Appendix A Overview 
+
+This supplement details the full method behind UniIntervene , from the proxy value function used to score rollouts, through the temporal value-risk trigger, to the memory-guided recovery policy. We first describe the real-world benchmark and hardware (Appendix B), then give the implementation of each component in the order they appear in the main paper: the proxy value function and its labeling (Appendix C), the future-conditioned action-value estimator and its network architecture (Appendix D), the temporal value-risk trigger and its offline mining rules (Appendix E), and the recovery memory together with the goal-conditioned recovery policy (Appendix F). We then list the end-to-end training procedure and all hyperparameters (Appendix G), the baseline configurations (Appendix H), and qualitative results on the learned behavior (Appendix I). A short video accompanies this submission. It walks through a single real-world rollout in which 
+
+UniIntervene detects sustained value stagnation during a contact-rich insertion, takes over from the policy, retrieves a high-value recovery target, and returns the rollout to a productive state without human intervention. 
+
+# B Real-World Benchmark and Hardware 
+
+B.1 Hardware Setup  
+
+> Figure 4. Real-world hardware setup. A UR7e arm with a parallel-jaw gripper, a wrist camera and a fixed third-person camera, and a SpaceMouse for corrective takeover.
+
+All experiments run on a single UR7e robotic arm with a parallel-jaw gripper. Visual observa-tions come from two calibrated RGB cameras, one mounted on the wrist and one fixed to provide a third-person workspace view, both resized to 
+
+224 × 224 before being fed to the policy and the intervention module. Human interventions are sup-plied through a 3D-connexion SpaceMouse, which lets the operator override the policy with a cor-rective end-effector velocity command whenever a takeover is needed. The same platform, camera placement, and intervention interface are shared by UniIntervene and all baselines, so that dif-ferences in measured intervention rate reflect the method rather than the teleoperation setup. Figure 4 shows the platform. 
+
+B.2 Task Suite 
+
+The benchmark contains five tasks chosen to span multi-object interaction, contact-rich assembly, and non-rigid object manipulation. Each task is initialized with randomized object poses, and an episode is scored as a success only if the final configuration satisfies the task-specific criterion below. Figure 5 shows a snapshot of the five tasks. 
+
+Pick Eggplant (multi-object). An eggplant and three or four distractor objects are placed at randomized positions. The arm must grasp the eggplant and lift it clear of the workspace. Success requires a stable grasp on the correct object with the distractors left undisturbed. 
+
+Tube Insertion (contact-rich precision manipulation). A flexible tube must be aligned with and inserted into a fixed port. The task demands sub-centimeter alignment and tolerates only small lateral error before the tube buckles. Success requires the tube tip to be seated inside the port. 
+
+RAM Insertion (contact-rich precision manipulation). A memory module must be aligned to a slot and pressed home. Small appearance changes between a near-miss and a seated module make failure visually subtle, which is the regime where failure-prediction triggers tend to break down. Success requires the   
+
+> 13 Figure 5. The five real-world manipulation tasks used to evaluate UniIntervene , shown from the third-person workspace camera during execution.
+
+module to be fully seated and latched. 
+
+Wipe Whiteboard (contact-rich). The arm holds an eraser and must wipe a marked region on a vertical whiteboard while maintaining contact force. Success requires the marked region to be cleared without losing surface contact. 
+
+Fold Towel (non-rigid). A towel laid flat must be folded along a target line. The deformable dynamics produce frequent low-value states during regrasping and re-alignment, and demonstrations rarely cover the corrections needed. Success requires the towel to be folded into the target shape with aligned edges. 
+
+# C Proxy Value Function 
+
+The proxy value function provides the offline target 𝑞 ★𝑡 that supervises the value head in the main module (Eq. 4 of the main paper). Because both the trigger and the recovery-target retrieval are driven by this signal, it is trained separately from the online loop and frozen during UniIntervene training. 
+
+C.1 Progress Labeling 
+
+We assign a normalized time-to-go (NTTG) progress label to every transition before training the value function. For a successful episode of length 𝑇 , transition 𝑡 receives a progress label 𝑣 𝑡 = 𝑡 /( 𝑇 −1), so that value increases monotonically from 0 at the start to 1 at task completion. Failed episodes receive 𝑣 𝑡 = 0
+
+throughout, together with a large negative raw return that suppresses their value estimate. This labeling turns sparse terminal success into a dense per-step progress signal, and it is the target that the progress regression term below regresses against. 
+
+> 14
+
+C.2 Architecture 
+
+The proxy value function is a compact stitched vision-language model. A frozen SigLIP-SO400M vision tower encodes the observation into a 1152 -dimensional feature, a two-layer MLP projector maps it to the 
+
+640 -dimensional language space, and a Gemma-3-270M language model fuses it with the instruction. Twin value heads read the fused representation and predict a scalar value, and the reported value is the minimum of the two heads, 𝑉 (𝑜, ℓ ) = min (𝑉 1, 𝑉 2), which guards against single-head overestimation. The model is trained in two stages. The first stage aligns the projector on general vision-language data with the vision tower and language model frozen. The second stage unfreezes the projector and value heads on robot data with the vision tower kept frozen. 
+
+C.3 Training Objective 
+
+We pre-train the proxy value function offline on a dataset D of recorded transitions (𝑜 𝑡 , ℓ, 𝑟 𝑡 , 𝑜 𝑡 +1, 𝑑 𝑡 ),drawn from successful trajectories D+ and failed trajectories D− , where 𝑟 𝑡 is the sparse terminal reward (1 at a successful terminal state and 0 otherwise) and 𝑑 𝑡 is the done flag. The network carries twin value heads and we read the value as 𝑉 𝜙 (𝑜, ℓ ) = min 𝑘 ∈ { 1,2} 𝑉 𝜙,𝑘 (𝑜, ℓ ). This 𝑉 𝜙 is the quantity the main paper writes as 𝑉 𝑡 ≡ 𝑉 𝜙 (𝑜 𝑡 , ℓ ) in the temporal value-risk of Sec. 3.3, and it supplies the regression target 
+
+𝑞 ★𝑡 ≡ 𝑉 𝜙 (𝑜 𝑡 +1, ℓ ) for the value head in Eq. 4. The proxy objective is 
+
+Lproxy = 𝜆 TD LTD + 𝜆 label Llabel + 𝜆 prog Lmono 
+
+| {z }
+
+Lprog 
+
++𝜆 CQL LCQL , (9) with weights (𝜆 TD , 𝜆 label , 𝜆 prog , 𝜆 CQL ) = (1, 0.3, 1, 0.05 ), which recovers the grouped form LTD +Lprog + 0.05 LCQL stated in the main paper. Writing 𝜌 𝛽 for the Smooth-L1 loss with 𝛽 = 1, sg [·] for the stop-gradient, and 𝑣 𝑡 = 𝑡 /( 𝑇 −1) for the NTTG progress label of Appendix C.1, the individual terms are 
+
+LTD =∑︁  
+
+> 𝑘 ∈ { 1,2}
+
+ED
+
+h
+
+𝜌 𝛽 
+
+ 𝑉 𝜙,𝑘 (𝑜 𝑡 , ℓ ) − sg  𝑟 𝑡 + 𝛾 (1 − 𝑑 𝑡 ) 𝑉 𝜙 (𝑜 𝑡 +1, ℓ )   i
+
+, (10) 
+
+Llabel = ED+
+
+𝜌 𝛽 
+
+ 𝑉 𝜙 (𝑜 𝑡 , ℓ ) − 𝑣 𝑡 
+
+ , (11) 
+
+Lmono = ED+
+
+ max  0, 𝑉 𝜙 (𝑜 𝑡 , ℓ ) − 𝑉 𝜙 (𝑜 𝑡 +1, ℓ ) , (12) 
+
+LCQL = E𝑜 𝑡 ∼D 
+
+h
+
+log ∑︁  
+
+> ˜𝑜 ∈ N ( 𝑜 𝑡 )
+
+exp 𝑉 𝜙 ( ˜𝑜, ℓ )
+
+i
+
+− E𝑜 𝑡 ∼D 
+
+𝑉 𝜙 (𝑜 𝑡 , ℓ ) . (13) Equation (10) enforces one-step Bellman consistency on both heads against a bootstrapped, stop-gradient target. Equations (11) and (12) act only on successful trajectories: the first regresses the value onto the NTTG progress label, and the second is a monotonicity hinge that penalizes any drop in value between consecutive successful steps, so that 𝑉 𝜙 rises along productive rollouts. Equation (13) is the state-value form of the Conservative Q-Learning regularizer. It lowers a soft-maximum of the value over a set of negative or out-of-distribution candidate states N ( 𝑜 𝑡 ), sampled from failed trajectories, while raising the value on the observed in-distribution state, which caps the value assigned to states the data does not support and suppresses the over-estimation that would otherwise mislead the trigger. We use a discount of 
+
+𝛾 = 0.99 , a five-epoch progress warmup during which only Eqs. (11) and (12) are active, and balanced sampling of D+ and D− so that the rarer failure transitions are not drowned out. The per-term weights are repeated in Table 3. 
+
+C.4 Value Function Quality 
+
+On held-out validation episodes the value heads cleanly separate successful from failed rollouts. On the insertion split the mean predicted value reaches 0.53 on successful trajectories against 0.09 on failed ones, and on Pick Eggplant the gap is 0.53 against 0.24 . The two heads agree closely, with a head disagreement below 3 × 10 −3 in all splits, indicating that the conservative twin design does not collapse to a single mode. Figure 6 overlays the predicted value against normalized episode time for every successful and 
+
+> 15
+
+Table 3. Proxy value function configuration and training-objective weights. 
+
+Setting Value Setting Value 
+
+Vision tower SigLIP-SO400M TD weight 𝜆 TD 1.0
+
+Language model Gemma-3-270M Progress label weight 𝜆 label 0.3
+
+Projector MLP 1152 → 640 Progress weight 𝜆 prog 1.0
+
+Value heads twin, min (𝑉 1, 𝑉 2) Conservative weight 𝜆 CQL 0.05 
+
+Discount 𝛾 0.99 Progress warmup epochs 5
+
+Success/fail sampling balanced ( 0.5) Early-stop patience 6
+
+failed trajectory across four tasks. Successful rollouts rise monotonically toward 1, while failed rollouts stagnate at low value. This separation holds across tasks of very different horizon, and it is what makes the value trend, rather than the instantaneous frame, a usable progress signal for the trigger. Success    
+
+> Pick Eggplant RAM Insertion Wipe Whiteboard Fold Towel
+> Failure
+> Normalized episode time
+> Predicted value  (0 to 1)
+> Proxy value over normalized episode time: success rollouts rise monotonically, failures stagnate
+
+Figure 6. Predicted proxy value over normalized episode time, overlaid across all evaluation trajectories (faint lines) with the per-task mean in bold. Top row: successful episodes. Bottom row: failed episodes. Successful rollouts accumulate value monotonically while failed rollouts remain low and flat, and the gap is consistent across tasks of very different horizon. 
+
+# D Future-conditioned Action-Value Estimation 
+
+This section details the network that realizes the intervention module 𝐼 𝜓 . A single prompt-only forward pass of a vision-language backbone produces one shared hidden state from which all heads read, so the future prediction, value estimation, and trigger are computed without separate encoders. 
+
+D.1 Backbone and Shared Hidden State 
+
+The backbone is a Qwen3-VL-2B-Instruct model adapted with LoRA of rank 16 and scaling 𝛼 = 32 ,applied to the attention projections q_proj , k_proj , v_proj , and o_proj with dropout 0.05 . We append a learned special token <VQ_QUERY> to the prompt and take its last-layer hidden state ℎ𝑡 as the shared representation. The future head, the value head, and the trigger head all consume this same ℎ𝑡 . The value condition passed to the trigger head is detached before the intervention head reads it, so the trigger loss cannot corrupt value calibration. 
+
+16 D.2 Latent Future Prediction 
+
+The future head is a two-layer MLP that expands ℎ𝑡 to four times the hidden width and projects it to the latent dimension, producing the predicted next-step latent ˆ𝑧 𝑡 +1 in pooled form. The supervision target is a frozen V-JEPA2 encoder ( vjepa2-vitl-fpc64-256 ) applied to the realized next observation 𝑜 𝑡 +1,which yields a 1024 -dimensional representation aggregated over 256 tokens. We train the head with a normalized MSE that L2-normalizes prediction and target before comparison, so that the loss measures directional agreement in latent space rather than raw magnitude. This forward-looking latent is the input to both the value head and the risk head, which is why removing it degrades recovery quality even when trigger accuracy is preserved (Table 2 of the main paper). 
+
+D.3 Twin Value Head and Auxiliary Heads 
+
+The twin value head maps the predicted latent to two scalars and returns ˆ𝑞 𝑡 = min ( ˆ𝑞 1,𝑡 , ˆ𝑞 2,𝑡 ), trained with a Smooth-L1 loss against the proxy target 𝑞 ★𝑡 . An auxiliary current-value head regresses the proxy value of the current step from ℎ𝑡 , which stabilizes the value scale early in training. The risk head reads the predicted latent together with an encoding of the recent value sequence and regresses the temporal value-risk target defined in Appendix E. The intervention head reads the pooled latent concatenated with the detached value scalar and outputs the trigger logit. Table 4 summarizes the architecture and the training hyperparameters shared across tasks.   
+
+> Table 4. UniIntervene intervention module architecture and training settings.
+
+Component / Setting Value Component / Setting Value 
+
+Backbone Qwen3-VL-2B-Instruct Optimizer AdamW LoRA rank / 𝛼 / dropout 16 / 32 / 0.05 Backbone LR 2 × 10 −5
+
+LoRA targets q,k,v,o proj Head LR 1 × 10 −4
+
+Shared token <VQ_QUERY> Epochs 30 
+
+Future target encoder V-JEPA2 ViT-L (frozen) Batch size 12 –100 
+
+Future latent dim / tokens 1024 / 256 Future loss weight 1.0
+
+Future latent mode pooled Value (Q) loss weight 1.0
+
+Value head twin, min (𝑄 1, 𝑄 2) Intervention loss weight 1.0
+
+Value target proxy 𝑞 ★𝑡 +1, Smooth-L1 TVR loss weight 1.0
+
+Value-history dim 𝐾 8 Current-value loss weight 1.0
+
+History embed dim 32 Precision bf16 
+
+# E Temporal Value-Risk Trigger 
+
+The trigger maps the value estimate into an intervention score using the temporal trend of value rather than its instantaneous level. We describe the offline labeling used to learn the trend, the regression target, and the loss. We label intervention points offline by scanning the per-episode proxy value sequence, min-max normalized within each episode, with a sliding window of length 8. A step is marked as an intervention point if it satisfies any of three patterns. The decline rule fires when the windowed value shows a sustained negative slope with a sufficient fraction of downward steps. The plateau rule fires when the window is nearly flat, measured by the fraction of steps whose absolute change stays below a small threshold and a bound on the window amplitude. The abrupt-drop rule marks the trough of a single large drop that does not recover within a short horizon. Following Eq. 5 of the main paper, the temporal value-risk at step 𝑡 is the discounted cumulative shortfall 
+
+> 17
+
+of recent value progress relative to an expected rate 𝜖 , attenuated by the remaining distance to success, 
+
+𝑅 𝑡 = (1 − 𝑉 𝑡 ) 
+
+> 𝐾 −1
+
+∑︁ 
+
+> 𝑖 =0
+
+𝛾 𝑖 𝑟 
+
+ 𝜖 − Δ𝑉 𝑡 −𝑖 
+
+, Δ𝑉 𝑖 = 𝑉 𝑖 − 𝑉 𝑖 −1,
+
+with window 𝐾 = 8, expected progress rate 𝜖 = 0.005 , and trend discount 𝛾 𝑟 = 0.9. A value-history encoder embeds the recent value sequence and its one-step differences into a 32 -dimensional vector, which the risk head consumes together with the predicted future latent to regress ˆ𝑅 𝑡 . The intervention score is 
+
+𝑠 int  
+
+> 𝑡
+
+= 𝜎 ( ˆ𝑅 𝑡 ), and recovery is triggered when 𝑠 int  
+
+> 𝑡
+
+≥ 𝜏 int with 𝜏 int = 0.5. The trigger head is trained with a binary focal loss ( 𝛼 = 0.75 , 𝛾 = 2.0) against the mined labels, which counteracts the heavy negative skew of intervention points without resorting to a hand-tuned positive weight. 
+
+# F Memory Construction and Goal-conditioned Recovery 
+
+When the trigger fires, the recovery component selects a high-value target and produces a corrective action chunk toward it. The target is grounded in an offline memory of verified recovery segments. 
+
+F.1 Recovery Memory Construction 
+
+We build the memory by mining value-improvement segments from prior rollouts. For each episode we form candidate segments of a fixed span and keep those whose normalized value rises by at least a delta threshold and whose start value is already reasonably high, so that the segment endpoint is a genuinely high-value state under the same criterion that governs the trigger. To avoid over-representing easy regions, candidates are bucketed into progress bins and a fixed quota is sampled per bin, capped per episode. Each retained entry pairs the segment start, treated as an intervention state, with its high-value endpoint, treated as the recovery goal, under the task instruction. Table 5 reports the resulting memory for each task. The candidate pools are large, between roughly three thousand and forty thousand segments, from which a balanced set of 120 to 240 verified targets is retained. Fold Towel uses a longer span and more progress bins because its horizon is longer and its value trajectory is noisier.  
+
+> Table 5. Recovery memory statistics per task. Candidates are the mined value-improvement segments; items are the retained, progress-balanced recovery targets. Bins ×quota is the progress-bin sampling layout.
+
+Task Candidates Items Bins ×Quota Span 𝛿 thr. 
+
+Pick Eggplant 11 ,879 120 10 × 12 8 0.40 
+
+Tube Insertion 14 ,861 120 10 × 12 8 0.40 
+
+RAM Insertion 40 ,742 120 10 × 12 8 0.40 
+
+Wipe Whiteboard 17 ,638 120 10 × 12 8 0.40 
+
+Fold Towel 3,574 240 20 × 12 16 0.50 
+
+At deployment a per-task router maps the current instruction to the matching memory, after which retrieval operates within that memory. Figure 7 illustrates the construction process on the RAM Insertion data. 
+
+F.2 Target Retrieval 
+
+Retrieval matches the current context embedding 𝜙 (𝑜 𝑡 , ℓ ) against the memory keys by cosine similarity and returns the goal of the top-ranked entry. We audited retrieval on the training rollouts of every task. The top-1 match has a mean cosine similarity above 0.95 in all tasks, reaching 0.99 on the insertion and pick tasks, and the retrieved goal lies on average 0.34 to 0.56 in normalized value above the query state. The retrieved goals are therefore both semantically close to the failure context and substantially higher in value, which is the property the recovery policy needs.                             
+
+> 18 010 20 30 40 50
+> episode step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> proxy value  Vt
+> high-value threshold τ
+> intervention state (ofail , s fail )
+> high-value goal (og, s g)
+> ∆V = +0 .41
+> span L= 16
+> (a) Value-improvement segment mining
+> 0123456789
+> progress bin (by start value)
+> 10 1
+> 10 2
+> 10 3
+> number of segments
+> mined candidates
+> retained per bin
+> 3,973 mined →240 retained
+> (b) Progress-balanced sampling ∆V
+> +0 .41
+> ∆V
+> +0 .40
+> ∆V
+> +0 .72
+> ∆V
+> +0 .60
+> ofail og
+> (c) Recovery memory entries
+> M={(ofail , s fail , `, o g, s g)},admitted iff V(og)> τ
+> Fold Towel
+
+Figure 7. Recovery memory construction for Fold Towel. The longer span 𝐿 = 16 matches the slower value growth of this deformable, long-horizon task (a); 3,973 mined candidates are balanced across progress bins into 240 retained targets, with the final bin absorbing the redistributed remainder (b); and each entry pairs an intervention frame with its high-value goal (c). 
+
+Table 6. Retrieval audit on training rollouts. Top-1 similarity is the mean cosine similarity of the retrieved memory entry; value lift is the mean normalized-value gap between the retrieved goal and the query state. 
+
+Task Queries Top-1 similarity Value lift 
+
+Insertion (RAM + Tube) 14 ,950 0.992 0.452 
+
+Pick Eggplant 5,580 0.992 0.563 
+
+Wipe Whiteboard 5,529 0.993 0.365 
+
+Fold Towel 2,360 0.957 0.339 
+
+F.3 Goal-conditioned Recovery Policy 
+
+Conditioned on the retrieved goal 𝑔 𝑡 , the current observation, and the instruction, the recovery policy emits a corrective action chunk of horizon 𝐻 = 8 over a 7-dimensional end-effector action. Following Eq. 8 of the main paper, the chunk is represented with a FAST tokenizer as discrete frequency-domain tokens and produced by per-token classification. The decoder is a compact causal head that reads a context vector pooled from the backbone hidden state, and it is attached through a shared-residual LoRA adapter of rank 
+
+16 and scaling 𝛼 = 32 so that it reuses the same representation as the intervention module rather than introducing a separate encoder. Training is behavior cloning on the rollout segments that connect each mined intervention state to its recovery goal. Because the goal is supplied by the memory, the otherwise ill-posed problem of choosing where to recover becomes a goal-reaching problem of how to get there. 
+
+# G Training Procedure and Hyperparameters 
+
+G.1 End-to-end Loop 
+
+Algorithm 1 shows how UniIntervene plugs into the online human-in-the-loop loop. At each step the intervention module runs a single backbone forward pass, predicts the future latent, estimates the action-conditioned value, and updates the value history. The risk head turns the recent value trend into a trigger score. When the score crosses the threshold the module retrieves a high-value goal and overrides the policy action with a recovery chunk, contributing the resulting transitions to the replay buffer. Human takeover remains available for the residual cases that the learned recovery does not resolve. 
+
+G.2 Component Order and Optimization 
+
+The proxy value function is trained first and then frozen. The intervention module is trained on rollouts scored by the frozen value function, using the mined trend labels for the trigger head and the V-JEPA2 targets for the future head. The recovery memory is built from the same scored rollouts, and the recovery policy is trained by behavior cloning on the mined segments. All modules use AdamW with a backbone 
+
+19 Algorithm 1 UniIntervene : agentic intervention in the real-world HiL-RL loop 
+
+Require: policy 𝜋 𝜃 ; intervention module 𝐼 𝜓 with future head 𝑓 fut , twin value head 𝑓 𝑄 , value-history encoder 𝑓 hist , risk head 𝑓 risk ; recovery policy 𝜋 rec ; memory M; threshold 𝜏 int ; window 𝐾 ; horizon 𝐻 ;replay buffer B 
+
+> 1:
+
+for each training episode do  
+
+> 2:
+
+value history V ← ∅ ; 𝑡 ← 0 
+
+> 3:
+
+while episode not done do  
+
+> 4:
+
+observe 𝑜 𝑡 , instruction ℓ; sample 𝑎 𝑡 ∼ 𝜋 𝜃 (𝑜 𝑡 , ℓ ) 
+
+> 5:
+
+ℎ𝑡 ← 𝑓 vlm (𝑜 𝑡 , ℓ, 𝑎 𝑡 ) ⊲ single prompt-only pass  
+
+> 6:
+
+ˆ𝑧 𝑡 +1 ← 𝑓 fut (ℎ𝑡 ); ˆ𝑞 𝑡 ← min 𝑓 𝑄 ( ˆ𝑧 𝑡 +1) 
+
+> 7:
+
+append current proxy value 𝑉 𝑡 to V 
+
+> 8:
+
+ˆ𝑅 𝑡 ← 𝑓 risk 
+
+  ˆ𝑧 𝑡 +1, 𝑓 hist (V 𝑡 −𝐾 :𝑡 ); 𝑠 int  
+
+> 𝑡
+
+← 𝜎 ( ˆ𝑅 𝑡 ) 
+
+> 9:
+
+if 𝑠 int  
+
+> 𝑡
+
+≥ 𝜏 int then ⊲ value trend stagnating  
+
+> 10:
+
+𝑔 𝑡 ← arg max 𝑗 sim  𝜙 (𝑜 𝑡 , ℓ ), 𝜙 (𝑜 fail  
+
+> 𝑗
+
+, ℓ 𝑗 ) 
+
+> 11:
+
+𝐴 rec  
+
+> 𝑡
+
+← 𝜋 rec (𝑜 𝑡 , 𝑔 𝑡 , ℓ ) ⊲ 𝐻 -step corrective chunk  
+
+> 12:
+
+execute 𝐴 rec  
+
+> 𝑡
+
+; add recovery transitions to B 
+
+> 13:
+
+else  
+
+> 14:
+
+execute 𝑎 𝑡 ; add transition to B 
+
+> 15:
+
+if human flags unsafe / out-of-distribution then  
+
+> 16:
+
+human takeover; add corrective transitions to B 
+
+> 17:
+
+𝑡 ← 𝑡 + 1 
+
+> 18:
+
+update 𝜋 𝜃 from B with off-policy RL learning rate of 2 × 10 −5 and a head learning rate of 1 × 10 −4, run in bf16 with gradient checkpointing enabled for the larger batch configurations. 
+
+# H Baseline Implementation Details 
+
+𝜋 0.5 (SFT). The imitation baseline fine-tunes a 𝜋 0.5 policy with supervised behavior cloning on 20 
+
+demonstrations per task. It uses the same observation space and action space as the other methods and serves as the offline starting point on top of which the online methods improve. 
+
+HIL-SERL. The human-in-the-loop RL baseline trains the manipulation policy with corrective human interventions and off-policy RL updates. It uses the same SpaceMouse interface and reward definition as UniIntervene , so the difference in intervention rate reflects who decides when to intervene rather than the interface. 
+
+Failure-aware RL (FA-RL). The recovery baseline pairs a learned failure predictor with a recovery policy. Following its design, the failure predictor is a ResNet-18 image classifier over a two-camera, two-frame stack at 224 × 224 , augmented with a value window of length 8 projected to 32 dimensions, and the recovery policy is an EfficientNet-B0 regressor producing an 8-step chunk over the 7-dimensional action with a Huber loss. Because its trigger is tied to discrete failure events, the failure predictor is unreliable when failures are visually subtle. On our validation splits its intervention F1 stays low, for example 0.33 
+
+on RAM Insertion and 0.25 on Fold Towel, which matches the reduced success and persistent intervention reported in Table 1 of the main paper. The baseline is trained in a multitask setting with an 80 /10 /10 
+
+train/validation/test split, a recovery horizon of 40 steps, and a recovery bonus of 0.2, matching the configuration of the other methods on the shared platform. 
+
+# I Learned Intervention and Recovery Behavior 
+
+To examine the behavior behind the aggregate metrics, we visualize recorded rollouts in end-effector space. Figure 8 shows the three-dimensional path of the gripper for three tasks, with the stagnation segment 
+
+20 highlighted. The stagnation segment is the contiguous region of lowest end-effector speed away from the endpoints, which is the signature that the temporal value-risk trigger is built to detect. In each case the path enters a slow, low-progress region during contact or regrasping, the kind of unproductive exploration that would otherwise prompt a human takeover, and then resumes toward the goal along the green recovery segment, which is the high-value trajectory the recovery policy is trained to reproduce. The third-person camera frames below each plot show the scene at the four annotated steps, with the stagnation step boxed in red. The behavior is consistent across the contact-rich insertions and the deformable Fold Towel task despite their different horizons, which supports the claim that a single trigger and recovery mechanism transfers across manipulation types. 0.0265  
+
+> 0.0260
+> 0.0255
+> 0.0250
+> 0.0245
+> 0.0240
+> 0.0235
+> 0.0230
+> X (m) 0.3960
+> 0.3955
+> 0.3950
+> 0.3945
+> 0.3940
+> Y (m)
+> 0.2275
+> 0.2300
+> 0.2325
+> 0.2350
+> 0.2375
+> 0.2400
+> 0.2425
+> 0.2450
+> Z (m)
+
+RAM Insertion              
+
+> 1
+> 2
+> 3
+> 4
+> 1Step 6 2Step 31 3Step 37 4Step 41
+> 0.158 0.160 0.162 0.164 0.166 0.168
+> X (m) 0.45
+> 0.44
+> 0.43
+> 0.42
+> 0.41
+> 0.40
+> 0.39
+> 0.38
+> Y (m)
+> 0.315
+> 0.320
+> 0.325
+> 0.330
+> 0.335
+> 0.340
+> Z (m)
+
+Tube Insertion         
+
+> 1
+> 2
+> 3
+> 4
+> 1Step 10 2Step 56 3Step 63 4Step 69
+> 0.000
+> 0.025
+> 0.050
+> 0.075
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> X (m) 0.445
+> 0.440
+> 0.435
+> 0.430
+> 0.425
+> 0.420
+> 0.415
+> 0.410
+> 0.405
+> Y (m)
+> 0.21
+> 0.22
+> 0.23
+> 0.24
+> 0.25
+> 0.26
+> 0.27
+> Z (m)
+
+Fold Towel              
+
+> 12
+> 3
+> 4
+> 1Step 13 2Step 20 3Step 46 4Step 87
+> Contact Stagnation Alignment Stall Regrasp Stagnation
+> Nominal Approach Sub-optimal (Stagnation) Segment Recovery (High-value) Segment Start Goal
+
+Figure 8. Recorded end-effector trajectories in three dimensions for three tasks, split into three phases. The nominal approach is in blue, the sub-optimal stagnation segment where end-effector speed collapses is in dark red, and the high-value recovery segment along which the policy regains progress is in green. The start is a yellow star and the goal is a blue dot. Four steps are marked with numbered circles, and the third-person camera frames below each plot show the scene at those steps, with the stagnation step boxed in red. The red segment is the low-value stagnation that the temporal value-risk trigger detects, and the green segment is the high-value trajectory that recovery is meant to reproduce. 21

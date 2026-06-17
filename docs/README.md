@@ -6,139 +6,86 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-16
-- 运行时间：2026-06-16 22:26:50 UTC
+- 最新运行日期：2026-06-17
+- 运行时间：2026-06-17 22:28:39 UTC
 - 运行状态：成功
-- 本次总论文数：39
-- 精读区：26
+- 本次总论文数：22
+- 精读区：9
 - 速读区：13
 
 ### 今日简报（AI）
-今日推荐39篇论文，聚焦强化学习与LLM智能体安全、效率提升。
-关键方向为高效预算分配（TRACE）与可证明安全可扩展RL（Provably Safe），值得精读。
-建议优先阅读这两篇10分论文，再结合速读中的多智能体控制与策略优化拓展思路。
-- 详情：[/202606/16/README](/202606/16/README)
+今日推荐精读《Dynamic Malicious Skills in Agentic AI》与《Bootstrapped Monitoring》两篇高分论文，聚焦智能体安全与透明推理监督机制。值得关注强化学习在智能体搜索中的高效训练方法（《Effective Reinforcement Learning》），以及干预策略在现实强化学习中的应用（《UniIntervene》）。建议优先精读安全类论文以理解前沿风险，速读可补充效率优化方向。
+- 详情：[/202606/17/README](/202606/17/README)
 
 ### 精读区论文标签
-1. [TRACE: A Unified Rollout Budget Allocation Framework for Efficient Agentic Reinforcement Learning](/202606/16/2606.11119v1-trace-a-unified-rollout-budget-allocation-framework-for-efficient-agentic-reinforcement-learning)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：面向代理强化学习的 rollout 预算分配框架
-2. [Provably Safe, Yet Scalable Reinforcement Learning](/202606/16/2606.14536v1-provably-safe-yet-scalable-reinforcement-learning)  
+1. [Dynamic Malicious Skills in Agentic AI](/202606/17/2606.16287v2-dynamic-malicious-skills-in-agentic-ai)  
    标签：评分：10.0/10、query:agent-safety
-   evidence：可证明安全且可扩展的强化学习
-3. [Reward Hacking in Language Model Agents: Revisiting AI Safety Gridworlds](/202606/16/2606.15385v1-reward-hacking-in-language-model-agents-revisiting-ai-safety-gridworlds)  
-   标签：评分：10.0/10、query:ai-safety
-   evidence：语言模型智能体中的奖励黑客与AI安全Gridworlds
-4. [Claw-R1: A Step-Level Data Middleware System for Agentic Reinforcement Learning](/202606/16/2606.09138v1-claw-r1-a-step-level-data-middleware-system-for-agentic-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体强化学习数据中间件
-5. [Safe-RULE: Safe Reinforcement UnLEarning](/202606/16/2606.09559v1-safe-rule-safe-reinforcement-unlearning)  
+   evidence：对智能体AI的攻击，安全漏洞与防御
+2. [Bootstrapped Monitoring: Leveraging Transparent Reasoning to Oversee Stronger AI Agents](/202606/17/2606.11998v1-bootstrapped-monitoring-leveraging-transparent-reasoning-to-oversee-stronger-ai-agents)  
    标签：评分：9.0/10、query:agent-safety
-   evidence：安全强化反学习防御离线安全强化学习中的数据中毒
-6. [SHAPO: Sharpness-Aware Policy Optimization for Safe Exploration](/202606/16/2606.10228v1-shapo-sharpness-aware-policy-optimization-for-safe-exploration)  
+   evidence：通过引导式监控监督更强的AI代理
+3. [Towards Responsibly Non-Compliant Machines](/202606/17/2606.12147v1-towards-responsibly-non-compliant-machines)  
    标签：评分：9.0/10、query:agent-safety
-   evidence：安全强化学习锐度感知策略优化
-7. [AgentCanary: A Security Evaluation Framework for Autonomous AI Agents in Real Executable Environments](/202606/16/2606.10484v1-agentcanary-a-security-evaluation-framework-for-autonomous-ai-agents-in-real-executable-environments)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：自主AI智能体的安全评估框架
-8. [Toward Secure LLM Agents: Threat Surfaces, Attacks, Defenses, and Evaluation](/202606/16/2606.10749v1-toward-secure-llm-agents-threat-surfaces-attacks-defenses-and-evaluation)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：LLM智能体安全性的全面综述
-9. [HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation](/202606/16/2606.11559v1-hero-hindsight-enhanced-reflection-from-environment-observations-for-agentic-self-distillation)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：用于多轮RL的代理自蒸馏
-10. [Runtime Skill Audit: Targeted Runtime Probing for Agent Skill Security](/202606/16/2606.11671v1-runtime-skill-audit-targeted-runtime-probing-for-agent-skill-security)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：运行时探针评估智能体技能安全性
-11. [APPO: Agentic Procedural Policy Optimization](/202606/16/2606.12384v1-appo-agentic-procedural-policy-optimization)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体强化学习信用分配
-12. [Individual Control Barrier Functions-Guided Diffusion Model for Safe Offline Multi-Agent Reinforcement Learning](/202606/16/2606.12640v1-individual-control-barrier-functions-guided-diffusion-model-for-safe-offline-multi-agent-reinforcement-learning)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：结合控制障碍函数的离线多智能体强化学习安全方法
-13. [The Containment Gap: How Deployed Agentic AI Frameworks Fail Public-Facing Safety Requirements](/202606/16/2606.12797v1-the-containment-gap-how-deployed-agentic-ai-frameworks-fail-public-facing-safety-requirements)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：智能体AI框架安全差距
-14. [PolicyGuard: Towards Test-time and Step-level Adversary Defense for Reinforcement Learning Agent](/202606/16/2606.12896v1-policyguard-towards-test-time-and-step-level-adversary-defense-for-reinforcement-learning-agent)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：强化学习智能体后门攻击防御
-15. [Beyond Runtime Enforcement: Shield Synthesis as Defensibility Analysis for Adversarial Networks](/202606/16/2606.13621v1-beyond-runtime-enforcement-shield-synthesis-as-defensibility-analysis-for-adversarial-networks)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：强化学习智能体安全中的盾牌合成
-16. [Safety-Contract Graph Multi-Agent Reinforcement Learning for Autonomous Network Security Response](/202606/16/2606.13832v1-safety-contract-graph-multi-agent-reinforcement-learning-for-autonomous-network-security-response)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：基于安全合约图的多智能体强化学习约束优化
-17. [Capability Minimization as a Safety Primitive: Risk-Aware Causal Gating for Least-Privilege LLM Agents](/202606/16/2606.13884v1-capability-minimization-as-a-safety-primitive-risk-aware-causal-gating-for-least-privilege-llm-agents)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：人工智能智能体安全风险感知因果门控
-18. [Hidden in Plain Sight: Benchmarking Agent Safety Against Decomposition Attacks with DECOMPBENCH](/202606/16/2606.13994v1-hidden-in-plain-sight-benchmarking-agent-safety-against-decomposition-attacks-with-decompbench)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：针对分解攻击的智能体安全评估基准
-19. [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](/202606/16/2606.14130v1-contract-based-compositional-shielding-for-safe-multi-agent-reinforcement-learning)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：安全多智能体强化学习与形式化屏蔽
-20. [CSPO: Constraint-Sensitive Policy Optimization for Safe Reinforcement Learning](/202606/16/2606.14415v1-cspo-constraint-sensitive-policy-optimization-for-safe-reinforcement-learning)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：约束敏感策略优化用于安全强化学习
-21. [Learning Coordinated Preference for Multi-Objective Multi-Agent Reinforcement Learning](/202606/16/2606.14693v1-learning-coordinated-preference-for-multi-objective-multi-agent-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：多智能体强化学习协调偏好以处理多目标任务
-22. [OSGuard: A Benchmark for Safety in Computer-Use Agents](/202606/16/2606.15034v1-osguard-a-benchmark-for-safety-in-computer-use-agents)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：面向计算机使用智能体的安全评估基准
-23. [The Perils of Agency: How Developers Perceive, Prioritize, and Address Risks in Agentic AI Products](/202606/16/2606.15485v1-the-perils-of-agency-how-developers-perceive-prioritize-and-address-risks-in-agentic-ai-products)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：关于开发者如何感知和应对代理AI产品风险的研究
-24. [$λ$-Reachability: Geometric-Horizon Safety Bellman Equations for Humanoid Safety](/202606/16/2606.16022v1--reachability-geometric-horizon-safety-bellman-equations-for-humanoid-safety)  
-   标签：评分：9.0/10、query:agent-safety
-   evidence：针对高维系统的新型安全贝尔曼方程
-25. [Adaptive and Explicit safe: Triggering Latent Safety Awareness in Large Reasoning Models](/202606/16/2606.16808v1-adaptive-and-explicit-safe-triggering-latent-safety-awareness-in-large-reasoning-models)  
+   evidence：通过负责任的不服从直接探讨代理安全的关键挑战
+4. [Strategic Decision Support for AI Agents](/202606/17/2606.12587v1-strategic-decision-support-for-ai-agents)  
    标签：评分：9.0/10、query:ai-safety
-   evidence：触发推理模型中的潜在安全意识
-26. [When in Doubt, Plan It Out: Committed Small Language Model Deliberation for Reactive Reinforcement Learning](/202606/16/2606.16995v1-when-in-doubt-plan-it-out-committed-small-language-model-deliberation-for-reactive-reinforcement-learning)  
+   evidence：探讨AI对齐与价值学习在智能体决策支持中的应用
+5. [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](/202606/17/2606.14130v1-contract-based-compositional-shielding-for-safe-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agent-safety
-   evidence：结合小语言模型规划与安全验证的强化学习
+   evidence：组合式保护盾用于安全多智能体强化学习
+6. [Hamilton-Jacobi Reachability-Based Safe Reinforcement Learning for Emergency Collision Avoidance](/202606/17/2606.15311v1-hamilton-jacobi-reachability-based-safe-reinforcement-learning-for-emergency-collision-avoidance)  
+   标签：评分：9.0/10、query:agent-safety
+   evidence：基于Hamilton-Jacobi可达性的安全强化学习碰撞规避方法
+7. [Defending against Adaptive Prompt Injection Attacks via Reasoning-enabled Task Alignment](/202606/17/2606.15441v1-defending-against-adaptive-prompt-injection-attacks-via-reasoning-enabled-task-alignment)  
+   标签：评分：9.0/10、query:agent-safety
+   evidence：防御针对LLM智能体的自适应提示注入攻击
+8. [Towards Pareto-Optimal Tool-Integrated Agents with Pareto Ranking Policy Optimization](/202606/17/2606.16111v1-towards-pareto-optimal-tool-integrated-agents-with-pareto-ranking-policy-optimization)  
+   标签：评分：9.0/10、query:ai-safety
+   evidence：工具使用智能体的多目标对齐，与AI对齐相关
+9. [Human-on-the-Bridge: Scalable Evaluation for AI Agents](/202606/17/2606.16871v1-human-on-the-bridge-scalable-evaluation-for-ai-agents)  
+   标签：评分：9.0/10、query:agent-safety
+   evidence：可扩展的AI智能体安全评估范式
 
 ### 速读区论文标签
-1. [An Agency-Transferring Model-Free Policy Enhancement Technique](/202606/16/2606.09825v1-an-agency-transferring-model-free-policy-enhancement-technique)  
+1. [Effective Reinforcement Learning for Agentic Search by Recycling Zero-Variance Queries During Training](/202606/17/2606.10709v1-effective-reinforcement-learning-for-agentic-search-by-recycling-zero-variance-queries-during-training)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：用于强化学习代理的代理权转移策略增强
-2. [3SPO: State-Score-Supervised Policy Optimization for LLM Agents](/202606/16/2606.09961v1-3spo-state-score-supervised-policy-optimization-for-llm-agents)  
+   evidence：通过回收零方差查询改进智能体强化学习训练
+2. [Bellman-Taylor Score Decoding for Markov Decision Processes with State-Dependent Feasible Action Sets](/202606/17/2606.10979v1-bellman-taylor-score-decoding-for-markov-decision-processes-with-state-dependent-feasible-action-sets)  
+   标签：评分：8.0/10、query:agent-safety
+   evidence：处理带状态相关可行动作集的MDP框架，解决操作约束
+3. [UniIntervene: Agentic Intervention for Efficient Real-World Reinforcement Learning](/202606/17/2606.12372v1-uniintervene-agentic-intervention-for-efficient-real-world-reinforcement-learning)  
+   标签：评分：8.0/10、query:agent-safety
+   evidence：用于真实世界安全强化学习的智能体干预
+4. [PI-Hunter: Automated Red-Teaming for Exposing and Localizing Prompt Injections](/202606/17/2606.12737v1-pi-hunter-automated-red-teaming-for-exposing-and-localizing-prompt-injections)  
+   标签：评分：8.0/10、query:agent-safety
+   evidence：面向LLM智能体提示注入漏洞的自动化红队测试
+5. [SENTINEL: Failure-Driven Reinforcement Learning for Training Tool-Using Language Model Agents](/202606/17/2606.12908v1-sentinel-failure-driven-reinforcement-learning-for-training-tool-using-language-model-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：针对LLM智能体的步骤级优化强化学习算法
-3. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/16/2606.10322v2-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
-   标签：评分：8.0/10、query:ai-safety
-   evidence：利用博弈论多智能体控制防御提示注入
-4. [Reasoning or Memorization? Direction-Aware Diversity Exploration in LLM Reinforcement Learning](/202606/16/2606.10346v1-reasoning-or-memorization-direction-aware-diversity-exploration-in-llm-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：LLM强化学习中的方向感知多样性探索
-5. [HIPIF: Hierarchical Planning and Information Folding for Long-Horizon LLM Agent Learning](/202606/16/2606.10507v1-hipif-hierarchical-planning-and-information-folding-for-long-horizon-llm-agent-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：基于层次强化学习的LLM智能体学习方法
-6. [Autonomous Incident Resolution at Hyperscale: An Agentic AI Architecture for Network Operations](/202606/16/2606.09122v1-autonomous-incident-resolution-at-hyperscale-an-agentic-ai-architecture-for-network-operations)  
-   标签：评分：7.0/10、query:agent-safety
-   evidence：包含安全边界的智能体AI架构用于事件解决
-7. [Observability for Delegated Execution in Agentic AI Systems](/202606/16/2606.09692v1-observability-for-delegated-execution-in-agentic-ai-systems)  
-   标签：评分：7.0/10、query:agent-safety
-   evidence：代理AI系统中委托执行的可观测性框架
-8. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/16/2606.10322v1-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
-   标签：评分：7.0/10、query:agent-safety
-   evidence：针对提示注入攻击的多智能体控制方法
-9. [Phi-Actor-Critic: Steering General-Sum Games to Pareto-Efficient Correlated Equilibria](/202606/16/2606.11284v1-phi-actor-critic-steering-general-sum-games-to-pareto-efficient-correlated-equilibria)  
+   evidence：面向工具使用智能体的失败驱动强化学习
+6. [Role-Agent: Bootstrapping LLM Agents via Dual-Role Evolution](/202606/17/2606.10917v1-role-agent-bootstrapping-llm-agents-via-dual-role-evolution)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体强化学习中的均衡选择
-10. [Counterfactual Transport Flows for Offline Conservative Trajectory Refinement](/202606/16/2606.09115v1-counterfactual-transport-flows-for-offline-conservative-trajectory-refinement)  
-   标签：评分：6.0/10、query:agent-safety
-   evidence：用于安全决策的离线保守轨迹优化
-11. [Fast and Highly Expressive Policy Learning for Offline Reinforcement Learning via Bootstrapped Flow Q-Learning](/202606/16/2606.10613v1-fast-and-highly-expressive-policy-learning-for-offline-reinforcement-learning-via-bootstrapped-flow-q-learning)  
+   evidence：双角色演化LLM智能体，利用过程奖励进行强化学习
+7. [IAPO: Input Attribution-Aware Policy Optimization for Tool Use in Small Multimodal Agents](/202606/17/2606.11652v1-iapo-input-attribution-aware-policy-optimization-for-tool-use-in-small-multimodal-agents)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：多模态小语言模型代理的工具使用RL优化
+8. [DARRMS -- An Efficient Algorithm for Dynamic Attention Radius in Resource-Constrained Multi-Agent Systems](/202606/17/2606.12614v1-darrms----an-efficient-algorithm-for-dynamic-attention-radius-in-resource-constrained-multi-agent-systems)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：资源受限多智能体强化学习
+9. [ProPlay: Procedural World Models for Self-Evolving LLM Agents](/202606/17/2606.12780v1-proplay-procedural-world-models-for-self-evolving-llm-agents)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：用于自我进化LLM代理的程序化世界模型
+10. [Organize then Retrieve: Hierarchical Memory Navigation for Efficient Agents](/202606/17/2606.11680v1-organize-then-retrieve-hierarchical-memory-navigation-for-efficient-agents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：离线强化学习策略方法
-12. [Test-Time Gradient Guidance of Flow Policies in Reinforcement Learning](/202606/16/2606.11087v1-test-time-gradient-guidance-of-flow-policies-in-reinforcement-learning)  
+   evidence：面向智能体任务的分层记忆导航
+11. [PAWS: Preference Learning with Advantage-Weighted Segments](/202606/17/2606.11982v1-paws-preference-learning-with-advantage-weighted-segments)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：强化学习智能体策略改进
-13. [Agent Skill Evaluation and Evolution: Frameworks and Benchmarks](/202606/16/2606.11435v1-agent-skill-evaluation-and-evolution-frameworks-and-benchmarks)  
-   标签：评分：6.0/10、query:agent-safety
-   evidence：智能体技能评估以保障安全与实用性
+   evidence：基于偏好的强化学习，使用片段级优势函数
+12. [HarnessX: A Composable, Adaptive, and Evolvable Agent Harness Foundry](/202606/17/2606.14249v1-harnessx-a-composable-adaptive-and-evolvable-agent-harness-foundry)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：使用强化学习进化代理框架，与代理RL主题相关
+13. [GAS-Leak-LLM: Genetic Algorithm-Based Suffix Optimization for Black-Box LLM Jailbreaking](/202606/17/2606.15788v1-gas-leak-llm-genetic-algorithm-based-suffix-optimization-for-black-box-llm-jailbreaking)  
+   标签：评分：6.0/10、query:ai-safety
+   evidence：基于遗传算法的黑盒LLM越狱方法
 
 
 <div class="dpr-home-promo-card">

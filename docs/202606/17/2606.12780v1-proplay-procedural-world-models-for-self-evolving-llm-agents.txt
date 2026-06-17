@@ -1,0 +1,936 @@
+Title: ProPlay: Procedural World Models for Self-Evolving LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.12780v1
+
+Published Time: Fri, 12 Jun 2026 00:21:00 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+## ProPlay: Procedural World Models for Self-Evolving LLM Agents 
+
+Yijun Ma 1,∗ Zehong Wang 1,∗,† Yiyang Li 1 Ziming Li 2
+
+Xiaoguang Guo 2 Weixiang Sun 1 Chuxu Zhang 2 Yanfang Ye 1,† 
+
+> 1
+
+University of Notre Dame 2 University of Connecticut  
+
+> ∗
+
+Equal Contribution † Corresponding Author 
+
+<yma7,zwang43,yye7>@nd.edu 
+
+Abstract 
+
+Self-evolving agents are expected to improve through interaction without external supervi-sion, but this remains difficult in partially ob-servable environments where agents must ex-plore actively, learn from limited feedback, and decide when to trust prior experience. Existing LLM-agent methods often rely on memory or planning modules, yet they rarely close the loop between them to continually refine an internal understanding of environment dynamics. We introduce ProPlay, a procedural world model that supports procedure-level preplay, where agents can rehearse future procedural paths us-ing the learned world knowledge. Rather than representing experience as isolated rules or low-level action constraints, ProPlay abstracts suc-cessful trajectories into procedures and orga-nizes them in a procedure graph that captures causal transitions among task stages. Each tran-sition is associated with a reliability record em-bedding to estimate its task-specific contribu-tion from past outcomes. Before each episode, ProPlay simulates future procedural trajectories over known graph structures as structured soft guidance; after execution, it refines the graph using environment feedback. Experiments on public benchmarks show that ProPlay con-sistently improves environment understanding and self-evolution capability over strong base-lines. Our code has been released in https: //github.com/antman9914/proplay .
+
+1 Introduction 
+
+An important goal of Agentic AI is to build agents that improve through their own interactions, with-out relying on additional supervised data or large-scale retraining (Fang et al., 2025). Such self-evolving agents should be able to acquire new capa-bilities, refine their strategies, and adapt to unfamil-iar environments from experience (Gao et al., 2025; Wang et al., 2023a). This goal is especially chal-lenging in partially observable environments (Kael-bling et al., 1998), where an agent rarely observes 
+
+Figure 1: Motivation of ProPlay. (1) Humans adapt to partially observable environments by imagining plau-sible future paths before acting and consolidating or discarding them after receiving feedback. (2) We ex-pect self-evolving agents to follow a similar loop: use prior experience to anticipate procedural paths, test them through interaction, and refine internal environment un-derstanding with environment feedback. 
+
+the full state of the world and must infer environ-ment dynamics from sparse, delayed, and some-times misleading feedback. A useful way to view this challenge is through the interaction between imagination and consolida-tion. Humans often anticipate possible future paths before acting, and later use feedback to reinforce or discard those expectations. Neuroscience studies describe a related mechanism known as preplay, where hippocampal activity can pre-enact candi-date future trajectories before execution (Dragoi and Tonegawa, 2011; Ólafsdóttir et al., 2018). This process naturally connects two capacities that are central to self-evolution: planning, which uses cur-rent knowledge to imagine what to do next, and memory, which consolidates useful experience for future decisions (Schacter et al., 2007). For LLM agents, the key question is therefore not only how to store past experience or generate plans, but how 1
+
+> arXiv:2606.12780v1 [cs.LG] 11 Jun 2026
+
+to close the loop so that each interaction improves the agent’s internal understanding of the environ-ment (Sajid et al., 2021; Li et al., 2026b). Closing this loop requires solving three coupled problems. (1) The agent must explore actively, since passive observation is insufficient for recov-ering hidden environment dynamics (Pezzulo et al., 2024). (2) It must accumulate experience at the right level of abstraction: real tasks often involve hierarchical, long-horizon, and causally structured progressions (Yu et al., 2023), so raw trajectories or isolated rules may not reveal why a task succeeds. (3) It must decide when to trust previous experience. Past behavior can be useful, but it can also be noisy, overfitted to particular task instances, or irrelevant to the current goal. Effective self-evolution thus requires a mechanism that can acquire, refine, and selectively utilize environment knowledge through repeated interaction (Friston et al., 2017). Existing LLM-agent methods address parts of this problem, but often leave the loop incom-plete. Memory-based approaches store reflections, rules, or workflows from previous episodes, while planning-based approaches search over possible fu-ture actions or reasoning paths (Zhao et al., 2024; Zhou et al., 2024; Wang et al., 2025, 2026; Li et al., 2026a; Zhang et al., 2026; Wu et al., 2026; Zhang et al., 2025). These components are useful, yet they are typically treated as separate modules rather than as a unified model of how the environment evolves. World models offer a natural alternative, because they explicitly represent how actions, states, and outcomes are related (Ha and Schmidhuber, 2018; Hafner et al., 2019, 2023). Recent LLM-agent systems such as Wall-E (Zhou et al., 2026) and WorldCoder (Tang et al., 2024) take this direction by learning action-level rules or executable func-tions from interaction history. However, action-level world models mainly capture local constraints. They can miss the higher-level causal structure of a task, and their direct influence on action selection can also make it difficult to balance exploitation with continued exploration. We argue that self-evolving agents need world models that capture procedural causal structure . A procedure is a high-level abstraction of a task stage, induced from successful interaction trajectories, that describes what role the stage plays and how it can be carried out. Compared with individual ac-tions or local rules, procedures represent reusable progress patterns such as boiling water, measuring a property, assembling required tools, or verifying a result. Transitions among procedures then de-scribe how task stages depend on one another. This procedural view gives the agent a structured prior over long-horizon task progress while preserving flexibility in low-level action choices (Wang et al., 2023b). Based on this perspective, we introduce Pro-Play , a preplay framework built on an evolving procedural world model for LLM agents. ProPlay represents environment knowledge as a procedure graph, where nodes are induced procedures and directed edges encode observed procedural transi-tions. To support reliable use of past experience, each transition maintains a reliability record em-bedding that reflects how consistently the transition contributed to successful tasks with similar descrip-tions. Before each new episode, ProPlay performs procedure-level preplay: it reasons over the current task, the procedure graph, transition reliabilities, and relevant failure experience to construct a task-specific procedural trajectory. This trajectory is in-jected into the agent context as soft guidance rather than a hard constraint, allowing the agent to exploit accumulated knowledge while still adapting to ob-servations and exploring unseen transitions. After execution, ProPlay refines the graph using environ-ment feedback by inducing new procedures, updat-ing transitions, and revising reliability records. We evaluate ProPlay on three public interac-tive benchmarks: ScienceWorld, τ -Bench, and PlanCraft. The experimental results show that procedure-level abstraction provides a useful foun-dation for agents that must learn environment dy-namics online, especially in tasks with reusable multi-step causal structure. Our main contributions are summarized: • Procedure-Centric Self-Evolving Agent. 
+
+We propose a procedure-centric perspective for self-evolving LLM agents, which mod-els environment dynamics as procedural path-ways rather than low-level action constraints. • ProPlay. We introduce a preplay framework that constructs and continually maintains a procedural world model from interaction ex-perience, retrieving task-relevant procedural trajectories as soft guidance for LLM agents. • Empirical Evaluation. We conduct exper-iments across three public benchmarks and demonstrate that ProPlay consistently im-2proves environment understanding and self-evolution capability against strong baselines. 
+
+2 Related Work 
+
+Self-Evolving Agent. Self-evolving agents au-tonomously improve through environment inter-action without external supervision (Gao et al., 2025; Fang et al., 2025). A prominent thread fo-cuses on memory-based experience accumulation, progressing from verbal reflection and rule extrac-tion (Shinn et al., 2023; Zhao et al., 2024; Wang et al., 2023a) to persistent and hierarchical memory management (Packer et al., 2023; Kang et al., 2025; Xu et al., 2026; Wang et al., 2025). Deliberate planning has advanced in parallel, from multi-path reasoning (Yao et al., 2023) to tree-search-based de-cision making (Zhou et al., 2024) and world-model-guided exploration (Hao et al., 2023; Putta et al., 2024). Despite these advances, existing approaches largely treat memory and planning as independent modules, failing to continually refine environment understanding under a unified framework. 
+
+World Model for LLM Agent. World models provide a principled framework for capturing envi-ronment dynamics to support forward-looking de-cision making. Early applications in LLM agents treat world knowledge as a static external prior — leveraging pre-trained commonsense knowl-edge (Zhao et al., 2023) or curated action knowl-edge bases (Zhu et al., 2025) to guide planning. RAP (Hao et al., 2023) marked a conceptual turn-ing point by casting the LLM itself as an im-plicit world model within MCTS, demonstrating the value of internal forward simulation for plan-ning quality. This inspired a growing line of work building internal world models from agent experi-ence: WKM (Qiao et al., 2024) distills parametric world knowledge from offline trajectories, while WorldCoder (Tang et al., 2024) and Wall-E (Zhou et al., 2026) enable online updates via code-based and rule-based models, with recent extensions to web navigation (Chae et al., 2025). However, all these methods overlook the procedural causal struc-ture that governs holistic environment dynamics and long-range causal dependencies. 
+
+3 Methodology 
+
+Problem Formulation. Given a partially observ-able environment with observation space O and action space A, a self-evolving agent is expected to continually adapt to the environment across a sequence of K task episodes {τi}Ki=1 . At each step 
+
+t within episode k, the agent receives an observa-tion ot ∈ O , selects an action at ∈ A , and receives reward rt ∈ R. The trajectory of episode k is denoted Hk = ( o1, a 1, r 1), . . . , (oT , a T , r T ), and 
+
+Rk ∈ [0 , 1] indicates the final reward episode k ob-tained. Each task episode instance τ is associated with a natural language description dτ . The agent is expected to maximize task success rate and total reward 1
+
+> K
+
+PKk=1 Rk through continual interactions with environment. 
+
+Overview. As illustrated in Figure 2, the core of ProPlay is a continually evolving procedure graph G that represents environment dynamics as a collection of abstracted procedures, their causal transitions and corresponding reliability record em-beddings, which is essentially a procedural world model. Proplay operates in an episode-level three-phase loop. Before each episode, a preplay mech-anism generates the most relevant procedure tra-jectory from G and provides it as structured soft guidance to the LLM agent. During the episode, the agent executes under this guidance, maintaining the flexibility to deviate and explore. After com-pletion, environment feedback is collected to refine 
+
+G: new procedures are induced from successful executions, and procedure transition reliabilities are adjusted based on received reward. This closed loop enables ProPlay to progressively internalize environment dynamics over episodes. 
+
+3.1 Procedural World Model 
+
+Internal environment understanding is the founda-tion of both environment exploration and experi-ence exploitation. Building such a representation is non-trivial, as environment dynamics are partially observable, hierarchically structured, and causally complex (Kaelbling et al., 1998). Prior approaches tend to adopt rules (Shinn et al., 2023), individual actions (Zhou et al., 2026; Tang et al., 2024) and entities (Anokhin et al., 2025) as basic unit of envi-ronment representation, but they fail to express the holistic stage-wise causal structure underlying task progression. Instead, ProPlay represents environment dynam-ics using procedures as the fundamental unit of the world model. Rather than specifying individ-ual actions, a procedure p is natural language de-scription of the purpose and execution template of a generalizable task stage, which is abstracted 3Figure 2: Overview of ProPlay. (1) Procedural world model represents environment dynamics via a procedure graph with reliability records assigned for each procedure transition. (2) Procedure-level preplay constructs procedural plan by reasoning over existing world knowledge and current task description. (3) Preplay plan functions as soft guidance for reasoning, and the resulting action trajectory is collected for further procedure induction and world model refinement, which forms an episodic execution loop. 
+
+from successful interaction trajectories. Procedure-level abstraction allows the world model to repre-sent the skeleton of task progression in a form that generalizes across task instances while remaining grounded in actual agent experience. These procedures are organized into an attributed directed graph G = ( P, E, C), where P is the set of procedure nodes, and E ⊆ P × P is the set of directed edges encoding causal transitions among task stages. A key challenge in accumulating ex-perience from partially observable environments is that interactions may reflect contingent or sub-optimal behavior rather than actual environmental regularities. Therefore, we introduce reliability record embedding C : E → Rdc to each transition, where dc is the dimension of record embedding. The reliability record embedding is designed to quantify how consistently the given procedure tran-sition has contributed to the success of specific tasks, in order to elevate generalizable procedural knowledge while suppressing misleading experi-ence. Formally, given procedural transition (pi, p j ),its reliability record embedding ckij at the end of episode k is defined as the weighted summation of relevant seen task description embeddings: 
+
+ckij =
+
+> k
+
+X
+
+> i=1
+
+I(( pi, p j ) ∈ W i) · Ri · ϕ(dτi ) (1) where W i = ( pi1 , . . . , p in ) represents the exe-cuted procedure pathway at episode i, I(·) is an in-dicator function indicating whether (pi, p j ) is part of W i, ϕ(·) is the all-MiniLM-L6-v2 text encoder for task descriptions. 
+
+3.2 Procedure-Level Preplay 
+
+Effective self-evolution requires agents to be ac-tive, predicting about how a task should unfold and learning from its own errors (Pezzulo et al., 2024). This directly motivates our preplay mechanism: at the start of episode k, ProPlay queries procedure graph Gk−1 derived from episode k − 1 to con-struct a procedure trajectory over the current task 
+
+τk, which the agent then executes to confirm, refine, or revise through interaction. 
+
+Procedure Trajectory Construction. ProPlay delegates trajectory construction to the agent itself. To learn from relevant failure and success, evidence provided to agent is composed of three parts: task description dτk , the full procedure graph Gk−1, and failure experiences from past episodes. We first extract failed episodes with semantically close task description via cosine similarity between ϕ(dτk )
+
+and ϕ(dτi ), and then assign each observed proce-dure transition ck−1 
+
+> ij
+
+∈ C k−1 with a task-specific re-liability score sk−1 
+
+> ij
+
+, which is defined as the cosine similarity between ϕ(dτk ) and ck−1 
+
+> ij
+
+. All the ob-served procedure transitions in Ek−1 are injected in the descending order of sk−1 
+
+> ij
+
+, so that task-relevant 4transitions surface prominently. LLM agent rea-sons over dτk and all the injected evidence, con-structing procedure trajectory W ∗ = ( p1, . . . , p m)
+
+as the preplay plan for the current task. Note that unknown procedure transitions are allowed in W ∗
+
+to facilitate exploration. 
+
+3.3 Episodic World Model Refinement 
+
+During episode k, W ∗ functions as the soft guid-ance of LLM agents, allowing agents to reason over low-level actions independently. The resulting tra-jectory Hk constitutes the environment feedback against which the agent’s preplay expectations can be compared. This expectation-feedback compar-ison is the mechanism by which ProPlay continu-ously refines its understanding of environment dy-namics: where expectations align with outcomes, the world model is reinforced; where they diverge, the world model is updated to better reflect real environment dynamics. 
+
+Soft Guidance. During each episode, W ∗ is al-ways injected into the agent’s context prompt as a high-level structured prior. It is noteworthy that 
+
+W ∗ is provided as soft guidance rather than a hard constraint: the agent is explicitly permitted to devi-ate from the suggested pathway when observations warrant it. By preserving the agent’s freedom to ex-plore while grounding its reasoning in accumulated procedural knowledge, our preplay mechanism en-ables a principled balance between exploitation and exploration. Formally, the agent policy at step t is conditioned on both the interaction context and the preplay trajectory, i.e., at ∼ πθ (at | o≤t, W ∗).
+
+Procedure Induction. After episode k termi-nates, ProPlay first partitions Hk at the last step where cumulative reward increased. The prefix pro-ductive portion Hks that contributed to task progress is passed to LLM agent for procedure induction, while the suffix portion Hkf that failed to yield fur-ther progress is summarized and stored as a failure experience associated with dτk . ProPlay extracts a new workflow set from all the past successful tra-jectories H≤ks by prompting LLM agent to segment the trajectories into coherent task stages and induce a new set of procedures Pnew . To maintain a coher-ent and non-redundant procedural vocabulary, each 
+
+pnew ∈ P new is compared against existing proce-dures: if the semantic similarity between pnew and any p ∈ P exceeds a threshold δ, pnew is merged with its nearest neighbor, integrating new experi-ence and correcting potential errors; Otherwise, it is added as a new procedure, expanding the world model’s knowledge of environment dynamics. Af-ter induction, Hks is mapped to the updated P, and the corresponding procedure pathway W k is de-rived, where new consecutive procedure transitions are added to E.Although our procedure induction method is sim-ilar to AWM (Wang et al., 2025), they serve funda-mentally different goals. AWM constructs a library of independently reusable workflow templates as episodic memory, while ProPlay treats induced pro-cedures as basic units in an evolving world model, where the procedures and their causal transition structures constitute the accumulated understand-ing of the environment. 
+
+Reliability Record Update. The reliability record embedding of each procedure transition ob-served in episode k is updated based on Equation 1 to reflect their task-specific contributions. This ensures that reliability scores can consistently track the task-specific empirical reward gain of each tran-sition, consolidating generalizable knowledge and gradually discarding noisy transitions. As a re-sult, procedural world model can provide more grounded signal for further exploration. The episodic query-execute-refine loop ensures that ProPlay always benefits from up-to-date ex-perience, while maintaining a balance between ex-ploitation and exploration. 
+
+4 Experiments 
+
+4.1 Experimental Setting Benchmark. We evaluate our ProPlay on three public benchmarks. ScienceWorld (Wang et al., 2022) is a text-based scientific reasoning environ-ment. We evaluate over 270 shuffled tasks cov-ering 23 task types under standard difficulty. τ -Bench (Yao et al., 2024) is a conversational bench-mark that simulates realistic multi-turn tool-use in-teractions with an LLM-simulated user. We evalu-ate on both retail and airline domains, with 115 and 50 tasks respectively. PlanCraft (Dagan et al., 2024) is a text-based crafting benchmark in a Minecraft-like environment that requires multi-step recipe planning and inventory management. We evalu-ate on 187 tasks stratified across three difficulty levels (easy/medium/hard). These benchmarks are used to evaluate different capabilities of ProPlay: 
+
+τ -Bench for single task adaptation, ScienceWorld for evolutionary ability in a complex multi-task en-5Methods ScienceWorld τ -Bench PlanCraft A.R. SR Avg. Score Retail Airline Overall Easy Medium Hard Overall 
+
+ReAct 27.0 58.7 80.9 84.0 81.8 61.3 45.0 7.5 38.5 5.3 Reflexion 32.2 65.0 81.7 90.0 84.2 66.2 50.0 9.0 42.2 3.1 ExpeL 36.3 67.9 80.0 90.0 83.0 72.5 50.0 4.5 43.3 3.3 LATS 18.9 48.1 81.7 82.0 81.8 70.0 45.0 10.4 43.3 4.8 Wall-E 24.8 52.3 83.5 88.0 84.9 63.7 45.0 7.5 39.6 4.4 WorldCoder 24.8 53.4 83.5 82.0 83.0 61.3 42.5 7.5 38.0 5.4 ProPlay 37.4 70.2 83.5 90.0 85.5 71.2 47.5 10.4 44.4 1.6 
+
+Table 1: Performance and Average Ranking (A.R.) Comparison. Results are reported on ScienceWorld, τ -Bench and PlanCraft, with the best and sub-best performance highlighted in Boldface and Underline. 30 90 150 210 270            
+
+> Episode
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Window average score
+> Average Score
+> 0.50 0.00 0.50
+> Average Task-Wise ΔScore
+> LATS
+> WALL-E
+> WorldCoder
+> ExpeL
+> ReAct
+> Reflexion
+> +0.36 −0.14
+> +0.26 −0.09
+> +0.26 −0.12
+> +0.20 −0.07
+> +0.20 −0.10
+> +0.13 −0.07
+> ProPlay Loss/Win Gap
+> 090 180 270
+> Episode
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Cumulative count
+> World Model Growth
+> Nodes
+> Edges
+> ProPlay ExpeL Reflexion ReAct WALL-E WorldCoder LATS
+
+Figure 3: Evolution Trend Analysis in ScienceWorld. (1) ProPlay exhibits stable reward gain and advantages in cold-start stage. (2) ProPlay demonstrates significant advantages in tasks where it excels, while not falling noticeably behind in average when it comes to the tasks ProPlay is less proficient. (3) The growth in the scale of procedural world model is gradually stagnating, while the number of procedural transitions continues to increase. 
+
+vironment, and PlanCraft for self-evolution under curriculum setting. 
+
+Baseline. We compare ProPlay with standard agents (ReAct (Yao et al., 2022), Reflexion (Shinn et al., 2023)), memory- and planning-augmented agents (ExpeL (Zhao et al., 2024), LATS (Zhou et al., 2024)) and world model-based agents (World-Coder (Tang et al., 2024), Wall-E (Zhou et al., 2026)). ReAct and Reflexion evaluate whether reasoning and experience summarization can sup-port self-evolution. ExpeL and LATS examine whether memory and planning can replace envi-ronment understanding. Wall-E and WorldCoder verify whether action-level world modeling is suffi-cient for self-evolution. All methods are evaluated under online inference setting, where no offline training is involved. Each task has only one trial. GPT-4.1-mini with temperature 0 is adopted as the backbone LLM. 
+
+Metric. For ScienceWorld, we report success rate (SR) and average reward (Avg. Score), where SR is the fraction of episodes completed successfully. For τ -Bench, we report per-domain SR and overall SR. For PlanCraft, we report per difficulty level SR and overall SR. 
+
+4.2 Results Main Results. Table 1 summarizes the online in-ference results. Overall, ProPlay achieves the best A.R., with best and sub-best performance over all the benchmarks. Notably, ProPlay significantly out-performs planning-based and world model-based baselines in ScienceWorld, demonstrating the su-periority of our episodic preplay mechanism and procedure-level environment modeling in complex environments. ProPlay also achieves the best hard task SR after curriculum learning in PlanCraft, in-dicating that the procedural world model actually induced meaningful procedures from simpler tasks. Two world model-based baselines even fail to con-sistently outperform simple ReAct, indicating that their action-level constraints may significantly limit 6Boil Use        
+
+> Thermometer
+> Chemistry
+> Mix
+> Chemistry
+> Mix Paint
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Success Rate
+> 83%
+> 75%
+> 42%
+> 33%
+> 50%
+> 33%
+> 8%
+> 8%
+> 50%
+> 17%
+> 25%
+> 17%
+> 67%
+> 25%
+> 8%
+> 0%
+> 8%
+> 17%
+> 25%
+> 0%
+> 17%
+> 0%
+> 0%
+> 0%
+> 8%
+> 0%
+> 0%
+> 0%
+> ProPlay ReAct Reflexion ExpeL WALL-E WorldCoder LATS
+> Boil Use
+> Thermometer
+> Chemistry
+> Mix
+> Chemistry
+> Mix Paint
+> 0.0
+> 0.5
+> 1.0
+> Average Score
+> 0.96
+> 0.94
+> 0.61
+> 0.63
+> 0.64
+> 0.74
+> 0.40
+> 0.35
+> 0.67
+> 0.59
+> 0.47
+> 0.52
+> 0.68
+> 0.56
+> 0.39
+> 0.33
+> 0.13
+> 0.49
+> 0.48
+> 0.29
+> 0.20
+> 0.07
+> 0.29
+> 0.34
+> 0.09
+> 0.25
+> 0.32
+> 0.22
+
+Figure 4: Task-Specific Results in ScienceWorld. ProPlay demonstrates consistent advantages on tasks with clear multi-step procedural structure. 
+
+Methods ScienceWorld SR Avg. Score 
+
+ProPlay 37.4 70.2 
+
+w/ retrieval 35.6 69.6 w/ random sample 35.9 69.1 w/ hard constraint 32.6 66.3 w/o graph 34.8 69.4 w/o transition 32.2 64.8 w/o reliability 35.6 70.1 w/ action-level 37.0 68.8 
+
+Table 2: Ablation of model components and alternative solutions in ProPlay on Science-World. 
+
+the reasoning flexibility of LLM agents. 
+
+Self-Evolution Analysis. Figure 3 presents the evolution trend of all the selected methods. (1) As shown in the evolution trend of average score over episodes, ProPlay demonstrates significant advan-tages in the early stages (before episode 90) and stable high reward gain across all the episodes. We attribute the observations to our preplay mecha-nism and soft procedural guidance design. Dur-ing cold-start stage, the internal world model has not formed environment understanding, requiring agent to leverage its own prior knowledge to ex-plore potential procedures. Later, the agent could also be limited by the world knowledge itself. Both periods require dynamic balance between explo-ration and exploitation, which other methods fail to achieve. (2) We also collect task-specific av-erage score and compute the task-specific gap be-tween ProPlay and other baselines. ProPlay demon-strates significant advantages in tasks where it ex-cels, while not falling noticeably behind in average for less proficient tasks. It indicates that the accu-mulated procedural world knowledge can be gen-eralized across heterogeneous tasks. (3) ProPlay’s procedural graph exhibits a two-phase growth pat-tern analogous to cortical synaptogenesis (Hutten-locher, 1979): concept nodes accumulate rapidly in early episodes, while relational edges overtake and increasingly outnumber them afterwards. This dis-sociation suggests that deepening relational struc-ture drives late-stage performance gains, which mir-rors how synaptic density underlies the computa-tional capacity of mature neural circuits (Bullmore and Sporns, 2009). 
+
+Task-Specific Results. Figure 4 visualizes part of task-specific results on ScienceWorld, covering boil, use thermometer, chemistry mix and chem-istry mix paint secondary color. ProPlay demon-strates strong and consistent advantages on tasks that require multi-step procedural reasoning with clear causal structure. On harder compositional tasks like chemistry mix and chemistry mix paint, ProPlay also generalizes across task variations and outperforms other baselines. 
+
+4.3 Ablation Studies 
+
+Table 2 presents the results of all the ablation stud-ies. We conduct two branches of ablation studies on ScienceWorld: 
+
+Preplay Analysis. To demonstrate the effective-ness of our preplay mechanism and soft guidance principle, we first replace preplay with: (1) top-k procedure transition retrieval based on task-specific reliability score (w/ retrieval); (2) random proce-dure sampling as preplay plan (w/ random sample). Then, we replace the soft guidance with hard con-straint, where the agent is forced to strictly follow preplay plan (w/ hard constraint). The results in-dicate that grounded reasoning or speculative rea-soning alone is not always effective. The reasoning flexibility ProPlay provides is necessary. 
+
+World Model Analysis. To demonstrate the su-periority of our procedural world model, we first remove the whole procedural graph (w/o graph), procedure transitions (w/o transition), reliability records (w/o reliability) respectively, and then re-place the procedural world model with action-level world model, where actions are regarded as funda-mental unit of the world model, while other compo-7Melting Point 
+
+> (Known)
+> Test
+> Conductivity
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Success Rate
+> 33%
+> 0%
+> 25%
+> 25%
+> 25%
+> 0%
+> 75%
+> 42%
+> 8%
+> 0%
+> 42%
+> 17%
+> 8%
+> 0%
+> ProPlay
+> ReAct
+> Reflexion
+> ExpeL
+> WALL-E
+> WorldCoder
+> LATS
+> Melting Point
+> (Known)
+> Test
+> Conductivity
+> 0.0
+> 0.5
+> 1.0
+> Average Score
+> 0.65
+> 0.63
+> 0.61
+> 0.75
+> 0.60
+> 0.64
+> 0.91
+> 0.81
+> 0.47
+> 0.68
+> 0.61
+> 0.53
+> 0.61
+> 0.62
+
+Figure 5: Failure Case Analysis on ScienceWorld. 
+
+ProPlay underperforms on tasks that require pre-cise quantitative reasoning or non-decomposable tool-assembly sequences. 0 0-0.3 0.3-0.6 >0.6    
+
+> Plan Reliability
+> 0%
+> 10%
+> 20%
+> 30%
+> 40%
+> 50%
+> 60%
+> Success Rate  39%
+> n=41
+> 35%
+> n=54
+> 39%
+> n=49
+> 31%
+> n=108
+> ScienceWorld: Reliability Bins
+> 00-0.3 0.3-0.6 >0.6
+> Plan Reliability
+> 0%
+> 10%
+> 20%
+> 30%
+> 40%
+> 50%
+> 60%
+> Success Rate
+> 31%
+> n=86
+> 50%
+> n=12
+> 33%
+> n=21
+> 50%
+> n=12
+> PlanCraft: Reliability Bins
+
+Figure 6: Reliability Analysis of ScienceWorld and PlanCraft. High plan reliability does not necessarily lead to task completion. 
+
+nents except for procedure induction remains the same. The results indicate that procedure transition is the most valuable knowledge within the world model, and our proposed reliability records also contribute to reliable world knowledge exploita-tion. Besides, procedural world model can provide more comprehensive environment understanding than action-level world model. 
+
+4.4 Discussion Failure Case Analysis. Figure 5 visualizes two significant failure cases of ProPlay on Sci-enceWorld, including melting point measurement (known substance) and conductivity testing. The two cases reveal the fundamental limitations of procedural abstraction. The failure on melting point measurement suggest that tasks requiring precise quantitative reasoning are better served by fine-grained rule-based methods like ExpeL, where 
+
+Figure 7: Case Analysis on ScienceWorld. ProPlay can autonomously evolve feasible task-specific procedures. 
+
+procedures may over-generalize across substance-specific thresholds. On the other hand, conductivity testing involves tool assembly, which can not be always decomposed into reusable procedures. A potential solution to overcome the limitation is to integrate complementary fine-grained constraints like action-level rules, enabling the agent to adap-tively select the appropriate level of abstraction based on task structure. 
+
+Reliability Analysis. To better understand the role of preplay plans and their reliabilities, we define plan reliability as the average transi-tion reliability score of each procedural plan 
+
+1
+
+m−1
+
+P
+
+(pi,p j )⊂W ∗ skij and compare plan reliabili-ties with their corresponding SR. The statistics in ScienceWorld and PlanCraft are summarized in Figure 6. Note that the plans with zero reliability are composed of unseen procedure transitions. We can find that high plan reliability does not necessar-ily lead to high SR and reward. In ScienceWorld, plans with unseen transitions play a critical role, demonstrating the importance of free exploration. In contrast, "more reliable" plans show unexpect-edly low SR, which is caused by the existence of high-frequency generic transitions (e.g., navigation 
+
+→ focus), which accumulate high global reliability 8yet offer little task-specific guidance. For PlanCraft, "reliable" plan is also insufficient for task comple-tion, but the contribution of unseen plans is less significant. We attribute such difference to the spar-sity of procedure graph, making it difficult to re-trieve valuable reference and form high-frequency generic transitions. 
+
+Case Study. We contrast two measure-temperature episodes to demonstrate how the evolution of procedural world model affects plan quality. We select one early episode and one late episode with the same task type in the online infer-ence, and illustrate their preplay plans and actual execution trajectories in Figure 7. In Task #7, no temperature-measurement workflow exists, and the plan falls back to a generic "Move Non-Living Thing" procedure with plan reliability 0.14, leading to dead loop and failure. By Task #238, ProPlay has induced a dedicated "Measure Temperature" procedure with a reliable transition, yielding a feasible task-specific plan with reliability 0.83. As a result, the agent completes the task in 15 steps. 
+
+5 Conclusion 
+
+We present ProPlay, a preplay framework for self-evolving LLM agents built on an evolving procedu-ral world model. To maintain an internal environ-ment understanding, ProPlay encodes environment dynamics as procedural causal structures, with re-liability record embeddings that distinguish gen-eralizable knowledge from contingent experience. Before each episode, ProPlay performs procedure-level preplay to synthesize procedure trajectories as soft guidance, preserving exploration flexibility while grounding agent reasoning in accumulated procedural knowledge. Experiments across diverse benchmarks show that ProPlay consistently outper-forms strong baselines, highlighting that procedure-level abstraction offers a principled and effective foundation for self-evolving agent in partially ob-servable environments. 
+
+Limitations 
+
+Procedural abstraction scope. ProPlay’s proce-dural abstraction is most effective for tasks with clear, reusable causal structure. Tasks requiring precise quantitative reasoning and tasks with unpre-dictable variants are better served by fine-grained rule-based representations. This suggests that pro-cedural structures and action-level rules are com-plementary, and a principled strategy for adaptively combining them remains an open problem. 
+
+Single-Shot Preplay. The preplay plan is gen-erated once at the start of each episode with only one procedure trajectory, which is injected as static soft guidance throughout execution. When early-episode observations reveal that the plan is incor-rect, the agent cannot benefit from a mid-episode plan revision, and must instead rely entirely on its own reasoning to recover. We plan to inject these procedural knowledge into parameters (Han et al., 2026b,a) in our future work. 
+
+Benchmark Scope. It remains an open question whether the same benefits of procedural environ-ment modeling can generalize to more open-ended environments like web navigation, GUI interaction, and long-horizon code generation, where the action space is unbounded and procedural structure may not emerge naturally from accumulated experience. 
+
+Ethical Concerns 
+
+This work is entirely verified within publicly avail-able benchmarks (ScienceWorld, τ -Bench, Plan-Craft) and does not involve human subjects, private data, or real-world system interactions. The LLM-simulated users in τ -Bench are a proxy for real human behavior and may not reflect the full diver-sity of actual user responses. We will release all evaluation code, prompt templates and data splits used in our experiments. 
+
+References    
+
+> Petr Anokhin, Nikita Semenov, Artyom Sorokin, Dmitry Evseev, Andrey Kravchenko, Mikhail Burtsev, and Evgeny Burnaev. 2025. Arigraph: learning knowl-edge graph world models with episodic memory for llm agents. In Proceedings of the Thirty-Fourth Inter-national Joint Conference on Artificial Intelligence ,pages 12–20. Ed Bullmore and Olaf Sporns. 2009. Complex brain networks: graph theoretical analysis of structural and functional systems. Nature reviews neuroscience ,10(3):186–198. Hyungjoo Chae, Namyoung Kim, Kai Ong, Minju Gwak, Gwanwoo Song, Jihoon Kim, Sunghwan Kim, Dongha Lee, and Jinyoung Yeo. 2025. Web agents with world models: Learning and leveraging environ-ment dynamics in web navigation. In International Conference on Learning Representations , volume 2025, pages 63707–63738.
+
+9Gautier Dagan, Frank Keller, and Alex Lascarides. 2024. Plancraft: an evaluation dataset for planning with llm agents. arXiv preprint arXiv:2412.21033 .George Dragoi and Susumu Tonegawa. 2011. Preplay of future place cell sequences by hippocampal cellular assemblies. Nature , 469(7330):397–401. Jinyuan Fang, Yanwen Peng, Xi Zhang, Yingxu Wang, Xinhao Yi, Guibin Zhang, Yi Xu, Bin Wu, Siwei Liu, Zihao Li, and 1 others. 2025. A comprehensive survey of self-evolving ai agents: A new paradigm bridging foundation models and lifelong agentic sys-tems. arXiv preprint arXiv:2508.07407 .Karl Friston, Thomas FitzGerald, Francesco Rigoli, Philipp Schwartenbeck, and Giovanni Pezzulo. 2017. Active inference: a process theory. Neural computa-tion , 29(1):1–49. Huan-ang Gao, Jiayi Geng, Wenyue Hua, Mengkang Hu, Xinzhe Juan, Hongzhang Liu, Shilong Liu, Jiahao Qiu, Xuan Qi, Yiran Wu, and 1 others. 2025. Asurvey of self-evolving agents: What, when, how, and where to evolve on the path to artificial super intelligence. arXiv preprint arXiv:2507.21046 .David Ha and Jürgen Schmidhuber. 2018. World mod-els. arXiv preprint arXiv:1803.10122 , 2(3):440. Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mo-hammad Norouzi. 2019. Dream to control: Learn-ing behaviors by latent imagination. arXiv preprint arXiv:1912.01603 .Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. 2023. Mastering diverse do-mains through world models. arXiv preprint arXiv:2301.04104 .Xiaolong Han, Ferrante Neri, Zijian Jiang, Fang Wu, Yanfang Ye, Lu Yin, and Zehong Wang. 2026a. W2t: Lora weights already know what they can do. arXiv preprint arXiv:2603.15990 .Xiaolong Han, Zehong Wang, Bo Zhao, Binchi Zhang, Jundong Li, Damian Borth, Rose Yu, Haggai Maron, Yanfang Ye, Lu Yin, and 1 others. 2026b. Asurvey of weight space learning: Understanding, representation, and generation. arXiv preprint arXiv:2603.10090 .Shibo Hao, Yi Gu, Haodi Ma, Joshua Hong, Zhen Wang, Daisy Wang, and Zhiting Hu. 2023. Rea-soning with language model is planning with world model. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,pages 8154–8173. Peter R. Huttenlocher. 1979. Synaptic density in human frontal cortex-developmental changes and effects of aging. Brain Res , 163(2):195–205. Leslie Pack Kaelbling, Michael L Littman, and An-thony R Cassandra. 1998. Planning and acting in partially observable stochastic domains. Artificial intelligence , 101(1-2):99–134. Jiazheng Kang, Mingming Ji, Zhe Zhao, and Ting Bai. 2025. Memory os of ai agent. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 25972–25981. Ziming Li, Jiatan Huang, Xiaoguang Guo, Guilin Wang, and Chuxu Zhang. 2026a. Same signal, opposite meaning: Direction-informed adaptive learning for llm agents. arXiv preprint arXiv:2605.06908 .Ziming Li, Xiaoming Wu, Zehong Wang, Jiazheng Li, Yijun Tian, Jinhe Bi, Yunpu Ma, Yanfang Ye, and Chuxu Zhang. 2026b. Graph is a substrate across data modalities. arXiv preprint arXiv:2601.22384 .H Freyja Ólafsdóttir, Daniel Bush, and Caswell Barry. 2018. The role of hippocampal replay in memory and planning. Current Biology , 28(1):R37–R50. Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G Patil, Ion Stoica, and Joseph E Gonzalez. 2023. Memgpt: Towards llms as operating systems. 
+
+arXiv preprint arXiv:2310.08560 .Giovanni Pezzulo, Thomas Parr, Paul Cisek, Andy Clark, and Karl Friston. 2024. Generating meaning: active inference and the scope and limits of passive ai. Trends in Cognitive Sciences , 28(2):97–112. Pranav Putta, Edmund Mills, Naman Garg, Sumeet Motwani, Chelsea Finn, Divyansh Garg, and Rafael Rafailov. 2024. Agent q: Advanced reasoning and learning for autonomous ai agents. arXiv preprint arXiv:2408.07199 .Shuofei Qiao, Runnan Fang, Ningyu Zhang, Yuqi Zhu, Xiang Chen, Shumin Deng, Yong Jiang, Pengjun Xie, Fei Huang, and Huajun Chen. 2024. Agent planning with world knowledge model. Advances in Neural Information Processing Systems , 37:114843–114871. Noor Sajid, Philip J Ball, Thomas Parr, and Karl J Fris-ton. 2021. Active inference: demystified and com-pared. Neural computation , 33(3):674–712. Daniel L Schacter, Donna Rose Addis, and Randy L Buckner. 2007. Remembering the past to imagine the future: the prospective brain. Nature reviews neuroscience , 8(9):657–661. Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652. Hao Tang, Darren Key, and Kevin Ellis. 2024. World-coder, a model-based llm agent: Building world mod-els by writing code and interacting with the environ-ment. Advances in Neural Information Processing Systems , 37:70148–70212. Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and An-ima Anandkumar. 2023a. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 .
+
+10 Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. 2022. Scienceworld: Is your agent smarter than a 5th grader? In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , pages 11279–11298. Zehong Wang, Fang Wu, Hongru Wang, Xiangru Tang, Bolian Li, Zhenfei Yin, Yijun Ma, Yiyang Li, Weix-iang Sun, Xiusi Chen, and 1 others. 2026. Why reasoning fails to plan: A planning-centric analysis of long-horizon decision making in llm agents. arXiv preprint arXiv:2601.22311 .Zihao Wang, Shaofei Cai, Guanzhou Chen, Anji Liu, Xiaojian Ma, and Yitao Liang. 2023b. Describe, explain, plan and select: Interactive planning with large language models enables open-world multi-task agents. arXiv preprint arXiv:2302.01560 .Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. 2025. Agent workflow memory. In International Conference on Machine Learning ,pages 63897–63911. PMLR. Fang Wu, Weihao Xuan, Heli Qi, Hanqun Cao, Heng-Jui Chang, Zeqi Zhou, Haokai Zhao, Ma Jian, Carl Ma, Yu-Chi Cheng, and 1 others. 2026. Proteo-r1: Reasoning foundation models for de novo protein design. arXiv preprint arXiv:2605.02937 .Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Xin Guo, Ding-wen Yang, Chenyang Liao, Wei He, and 1 others. 2025. Agentgym: Evaluating and training large lan-guage model-based agents across diverse environ-ments. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 27914–27961. Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. 2026. A-mem: Agentic memory for llm agents. Advances in Neural Informa-tion Processing Systems , 38:17577–17604. Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2024. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. arXiv preprint arXiv:2406.12045 .Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik Narasimhan. 2023. Tree of thoughts: Deliberate problem solving with large language models. Advances in neural information processing systems , 36:11809–11822. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2022. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629 .Zhongwei Yu, Jingqing Ruan, and Dengpeng Xing. 2023. Explainable reinforcement learn-ing via a causal world model. arXiv preprint arXiv:2305.02749 .Zheyuan Zhang, Kaiwen Shi, Han Bao, Zehong Wang, Tianyi Ma, and Yanfang Ye. 2026. Why semantic entropy fails: Geometry-aware and calibrated un-certainty for policy optimization. arXiv preprint arXiv:2605.21801 .Zheyuan Zhang, Kaiwen Shi, Zhengqing Yuan, Zehong Wang, Tianyi Ma, Keerthiram Murugesan, Vincent Galassi, Chuxu Zhang, and Yanfang Ye. 2025. Agen-trouter: A knowledge-graph-guided llm router for collaborative multi-agent question answering. arXiv preprint arXiv:2510.05445 .Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. 2024. Expel: Llm agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 38, pages 19632–19642. Zirui Zhao, Wee Sun Lee, and David Hsu. 2023. Large language models as commonsense knowledge for large-scale task planning. Advances in neural infor-mation processing systems , 36:31967–31987. Andy Zhou, Kai Yan, Michal Shlapentokh-Rothman, Haohan Wang, and Yu-Xiong Wang. 2024. Lan-guage agent tree search unifies reasoning, acting, and planning in language models. In Proceedings of the 41st International Conference on Machine Learning ,pages 62138–62160. Siyu Zhou, Tianyi Zhou, Yijun Yang, Guodong Long, Deheng Ye, Jing Jiang, and Chengqi Zhang. 2026. Wall-e: World alignment by neurosymbolic learning improves world model-based llm agents. Advances in Neural Information Processing Systems , 38:65352– 65391. Yuqi Zhu, Shuofei Qiao, Yixin Ou, Shumin Deng, Shiwei Lyu, Yue Shen, Lei Liang, Jinjie Gu, Hua-jun Chen, and Ningyu Zhang. 2025. Knowa-gent: Knowledge-augmented planning for llm-based agents. In Findings of the Association for Computa-tional Linguistics: NAACL 2025 , pages 3709–3732. 
+
+A Additional Experimental Setting 
+
+We conduct ScienceWorld evaluation based on AgentGym (Xi et al., 2025), following the corre-sponding task type settings. The maximum step budget for ScienceWorld, τ -Bench and PlanCraft are set as 100, 30 and 30 respectively. For baseline adaptation, since the original Reflexion operates within a single task with multiple trials, we adapt it to the cross-task setting by accumulating verbal re-flections across episodes; at most 20 reflections are retained (FIFO). ExpeL maintains a sliding buffer of up to 50 failed trajectories and extracts at most 20 rules for injection. For LATS, we retain its original within-episode tree search design but limit cross-episode reflection to 3 stored trajectories to bound context length. Wall-E maintains per-verb 11 rule libraries capped at 5 rules each, with a correc-tion buffer of up to 30 examples per verb. World-Coder and Wall-E were originally designed with offline or multi-trial settings; we adapt both to the online single-trial setting by initializing their world models from scratch at the start of each benchmark run, with no pre-collected demonstrations. For Pro-Play, there is no explicit limitation in the length of preplay procedural plan and the size of induced workflow. We set δ = 0 .75 for both procedure merging and failure experience retrieval. We adopt different procedure definitions for the three bench-marks. For ScienceWorld, we adopt the general procedure definition. For τ -Bench, considering that tools can already represent high-level abstrac-tions, we regard tools themselves as procedures. For PlanCraft, we consider recipes as procedures. 
+
+B Prompts 
+
+Procedure Induction 
+
+System Message :You are maintaining a library of abstract procedure templates for a task agent. Given the current procedure library and accumulated episode summaries, update the library to reflect generalizable pat-terns. Each episode summary contains: - Actions: the complete action sequence. - Successful steps: actions from the productive part of the episode. Reward-gaining actions are marked with (+delta). - Failed steps (optional): actions attempted after the last reward gain, marked with [x]. Do NOT incorporate these into procedures. Derive procedure patterns from Successful steps only. Update rules: 1. ADD a new procedure if episodes demonstrate a task pattern not covered by any existing entry. 2. ADD steps to an existing procedure if episodes reveal steps consistently missing from the general template. 3. REWRITE an existing procedure only if it contains steps that are outright incorrect. 4. Use abstract placeholders (e.g. <object>, <container>, <location>) — never hard-code values from individual episodes. 5. Do not add conditional branches that apply only to a single episode. Output: Section 1 — the complete updated procedure library. Section 2 — an execution trace for the LATEST episode only: the ordered sequence of procedure names that best describes what the agent actually did. Wrap in <trace> tags, one name per line. 
+
+User Message: 
+
+## Existing Procedures {existing_procedures} ## Episodes {episode_summaries} ## Updated Procedures {induced_procedures} 
+
+Preplay 
+
+System Message: 
+
+You are a planning assistant for an interactive task agent. Given a task goal and a procedure graph built from past experience, generate a plan to accomplish the task. Guidelines: 1. Select only the procedures relevant to this task — not every available procedure needs to be used. 2. Use your own reasoning to determine the order and combination of steps. The procedure graph is evidence, not a prescription. 
+
+3. Reliability scores reflect how often a transition contributed to past successful episodes. Higher scores are a useful signal, but not instructions — a low-reliability edge may still be the right choice, and a high-reliability edge may not apply to this task. 4. You may include steps not present in the known procedures if the task requires them. 5. If a Past Episode Experiences section is shown, study each failure entry to identify the root cause, and design your plan to reason around it. Prioritize experiences from tasks similar to the current goal. Output format: - Output the plan inside <plan> tags - Top-level entries are numbered, each beginning with the exact procedure name. Under each entry, list indented sub-steps (-) that adapt the procedure to this specific task. 
+
+User Message: 
+
+Task Goal goal Available Procedures {procedure_library} Known Procedure Transitions (from past experience) Sorted by relevance to this task (higher = this sequence worked well on similar tasks). {transitions_with_reliability} Past Episode Experiences {failed_experiences} Generate a plan for this task. Use the procedure graph as evidence — follow known sequences where they apply, and add or modify steps based on your understanding of the task. <plan> 
+
+Soft Guidance Injection 
+
+System Message: 
+
+Suggested procedure plan for this task (from past experience): Fol-low these steps as a guide; adjust based on what you observe. {plan_text} 
+
+User Message: 
+
+Task: {task} Observation: {current_observation} Working notes (your in-episode memory from previous steps): {memory} Recent history (last {k} steps): {history} What do you do next? 
+
+C Additional Results 
+
+C.1 Complementary Task-Specific Results on ScienceWorld 
+
+We summarize the task-specific results of the other 17 tasks in ScienceWorld in Figure 8. The obser-vation is consistent with Figure 4, such that Pro-Play demonstrates consistent advantages on tasks with clear procedural structure and fails on tasks requiring non-decomposable action sequences that are very sensitive to task configurations. Specif-ically, ProPlay matches or leads all baselines on state-transition tasks (change-the-state-of-matter-of, freeze), where the causal chain from action to outcome is fixed and generalizable across episodes. In contrast, ProPlay shows the largest performance gaps on two task families: power-component tasks, where ProPlay achieves 0% success rate, likely be-cause assembling electrical circuits requires strict action ordering that is highly sensitive to object placement; and open-ended search tasks (find-animal, find-non-living-thing), where the target 12 object location varies unpredictably across configu-rations, making it difficult for the world model to form reliable relational edges. Compound sequen-tial tasks such as lifespan-longest-then-shortest-lived further expose a limitation: for ranking-based tasks with dependent sub-goals in a strict order, pro-cedural knowledge can not always transfer useful relational knowledge across sub-goals. 
+
+C.2 Procedure Graph Evolution 
+
+We visualize 5 snapshots of evolved procedure graph in ScienceWorld and PlanCraft respectively in Figure 9. As the graph continues to evolve, the procedural world model in PlanCraft remains a stable edge-to-node ratio (around 1.5) and grad-ually forms task-specific clusters, reflecting the many-to-one compositional recipe family structure of Minecraft crafting. In contrast, procedures in ScienceWorld are defined as generalizable work-flows, where heterogeneous scientific domains all converge on a shared set of manipulation primi-tives. This structural divergence reflects a funda-mental difference in how procedures are defined in each benchmark: PlanCraft procedures are compo-sitionally hierarchical, enabling bottom-up cluster formation, whereas ScienceWorld procedures are induced from common prerequisites, precluding the emergence of domain-isolated subgraphs. This structural contrast suggests that ProPlay can auto-matically recover the causal structures of different environment dynamics. 13 Change State 
+
+of Matter 
+
+Lifespan 
+
+(Longest) 
+
+Find 
+
+Plant 
+
+Lifespan 
+
+(Shortest) 
+
+Melt Find 
+
+Living Thing 
+
+0% 
+
+50% 
+
+100% 
+
+> Success Rate
+> 92%
+> 83%
+> 67%
+> 67%
+> 50%
+> 42%
+> 50%
+> 75%
+> 8%
+> 67%
+> 58%
+> 8%
+> 58%
+> 67%
+> 58%
+> 58%
+> 42%
+> 42%
+> 92%
+> 50%
+> 67%
+> 83%
+> 58%
+> 33%
+> 17%
+> 83%
+> 50%
+> 58%
+> 33%
+> 50%
+> 33%
+> 92%
+> 8%
+> 75%
+> 50%
+> 17%
+> 17%
+> 33%
+> 8%
+> 25%
+> 0%
+> 8%
+
+ProPlay ReAct Reflexion ExpeL WALL-E WorldCoder LATS 
+
+Change State 
+
+of Matter 
+
+Lifespan 
+
+(Longest) 
+
+Find 
+
+Plant 
+
+Lifespan 
+
+(Shortest) 
+
+Melt Find 
+
+Living Thing 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Avg. Score
+> 0.92
+> 0.92
+> 0.92
+> 0.83
+> 0.74
+> 0.83
+> 0.63
+> 0.88
+> 0.32
+> 0.75
+> 0.72
+> 0.56
+> 0.65
+> 0.83
+> 0.92
+> 0.79
+> 0.54
+> 0.74
+> 0.98
+> 0.75
+> 0.93
+> 0.92
+> 0.76
+> 0.87
+> 0.20
+> 0.92
+> 0.68
+> 0.79
+> 0.39
+> 0.63
+> 0.59
+> 0.96
+> 0.44
+> 0.83
+> 0.65
+> 0.67
+> 0.23
+> 0.60
+> 0.24
+> 0.56
+> 0.04
+> 0.62
+
+Freeze Melting Point 
+
+(Unknown) 
+
+Conductivity 
+
+(Unknown) 
+
+Find 
+
+Non-Living 
+
+Lifespan 
+
+(L→S) 
+
+Find 
+
+Animal 
+
+0% 
+
+50% 
+
+100% 
+
+> Success Rate
+> 33%
+> 33%
+> 33%
+> 25%
+> 25%
+> 17%
+> 0%
+> 42%
+> 17%
+> 17%
+> 50%
+> 25%
+> 25%
+> 25%
+> 50%
+> 33%
+> 42%
+> 42%
+> 33%
+> 33%
+> 42%
+> 33%
+> 42%
+> 8%
+> 17%
+> 17%
+> 17%
+> 67%
+> 50%
+> 42%
+> 17%
+> 0%
+> 25%
+> 25%
+> 58%
+> 0%
+> 8%
+> 33%
+> 0%
+> 25%
+> 25%
+> 0%
+
+Freeze Melting Point 
+
+(Unknown) 
+
+Conductivity 
+
+(Unknown) 
+
+Find 
+
+Non-Living 
+
+Lifespan 
+
+(L→S) 
+
+Find 
+
+Animal 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Avg. Score
+> 0.72
+> 0.69
+> 0.76
+> 0.85
+> 0.60
+> 0.81
+> 0.41
+> 0.77
+> 0.70
+> 0.81
+> 0.79
+> 0.81
+> 0.69
+> 0.59
+> 0.83
+> 0.79
+> 0.61
+> 0.87
+> 0.67
+> 0.74
+> 0.77
+> 0.85
+> 0.62
+> 0.67
+> 0.38
+> 0.67
+> 0.74
+> 0.92
+> 0.76
+> 0.77
+> 0.59
+> 0.28
+> 0.66
+> 0.84
+> 0.71
+> 0.66
+> 0.09
+> 0.83
+> 0.53
+> 0.82
+> 0.57
+> 0.33
+
+Life Stages 
+
+(2) 
+
+Chem Mix 
+
+Paint (3°) 
+
+Life Stages 
+
+(1) 
+
+Power 
+
+Component 
+
+Power 
+
+(Renew.) 
+
+0% 
+
+50% 
+
+100% 
+
+> Success Rate
+> 14%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 17%
+> 25%
+> 29%
+> 0%
+> 0%
+> 25%
+> 8%
+> 0%
+> 0%
+> 0%
+> 8%
+> 17%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 0%
+> 33%
+> 33%
+> 0%
+> 0%
+> 0%
+> 8%
+> 8%
+
+Life Stages 
+
+(2) 
+
+Chem Mix 
+
+Paint (3°) 
+
+Life Stages 
+
+(1) 
+
+Power 
+
+Component 
+
+Power 
+
+(Renew.) 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Avg. Score
+> 0.64
+> 0.17
+> 0.18
+> 0.67
+> 0.43
+> 0.17
+> 0.15
+> 0.07
+> 0.69
+> 0.59
+> 0.69
+> 0.26
+> 0.38
+> 0.82
+> 0.44
+> 0.54
+> 0.27
+> 0.19
+> 0.76
+> 0.56
+> 0.31
+> 0.12
+> 0.07
+> 0.73
+> 0.53
+> 0.42
+> 0.13
+> 0.09
+> 0.80
+> 0.64
+> 0.32
+> 0.12
+> 0.10
+> 0.15
+> 0.13
+
+Figure 8: Complementary Task-Specific Results in ScienceWorld. SW Ep. 1 
+
+2 nodes / 1 edges 
+
+SW Ep. 10 
+
+10 nodes / 9 edges 
+
+SW Ep. 30 
+
+18 nodes / 15 edges 
+
+SW Ep. 90 
+
+25 nodes / 32 edges 
+
+SW Ep. 270 
+
+33 nodes / 60 edges 
+
+PC Ep. 1 
+
+1 nodes / 0 edges 
+
+PC Ep. 10 
+
+10 nodes / 16 edges 
+
+PC Ep. 30 
+
+29 nodes / 45 edges 
+
+PC Ep. 55 
+
+51 nodes / 75 edges 
+
+PC Ep. 83 
+
+83 nodes / 131 edges 
+
+(a) ScienceWorld world model evolution 
+
+(b) PlanCraft world model evolution 
+
+Navigation & Object Thermal & State Chemistry & Mixture Electrical Color & Paint Biology & Search Food 
+
+Smelt Dye / Textile Wood Stone / Brick Metal / Tool Other 
+
+Figure 9: Procedure Graph Evolution in ScienceWorld and PlanCraft. We visualize the procedure graphs induced in episode 1, 10, 30, 90 and 270 respectively, with different node colors representing different targeting tasks. 
+
+14
