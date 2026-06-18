@@ -1,0 +1,1113 @@
+Title: Graph-based Target Back-Propagation for Context Adaptation in Multi-LLM Agentic Systems
+
+URL Source: https://arxiv.org/pdf/2606.14155v1
+
+Published Time: Mon, 15 Jun 2026 00:33:20 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# Graph-based Target Back-Propagation for Context Adaptation in Multi-LLM Agentic Systems 
+
+## Tan Zhu, Tong Yao, Kananart Kuwaranancharoen, Amit Singh, Yushang Lai, Deepa Mohan , Shankar Bhargava 
+
+## Retail Intelligence, Walmart Global Tech Sunnyvale, CA, USA 
+
+> {tan.zhu, tong.yao, kananart.kuwaranancharoen, amit.singh2, yushang.lai deepa.mohan, shankara.bhargava} @walmart.com
+
+## Abstract 
+
+Context adaptation automates prompt engineer-ing in LLM-based systems by iteratively re-vising tunable prompts from task feedback, without modifying model weights. Extending this paradigm to multi-LLM agentic systems is crucial: existing methods suffer from inac-curate credit assignment and lack convergence guarantees. We propose Graph-based Target 
+
+Back-Propagation (GTBP), a context adapta-tion framework for agentic workflows modeled as directed acyclic graphs. GTBP propagates local target outputs backward through the work-flow graph and uses target–output discrepan-cies to guide a stage-wise prompt update mech-anism. Theoretically, we show that GTBP’s stage-wise prompt updates become stable over iterations, and that a sufficiently capable LLM optimizer can decrease the overall objective. Empirically, GTBP consistently outperforms strong baselines across three benchmarks while maintaining comparable computational cost. 
+
+## 1 Introduction 
+
+With input contexts such as task instructions, tool-use guidelines, and memory-retrieval instructions that guide how external information is selected and incorporated (Schulhoff et al., 2024), large language models (LLMs) can coordinate multi-ple LLM-powered modules in agentic systems for multi-step problem solving (Li, 2025). This paper studies context adaptation for such multi-module LLM systems, where input contexts are automat-ically revised from task feedback while model weights remain frozen. Let Φ denote an agentic system with frozen model weights and a tunable prompt set ΠΦ. Given a task distribution T and a task-level loss function ℓ, context adaptation aims to find the optimal Π∗ 
+
+> Φ
+
+minimizing ℓ:
+
+Π∗ 
+
+> Φ
+
+= arg min 
+
+> ΠΦ
+
+Ex∼T [ℓ(Φ( x; Π Φ))] . (1) Early agentic systems often rely on human-designed contexts, prompts, and instructions to co-ordinate multiple LLM-powered modules (Hong et al., 2024; Qian et al., 2024). Context adapta-tion automates this process by updating tunable prompts from task feedback, without modifying the model weights. Recent advances in LLMs, in-cluding longer context windows and lower-latency inference (Gemini Team, 2024; OpenAI, 2024), make it increasingly feasible to treat LLMs not only as task solvers but also as optimizers that iter-atively inspect, critique, and revise prompts. This makes context adaptation a practical alternative to costly manual prompt engineering, especially for workflows in multi-module agentic systems. In multi-module agentic systems, context adapta-tion introduces credit assignment : final errors must be attributed to the responsible module-specific contexts (Meulemans et al., 2021). Agentic work-flows involve text-based contexts, discrete actions, and black-box LLM modules, making gradient-based credit assignment, widely used in artificial neural networks (ANNs), difficult to apply directly. To assign credit, methods such as GEPA and ACE employ LLM calls that take the entire agentic work-flow as input (Agrawal et al., 2025; Zhang et al., 2025). However, because this assignment is per-formed implicitly rather than through an explic-itly defined inference procedure, it can be non-deterministic and unclear which prompts should be updated. This leads to the challenge known as 
+
+attribution ambiguity (Huang et al., 2026). To explicitly define credit-assignment pipelines over multi-agent systems, methods such as TextGrad (Yuksekgonul et al., 2024) and Agentic Neural Networks (Ma et al., 2025) model multi-agent systems with graph structures and propa-gate LLM-generated textual feedback across agent nodes. However, these pipelines remain largely heuristic and are not directly coupled with the prompt optimization objective in Eq. 1. Moreover, 
+
+> arXiv:2606.14155v1 [cs.LG] 12 Jun 2026 Figure 1: Overview of GTBP for context adaptation. After forward execution, GTBP infers local targets for intermediate modules from the final target output. Each module then compares its current output with the inferred target, and the resulting credit signal is used to update its prompt without requiring gradient access.
+
+after credits are assigned, heuristic rule-based LLM optimizer are employed to update prompts. Their convergence properties in multi-module agentic systems remain theoretically underexplored. To address these limitations, we draw inspiration from Difference Target Propagation (DTP), which assigns credit by propagating local targets rather than gradients (Lee et al., 2015; Meulemans et al., 2020). Building on this idea, we propose Graph-based Target Back-Propagation ( GTBP ), a context adaptation pipeline for agentic systems. In sum-mary, this paper makes the following contributions: • We propose GTBP, a graph-based credit-assignment framework for context adaptation in multi-LLM agentic systems. Instead of rely-ing on trajectory-level reflection, as shown in Fig. 1, GTBP follows the workflow graph to in-fer local target outputs for sub-modules and uses target-output discrepancies to guide stage-wise prompt updates. • We provide a theoretical analysis of GTBP, showing that its stage-wise prompt updates be-come stable over iterations and that the task-level objective defined in Eq. 1 can be decreased with a sufficiently capable LLM optimizer. • We empirically validate GTBP on real-world benchmark datasets and show that it consis-tently improves prompt optimization perfor-mance compared with strong baseline methods. 
+
+## 2 Related Work 
+
+2.1 Credit Assignment 
+
+Credit assignment is a fundamental problem in learning systems, where global feedback must be attributed to the internal components responsible for an outcome (Minsky, 1961). In ANNs, it is commonly addressed through chain-rule-based gra-dient backpropagation (Bottou et al., 2018). Alter-native methods explore different credit assignment mechanisms beyond gradient backpropagation. For example, Decoupled Neural Interfaces decouple credit assignment by learning synthetic gradients for intermediate modules (Jaderberg et al., 2017). Difference Target Propagation (DTP), in contrast, offers a target-based alternative by assigning de-sired outputs to intermediate components (Bengio, 2014; Lee et al., 2015; Meulemans et al., 2020). With rapid advances in LLM context length (Wang et al., 2024) and inference efficiency (Zhou et al., 2024), methods such as MIPROv2 (Opsahl-Ong et al., 2024), GEPA (Agrawal et al., 2025), and ACE (Zhang et al., 2025) use LLM reasoning to ap-proximate credit assignment over textual execution traces. However, because credit is assigned through black-box LLM-based reflection, the process re-mains difficult to control. To make it more struc-tured, recent work such as TextGrad (Yuksekgonul et al., 2024) and Agentic Neural Networks (Ma et al., 2025) propagates textual gradients through neural-network-like agentic workflows. TextRes-Net instead improves attribution through a credit-assignment-friendly residual architecture for signal decomposition and routing (Huang et al., 2026). 
+
+2.2 Context Adaptation 
+
+Context adaptation extends manual prompt engi-neering (Schulhoff et al., 2024) by automatically revising input contexts, such as prompts, instruc-tions, or retrieved evidence, using task feedback or LLM-generated feedback (Sahoo et al., 2024). Rep-resentative methods differ in how they update tex-tual contexts. Early automatic prompt optimization methods rely on non-textual feedback, such as task-level scores. APE (Zhou et al., 2023) and OPRO (Yang et al., 2024) search over LLM-generated prompt candidates using scalar evaluation signals. Moving beyond metric-based signals, recent stud-ies such as Reflexion (Shinn et al., 2023) and GEPA (Agrawal et al., 2025) exploit textual feedback for iterative improvement. With textual credit signals, prompts can be updated in more structured ways, such as playbooks in ACE (Zhang et al., 2025). The theoretical understanding of context adap-tation is still emerging. Since modern LLMs are largely built on Transformer architectures, early work relates context adaptation to weight up-dates, showing that prompt updating can induce effects equivalent to parameter updates (Li et al., 2024). Recent work further suggests that context-conditioned behavior may be related to implicit op-timization over model weights (Dherin et al., 2025), although a general theoretical characterization of this relationship remains open. 
+
+## 3 Problem Formulation 
+
+In this section, we instantiate the objective in Eq. 1 by defining the agentic system as a directed graph, and specifying the workflow studied in this paper. An agentic workflow is modeled as a directed acyclic graph G = ( V, E), where each node v ∈ V 
+
+corresponds to a LLM-invoking submodule 
+
+Ov = Mv(Iv; πv)
+
+parameterized by a tunable prompt πv and input Iv.For any node v, the input is formed by aggregating the outputs of its predecessor nodes 
+
+Iv = { Ou | (u, v ) ∈ E } .
+
+In this graph-based workflow, node outputs are passed to downstream nodes and aggregated to 
+
+Algorithm 1 Forward Execution of a Graph-based Agentic Workflow                                              
+
+> Require: Graph G= ( V,E)with input-node set Vin and output node vout , external input x, prompts {πv}v∈V
+> Ensure: Final system output y
+> 1: for each node v∈ V in topological order do
+> 2: if v∈ V in then
+> 3: Iv←xv
+> 4: else
+> 5: Iv← { Ou|(u, v )∈ E }
+> 6: end if
+> 7: Ov←Mv(Iv;πv)
+> 8: end for
+> 9: y←Ovout
+
+form subsequent inputs. Algorithm 1 describes how the workflow executes the graph and combines intermediate nodes’ outputs into the final output. In this paper, we focus on a one-hidden-layer agentic workflow. Given an input message x, the workflow contains K prompt-tunable LLM sub-modules that produce intermediate responses 
+
+Ok = Mk(x; πk), k = 1 , . . . , K. (2) Given these intermediate responses, the workflow contains an output node that aggregates them with the original input to produce the final output: 
+
+y = Mout (x, O 1, . . . , O K ; πout ). (3) Throughout this paper, all LLM parameters are fixed, and only the prompts {π1, . . . , π K , π out } are updated. This structure creates a simple credit-assignment setting where the final error may arise from any intermediate module or from the output module. Given this workflow graph, let ΠΦ =
+
+{πv}v∈V denote the prompt set of the overall sys-tem. For a textual input x, graph execution induces the final system output y = Φ( x; Π Φ) following Algorithm 1. For an input–reference pair (x, y ∗)
+
+sampled from the task distribution T , let ℓ(y, y ∗)
+
+denote an output-level loss measuring the discrep-ancy between the system output and the reference. The context adaptation objective is then 
+
+Π∗ 
+
+> Φ
+
+= arg min 
+
+> ΠΦ
+
+E(x,y ∗)∼T [ℓ(Φ( x; Π Φ), y ∗)] . (4) In our experiments, ℓ is instantiated using the eval-uation metric associated with each dataset T .
+
+## 4 Proposed Method 
+
+This section presents Graph-based Target Back-
+
+Propagation ( GTBP ), which uses LLM-guided tar-get propagation to trace output-level feedback back-Algorithm 2 Target Propagation in GTBP                                          
+
+> Require: Graph G= ( V,E), cached node outputs {Ov}v∈V ,output target ˆOvout , local contexts {cv}v∈V
+> Ensure: Local targets {ˆOv}v∈V
+> 1: for each node v∈ V in reverse topological order do
+> 2: Compute ˆIvusing Eq. 6 3: for each node usuch that (u, v )∈ E do
+> 4: Get ˆOufrom ˆIv
+> 5: end for
+> 6: end for
+> 7: return {ˆOv}v∈V
+
+ward through the agentic workflow and assign lo-calized optimization signals to prompt-tunable sub-modules. We then introduce a stage-wise mecha-nism for updating the corresponding prompts. An overview of GTBP is included in Figure 1. 
+
+4.1 LLM-Guided Target Propagation 
+
+Based on the graph-based workflow, GTBP adapts the idea of target propagation to assign credit to LLM-based modules in agentic workflows. Given an input–reference pair (x, y ∗) ∈ T , the graph G =(V, E) produces node outputs {Ov}v∈V including the final output Ovout following Algorithm 1. Let the expected output for each node v ∈ V be ˆOv.Target propagation starts by assigning the reference output y∗ as the target of the final output ˆOvout .The goal is then to propagate this output-level target backward through the graph and infer local targets for the other nodes. For a node u, its output 
+
+Ou may be consumed by multiple successor nodes. For each successor node v with (u, v ) ∈ E , GTBP infers a target input for node v by solving 
+
+arg min 
+
+> I
+
+h
+
+ℓ
+
+
+
+Mv(I; πv) , ˆOv
+
+
+
++ λℓ (I, I v)
+
+i
+
+, (5) where Iv denotes the original input to node v, and 
+
+ˆIv denotes the inferred target input for node v. The first term encourages node v to produce target out-puts for its predecessor nodes u with (u, v ) ∈ E ,while the second term regularizes the inferred target input to remain close to the original input Iv. The coefficient λ > 0 controls this locality constraint. 
+
+Remark 1. In a general directed graph, a node may branch to multiple successors, which can lead to multiple backward-inferred targets for the same node. This ambiguity does not occur in our one-hidden-layer workflow. As defined in Eqs. 2 and 3, each intermediate node connects only to the output node, and therefore receives a single target. 
+
+However, Eq. 5 is generally not analytically solv-able in LLM-based agentic systems, since sub-                       
+
+> Prompt template Pback
+> Input: system prompt of node v,cv; original input of node v,Iv; target output of node v,ˆOv.
+> Instruction: Generate a target input ˆIvfor node vsuch that node vis more likely to produce the target output ˆOv
+> when processing ˆIvwith its current prompt. The generated target input should remain close in meaning and structure to the original input Iv.
+
+Figure 2: Backward target-inference prompt template used to infer the target input for a downstream node. 
+
+module Mv might be a black-box LLM call, and inputs and outputs within the system are text-based and non-differentiable. To address this problem, GTBP approximates the target output using an LLM-guided backward operator: 
+
+ˆIv = LLM 
+
+
+
+Pback ( ˆOv, I v, c v)
+
+
+
+, (6) where Pback (·) is a backward inference prompt tem-plate and cv denotes the local context of node v,including its role description, system prompt, and task constraints. A concrete example of such a backward inference prompt is shown in Fig. 2. As shown in Algorithm 2, by applying Eq. 6 from the output node to earlier nodes in reverse topological order, GTBP generates targets for each sub-module node in the agentic workflow. 
+
+Algorithm 3 Prompt Update for Tunable Prompts                                                     
+
+> Require: Node v, current prompt πv=⟨cv, 1, . . . , c v,m ⟩,module-level update set Sv={(I(i)
+> v, O (i)
+> v,ˆO(i)
+> v)}Ni=1 ,update budget n, claim-addition marker av∈ { 0,1}
+> Ensure: Updated prompt πv
+> 1: Compute discrepancies {∆( O(i)
+> v,ˆO(i)
+> v)}Ni=1
+> 2: if av= 1 then
+> 3: Add one new prompt claim to πv
+> 4: Set n←n−1
+> 5: end if
+> 6: Select at most nexisting prompt entries from
+> ⟨cv, 1, . . . , c v,m ⟩for revision 7: Update the selected prompt entries in πvusing Eq. 8 with
+> Svand discrepancies av
+> 8: return Updated πv
+
+4.2 Stage-wise Prompt Updating 
+
+Before introducing the proposed prompt update pipeline, we first specify the structure of the tunable prompt. The prompt associated with LLM module 
+
+v in the agentic workflow is formatted as an ordered list of textual claims πv = ⟨cv, 1, . . . , c v,m ⟩, where 
+
+m denotes the number of prompt claims. For each (x, y ∗) ∈ T , the target output ˆOv for each sub-module v in the agentic workflow G can be obtained by the target propagation procedure Prompt template Poptimize                             
+
+> Input: current prompt πv; local update set Sv(B); edit budget n; claim-addition marker av∈ { 0,1}.
+> Instruction: Given the examples in Sv(B), revise the cur-rent prompt πvso that module vis more likely to produce outputs close to the target outputs ˆO(i)
+> vfor inputs I(i)
+> v. Use the current outputs O(i)
+> vto identify the gap between cur-rent and desired behavior. If av= 1 , add one new claim to the prompt and use one unit of the edit budget. Then update no more than n−avexisting claims.
+
+Figure 3: Prompt optimization template used by the stage-wise LLM optimizer. 
+
+described in Algorithm 2. Given the input Iv and the target output ˆOv, the sub-module-level prompt update for node v can be expressed as 
+
+πopt  
+
+> v
+
+:= arg min 
+
+> πv
+
+E(x,y ∗)∼T ℓ
+
+
+
+Mv(Iv; πv), ˆOv
+
+
+
+.
+
+(7) In practice, we approximate this objective using an LLM-based optimizer on a mini-batch sampled from the task distribution: 
+
+πLLM  
+
+> v
+
+:= LLM 
+
+
+
+P m,n 
+
+> optimize
+
+(πv, Sv(B)) 
+
+
+
+, (8) where B ⊆ T denotes a finite mini-batch sampled from the task distribution, Sv(B) =
+
+{(I(i) 
+
+> v
+
+, O (i) 
+
+> v
+
+, ˆO(i) 
+
+> v
+
+)}i∈B is the module-level update set for node v, and Poptimize is the prompt opti-mization template for the LLM. 
+
+4.3 Graph-based Target Back-Propogation 
+
+As shown in Algorithm 4, GTBP performs context adaptation by repeatedly applying LLM-guided tar-get propagation to mini-batches sampled from the task distribution and updating the tunable prompts accordingly. At each iteration, a finite mini-batch 
+
+B = {(x(i), y ∗(i))}Ni=1 is sampled from the data distribution T . For each example, the agentic work-flow is executed in the to cache node-level inputs and outputs following Algorithm 1. Then the local targets for sub-modules of the agentic workflow are inferred following Algorithm 2. Finally, the inputs, cached outputs, and inferred targets are col-lected across the mini-batch and used to update the tunable prompts following Algorithm 3. GTBP further controls prompt updates through two stage-wise scheduling parameters. Let m0 de-note the initial edit budget, i.e., the initial number of prompt claims allowed to be updated. Let m+
+
+denote the claim-addition interval, meaning that a new prompt claim is added after every m+ it-erations. Let m− denote the edit-budget decay 
+
+Algorithm 4 Graph-based Target Propagation                                                                          
+
+> Require: Task distribution T, iterations T, batch size N,workflow G, tunable nodes V, initial prompts Π(0) Φ, initial edit budget n0, claim-addition interval m+, edit-budget decay interval m−
+> Ensure: Updated prompts Π(T)Φ
+> 1: for t= 1 , . . . , T do
+> 2: Sample mini-batch Bt∼ T
+> 3: for (x(i), y ∗(i))∈ B tdo
+> 4: Run forward pass on Gby Algorithm 1 5: Cache the corresponding {(I(i)
+> v, O (i)
+> v)}v∈V
+> 6: Set ˆO(i)
+> vout ←y∗(i)
+> 7: Infer local targets by Algorithm 2 8: end for
+> 9: Set edit budget ntaccording to m−and claim-addition marker at←1if tis divisible by m+, and
+> at←0otherwise 10: for v∈ V do
+> 11: Update π(t−1)
+> vto π(t)
+> vby Algorithm 3 with edit budget ntand claim-addition marker at
+> 12: end for
+> 13: end for
+> 14: return Π(T)Φ
+
+interval: after every m− iterations, the number of editable prompt claims is reduced by one, but never below one. 
+
+## 5 Theoretical Analysis 
+
+Theoretical analysis of GTBP is challenging be-cause practical LLM-based agent modules are deep, sequence-level, and text-based. Therefore, we first introduce a simplified theoretical setting. Under this setting, we analyze two properties. First, the change of the overall objective in Eq. 1 converges to zero as the number of iterations increases. Second, the prompt-update pipeline induces an optimiza-tion effect similar to gradient descent on trainable weights. Together, these results explain the stabil-ity and descent behavior of the proposed method. For readability, proofs are deferred to Appendix A. 
+
+5.1 Simplified Theoretical Setting Single-token setting. We restrict the input-reference pair (x, y ∗) in T to a single-token setting. This avoids sequence-level notation and makes the following loss and stability analysis easier to state. 
+
+Prompt-input concatenation. For each node v in the agentic workflow G, we assume that the node input Iv and prompt πv are directly concatenated before being processed by the LLM module, with-out applying an additional prompt template. 
+
+Single-block module approximation. We view each LLM module as a single transformer block: 
+
+Mv(Iv; πv) = HWv (Av(Iv, π v)) ,where Av maps the concatenated input and prompt to a contextual hidden representation, and HWv
+
+denotes the linear transformation with weight Wv.
+
+5.2 Stability of Prompt Updates 
+
+The convergence analysis builds on the implicit weight theorem in Dherin et al. (2025), which shows that changing the input text of a transformer block can be equivalently represented as a weight update without input text changes. 
+
+Lemma 1 (Implicit Weight) . For a transformer block with frozen parameters, let t denote the up-date iteration of GTBP. For a fixed node input Iv,changing the prompt from π(t−1)  
+
+> v
+
+to π(t) 
+
+> v
+
+can be in-terpreted as inducing an input-dependent effective inference-time weight update ∆W (t) 
+
+> v,I v
+
+, i.e., 
+
+Mv,W v
+
+
+
+Iv; π(t)
+
+> v
+
+
+
+= Mv,W v +∆ W (t)
+
+> v,Iv
+
+
+
+Iv; π(t−1) 
+
+> v
+
+
+
+.
+
+Remark 2. To save space, we present a simplified version of Lemma 1 in the main text, while the full statement is provided in Appendix A.1. The full version is used in the following proofs of theorems, but is not needed for the main statement. 
+
+Motivated by Theorem 3.2 of Li et al. (2023), the effect of a single prompt perturbation decreases inversely with prompt length. Since GTBP accumu-lates prompt claims over iterations and eventually updates only one claim at a time, we abstract this behavior into the following stability assumption to upper bound the implicit weight update. 
+
+Assumption 1 (Prompt-length stability) . For each node v in the agentic workflow G, the induced change in the contextual representation satisfies 
+
+Av(Iv, π (t) 
+
+> v
+
+) − Av(Iv, π (t−1)  
+
+> v
+
+) 2 = O(t−1).
+
+In Theorem 1, we show that, under Assump-tion 2, the implicit weight increment ∆W (t)
+
+> v,I v
+
+whose explicit form is given in Eq. 10 can be upper bounded in terms of the update iteration t in GTBP. 
+
+Assumption 2. There exists γv > 0 such that 
+
+∥Av(Iv, π (t−1)  
+
+> v
+
+)∥2 ≥ γv.
+
+Theorem 1. With Assumptions 1 and 2, the implicit weight update in Lemma 1 can be bounded by 
+
+∥∆W (t) 
+
+> v,I v
+
+∥F = O t−1 . (9) Theorem 1 shows that the implicit weight update induced by a stage-wise prompt update becomes smaller as the iteration number increases. To con-nect this update stability with the corresponding local objective in Eq. 8, we show in Theorem 2 that the change of the objective is also upper bounded. 
+
+Assumption 3 (Per-sample regularity) . The per-sample local target loss ℓ
+
+
+
+Mv(Iv; π(t) 
+
+> v
+
+), ˆOv
+
+
+
+in Eq. 7 is second-order smooth around Wv, and its gradient with respect to W is also bounded along the path from Wv to Wv + ∆ W (t) 
+
+> v,I v
+
+.
+
+Theorem 2. Under Assumptions 1 to 3, if GTBP updates the prompt from π(t−1)  
+
+> v
+
+to π(t) 
+
+> v
+
+, then the objective change can be upper bounded by 
+
+|Fv(π(t) 
+
+> v
+
+) − Fv(π(t−1)  
+
+> v
+
+)| = O(t−1),
+
+where Fv(·) is the local target objective in Eq. 7: 
+
+Fv(πv) = E(x,y ∗)∼T ℓ
+
+
+
+Mv(Iv; πv), ˆOv
+
+
+
+.
+
+5.3 Gradient-Aligned Implicit Updates 
+
+Theorem 2 shows that the local target optimization updates in GTBP become stable as training pro-ceeds, but stability alone does not explain why and how the objective can decrease. Therefore, this subsection studies whether the LLM optimizer can decrease the objective in Eq. 4 sufficiently well. GTBP uses LLMs for both backward target in-ference and prompt updates. Since we focus here on the effect of prompt updates on the objective, we simplify the analysis by assuming that the back-ward operator recovers local targets for upstream modules, as stated in Assumption 4. 
+
+Assumption 4. For each edge (u, v ) ∈ E , the lo-cal target inference problem in Eq. 5 can be ap-proximately solved by the LLM-guided backward operator, i.e., with LLM-inferred target output ˆOv
+
+and ˆOu, we have ˆOv = Mv
+
+ Iu← ˆOu 
+
+> v
+
+; πv
+
+.
+
+Assumption 4 simplifies the backward step by assuming that the LLM can infer local targets con-sistent with the downstream target. The remaining question is whether the prompt-update step can solve the local target optimization problem well enough to reduce the overall objective. To prove this, we define the LLM’s optimization capability. Let ϵopt ,v denote the token-level edit distance between πLLM  
+
+> v
+
+(cf. Eq. 7) and πopt  
+
+> v
+
+(cf. Eq. 8). A smaller ϵopt ,v means that the LLM is more capable of generating the prompt that optimizes the local target objective. Under this condition, we can con-nect the local target optimization with a descent direction of the overall objective in Theorem 3. 
+
+Theorem 3. Under Assumptions 1-4, and for an LLM with sufficiently small ϵopt ,v , the overall loss gap E(x,y ∗)∼T [ℓ(Φ( x; Π (t)Φ ), y ∗)] −
+
+min ΠΦ E(x,y ∗)∼T [ℓ(Φ( x; Π Φ), y ∗)] is O(t−1).
+
+## 6 Experiments 
+
+6.1 Datasets and Evaluation Metrics 
+
+We evaluate GTBP on three real-world datasets: SubPOP, HotpotQA, and LiveBench-Math. 
+
+SubPOP (Suh et al., 2025). SubPOP evaluates whether language models can predict survey re-sponse distributions across population subgroups. Each instance consists of a survey question, a tar-get subgroup, and the corresponding ground-truth response distribution. The dataset contains 3,229 training and 133 test questions, each paired with 22 subgroups. We use Wasserstein distance (WD) to compare predicted and ground-truth distributions. 
+
+HotpotQA (Yang et al., 2018). HotpotQA evalu-ates multi-hop question answering, where models must combine evidence from multiple supporting documents to answer a question. We use the dis-tractor setting, in which each instance consists of a question, 2 gold paragraphs containing supporting facts, 8 distractor paragraphs, and a ground-truth answer. We randomly sample 700 questions from the training split for prompt adaptation and 1,000 questions from the validation split for evaluation. Following prior work, we report answer-level F1. 
+
+LiveBench-Math (White et al., 2025). LiveBench is a popular benchmark with objectively verifiable answers and deterministic graders. Its math sub-set, LiveBench-Math, contains high-school math-competition problems, symbolic-math problems, and olympiad proof-completion tasks. From the July 30, 2025 snapshot, we shuffle and split the questions into train, validation, and test sets. Dur-ing evaluation, each held-out question is scored with LiveBench grader, and we report accuracy. 
+
+6.2 Baselines and Hyperparameter Settings 
+
+We compare GTBP with three baseline methods under the same backbone model, GPT-4.1-mini: 
+
+GTBP (proposed). Prompts in GTBP are auto-matically initialized from data rather than manual design. For each intermediate module Mk, we in-dependently sample a random mini-batch and use an LLM to summarize its task patterns, reasoning                                              
+
+> Method HotpotQA LiveBench-Math SubPOP F1 ↑Acc. ↑WD ↓
+> Zero-shot 0.7535 0.6111 0.1261 Few-shot 0.7659 0.5556 0.1212 GEPA 0.7697 0.6413 0.1160 GTBP 0.80 0.6690 0.1072
+> Table 1: Performance comparison across HotpotQA, LiveBench-Math, and SubPOP, each reported using its standard evaluation metric.
+> Dataset GEPA GTBP #Calls In Out #Calls In Out
+> HotpotQA 1,080 2,374 36 2,122 9,826 335 LiveBench 1,807 2,071 1,594 747 3,580 932 SubPOP 12,700 1,112 219 1,639 1,730 456
+> Table 2: Training efficiency: total LLM calls per run and average input/output tokens per call.
+
+skills, and output requirements from a distinct per-spective. The resulting summary is used to initial-ize the prompt πk of module Mk. We then summa-rize the first-layer prompts {πk}Kk=1 to generate the output-module prompt πout , instructing the output module to integrate the intermediate responses. We instantiate GTBP with the described work-flow and tune the number of intermediate modules over K ∈ { 1, 2, 4}. The mini-batch size and the number of iterations are both set as 15. For prompt update, the initial number of claims in each prompt is set to 10, and both m+ and m− are set to 4. 
+
+GEPA. We run GEPA using the DSPy implemen-tation (Khattab et al., 2024) with Pareto-based can-didate selection and update skipping on perfect-scoring examples. For HotpotQA, we directly con-figure the optimizer hyperparameters with a reflec-tion mini-batch size of 3, a metric-call budget of 1000. For SubPOP, we use the light auto con-figuration with a reflection mini-batch size of 15, round-robin component selection, a merge phase with up to 5 merge invocations. 
+
+Zero- and Few-shot. Zero-shot directly queries LLM with the task input. Few-shot adds randomly sampled training examples before the test query as in-context demonstrations. For HotpotQA and LiveBench-Math, where inputs are longer, we tune the number of examples over {1, 3, 5, 10 }. For SubPOP, we maintain consistency as (Suh et al., 2025) and keep the number of examples as 5. Method HotpotQA LiveBench-Math SubPOP In / Out In / Out In / Out             
+
+> Zero-shot 1,629 / 11 364 / 1,741 169 / 26 Few-shot 15,296 / 11 1,015 / 1,442 641 / 27 GEPA 2,019 / 16 1,683 / 1,895 1,055 / 210 GTBP 6,358 / 278 4,146 / 709 2,176 / 328
+> Table 3: Inference efficiency: average per-sample in-put/output token usage across all methods.
+
+6.3 Effectiveness and efficiency evaluation 
+
+Table 1 shows that GTBP achieves the best over-all performance across all three benchmarks. Rel-ative to the strongest baseline, GTBP improves HotpotQA F1 from 0.769 to 0.800 (+4.0%), LiveBench-Math accuracy from 0.641 to 0.669 (+4.4%), and reduces SubPOP WD from 0.116 to 0.107 (-7.8%). These gains are consistent across both reasoning tasks (HotpotQA, LiveBench-Math) and distribution prediction (SubPOP), suggesting that explicitly structured, module-level credit sig-nals lead to more effective prompt updates than global reflection-based approaches. Table 2 compares GEPA and GTBP on LLM calls per training run and average input/output to-kens per call. On HotpotQA, GTBP issues more calls and produces more output tokens, reflecting the structured credit signals generated during back-ward target inference. On LiveBench-Math and SubPOP, GTBP requires far fewer calls than GEPA, demonstrating that module-level target propagation can be significantly more call-efficient than global candidate generation on tasks with higher per-call overhead. Overall, GTBP achieves comparable or lower training costs than GEPA while consistently delivering stronger task performance. Table 3 reports per-sample inference token usage. GTBP incurs higher per-sample token usage than zero- and few-shot baselines, but remains in the same order of magnitude as GEPA. The higher output token count of GTBP indicates module-level reasoning. Since GTBP operates entirely in prompt space with frozen model weights, it is compatible with proprietary LLMs without requiring gradient access. The resulting prompts are human-readable, as illustrated by the SubPOP examples in App. B. 
+
+6.4 Convergence Analysis 
+
+We validate empirically Theorem 2. As training proceeds and prompt edits become smaller, the induced workflow change gradually stabilizes. We analyze SubPOP with 200 samples from a  
+
+> Figure 4: GTBP training convergence over 60 iterations. (a) Training Wasserstein distance. (b) Training rank match accuracy. (c) Total prompt length across network nodes. (d) Maximum update per iteration.
+
+single subgroup. We use SubPOP because its target distributions are explicitly available, enabling rule-based evaluation without an LLM judge. During GTBP training, we track WD, rank-match accu-racy, prompt length, and the maximum number of prompts updated per iteration. Rank-match accu-racy measures whether the ordering of predicted options matches the ordering induced by the tar-get distribution, providing a discrete measure of distributional alignment in addition to WD. Figure 4 reveals that WD decreases and rank-match accuracy rises rapidly in the early iterations, after which both metrics gradually stabilize. Mean-while, prompt length grows monotonically while the update ratio decreases, indicating that GTBP accumulates structured knowledge through progres-sively smaller edits, promoting stable convergence. 
+
+## 7 Conclusion and Future Work 
+
+We propose GTBP, a graph-based target back-propagation framework for context adaptation in multi-LLM agentic systems. GTBP assigns credit by inferring local target outputs for intermediate modules and updates prompts using module-level discrepancies, while keeping LLM weights frozen. Experiments on reasoning and opinion prediction tasks show that GTBP improves over prompting and prompt-optimization baselines, suggesting that target-based credit assignment is useful for black-box LLM workflows. Future work will extend GTBP to broader agentic abilities, such as memory retrieval, tool calling, and environment interaction, as well as more complex workflow structures, in-cluding deeper graphs and dynamic routing. Limitations 
+
+While GTBP shows consistent improvements across HotpotQA, LiveBench-Math, and SubPOP, several limitations remain and suggest directions for future work. Our theoretical analysis relies on several assump-tions to make the optimization dynamics tractable, including bounded prompt edits and sufficiently ac-curate LLM-based optimizer. In particular, the con-vergence analysis assumes the existence of a suf-ficiently capable LLM optimizer that can produce prompt updates closely aligned with the inferred lo-cal targets. While these assumptions enable formal analysis of the proposed target-propagation mecha-nism, extending the results to weaker assumptions and more general workflow settings remains an important direction for future work. Our proposed work focuses on the context-adaptation setting in which all LLM weights are frozen. In some settings, GTBP underperforms fine-tuned models, such as the fine-tuned Llama-3-70B results reported on SubPOP (Table 4). Fine-tuning typically relies on open-weight models and can achieve strong performance on individual benchmarks after training on task-specific datasets, potentially at the cost of broader task generaliza-tion. GTBP instead aims to provide a more gen-eral adaptation framework while keeping model weights frozen. The agentic workflow we evaluate is a simplified instance of what is possible in practice. Our ex-periments instantiate GTBP on a one-hidden-layer workflow with up to four intermediate modules and an output node (Section 6.2). The proposed struc-ture avoids the multi-target ambiguity that arises when a node branches to multiple successors, and it does not capture deeper graphs, tool-calling, or dy-namic routing that are common in real-world agen-tic systems. Whether the target back-propagation dynamics scale gracefully to such structures re-mains an open empirical question. The prompt-update mechanism itself also leaves room for improvement. GTBP iteratively adds claims to the prompt, causing the total prompt length to grow over training, as shown in Fig-ure 4(c). In this work, we did not explicitly optimize for prompt brevity or per-call token cost. Future work could explore prompt-budgeting schemes, such as merging or pruning redundant claims, jointly optimizing task loss and prompt length, or introducing memory-retrieval mecha-nisms that selectively retrieve relevant claims at inference time, thereby reducing token cost with-out sacrificing accuracy. 
+
+## Ethical Considerations 
+
+This work does not raise significant ethical con-cerns. All datasets used in our experiments, Hot-potQA, LiveBench-Math, and SubPOP, are pub-licly available and contain no personally identifi-able information. The SubPOP dataset consists of anonymized survey responses aggregated at the de-mographic subgroup level. No new data collection or human annotation was conducted as part of this work. 
+
+## Acknowledgment 
+
+We acknowledge the use of AI writing assistants to enhance writing clarity and AI coding assistants to support the implementation of experiments. 
+
+## References             
+
+> Lakshya A. Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J. Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alexandros G. Dimakis, Ion Stoica, Dan Klein, Matei Zaharia, and Omar Khattab. 2025. GEPA: Reflective prompt evo-lution can outperform reinforcement learning. arXiv preprint arXiv:2507.19457 .Yoshua Bengio. 2014. How auto-encoders could pro-vide credit assignment in deep networks via target propagation. arXiv preprint arXiv:1407.7906 .Léon Bottou, Frank E. Curtis, and Jorge Nocedal. 2018. Optimization methods for large-scale machine learn-ing. SIAM Review , 60(2):223–311. Benoit Dherin, Michael Munn, Hanna Mazzawi, Michael Wunder, and Javier Gonzalvo. 2025. Learn-ing without training: The implicit dynamics of in-context learning. arXiv preprint arXiv:2507.16003 .Gemini Team. 2024. Gemini 1.5: Unlocking multi-modal understanding across millions of tokens of context. arXiv preprint arXiv:2403.05530 .Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. 2024. MetaGPT: Meta pro-gramming for a multi-agent collaborative framework. In International Conference on Learning Representa-tions .Suizhi Huang, Mei Li, Han Yu, and Xiaoxiao Li. 2026. TextResNet: Decoupling and routing optimization
+
+signals in compound AI systems via deep residual tuning. arXiv preprint arXiv:2602.08306 .Max Jaderberg, Wojciech Marian Czarnecki, Simon Osindero, Oriol Vinyals, Alex Graves, David Silver, and Koray Kavukcuoglu. 2017. Decoupled neural in-terfaces using synthetic gradients. In Proceedings of the 34th International Conference on Machine Learn-ing , volume 70 of Proceedings of Machine Learning Research , pages 1627–1635. PMLR. Omar Khattab, Arnav Singhvi, Paridhi Maheshwari, Zhiyuan Zhang, Keshav Santhanam, Sri V. A, Sai-ful Haq, Ashutosh Sharma, Thomas T. Joshi, Hanna Moazam, Heather Miller, Matei Zaharia, and Christo-pher Potts. 2024. DSPy: Compiling declarative lan-guage model calls into self-improving pipelines. In 
+
+International Conference on Learning Representa-tions .Dong-Hyun Lee, Saizheng Zhang, Asja Fischer, and Yoshua Bengio. 2015. Difference target propagation. 
+
+arXiv preprint arXiv:1412.7525 .Shuai Li, Zhao Song, Yu Xia, Tong Yu, and Tianyi Zhou. 2024. The closeness of in-context learning and weight shifting for softmax regression. In The Thirty-eighth Annual Conference on Neural Information Processing Systems .Xinzhe Li. 2025. A review of prominent paradigms for LLM-based agents: Tool use (including RAG), planning, and feedback learning. In Proceedings of the 31st International Conference on Computational Linguistics , pages 9760–9779. Association for Com-putational Linguistics. Yingcong Li, M. Emrullah Ildiz, Dimitris Papailiopou-los, and Samet Oymak. 2023. Transformers as al-gorithms: Generalization and stability in in-context learning. In Proceedings of the 40th International Conference on Machine Learning , pages 19565– 19594. PMLR. Xiaowen Ma, Chenyang Lin, Yao Zhang, Volker Tresp, and Yunpu Ma. 2025. Agentic neural networks: Self-evolving multi-agent systems via textual backpropa-gation. arXiv preprint arXiv:2506.09046 .Alexander Meulemans, Francesco S. Carzaniga, Johan A. K. Suykens, João Sacramento, and Benjamin F. Grewe. 2020. A theoretical framework for target propagation. arXiv preprint arXiv:2006.14331 .Alexander Meulemans, Matilde Tristany Farinha, Javier García Ordóñez, Pau Vilimelis Aceituno, João Sacra-mento, and Benjamin F Grewe. 2021. Credit as-signment in neural networks through deep feedback control. Advances in Neural Information Processing Systems , 34:4674–4687. Marvin Minsky. 1961. Steps toward artificial intelli-gence. Proceedings of the IRE , 49(1):8–30. OpenAI. 2024. Hello GPT-4o. https://openai.com/ index/hello-gpt-4o/ .Krista Opsahl-Ong, Michael J Ryan, Josh Purtell, David Broman, Christopher Potts, Matei Zaharia, and Omar Khattab. 2024. Optimizing instructions and demon-strations for multi-stage language model programs. In Proceedings of the 2024 Conference on Empiri-cal Methods in Natural Language Processing , pages 9340–9366, Miami, Florida, USA. Association for Computational Linguistics. Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu, and Maosong Sun. 2024. ChatDev: Communicative agents for software development. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , pages 15174–15186. As-sociation for Computational Linguistics. Pranab Sahoo, Ayush Kumar Singh, Sriparna Saha, Vinija Jain, Samrat Mondal, and Aman Chadha. 2024. A systematic survey of prompt engineering in large language models: Techniques and applications. 
+
+arXiv preprint arXiv:2402.07927 .Sander Schulhoff, Michael Ilie, Nishant Balepur, Kon-stantine Kahadze, Amanda Liu, Chenglei Si, Yinheng Li, Aayush Gupta, HyoJung Han, Sevien Schulhoff, Pranav Sandeep Dulepet, and 1 others. 2024. The prompt report: A systematic survey of prompting techniques. arXiv preprint arXiv:2406.06608 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik R Narasimhan, and Shunyu Yao. 2023. Re-flexion: language agents with verbal reinforcement learning. In Thirty-seventh Conference on Neural Information Processing Systems .Joseph Suh, Erfan Jahanparast, Suhong Moon, Minwoo Kang, and Serina Chang. 2025. Language model fine-tuning on scaled survey data for predicting dis-tributions of public opinions. In Proceedings of the 63rd Annual Meeting of the Association for Compu-tational Linguistics (Volume 1: Long Papers) , pages 21147–21170, Vienna, Austria. Association for Com-putational Linguistics. Xindi Wang, Mahsa Salmani, Parsa Omidi, Xiangyu Ren, Mehdi Rezagholizadeh, and Armaghan Eshaghi. 2024. Beyond the limits: A survey of techniques to extend the context length in large language models. 
+
+arXiv preprint arXiv:2402.02244 .Colin White, Samuel Dooley, Manley Roberts, Arka Pal, Ben Feuer, Siddhartha Jain, Ravid Shwartz-Ziv, Neel Jain, Khalid Saifullah, Sreemanti Dey, Shubh-Agrawal, Sandeep Singh Sandha, Siddartha Naidu, Chinmay Hegde, Yann LeCun, Tom Goldstein, Willie Neiswanger, and Micah Goldblum. 2025. Livebench: A challenging, contamination-limited llm benchmark. 
+
+Preprint , arXiv:2406.19314. Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V. Le, Denny Zhou, and Xinyun Chen. 2024. Large language models as optimizers. In Interna-tional Conference on Learning Representations .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D. Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empiri-cal Methods in Natural Language Processing , pages 2369–2380, Brussels, Belgium. Association for Com-putational Linguistics. Mert Yuksekgonul, Federico Bianchi, Joseph Boen, Sheng Liu, Zhi Huang, Carlos Guestrin, and James Zou. 2024. TextGrad: Automatic “differentiation” via text. arXiv preprint arXiv:2406.07496 .Qizheng Zhang, Changran Hu, Shubhangi Upasani, Boyuan Ma, Fenglu Hong, Vamsidhar Kamanuru, Jay Rainton, Chen Wu, Mengmeng Ji, Hanchen Li, Urmish Thakker, James Zou, and Kunle Olukotun. 2025. Agentic context engineering: Evolving con-texts for self-improving language models. arXiv preprint arXiv:2510.04618 .Yongchao Zhou, Andrei Ioan Muresanu, Ziwen Han, Keiran Paster, Silviu Pitis, Harris Chan, and Jimmy Ba. 2023. Large language models are human-level prompt engineers. In The Eleventh International Conference on Learning Representations .Zixuan Zhou, Xuefei Ning, Ke Hong, Tianyu Fu, Ji-aming Xu, Shiyao Li, Yuming Lou, Luning Wang, Zhihang Yuan, Xiuhong Li, Shengen Yan, Guohao Dai, Xiao-Ping Zhang, Yuhan Dong, and Yu Wang. 2024. A survey on efficient inference for large lan-guage models. arXiv preprint arXiv:2404.14294 .
+
+## A Appendix of Theoretical Analysis 
+
+A.1 Full version of Lemma 1 Lemma 1. For a transformer block with frozen parameters, let t denote the update iteration of GTBP. Changing the prompt from π(t−1)  
+
+> v
+
+to π(t) 
+
+> v
+
+can be interpreted as inducing an effective inference-time weight update ∆W (t) 
+
+> v
+
+, i.e., 
+
+TWv
+
+
+
+π(t) 
+
+> v
+
+, x v
+
+
+
+= TWv +∆ W (t)
+
+> v
+
+
+
+π(t−1)  
+
+> v
+
+, x v
+
+
+
+,
+
+(10) 
+
+where 
+
+∆W (t) 
+
+> v
+
+=
+
+
+
+Wv δA v
+
+
+
+π(t) 
+
+> v
+
+, π (t−1) 
+
+> v
+
+ 
+
+Av(π(t−1)  
+
+> v
+
+)⊤
+
+∥Av(π(t−1)  
+
+> v
+
+)∥22
+
+(11) 
+
+with 
+
+δA v
+
+
+
+π(t) 
+
+> v
+
+, π (t−1) 
+
+> v
+
+
+
+:= Av
+
+
+
+π(t)
+
+> v
+
+
+
+− Av
+
+
+
+π(t−1) 
+
+> v
+
+
+
+.
+
+A.2 Proof of Theorem 1 
+
+Proof. Taking the Frobenius norm on both sides of Eq. 11 and using ∥uv ⊤∥F = ∥u∥2∥v∥2, we obtain 
+
+∥∆W (t) 
+
+> v
+
+∥F
+
+=
+
+Wv
+
+ Av(π(t) 
+
+> v
+
+, x v) − Av(π(t−1)  
+
+> v
+
+, x v)
+
+> 2
+
+∥Av(π(t−1)  
+
+> v
+
+, x v)∥2
+
+≤ ∥Wv∥2∥Av(π(t) 
+
+> v
+
+, x v) − Av(π(t−1)  
+
+> v
+
+, x v)∥2
+
+∥Av(π(t−1)  
+
+> v
+
+, x v)∥2
+
+.
+
+By Assumption 1, 
+
+∥Av(π(t) 
+
+> v
+
+, x v) − Av(π(t−1)  
+
+> v
+
+, x v)∥2 = O(t−1).
+
+By Assumption 2, 
+
+∥Av(π(t−1)  
+
+> v
+
+, x v)∥2 ≥ γv.
+
+Therefore, 
+
+∥∆W (t) 
+
+> v
+
+∥F ≤ ∥Wv∥2
+
+γv
+
+O(t−1).
+
+Since Wv is frozen, ∥Wv∥2 is a constant. Hence, 
+
+∥∆W (t) 
+
+> v
+
+∥F = O(t−1).
+
+A.3 Proof of Theorem 2 
+
+Proof. By Lemma 1, the prompt update from 
+
+π(t−1)  
+
+> v
+
+to π(t) 
+
+> v
+
+can be represented as an input-dependent effective weight update ∆W (t) 
+
+> v,I v
+
+. Thus, for the local target loss, we can write 
+
+ℓ
+
+
+
+Mv(Iv; π(t) 
+
+> v
+
+), ˆOv
+
+
+
+= ℓ
+
+
+
+Mv,W v +∆ W (t)
+
+> v,Iv
+
+(Iv; π(t−1)  
+
+> v
+
+), ˆOv
+
+
+
+.
+
+Define the per-sample local target loss as 
+
+fv,t −1(Wv) := ℓ
+
+
+
+Mv(Iv; π(t−1)  
+
+> v
+
+), ˆOv
+
+
+
+.
+
+Then, using E as shorthand for E(x,y ∗)∼T , we have 
+
+Fv(π(t) 
+
+> v
+
+) − Fv(π(t−1)  
+
+> v
+
+)= E
+
+h
+
+fv,t −1(Wv + ∆ W (t) 
+
+> v,I v
+
+) − fv,t −1(Wv)
+
+i
+
+.
+
+(12) By Assumption 3, fv,t −1 is second-order smooth along the segment from Wv to Wv + ∆ W (t) 
+
+> v,I v
+
+.Therefore, 
+
+fv,t −1(Wv + ∆ W (t) 
+
+> v,I v
+
+) − fv,t −1(Wv)
+
+≤
+
+D
+
+∇fv,t −1(Wv), ∆W (t)
+
+> v,I v
+
+E
+
++ Lv
+
+2 ∆W (t) 
+
+> v,I v
+> 2
+> F
+
+.
+
+(13) By the bounded-gradient condition in Assump-tion 3, we assume that there exists Gv > 0 such that 
+
+∥∇ fv,t −1(Wv)∥F ≤ Gv.
+
+Then, by Cauchy–Schwarz, the first term on the right-hand side of Eq. 13 satisfies 
+
+D
+
+∇fv,t −1(Wv), ∆W (t)
+
+> v,I v
+
+E
+
+≤ ∥∇ fv,t −1(Wv)∥F ∆W (t) 
+
+> v,I vF
+
+≤ Gv ∆W (t)  
+
+> v,I vF
+
+.
+
+Hence, we can rewrite Eq. 13 as 
+
+fv,t −1(Wv + ∆ W (t) 
+
+> v,I v
+
+) − fv,t −1(Wv)
+
+≤ Gv ∆W (t)  
+
+> v,I vF
+
++ Lv
+
+2 ∆W (t) 
+
+> v,I v
+> 2
+> F
+
+. (14) By Theorem 1, we have that 
+
+∆W (t)  
+
+> v,I vF
+
+= O(t−1),
+
+which leads to 
+
+E
+
+h
+
+∆W (t) 
+
+> v,I vF
+
+i
+
+= O(t−1), (15) and 
+
+E
+
+
+
+∆W (t)
+
+> v,I v
+> 2
+> F
+
+
+
+= O(t−2). (16) Therefore, by combining Eqs. 12, 14, 15, and 16, we obtain 
+
+Fv(π(t) 
+
+> v
+
+) − Fv(π(t−1)  
+
+> v
+
+)
+
+≤ E
+
+h
+
+fv,t −1(Wv + ∆ W (t) 
+
+> v,I v
+
+) − fv,t −1(Wv)
+
+i
+
+= O(t−1) + O(t−2)= O(t−1).
+
+A.4 Proof of Theorem 3 
+
+Proof. Let 
+
+F (Π Φ) = E(x,y ∗)∼T [ℓ(Φ( x; Π Φ), y ∗)] 
+
+denote the overall objective in Eq. 4. For the one-hidden-layer workflow, the intermediate responses at iteration t are 
+
+O(t) 
+
+> k
+
+= Mk(x; π(t) 
+
+> k
+
+), k = 1 , . . . , K, 
+
+and the final output is 
+
+y(t) = Mout 
+
+
+
+x, O (t)1 , . . . , O (t) 
+
+> K
+
+; π(t)out 
+
+
+
+.
+
+Consider the prompt-update step for the first-layer modules. Sufficiently small ϵopt ,k means that the LLM optimizer is powerful enough to generate prompts whose outputs are close to the inferred local targets. Thus, for each first-layer node k,the updated response becomes sufficiently close to its inferred local target ˆOk. Since K is finite, the aggregated input received by the output node 
+
+I(t)out = ( x, O (t)1 , . . . , O (t) 
+
+> K
+
+)
+
+also close to the target-consistent input 
+
+ˆIout = ( x, ˆO1, . . . , ˆOK ).
+
+By Assumption 1 applied to the output node, the contextual representation change induced by the updated output-node input and prompt is 
+
+O(t−1). Therefore, by Theorem 2, the correspond-ing change in the output-node local target objective is also O(t−1):
+
+Fout (I(t)out , π (t)out ) − Fout ( ˆIout , π (t−1) out ) = O(t−1).
+
+(17) With Assumption 4, with ˆIout we have 
+
+y∗ = Mout 
+
+
+
+x, ˆO1, . . . , ˆOK ; π(t−1) out 
+
+
+
+,
+
+which results in 
+
+Fout ( ˆIout , π (t−1) out ) = F (Π ∗
+
+> Φ
+
+). (18) Since 
+
+Fout (I(t)out , π (t)out ) = F (Π (t)Φ ),
+
+applying Eq. 18, Eq. 17 becomes 
+
+|F (Π (t)Φ ) − F (Π ∗
+
+> Φ
+
+)| = O(t−1).B Appendix of Experiment 
+
+This section expands on the methodology and re-sults introduced in Section 6, providing group-level breakdowns across demographic categories for the SubPOP dataset (Suh et al., 2025). Table 4 compares our proposed algorithm against the self-reported performance metrics in (Suh et al., 2025) and several baseline ap-proaches. 
+
+Few-shot prompting : We consider a condition-ing prompt that includes group information along with the group’s response distribution over train-ing questions, followed by the test question as the instruction prompt. In our experiments, we use 5 examples as the few-shot baseline. 
+
+Fine-tuned model : We report benchmark metrics from (Suh et al., 2025), where the authors fine-tuned several LLMs of varying parameter counts using the training data. 
+
+GEPA : We leverage GEPA (Agrawal et al., 2025) as a prompt training optimizer. Example prompts trained using GEPA is provided in Appendix. 
+
+GTBP : Example prompts trained using GTBP are provided in Appendix. Our proposed approach (GTBP) achieves a lower average Wasserstein Distance (WD) than GEPA across demographic groups, demonstrating con-sistent improvements in bias mitigation without task-specific fine-tuning. Furthermore, when com-pared against fine-tuned models of similar parame-ter counts, specifically Llama-2-13B and Mistral-7B-v0.1, our approach still attains competitive or superior performance, highlighting its effectiveness as a model weight training alternative. However, our method does not outperform fine-tuned Llama-3-70B on average WD. We attribute this gap to two complementary factors: (1) the in-herent representational capacity of larger models, which may enable more nuanced demographic in-ference by default, and (2) the benefit of supervised fine-tuning, which directly optimizes the model to-ward the target distribution. These results suggest that scaling model size or incorporating fine-tuning remain important considerations for future work. Attribute Group Human Baseline Llama-2-7B Llama-2-13B Mistral-7B-v0.1 GPT-4.1-mini Llama-3-70B Base Fine-tuned Base Fine-tuned Base Fine-tuned Base GEPA GTBP Base Fine-tuned Region Northeast 0.027 0.196 0.113 0.193 0.103 0.185 0.108 0.0991 0.0982 0.0952 0.156 0.078 South 0.018 0.183 0.108 0.185 0.103 0.176 0.103 0.1168 0.0994 0.101 0.138 0.08 Education College grad* 0.019 0.206 0.105 0.175 0.101 0.167 0.099 0.0954 0.0864 0.084 0.137 0.077 Less than high school 0.036 0.191 0.129 0.182 0.117 0.172 0.121 0.1326 0.119 0.112 0.18 0.108 Gender Male 0.017 0.186 0.102 0.176 0.101 0.17 0.099 0.1063 0.0904 0.092 0.15 0.079 Female 0.016 0.184 0.108 0.198 0.105 0.176 0.1 0.105 0.084 0.094 0.151 0.08 Race / ethnicity Black 0.029 0.2 0.114 0.179 0.102 0.17 0.107 0.1099 0.124 0.089 0.139 0.094 White 0.014 0.19 0.105 0.187 0.103 0.181 0.102 0.1 0.0905 0.0922 0.153 0.083 Asian 0.049 0.201 0.119 0.19 0.107 0.184 0.114 0.1158 0.113 0.107 0.158 0.096 Hispanic 0.05 0.204 0.133 0.199 0.122 0.182 0.134 0.1377 0.13 0.1198 0.172 0.115 Income $100,000 or more 0.021 0.21 0.111 0.184 0.106 0.176 0.102 0.1145 0.0937 0.0985 0.179 0.082 Less than $30,000 0.026 0.179 0.115 0.172 0.103 0.165 0.105 0.1083 0.102 0.099 0.171 0.086 Political Party Democrat 0.02 0.219 0.103 0.197 0.092 0.199 0.091 0.1011 0.105 0.0816 0.128 0.076 Republican 0.023 0.205 0.123 0.234 0.117 0.206 0.115 0.1321 0.144 0.109 0.187 0.093 Political Ideology Liberal 0.019 0.224 0.102 0.191 0.09 0.188 0.096 0.1034 0.109 0.09 0.134 0.076 Conservative 0.022 0.184 0.12 0.178 0.112 0.172 0.113 0.1425 0.142 0.136 0.16 0.092 Moderate 0.018 0.191 0.11 0.183 0.103 0.17 0.103 0.0989 0.092 0.095 0.141 0.082 Religion Protestant 0.019 0.187 0.11 0.179 0.107 0.172 0.105 0.1318 0.112 0.1111 0.164 0.082 Jewish 0.066 0.245 0.149 0.226 0.144 0.218 0.129 0.1157 0.149 0.113 0.164 0.119 Hindu 0.095 0.264 0.18 0.253 0.169 0.252 0.186 0.2107 0.177 0.18 0.223 0.166 Atheist 0.021 0.222 0.126 0.207 0.103 0.199 0.116 0.1135 0.113 0.095 0.132 0.106 Muslim 0.09 0.253 0.175 0.24 0.181 0.238 0.173 0.1829 0.179 0.163 0.203 0.158 
+
+Average WD 0.033 0.206 0.121 0.196 0.113 0.187 0.115 0.122 0.116 0.107 0.160 0.096 
+
+Table 4: Bias/divergence scores across demographic groups and model variants. Listing 1: Example of GEPA trained prompt for HotpotQA 
+
+This agent answers multi - hop questions from the HotpotQA benchmark where each question is paired with multiple supporting context paragraphs containing relevant information . Task Overview : - The questions focus on two main reasoning patterns : 1. Bridge Questions : Require connecting intermediate entities or facts across different context pieces to reach the final answer . 2. Comparison Questions : Require comparing two entities based on explicit , extractable attributes from the context to determine a yes / no answer or select the entity that better meets criteria . Requirements for Processing : 1. Identify all relevant entities referenced in the question from the context . 2. Extract explicit , directly stated attributes or facts related to these entities that are needed to answer the question . 3. If the question involves bridging information , connect facts across multiple contexts logically and sequentially . 4. For comparison questions , isolate and compare the explicit attributes of the two entities without overgeneralization or inferential leaps . 5. Provide a final answer that is concise and precise , limited to : - A short phrase , - A specific entity name , - Or a direct " yes " or " no " answer depending on the question . Key Domain - Specific Guidance : - When identifying shared fields , professions , or attributes between two entities , only use explicitly stated , precise commonalities in the text . Avoid broad , implicit commonalities . For example , prefer " ESA astronaut " rather than the broader " astronauts " if that specificity is provided . - For questions involving modes or means (e.g., travel methods ) , respond only with the mode itself , excluding ancillary context . - When asked about something like starring roles or main works associated with an individual , distinguish starring / main roles from minor appearances or voice acting . Use only explicitly identified starring roles as answers . - Avoid any explanatory or background details in the final output . The answer must be the succinct final solution to the question without added context . Answer Formatting : - Provide the answer in the form requested by the question ( name , phrase , yes / no ). - Do not include supporting explanations , justifications , or references . Overall Approach for Multi - hop Reasoning : - Parse the question to identify entities , relationships , or comparison targets . - Extract attributes for these entities from the contexts . - Apply bridge reasoning by linking intermediate information when required . - For comparisons , explicitly isolate and evaluate attributes based on context - provided facts . - Produce a clean , precise final answer strictly aligned with the wording and scope of the question . This precision and structured approach ensure accurate and concise answers on multi - hop and comparison questions that require synthesizing multiple context paragraphs with domain - specific understanding . 
+
+Listing 2: Example of GTBP trained prompt for HotpotQA - Node L0_N0
+
+- Use the exact adjective form for nationality as expected by the question , such as 
+
+' English ' instead of ' British ' and ' American ' instead of ' United States '.- Verify the precise chemical compound name when synonyms or colloquial terms are given , ensuring exact identification rather than a related analogue . - For questions about multiple species coexisting , prefer broader regions (e.g., 
+
+' Africa ') over specific countries unless all species are explicitly confirmed there . - For blockbuster film questions by year , select a film explicitly listed as ablockbuster in that year and different from the one named in the question . - When asked about the meaning or origin of a term , confirm if the expected answer is the literal meaning or the entity itself , and respond accordingly . - For geographic questions involving suburbs and cities , provide the official city or local government area name rather than just the city name . - Provide full exact dates ( day , month , year ) when a specific date is requested , not just the year . - Focus on the most specific geographic or administrative entity mentioned when multiple levels are referenced . - Extract multi - dimensional patterns from question - answer pairs involving named entities , cultural references , and factual data across domains like entertainment , history , geography , and science ; explicitly state common genres and clarify genre relationships , especially subgenres . - Identify entity types ( persons , places , organizations , works of art ) and their relationships , including roles ( actor , director , author ) , affiliations ( bands , universities , companies ) , and temporal markers ( birthdates , event dates ). 
+
+Listing 3: Example of GTBP trained prompt for HotpotQA - Node L0_N1
+
+- Extract nuanced entity relationships and temporal dynamics from question - answer pairs across entertainment , history , geography , and science . - Identify precise entity types - individuals , creative works , organizations , locations - and their interrelations , including roles , affiliations , biographical , or production details ; always use full official names exactly as expected , avoiding abbreviations unless explicitly requested . - For biographical questions , provide the full , most specific entity name preferred by the target , including middle names , initials , birth and death dates , and explicitly name spouses with full or commonly recognized titles . - For creative works , analyze production credits , release years , source materials , and genres to predict concise factual answers naming key contributors or exact titles , including subtitles , punctuation , and release years when relevant . - For geographic or institutional queries , match the requested geographic specificity - distinguish continent , country , city , or administrative region - and provide the most precise official entity ; use official abbreviations or acronyms only if commonly used and expected ; align population or statistics with the question 's timeframe . - When multiple valid answers exist , prioritize the one explicitly mentioned or most directly supported by context rather than a generic or well - known example . - Carefully verify whether the question asks for the meaning , origin , or the entity itself ; do not confuse name origins with entity identity or descriptions . - Differentiate reasoning patterns : bridge questions link entities across contexts ; comparison questions evaluate attributes ( age , size , membership ) to select the best entity or value , verifying context completeness and clarifying common genres when comparing related but distinct artists ; when comparing sizes , explicitly name the larger entity with exact area figures and relative size claims . - Provide direct , succinct answers - entity names , short phrases , or specific dates - favoring the most prominent or widely recognized entity ; strictly match expected answer formats , including official team or program names , capitalization , spacing , and nationality adjectives in the most specific official form (e.g., " English " not " British ") ; for joint actions or events , include all relevant individuals ' full names . - Apply precise temporal reasoning aligned with the question 's timeframe and expected answer formats (e.g., " one " instead of numeric approximations ) to match historical sequencing ; include full temporal details ( month , day , year ) when context provides them and the question asks for a specific date . 
+
+Listing 4: Example of GTBP trained prompt for HotpotQA - Node L1_N0
+
+- Clarify temporal boundaries and calculate tenure strictly within the specified time frame , providing exact dates if available and distinguishing total tenure from overlapping periods . - Prioritize precise identification of entity types , roles , affiliations , and temporal markers , including the exact adjective form of nationality as expected . - Distinguish bridge and comparison reasoning patterns ; confirm units and scope of size or attribute measurements ; prioritize the most specific and commonly recognized geographic entity and use the most specific , complete names to avoid ambiguity . - Provide concise , direct answers matching the question 's expected format ; trim overly long titles to main titles unless subtitles are explicitly requested . - Confirm the mode of travel is explicitly stated and consistent across analyses , including prepositions and phrasing for precision . - When multiple candidates exist , verify the exact entity mentioned and consider alternative correct answers ; prioritize commonly recognized full names or those matching the question 's expected specificity . - Integrate cultural and domain - specific knowledge , accepting common variants , abbreviations , and acronyms if widely recognized and relevant , ensuring clarity and completeness . - Resolve ambiguity by prioritizing primary contributors or lead figures over peripheral ones , especially in creative or biographical contexts . - Clarify entities detected by metabolites by explicitly naming the chemical or enzyme , carefully verifying chemical names to avoid confusion between similar compounds or synonyms . - Verify that context fully supports affiliations or attributes assigned , ensuring all relevant entities are present before concluding . 
+
+Listing 5: Example of GEPA trained prompt for LiveBench-Math 
+
+You will be given a mathematical problem along with a partially completed solution or a related task that involves filling in missing formulae or expressions , solving integrals , or selecting and formatting final answers . Your task is to : 1. Carefully analyze the problem statement and any partial solutions or instructions provided . 2. When the problem involves matching missing formula tags (e.g., < missing X >) to agiven list of LaTeX expressions , proceed as follows : - Read the solution step -by - step and understand the mathematical context of each missing tag . - Identify the most appropriate formula from the provided list that logically and mathematically fits each missing tag . - Provide detailed reasoning for each match , explaining why a particular formula fits a specific missing tag . - Present your final answer as a comma - separated list of expression identifiers corresponding exactly to the missing tags in order (e.g., "5 , 22 , 3, ...") . - Avoid extraneous commentary or formatting that could interfere with automated parsing . 3. When the problem requires solving an integral or other direct mathematical computation : - Provide a clear , step -by - step solution using proper mathematical notation ( LaTeX ). - Use substitution , algebraic manipulation , or known formulas as appropriate . - Express the final answer in exact form , enclosed in a \(\ boxed {}\) environment . - Avoid decimal approximations unless explicitly requested . 4. For probability or combinatorial problems involving multiple - choice answers : - Perform a rigorous analysis using generating functions , parity arguments , characteristic functions , or other relevant methods . - Identify the closest matching multiple - choice option . - Output the answer as the corresponding letter repeated exactly five times (e.g., " CCCCC ") . - Do not include any additional text or explanation in the final answer output . 5. For problems involving sequences , sums , or algebraic expressions : - Use known formulas (e.g., sum of integers , sum of squares ) and clearly show substitutions . - When completing the square or manipulating expressions , ensure clarity and unambiguous formatting with parentheses and fraction bars . - Express roots or means in exact radical or fractional exponent form unless decimals are requested . 6. Always double - check that your final answer matches the problem 's requested format exactly : - For missing formula matching tasks , provide only the comma - separated list of expression numbers . - For multiple - choice problems , provide only the repeated letter string . - For integrals or explicit expressions , provide only the boxed exact answer . 7. Avoid providing extraneous information , explanations , or formatting that could confuse automated evaluation systems . 8. Remember domain - specific facts observed from prior examples : - When matching missing formulae , the identifiers correspond strictly to the order of missing tags . - The problem context often involves prime numbers , arithmetic progressions , divisibility properties , or combinatorial structures . - Polynomial factorization and roots of unity arguments are common in algebraic problems . - Probability problems involving parity often require discrete Fourier or characteristic function methods . - Geometric problems involving tangent circles require careful use of distance and radius relations , often leveraging symmetry . By following these detailed guidelines , your solutions will be mathematically sound , clearly reasoned , and formatted precisely for automated grading and parsing systems . 
+
+Listing 6: Example of GTBP trained prompt for LiveBench-Math - Node L0_N0
+
+- You are an analytical node specializing in multi - angle reasoning for diverse math problems including algebra , number theory , combinatorics , geometry , and calculus . - You focus on identifying problem type (e.g., multiple - choice , AIME - style integer , symbolic , or fill -in - the - blank ) from the question text to guide the format of the final answer . - For multiple - choice questions , you rigorously verify the truth of each statement independently by constructing explicit counterexamples or proofs rather than relying on intuition or partial reasoning . Systematically check all relevant cases or candidates to confirm correctness and avoid incorrect conclusions . Always perform a comprehensive combinatorial or case analysis , developing systematic methods to track and verify the parity of digit occurrences or other problem - specific criteria across all components to avoid overlooking compensating factors or undercounting / overcounting cases . Prioritize correctness and thorough verification over guesswork or partial reasoning , ensuring the final selected letter corresponds exactly to one of the verified correct choices and output it in the required repeated letter format if specified . Always rigorously verify the correctness of the final answer by exhaustive case enumeration or combinatorial checks rather than relying on partial reasoning or intuition . Always rigorously verify the required output format for the final answer , especially when instructions specify a single letter or a repeated letter string ; prioritize correctness of the answer content over format adherence , but ensure the final output matches the specified format exactly . Always test multiple concrete counterexamples to verify the truth of logical statements involving gcd or divisibility , rather than relying on intuition or partial reasoning . When analyzing gcd conditions in equations , carefully consider how prime factors propagate through sums or products , and do not assume straightforward implications without explicit verification . For multiple - choice questions with logical statements , rigorously check each statement independently and avoid conflating implications or equivalences without thorough proof or counterexamples . Always rigorously verify 'if and only if ' conditions by testing both directions independently with explicit counterexamples or proofs rather than assuming equivalences from partial implications . Avoid relying on intuition or partial factorization arguments when analyzing gcd or divisibility conditions ; instead , systematically check prime factors and their propagation through sums or products . When evaluating multiple - choice logical statements , independently verify each statement 's truth by constructing concrete examples or counterexamples rather than inferring from related statements . Prioritize thorough and systematic prime factor analysis across all variables and conditions before finalizing conclusions about divisibility or gcd properties . Prioritize correctness by explicitly constructing or identifying counterexamples to disprove statements rather than assuming their truth based on partial factorization arguments . When analyzing multiple - choice statements , carefully check the 'if and only if '
+
+conditions by testing both directions independently and avoid premature conclusions about equivalences without thorough proof . Prioritize systematic prime factor analysis and explicit verification of gcd conditions across all variables before finalizing conclusions about divisibility properties . Ensure that final answers for multiple - choice questions reflect the logically consistent set of true statements based on thorough gcd and divisibility reasoning rather than guesswork or partial checks . When no option matches the logically consistent set of true statements , clearly state the reasoning and select the best guess based on thorough analysis rather than partial or inconsistent conclusions . When dealing with multiple - choice questions , rigorously confirm the correctness of the final answer by thorough algebraic or combinatorial verification rather than guesswork or intuition , ensuring the final output matches the specified repeated letter format exactly . - Always perform a thorough and systematic enumeration of all valid cases when counting or verifying digit occurrences or divisibility conditions , explicitly verifying each candidate case to avoid missing any valid solutions or undercounting results . Avoid relying on intuition or partial checks when verifying parity or frequency conditions ; instead , explicitly verify each candidate case to ensure correctness . For multiple - choice questions requiring exact counts , double - check the final tally by cross - verifying with alternative methods or re - enumeration to prevent off -by - one or miscount errors . Prioritize completeness and accuracy in combinatorial or case analysis over speed or guesswork to ensure the final answer matches the problem 's requirements exactly . - Always systematically translate problem constraints into algebraic equations and verify all derived relationships thoroughly before concluding the count or solution , ensuring no valid cases are missed or miscounted . - Always verify the minimum or maximum values in factorization problems by systematically testing all constraints and prime exponent assignments rather than relying on initial plausible assignments , to avoid incorrect conclusions about gcd or lcm values . - When solving problems involving gcd and lcm with multiple variables , systematically analyze prime exponents across all variables and constraints , ensuring the minimum exponent is correctly identified for the gcd without premature assumptions or guesses . Ensure consistency across all given conditions before finalizing the answer , avoiding premature assumptions or oversights in factorization . - For AIME - style integer answers , you carefully compute or deduce the exact integer solution and output it as a zero - padded three - digit number . - For symbolic or numeric problems , you derive or simplify to a closed - form LaTeX expression , ensuring no extraneous prose is included in the output . Always verify the correctness of algebraic expansions or computational outputs , especially for characteristic polynomials , by carefully checking signs and coefficients to avoid significant errors in magnitude or sign . Use systematic methods like cofactor expansion or row reduction and cross - verify results with multiple approaches to prevent arithmetic errors or incorrect simplifications . Maintain exact fractional or integer representations rather than approximations to preserve accuracy and correctness . Avoid premature simplifications or assumptions about polynomial forms ; instead , verify correctness by multiple approaches such as cofactor expansion and direct substitution . - When factoring polynomials , carefully verify the factorization by expanding the factors to ensure they match the original polynomial exactly , including correct signs and any leading coefficients or negative factors . - Always explicitly verify the factorization and matching of polynomial terms in the numerator with the derivative components when performing integration by recognition , to ensure correctness of the integral expression . Confirm the exact constant factors in denominators or coefficients by differentiating the proposed antiderivative and matching it precisely to the original integrand , avoiding assumptions , approximations , or extra scaling factors after integration . - Always verify the constant coefficients in integral results by differentiating the proposed antiderivative to ensure exact matching of the original integrand , avoiding premature assumptions or approximations of factors . Carefully apply the chain rule and substitution factors when integrating composite functions to maintain accuracy in the final antiderivative expression , ensuring all inner derivatives and constant multipliers are correctly accounted for without sign errors or omissions . - Always verify the final form of integral expressions carefully , ensuring that denominators , constants , and terms reflect the correct integral result without unnecessary additions or arbitrary constants unless explicitly requested . When computing indefinite integrals , always provide the simplest canonical antiderivative form consistent with the problem 's instructions - explicitly include the constant of integration when appropriate , and avoid ambiguous or overly general statements about the integral 's value . Always simplify and present the integral of zero as zero itself , since the integral of zero is aconstant function equal to zero , not just any constant . Always verify the constant factors and the argument inside integral results by differentiating the proposed antiderivative to ensure exact matching of the original integrand , avoiding premature conclusions based on partial simplifications or guesses . When performing substitution in integrals , carefully track all constant multipliers and factors introduced by the substitution to maintain accuracy in the final expression . When expressing integrals of trigonometric functions , always verify the integral by considering trigonometric identities or product -to - sum formulas to match the expected answer forms , rather than relying solely on direct substitution methods . When expressing integrals involving trigonometric functions , consider using trigonometric identities or product -to - sum formulas to represent the integral in the simplest canonical form consistent with the problem instructions . - Always maintain exact fractional or symbolic representations throughout all intermediate and final steps rather than introducing approximate decimal multipliers or simplified integers , to preserve precision and correctness . Express final answers in the simplest exact fractional form without converting to decimals or approximations and present the final result in the requested LaTeX boxed format with exact fractions . - When completing the square , always include the constant term outside the squared binomial to ensure the expression matches the original quadratic exactly and fully represents the completed square form ; maintain careful arithmetic and algebraic manipulation to avoid errors in this constant term . - Always simplify radical expressions fully and factor out integer coefficients to present the exact answer in its simplest form without overly complex nested radicals . - When expressing geometric means or roots involving negative numbers , always explicitly represent roots of negative numbers inside the radical (e.g., \(\ sqrt [n ]{ -1}\) ) rather than placing the negative sign outside , to correctly handle principal roots in complex analysis contexts . Maintain exact fractional exponents and factor out integer powers as constants outside the root to present the simplest exact form of the answer without premature combination of negative factors . Express fractional exponents in simplest radical form and verify the final expression matches the required output format exactly , including the sign and placement of radicals . - When differentiating expressions , always carefully verify the application of differentiation rules , especially the product and chain rules , to ensure all factors and constants are correctly included in the final derivative expression . Maintain explicit factors and constants throughout the differentiation process rather than simplifying prematurely or losing critical multiplicative terms . Verify the final form of derivatives by factoring out common terms and combining fractions completely to match the expected simplified format . Explicitly factor constants or logarithmic terms as required to align with the expected final expression format , fully handle base conversions , apply logarithmic identities correctly , and fully simplify all logarithmic expressions . Always apply the full chain rule carefully when differentiating composite functions , ensuring all inner derivatives are correctly accounted for without missing factors or coefficients . Verify each differentiation step by explicitly writing out intermediate derivatives before combining them to catch subtle errors in factors or terms . When simplifying expressions after differentiation , double - check that all terms are correctly combined and no factors are mistakenly halved or doubled . Maintain exact symbolic forms throughout differentiation to avoid introducing approximation errors or incorrect simplifications that affect the final answer . - You pay close attention to problem - specific details such as factorization , polynomial roots , matrix characteristic polynomials , divisibility conditions , geometric configurations , and probability computations to inform your analysis . Always verify the characteristic polynomial by explicitly computing the determinant of \(\ lambda I - A \) using systematic methods like cofactor expansion or row reduction , double - checking signs and coefficients to avoid significant errors in magnitude or sign . Use multiple approaches to verify the characteristic polynomial and avoid premature simplifications or assumptions about the polynomial form ; maintain the exact expanded form with correct fractions to ensure accuracy . Avoid relying on intuition or partial factorization arguments when analyzing characteristic polynomials ; instead , systematically check all terms and coefficients for correctness . Always carefully verify the sign conventions and arithmetic operations when expanding determinants or characteristic polynomials to avoid sign errors in the final expression . Double - check each minor and cofactor calculation systematically to ensure correctness of coefficients and terms . - Always perform determinant calculations using systematic methods like cofactor expansion or row reduction , and verify results with multiple approaches to avoid arithmetic errors or incorrect simplifications . Present the final determinant in the exact simplified fractional or integer form as requested , avoiding approximations , incorrect zero conclusions , or incorrect integer simplifications . - Carefully analyze the logical flow and dependencies between expressions to assign formulae in the correct order , reducing guesswork and ensuring global consistency in the solution narrative . Prioritize assigning formulae to all missing tags comprehensively rather than only the initial ones . Prioritize logical and contextual consistency of each formula assignment rather than relying on partial pattern matches or assumptions to maintain the integrity of the solution narrative . Double - check the order of expressions when rewriting sums or complex expressions to maintain correctness and clarity , reducing guesswork and ensuring a coherent final answer . Avoid relying solely on intuition or partial pattern matches ; instead , systematically verify each formula 's relevance and correctness in the context of the solution steps . - When integrating trigonometric functions , consider using trigonometric identities such as product -to - sum formulas to simplify the integrand before integration , rather than relying solely on direct substitution methods . - When solving geometry problems involving volumes and surface areas , use established formulas like the Cayley - Menger determinant and Heron 's formula carefully and verify all intermediate steps to ensure exact , consistent , and simplified results , avoiding lengthy coordinate computations prone to arithmetic errors . Always verify complex determinant calculations and volume formulas using exact algebraic methods rather than approximations or assumptions to avoid significant errors in magnitude or sign . Always verify the correctness of geometric formulas and trigonometric identities by cross - checking with multiple approaches or known results to avoid subtle errors in final numeric answers . When expressing final answers involving sums or combinations of parameters , ensure the arithmetic and interpretation of the answer format are correct and consistent with problem instructions . - Always carefully verify the formula for sample variance , ensuring the correct divisor (n -1) for sample variance and the correct computation of squared deviations from the mean before finalizing the answer . Carefully verify arithmetic operations in summations and divisions when computing statistical measures like variance to avoid propagation of errors . Maintain exact fractional or symbolic representations throughout calculations rather than converting to decimals prematurely to preserve precision and correctness . Verify the divisor used in variance calculations (n -1 for sample variance ) and ensure squared deviations are computed accurately before finalizing the answer . Always double - check arithmetic operations in statistical calculations , especially when computing sums and divisions , to avoid propagation of errors . Use exact fractional forms throughout calculations to maintain precision and avoid incorrect decimal or integer approximations . - When expressing roots with fractional exponents , always separate integer powers outside the root and represent negative factors explicitly inside the root (e.g., \(\ sqrt [n ]{ -1}\) ) to maintain exact canonical form and clarity in the final answer . Maintain exact fractional exponents and avoid prematurely combining negative factors into a single negative multiplier outside the root to ensure correctness in complex root expressions . Rationalize denominators and simplify radicals fully to present answers in the simplest exact form , including all integer coefficients and prime bases raised to fractional powers reflecting the full prime factorization and exact root extraction . - Ensure the correct divisor is used for sample variance calculations (n -1) and double - check squared deviation computations before finalizing the answer . - Always verify the exact coefficients and sign patterns in polynomial expansions or trigonometric identities by referencing known formulas or derivations rather than relying on heuristic or partial reasoning . - For problems requiring exact symbolic answers , directly compute and present the final simplified expression in the requested format rather than referencing unrelated or incomplete intermediate steps ; ensure correct handling of negative factors and fractional exponents in roots , and avoid outputting unrelated formula indices or placeholders . - Always provide the simplest canonical form of an indefinite integral , explicitly including the constant of integration when appropriate , and avoid ambiguous or overly general statements about the integral 's value . - When computing statistical measures like sample variance , carefully verify each arithmetic step , especially squared deviations and summations to avoid propagation of errors ; double - check the divisor used (n -1 for sample variance ) and ensure all intermediate calculations are exact fractions or symbolic expressions . - Always perform determinant calculations using systematic methods like cofactor expansion or row reduction , and verify results with multiple approaches to avoid arithmetic errors or incorrect simplifications . Double - check sign conventions and arithmetic operations carefully when expanding determinants to avoid significant errors in magnitude or sign . Maintain exact fractional or integer representations throughout calculations rather than approximations to preserve accuracy . Verify intermediate steps thoroughly before finalizing the determinant value to prevent large discrepancies from expected results . - Always double - check arithmetic operations in polynomial expansions or determinant calculations , especially when dealing with fractions , to avoid minor but impactful errors in coefficients or constants . Use multiple verification methods , such as cofactor expansion and direct substitution , to confirm the correctness of characteristic polynomials or similar algebraic expressions . - Always carefully apply the chain rule and substitution factors when integrating composite functions to avoid sign errors in the final antiderivative expression . - Always perform a thorough and systematic enumeration of all valid cases when counting or verifying digit occurrences or parity conditions , explicitly verifying each candidate case to avoid missing valid solutions or undercounting results . - Always verify the characteristic polynomial by explicitly computing the determinant of \(\ lambda I - A \) using systematic methods like cofactor expansion or row reduction , and cross - check results with multiple approaches to avoid arithmetic errors or incorrect simplifications . Carefully double - check signs and coefficients in polynomial expansions to prevent significant errors in magnitude or sign , especially for constant terms . Maintain exact fractional or integer representations rather than approximations to preserve accuracy and correctness in algebraic computations . Avoid premature simplifications or assumptions about polynomial forms ; verify correctness by multiple approaches such as cofactor expansion and direct substitution . - When matching formulae to missing tags in a solution , always assign formulae to all missing tags comprehensively rather than only the initial ones to ensure completeness and correctness . Prioritize logical and contextual consistency of each formula assignment rather than relying on partial pattern matches or assumptions to maintain the integrity of the solution narrative . Avoid reusing formulae incorrectly and ensure the sequence of missing tags aligns with the problem 's reasoning steps . Double - check the order of expressions when rewriting sums or complex expressions to maintain correctness and clarity , reducing guesswork and ensuring a coherent final answer . 
+
+Listing 7: Example of GTBP trained prompt for LiveBench-Math - Node L0_N1
+
+- You are an analytical node specializing in detailed structural and conceptual reasoning across algebra , number theory , combinatorics , geometry , and functional equations . - You focus on identifying the problem format - multiple - choice , AIME - style integer , symbolic expression , or fill -in - the - blank with missing formula tags - to determine the precise answer output style . - For multiple - choice problems , ensure the final answer choice is clearly justified by consistent reasoning and cross - checked calculations , avoiding guess - based or heuristic conclusions . Provide a reasoned , justified final answer supported by detailed combinatorial or geometric analysis . Ensure the final answer choice is clearly justified by consistent reasoning and cross - checked calculations , explicitly connecting the final coefficient or value to the known formula and explaining the role of each relevant element . Avoid ambiguous or incomplete divisibility or gcd reasoning . Analyze underlying mathematical principles , constraints , and typical solution heuristics to select the correct letter , then output that letter repeated five times . Provide clear , logically deduced answers that directly relate to the problem 's constraints and conditions , avoiding unrelated or guess - based outputs . Strictly adhere to the known and standard formulas for coefficients or values , avoiding the introduction of extraneous multiplicative factors that alter the correct answer . Always verify the final answer choice by cross - checking calculations and reasoning to avoid heuristic or guess - based conclusions , even in complex problems . - Always verify the exact counting or enumeration conditions in combinatorial problems , especially when divisibility or modular constraints are involved , to avoid off -by - one errors or miscounts in the final answer . - Always perform a comprehensive enumeration of all valid cases in combinatorial counting problems to avoid undercounting solutions due to overlooked configurations or constraints . Verify the parity conditions comprehensively across all digits or elements involved , ensuring the combined counts meet the problem 's requirements without prematurely discarding valid cases . Systematically cross - check and reconcile all constraints simultaneously rather than sequentially to ensure no valid solutions are excluded prematurely . When the problem involves digit counts or parity , carefully consider digits that appear zero times as well , since zero counts are even and can affect the overall parity conditions . - Verify the consistency of all problem constraints simultaneously rather than sequentially to ensure no valid solutions are excluded prematurely . - For AIME - style integer answers , carefully perform exact computations or logical deductions , ensuring the final output is a zero - padded three - digit integer . - For symbolic or numeric problems , derive fully exact , fully simplified closed - form LaTeX expressions without extraneous explanation , emphasizing exactness and clarity . Always verify the constant factors and coefficients in integral results by differentiating the proposed antiderivative to confirm exact matches , including all constant factors and denominators , avoiding heuristic or approximate constants or scaling errors . Use exact symbolic manipulation and algebraic expansion to ensure the numerator and denominator terms align perfectly . Present the final answer in the simplest canonical form with explicit constants and the constant of integration . - Always include the constant of integration explicitly when providing indefinite integrals to ensure completeness and correctness of the solution . - When providing indefinite integrals , present the final answer in the problem 'srequested format as the simplest canonical antiderivative form plus the constant of integration , boxed and formatted exactly as specified , with no extraneous multiplicative constants or scaling factors . Represent the integral of zero as the simplest canonical constant \(\ boxed {0}\) rather than a general constant of integration , to match expected answer formats and avoid ambiguity . - Always verify the constant of integration is included and the substitution is properly applied when computing indefinite integrals , ensuring the final answer matches the expected canonical form exactly without extraneous factors or sign errors . - When providing indefinite integrals , always consider if the problem expects aspecific structural form or identity - based expression rather than just the straightforward antiderivative ; adapt the output accordingly to match the problem 's requested format or emphasis on structural decomposition , exploring equivalent trigonometric or algebraic identities that reveal deeper structural insights or canonical forms . - When differentiating complex functions involving logarithms and trigonometric compositions , always carefully apply the chain rule and verify derivatives of composite functions , especially when radicals or nested functions are involved , ensuring the derivative of the inner function is correctly computed and applied . Always carefully track and include all constant factors and bases when differentiating logarithmic functions , especially when changing between logarithm bases (e.g., natural log vs . log base 10) . Combine terms into asingle simplified fraction with a common denominator and factor out constants to ensure clarity and correctness in the final expression . Verify each step of differentiation by carefully applying the chain , product , and quotient rules , and simplify intermediate expressions to avoid errors in constants and denominators . When applying the quotient rule , ensure consistent and precise algebraic manipulation to factor and combine terms exactly as required by the problem 's expected answer format . - When differentiating or integrating trigonometric functions with linear arguments , carefully apply the chain rule and confirm the resulting antiderivative by differentiation to avoid sign or coefficient mistakes . - Always use exact symbolic arithmetic and consistent determinant expansion methods when computing characteristic polynomials and determinants to avoid sign , coefficient , and arithmetic errors ; systematically verify each minor and cofactor calculation and double - check arithmetic operations when combining like terms to ensure the polynomial or determinant is exact , consistent , and correctly formatted in the final output . Present the characteristic polynomial in a simplified , exact symbolic form with correct fractional coefficients and consistent variable usage . Present the final polynomial or determinant in aclear , properly formatted boxed expression , verifying the correctness of all constants and coefficients before finalizing the answer . Always verify the sign conventions and variable usage in characteristic polynomial computations to ensure consistency with the problem statement and standard definitions , avoiding sign errors or variable mismatches . Use consistent and exact symbolic arithmetic methods rather than heuristic or approximate numerical approaches when dealing with matrix operations to prevent magnitude and sign mistakes in coefficients . Carefully track and include all constant factors and bases when expanding determinants , and double - check arithmetic operations when combining like terms to ensure the polynomial or determinant is exact , consistent , and correctly formatted in the final output . Systematically verify each minor and cofactor calculation and the overall determinant expansion to avoid sign , coefficient , and arithmetic errors . - When computing characteristic polynomials , consistently follow the problem 'sspecified form (e.g., \(\ det (\ lambda I - A) \) ) without altering the leading coefficient or sign to maintain format consistency . Carefully track signs and coefficients throughout determinant expansion and minor calculations to avoid sign and arithmetic errors . Use exact symbolic arithmetic and verify each step systematically rather than applying heuristic or approximate numerical methods to ensure the polynomial is exact and correctly formatted . Present the final polynomial exactly as derived , respecting the problem 's conventions , rather than normalizing or changing the polynomial 's leading coefficient . - Always verify the correctness of algebraic manipulations by expanding the final expression to ensure it matches the original polynomial exactly , especially when completing the square or rewriting quadratics in vertex form . Double - check arithmetic operations and the placement of constants outside the squared binomial to avoid errors in the completed square form representation . Always verify the sign conventions and factorization forms when converting between completed square forms and factored expressions to ensure consistency and correctness in the final answer . - For fill -in - the - blank problems with masked formulae , systematically verify and reconcile missing formulae step -by - step rather than guessing or skipping tags , ensuring logical consistency and contextual alignment of each formula with the problem statements . Cross - validate each formula assignment with the problem 'sconditions and dependencies to minimize errors and improve reliability of the final matched list . Avoid partial or heuristic matching of formulae ; instead , clearly indicate best guesses and verify the logical flow and dependencies among formulae and solution steps to minimize errors and improve accuracy . - You pay special attention to prime factorization patterns , divisibility and gcd / lcm relations , polynomial root structures , matrix characteristic polynomials , and geometric configurations involving congruences , similarity , and circle properties . - When dealing with problems involving gcd and lcm of multiple integers , always rigorously verify gcd and lcm conditions across all relevant pairs and combinations to avoid incorrect assumptions about divisibility properties or representability , rather than relying on partial or heuristic checks . Always rigorously verify both directions of equivalence statements involving gcd and divisibility conditions by testing concrete counterexamples and proving implications to avoid incorrect conclusions about necessity or sufficiency of conditions . Systematically analyze and prove both directions of equivalence statements (" if and only if ") to ensure logical completeness and correctness , avoiding premature conclusions based on one direction only . When evaluating multiple statements for truth , independently confirm each statement 's validity through counterexamples or proofs before combining results to select the correct answer set . Carefully test counterexamples and confirm implications for each statement independently before combining results to determine the correct set of true statements . Clearly distinguish between necessary and sufficient conditions in logical statements and verify them with concrete examples or algebraic proofs to avoid misclassification of statements . - When solving problems involving coin denominations and Frobenius numbers , rigorously verify gcd conditions and their implications on representable amounts . Avoid assumptions based on partial gcd analysis ; systematically test candidate values for representability using modular arithmetic and linear combinations to confirm the largest impossible amount . For multiple - choice problems , ensure the final answer choice is clearly justified by consistent reasoning and cross - checked calculations , maintaining clarity in explaining the role of each coin denomination and how it affects the solution space , avoiding ambiguous or incomplete reasoning about divisibility and gcd effects . - Ensure all geometric and algebraic conditions are consistently applied and cross - verified to avoid contradictions , especially when multiple formulas relate the same quantities ; maintain logical coherence in the use of known identities and problem constraints to derive the final answer accurately . Avoid tentative or partial attempts by systematically consolidating problem data and applying the most relevant formulas to reach a definitive solution . Carefully check intermediate calculations and contradictions to identify errors early and adjust the approach accordingly . - When dealing with complex geometric formulas , always use exact algebraic formulas and symbolic manipulation rather than numerical approximations when computing volumes , areas , or other geometric quantities to ensure precise and verifiable results . Perform exact symbolic calculations rather than relying on approximate numerical values to avoid errors in sign or magnitude , especially under square roots or in volume formulas . Always verify the final exact form of expressions by carefully simplifying and cross - checking arithmetic to ensure consistency with problem constraints and answer format requirements , avoiding reliance on approximate numerical trials or guesswork for simplification . Use exact symbolic formulas and methods (e.g., Cayley - Menger determinant , Heron 'sformula ) systematically and verify each step to maintain accuracy and consistency in complex geometric computations , especially when multiple equivalent forms exist . - Always double - check arithmetic operations involving sums and averages , especially when calculating variances or other statistical measures , carefully distinguishing between population and sample formulas to avoid off -by - one errors in denominators that propagate through the final result . Always use exact fraction arithmetic and the correct denominator (n -1) when computing sample variance , and verify the arithmetic carefully at each step to prevent propagation of errors . Use precise arithmetic summation and verification of squared deviations in statistical problems to ensure accuracy and avoid mistakes in intermediate sums that affect the final result . Always express the final answer in exact simplified fractional form rather than decimal approximations . Always verify the final variance expression by re - deriving the formula and checking each arithmetic step to prevent common mistakes in variance calculations . - When dealing with geometric means of sets containing negative numbers , always factor out integer powers from fractional exponents to produce a simplified integer coefficient multiplied by fractional powers , and explicitly represent negative signs using roots of negative one to maintain clarity and canonical form . Carefully count the number of negative factors to determine the correct sign of the product and represent the answer with explicit roots of \( -1\) rather than a negative sign outside the radical . Always fully factor and simplify radical expressions by factoring out negative factors inside roots to maintain correct sign representation . - For problems involving symmetry and group actions on combinatorial structures , ensure a thorough and precise analysis of the group operations involved , including any combined operations such as complement or color swapping , rather than relying on partial or heuristic counting methods . Apply Burnside 's lemma or orbit - counting principles carefully , considering all relevant group elements and their fixed points , to accurately count the number of invariant configurations . Avoid premature conclusions by fully analyzing the problem 'salgebraic or combinatorial structure , ensuring the final probability or count is expressed in lowest terms and matches the problem 's formatting requirements . Carefully verify the correctness of the final probability by re - deriving or cross - checking with known results , especially when the problem is known or has a standard solution . - Always express radical expressions with negative factors by factoring out the negative sign as a root of \( -1\) and separate integer powers , ensuring the final answer is in the simplest exact form with clear fractional exponents rather than combining into a single radical with a negative radicand . Carefully count the number of negative factors when computing the product of a set of numbers to determine the correct sign , especially when roots of negative numbers are involved , and explicitly include the root of \( -1\) in the final expression if the product is negative under an odd root . - Avoid leaving the final answer in a form that is not fully simplified or factored ; always factor out integer powers and express the answer in acanonical , simplified form with explicit constants factored out . - Shift from partial or incorrect algebraic manipulations and premature conclusions to fully consistent and verified systems of equations emphasizing the key relationships between sums and problem constraints . Move from guess - based or heuristic formula assignments to systematic step -by - step verification and reconciliation of formulae to minimize errors and improve accuracy . - Always verify if the integrand simplifies to zero or a constant before attempting detailed derivative or product rule calculations , as this can drastically simplify the integral evaluation process and avoid unnecessary complexity . - When differentiating proposed antiderivatives , carefully check the constants and denominators to ensure the derivative matches the original integrand exactly , avoiding scaling errors . - Always perform meticulous step -by - step symbolic calculations when expanding determinants or characteristic polynomials to avoid sign , coefficient , and arithmetic errors ; use consistent and exact symbolic arithmetic methods rather than heuristic or approximate numerical approaches when dealing with matrix operations to prevent magnitude and sign mistakes in coefficients . Carefully track and include all constant factors and bases when expanding determinants , and double - check arithmetic operations when combining like terms to ensure the polynomial or determinant is exact , consistent , and correctly formatted in the final output . - Always carefully track and include all constant factors and bases when differentiating logarithmic functions , especially when changing between logarithm bases (e.g., natural log vs . log base 10) . - Always use consistent sign conventions and carefully verify each step of determinant expansion and minor calculations to avoid sign and coefficient errors in characteristic polynomial computations . - Always verify the geometric interpretation and relationships between vectors and shapes carefully , ensuring the correct application of vector sums and averages rather than relying on heuristic or partial formulas . - Always verify the constant factors and denominators in integral results by differentiating the proposed antiderivative to confirm exact matches , avoiding heuristic or approximate scaling adjustments that alter the original integrand 's form . Present the final indefinite integral clearly and unambiguously with the constant of integration included , avoiding alternative scalings or ambiguous expressions . Use precise algebraic manipulation and factorization to confirm the integrand matches the derivative of the proposed antiderivative exactly before finalizing the answer . Avoid unnecessary complexity by checking if the integrand simplifies or matches a derivative form early in the process to guide the integration approach efficiently . - Always perform meticulous step -by - step symbolic calculations when expanding determinants or characteristic polynomials to avoid sign , coefficient , and arithmetic errors ; use consistent and exact symbolic arithmetic methods rather than heuristic or approximate numerical approaches when dealing with matrix operations to prevent magnitude and sign mistakes in coefficients . 
+
+Listing 8: Example of GTBP trained prompt for LiveBench-Math - Node L1_N0
+
+- You synthesize inputs from upstream analytical nodes L0_N0 and L0_N1 , combining their complementary algebraic , combinatorial , geometric , and number - theoretic insights . - You prioritize structural and conceptual reasoning from complementary analyses , especially from L0_N1 , to identify problem format and subtle dependencies before finalizing the output format and answer type , while leveraging L0_N0 'smulti - angle reasoning for solution verification and complexity reduction . - When combining conflicting analyses , prioritize systematic step -by - step verification and reconciliation rather than choosing one perspective without verification to minimize errors . Always verify the correctness of algebraic factorizations and exponentiation steps by cross - checking with multiple independent methods or forms to avoid sign , factorization , or power errors , maintaining consistent sign conventions throughout to prevent fundamental mistakes in the final expression . Use exact symbolic forms and avoid approximations when manipulating algebraic expressions to ensure accuracy and prevent propagation of errors . When dealing with roots of products involving negative numbers , always explicitly separate and track the sign and parity of negative factors rather than embedding them inside radicals , to maintain clarity and correctness in expressions involving fractional exponents or complex roots . Always carefully track the sign and parity of factors when computing geometric means or roots of products , especially when negative numbers are involved , to avoid sign errors and ambiguity in the final expression . Systematically reconcile discrepancies by verifying each step and intermediate result rather than assuming one analysis is correct ; cross - validation is crucial to avoid errors . - Always ensure to cross - validate mappings or assignments of formulae or components from multiple independent analyses to detect discrepancies early and improve accuracy . When matching elements in a sequence or list , carefully verify the logical and contextual consistency of each assignment rather than relying on partial pattern matches or assumptions . Maintain a clear and consistent reference framework for identifiers and their corresponding expressions to avoid confusion and misalignment between different parts of the solution . Prioritize systematic step -by - step verification and reconciliation of conflicting conclusions from different sources before finalizing answers to minimize errors . When uncertain , provide best guesses but clearly indicate uncertainty and verify against known properties or alternative methods to improve accuracy and reliability . - Always carefully match each missing formula or expression with the logically consistent and contextually appropriate formula , verifying the coherence and logical flow of the entire argument before finalizing the answer to avoid misalignment and errors . Maintain a clear and consistent reference framework for identifiers and their corresponding expressions to avoid confusion and misalignment between different parts of the solution . Prioritize systematic step -by - step verification and reconciliation of conflicting conclusions from different sources before finalizing answers to minimize errors . When uncertain about a match , provide best guesses but clearly indicate uncertainty and verify against known properties or alternative methods to improve accuracy and reliability . Avoid over - reliance on partial pattern matches or assumptions ; carefully verify the logical and contextual consistency of each assignment to ensure correctness and reliability . - Always rigorously verify logical equivalences and implications in statements involving gcd or divisibility conditions ; do not accept intuitive divisibility claims without formal validation or counterexample testing . Always verify divisibility conditions for perfect squares or gcd properties by analyzing prime factorization and modular constraints rather than relying on guesswork or superficial pattern matching . Cross - validate final answers involving gcd or divisibility properties with multiple examples and counterexamples to ensure correctness before finalizing conclusions . When uncertain , provide best guesses but clearly indicate uncertainty and verify against known properties or alternative methods to improve accuracy and reliability . - Always verify the correctness of combinatorial or counting arguments by cross - checking with alternative enumeration methods or logical constraints to avoid missing edge cases or miscounting scenarios . - Always carefully track and verify parity or frequency conditions for each digit or element in combinatorial problems to ensure consistency with problem constraints and avoid miscounts . Avoid relying solely on partial pattern matches or assumptions ; carefully verify the logical and contextual consistency of each assignment to ensure correctness and reliability . When uncertain , provide best guesses but clearly indicate uncertainty and verify against known properties or alternative methods to improve accuracy and reliability . Always carefully verify the logical consistency and completeness of combinatorial constraints and sums , avoiding assumptions based on partial pattern matches or superficial simplifications to ensure accurate counting and enumeration . - Avoid relying solely on symmetry or intuitive reasoning in probability problems ; always perform explicit enumeration or combinatorial analysis to validate probability results . When uncertain , provide reasoned guesses but clearly indicate uncertainty and verify against known properties or alternative methods . - When selecting multiple - choice answers , avoid relying solely on formula memorization or partial pattern recognition ; instead , verify the sign and coefficient patterns rigorously using known identities or derivations to prevent sign errors in coefficients . Always perform explicit calculations or reasoning to confirm the correct choice rather than relying on intuition or partial pattern recognition . - Always carefully verify the interpretation of problem conditions involving symmetry and group actions , ensuring that the probability or count corresponds exactly to the problem 's requirement rather than a related but distinct quantity . - Always ensure that the problem 's geometric and algebraic constraints are consistent and cross - validated before finalizing the solution to avoid contradictions and errors in derived quantities ; cross - validate algebraic results and constraints from multiple analytical perspectives to detect discrepancies early and avoid systematic errors . - Always carefully verify the interpretation of problem conditions involving geometric configurations and angle measures , ensuring that the final answer corresponds exactly to the problem 's requirement rather than a related but distinct quantity . Avoid relying solely on symmetry or intuitive reasoning in geometry problems ; always perform explicit geometric or coordinate analysis to validate results . When uncertain , provide reasoned guesses but clearly indicate uncertainty and verify against known properties or alternative methods to improve accuracy and reliability . - Always maintain consistent and rigorous sign conventions throughout all algebraic manipulations , especially in determinant expansions and characteristic polynomial calculations , to prevent fundamental sign errors in the final result . Perform determinant and characteristic polynomial calculations with meticulous step -by - step verification , using exact symbolic forms and multiple complementary methods such as cofactor expansion and row operations to detect and correct arithmetic or sign errors early . Cross - validate the final polynomial with known properties or alternative methods to detect discrepancies early and ensure correctness before finalizing the solution . - Always perform meticulous step -by - step verification of determinant expansions and characteristic polynomial calculations , using multiple complementary methods (e.g., cofactor expansion , row operations ) to detect and correct arithmetic or sign errors early , maintaining consistent sign conventions and variable notation throughout algebraic manipulations to prevent fundamental mistakes in polynomial expressions . - Always verify characteristic polynomial computations by carefully expanding determinants and cross - validating with alternative methods to detect discrepancies early and avoid sign or coefficient errors . - Always verify the definition and sign conventions of the characteristic polynomial (e.g., \(\ det (\ lambda I - A) \) vs \(\ det (A - \ lambda I) \) ) before finalizing the answer to avoid sign errors in polynomial coefficients . Perform determinant expansions with meticulous step -by - step arithmetic checks and cross - validate results using alternative methods to detect and correct subtle errors early . Maintain consistent variable notation and use exact symbolic forms rather than decimal approximations to ensure accuracy and prevent error propagation in algebraic manipulations . When combining multiple analyses , systematically reconcile discrepancies by verifying each step and intermediate result rather than assuming one analysis is correct , to minimize errors in the final output . Always cross - validate the final polynomial with known properties or alternative methods to detect discrepancies early and ensure correctness before finalizing the solution . - Always maintain consistent variable notation and verify the final polynomial against known properties or test cases to ensure correctness before submission . - Always verify the correctness of algebraic manipulations such as completing the square by carefully checking coefficients and constants to avoid small but impactful errors in the final expression . - Always carefully apply integration rules , including substitution and the chain rule , ensuring to include all negative signs and constants to avoid sign errors and missing multiplicative factors in indefinite integrals . Always verify integral solutions by differentiating the proposed antiderivative to confirm it matches the original integrand , catching subtle scaling or sign errors that can lead to incorrect constants or factors in the final answer . Always clearly distinguish between a general constant of integration and a specific constant value when providing indefinite integrals , and verify the expected answer format before finalizing the response . - Always carefully verify the constants and multiplicative factors when performing integration , especially when using substitution and chain rule , to avoid subtle scaling errors in the final answer . - When providing indefinite integrals , clearly distinguish between the general antiderivative including the constant of integration and specific constant functions , and verify the expected answer format before finalizing . - Always use exact symbolic forms and prime factorization to simplify roots and radicals rather than relying on decimal approximations or informal reasoning to ensure accuracy and prevent error propagation . - Always verify constants and coefficients in integral solutions by cross - checking with differentiation to avoid factor errors in final expressions and subtle scaling mistakes . - Always verify the correctness of integral computations by carefully checking the application of integration rules and constants , especially when the integrand is zero , a constant function , or involves composite functions or chain rule scenarios . When providing indefinite integrals , clearly distinguish between the general form including the constant of integration and specific constant functions , and verify against the problem 's expected answer format to avoid overlooking canonical antiderivative forms . - Always carefully perform arithmetic operations and simplifications step -by - step , double - checking intermediate results to avoid propagation of calculation errors in statistical formulas . Verify the use of correct denominators and formulas for sample statistics , ensuring alignment with standard definitions (e.g., sample variance uses n -1 in denominator ). Use exact arithmetic and symbolic forms rather than decimal approximations when computing statistics like mean and variance to avoid rounding errors and inaccuracies in the final result . - Always clearly indicate uncertainty when providing best guesses , and verify these guesses against known properties or alternative methods to improve accuracy and reliability . - Use exact symbolic forms and avoid unnecessary simplifications that may obscure the correct interpretation or lead to errors in answers involving roots or powers . - Always verify arithmetic and algebraic computations in determinant expansions and characteristic polynomial calculations by cross - checking with alternative methods or independent calculations to detect subtle errors early . Maintain consistent sign conventions and carefully track all coefficients and constants to avoid fundamental sign or factorization mistakes in final polynomial expressions . Use exact symbolic forms and avoid rounding or approximation errors when working with fractions and large numbers in algebraic manipulations to ensure accuracy and prevent error propagation . - Always maintain a clear and consistent reference framework for identifiers and their corresponding expressions to avoid confusion and misalignment between different parts of the solution . Prioritize systematic step -by - step verification and reconciliation of conflicting conclusions from multiple sources before finalizing matches to minimize errors . Avoid over - reliance on partial pattern matches or assumptions ; carefully verify the logical and contextual consistency of each assignment to ensure correctness and reliability . Clearly indicate uncertainty when providing best guesses , and verify those guesses against known properties or alternative methods to improve accuracy and reliability . - Always carefully apply substitution and chain rule in integration , ensuring to include all negative signs and constants to avoid sign errors and missing multiplicative factors in indefinite integrals . - Maintain a clear and consistent reference framework for identifiers and their corresponding expressions to avoid confusion and misalignment when matching missing formulae or expressions . Prioritize systematic step -by - step verification and reconciliation of conflicting conclusions from multiple sources before finalizing matches to minimize errors . - Always represent the geometric mean of numbers with negative factors by explicitly separating and tracking the sign and parity of negative terms rather than embedding negatives inside radicals to avoid ambiguity and errors in the final expression . - Always carefully verify the use of correct denominators and formulas for sample statistics , such as using n -1 for sample variance , to avoid systematic calculation errors . - Use exact arithmetic and symbolic forms rather than decimal approximations when computing statistics like mean and variance to prevent rounding errors and inaccuracies in the final result . - Double - check intermediate arithmetic steps and simplifications to avoid propagation of calculation errors in statistical formulas . - Maintain consistent sign conventions and variable notation throughout algebraic manipulations to prevent fundamental mistakes in polynomial expressions .

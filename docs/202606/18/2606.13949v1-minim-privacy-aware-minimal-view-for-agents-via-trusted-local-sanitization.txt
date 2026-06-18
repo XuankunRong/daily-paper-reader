@@ -1,0 +1,523 @@
+Title: Minim: Privacy-Aware Minimal View for Agents via Trusted Local Sanitization
+
+URL Source: https://arxiv.org/pdf/2606.13949v1
+
+Published Time: Mon, 15 Jun 2026 00:22:00 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Hexuan Yu 1 Chaoyu Zhang 1 Heng Jin 1 Shanghao Shi 2 Ning Zhang 2 Y. Thomas Hou 1 Wenjing Lou 1
+
+## Abstract 
+
+Modern LLM-powered autonomous agents in-creasingly rely on rich user interface (UI) state ob-servations to achieve reliable action grounding in complex digital environments. However, many de-ployments transmit the full UI state to remote in-ference servers even when most elements are irrel-evant to the current task, which can leak sensitive but unnecessary context such as authentication codes, private notifications, and background appli-cation states. We propose M INIM , a trusted local broker that performs privacy-aware minimization on the client side before any observation leaves the device. Grounded in Contextual Integrity (CI), MINIM learns a dual-score representation for each UI element by predicting an inherent sensitivity score ( s) and a task-conditioned necessity score (n). These scores drive a ternary disclosure pol-icy that keeps essential elements, abstracts sen-sitive attributes when needed, and removes task-irrelevant content. We optimize a CI-aware objec-tive that penalizes necessity errors more strongly on high-risk content, enabling aggressive pruning while preserving task-critical information. Experi-ments on real-world UI observations derived from WebArena show that M INIM substantially reduces task-irrelevant sensitive leakage while preserving task-critical semantic context and the interactive affordances required for reliable agent actions. 
+
+## 1. Introduction 
+
+Modern agentic systems increasingly interact with the digi-tal world through structured observations , which represent interface state using explicit semantic structure rather than raw sensory streams. Prior work on interface-grounded 
+
+> 1
+
+Virginia Tech, Arlington and Blacksburg, VA, USA 
+
+> 2
+
+Washington University in St. Louis, St. Louis, MO, USA. Corre-spondence to: Hexuan Yu <hexuanyu@vt.edu>. 
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+agents has explored both pixel-based inputs for web and GUI reasoning (He et al., 2024; Koh et al., 2024) and struc-tured hierarchies such as accessibility trees or DOM-like representations (Deng et al., 2023; Zhou et al., 2024). A prominent instantiation is the accessibility API , which ex-poses a hierarchy of UI elements with roles, states, and affor-dances, and is widely used in OS-level assistants (e.g., Ap-ple Intelligence (Apple., 2024) and Microsoft Copilot (Mi-crosoft, 2024)) due to its stability relative to pixel-based inputs (Nguyen et al., 2025). More broadly, structured obser-vations also appear as DOM representations in web agents, scene graphs in robotics, and tool-use schemas (e.g., the Model Context Protocol (MCP) (Anthropic, 2024)) that stan-dardize tool definitions and invocation via typed schemas. However, these interfaces were primarily designed for as-sistive transparency rather than privacy-aware orchestration. As a result, many agent deployments follow a share-first design, sending rich interface state to remote inference to simplify integration and latency engineering. In our primary setting, this means disclosing the entire accessibility tree even when only a small subset is required for the user task. We term this failure mode Semantic Over-Privileged Obser-vation , where task-irrelevant elements in a structured hier-archy are exposed together with their functional semantics. For example, during a routine request such as “Summarize this email”, the remote agent may observe co-located UI con-text such as sidebar notifications, background application windows, or unrelated browser tabs. This can leak person-ally identifiable information and cross-session behavioral traces that are irrelevant to the immediate task but useful for profiling. Such risks have been quantified for autonomous agents and demonstrated in recent attacks (Zharmagambe-tov et al., 2025; Liu et al., 2025; Shao et al., 2024; Carlini et al., 2021; Green et al., 2025). Safeguarding structured observations for autonomous agents 
+
+is challenging because what should be disclosed is inher-ently task-conditioned . The same element may be necessary for completing one task (e.g., a 2FA code needed to au-thenticate) yet constitute pure leakage under another intent (e.g., browsing or summarization). Recent work further highlights a “Privacy Judgment-Action Gap” (Wang et al., 2025b), where agents fail to protect context even when it is recognized as sensitive. Existing privacy paradigms struggle 1 
+
+> arXiv:2606.13949v1 [cs.AI] 11 Jun 2026 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization
+
+to address this setting. Task-agnostic entity filtering (e.g., Presidio (Microsoft, 2024)) relies on static PII categories, which can remove task-critical context or miss sensitive non-PII attributes (e.g., political preference) (Kim et al., 2024; Garza et al., 2025). Differential Privacy (DP) intro-duces stochastic perturbations that can distort the precise semantic cues required for reliable actuation in structured interfaces (Zhang et al., 2025a; Abadi et al., 2016; Yu et al., 2021). Finally, cryptographic LLM methods (Pang et al., 2024; Riasi et al., 2025; Xu et al., 2025; Rathee et al., 2020) (e.g., Multi-Party Computation (MPC), Fully Homomorphic Encryption (FHE)) safeguard computation but do not pre-vent sensitive inference from whatever state is disclosed to the remote server, and they often incur latency that is incompatible with real-time agentic control loops. Distinct from conversational safeguards for user prompts (Ngong et al., 2025; Zhou et al., 2025), meaningful privacy for autonomous agents requires minimizing the structured ob-servation before it is disclosed to the inference server. To address this, we propose M INIM , a trusted local broker 
+
+that enforces pre-disclosure minimization on the client de-vice. M INIM implements a learned structural bottleneck that sanitizes the agent’s observation before it is transmitted to a remote inference server. Unlike prompt-based sanitiz-ers that rely on the agent’s own reasoning, M INIM uses a specialized local model to predict two scalar scores for each element in the structured observation: (1) sensitivity , which captures inherent information risk, and (2) task-conditioned necessity , which captures utility for the current intent. These scores drive a disclosure policy grounded in Contextual In-tegrity (CI) (Nissenbaum, 2004), restricting disclosure of high-sensitivity content unless it is predicted to be necessary for completing the user’s task. 
+
+Contributions. We make three contributions. First, we identify Semantic Over-Privileged Observation as a privacy risk in agentic systems that rely on structured observations, and formalize pre-disclosure minimization as learning a CI-compliant structural bottleneck. Second, we propose MINIM , which decouples contextual scoring from policy enforcement via a normative policy layer driven by joint sensitivity and necessity prediction, trained with a CI-aware objective that penalizes unnecessary disclosure of high-risk content. Finally, we evaluate M INIM on real agent obser-vations instantiated as accessibility trees derived from We-bArena (Zhou et al., 2024) across multiple domains (Shop-ping, Reddit, and Gmail), demonstrating substantial reduc-tion in task-irrelevant sensitive leakage while preserving task-critical content. 
+
+## 2. Problem Setup and Preliminaries 
+
+We focus on privacy-preserving perception for autonomous agents that act upon structured observations. While our framework is generalizable to various hierarchical state de-scriptions, we instantiate and evaluate our method on ac-cessibility trees, which serve as the primary interface for modern OS-level agents. 
+
+Structured Interface Representation. Let Xt denote the raw structured observation at time t, modeled as a hierar-chical tree of elements {ei}Ni=1 . Each element ei is char-acterized by a set of attributes including its semantic role (e.g., button, heading), text content, interaction state (e.g., checked, disabled), and structural properties such as depth and lineage. Unlike pixel-based inputs, this representation provides a discrete and semantically rich basis for agent reasoning. 
+
+Agent Interaction Model. The agent operates in a sequen-tial observation-action loop conditioned on a user task T . At each time step t, the agent samples an action at from its pol-icy at ∼ π(· | Zt, T ), where Zt represents the observation exposed to the remote inference server. In standard deploy-ments, the server receives the full raw state ( Zt = Xt). Our goal is to interpose a local transformation function f to produce a sanitized view Zt = f (Xt, T ) which minimizes sensitive information leakage while preserving the utility required to complete T . Crucially, Zt is not strictly a subset of Xt, as f may involve both the pruning of elements and the abstraction of specific attributes. 
+
+Contextual Integrity. CI posits that privacy is governed by adherence to appropriate information flow norms rather than absolute secrecy (Nissenbaum, 2004). These norms are characterized by four parameters: contexts , actors (senders and receivers), attributes (types of information), and trans-mission principles (constraints on how information may flow). Recent work has begun to adopt CI as a normative lens for disclosure and social reasoning in LLM-based assis-tants and dialogue agents (Lan et al., 2025; Mireshghallah et al., 2023; Tan et al., 2026). Our work extends this per-spective to the observation channel of agents by operational-izing task-conditioned necessity over structured elements and their attributes prior to disclosure. In our setting, the user’s active task T establishes the con-text , while the client device and remote inference server serve as the actors . The data fields within Xt correspond to the attributes . We target a transmission principle of task-conditioned necessity, which requires that information with high disclosure risk be shared only when it is essential for completing the current task. We operationalize this prin-ciple by learning predictive signals for sensitivity ( si) and necessity ( ni,T ) to drive the disclosure policy. 
+
+Threat Model. We assume M INIM is deployed locally as a trusted broker that intercepts the agent’s raw observation 2MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization   
+
+> Figure 1. System Architecture of M INIM . The trusted local broker intercepts raw structured observations (e.g., accessibility trees) and performs contextual integrity-driven sanitization. By jointly predicting sensitivity and task-conditioned necessity, M INIM implements a structural bottleneck that filters or abstracts information before it is transmitted to the remote agent.
+
+and outputs a sanitized view before any data is transmitted to a remote inference server. Our threat model excludes compromise of the local environment that hosts M INIM ,including OS-level malware and privileged attackers. The remote agent is honest-but-curious: it executes the task ac-cording to the protocol given the disclosed observation and task description, while passively harvesting task-irrelevant content (e.g., background windows) for downstream pro-filing or inference. We do not consider active adversaries that attempt to manipulate the agent via prompt injection or malicious content, as such attacks are orthogonal to our focus on pre-disclosure observation minimization. 
+
+## 3. Related Work 
+
+Prior defenses for LLM systems largely focus on unstruc-tured language, identifying sensitive content through pattern-based detectors or user intervention. User-centric tools such as PrivWeb (Zhang et al., 2025b) adopt human-in-the-loop filtering, which does not scale well to autonomous work-flows. Automated approaches, including local gateways and intermediaries (e.g., AirGapAgent (Bagdasarian et al., 2024), Portcullis (Zhan et al., 2025), and Papillon (Li et al., 2025)) and PII redaction benchmarks and evaluations (Shen et al., 2025; Sun et al., 2025), primarily target conversational prompts, logs, or free-form text. In parallel, recent work has begun to quantify privacy leakage and data minimiza-tion objectives in agentic settings (Zharmagambetov et al., 2025; Wang et al., 2025b). While these approaches provide important baselines for reducing disclosure, they do not di-rectly address agents whose observations are structured and action-critical. In such settings, naive redaction or perturba-tion can break the structural and semantic cues needed for reliable decision making and actuation. Our work focuses on pre-disclosure minimization for structured observations under task-conditioned norms, and we instantiate and eval-uate the approach on accessibility trees. Complementary work systematizes broader agent security and privacy threat surfaces (Yu et al., 2025; He et al., 2025), analyzes privacy risks from agent memory and logging (Wang et al., 2025a; Liu et al., 2026). 
+
+## 4. Methodology 
+
+4.1. Overview 
+
+We study pre-disclosure minimization for agent observations under CI. The core tension is that a remote agent needs some UI context to act reliably, but sending the full structured state (e.g., an accessibility tree) often reveals sensitive, task-irrelevant information. Our goal is to minimize sensitive disclosure while still transmitting the minimum necessary information required by the current task context. Figure 1 illustrates this process through a concrete example. A user shares a screenshot of their desktop with a remote agentic AI system to help reply to an email. The raw inter-face state includes both the email content and unrelated UI context, such as a system notification displaying a verifica-3MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+tion code. Although this code is sensitive, it is irrelevant to the email-reply task. Under our scheme, a trusted lo-cal broker intercepts the raw observation before it is sent to the remote agent. Conditioned on the task, the broker assigns each UI element an inherent sensitivity score and a task-conditioned necessity score. A well-trained model identifies the verification code as highly sensitive but un-necessary and abstracts it (replacing the raw value with a placeholder while preserving its structural role), while re-taining the email text and other interface elements required for drafting a reply. The resulting sanitized view, which preserves task-critical context while suppressing irrelevant sensitive information, is the only observation transmitted to the remote agent. 
+
+4.2. Training for Context-Conditioned Scoring 
+
+Our training phase consists of two stages: constructing a training dataset that captures task-conditioned privacy norms, and learning a scoring model whose objective opera-tionalizes CI. We build a data pipeline that produces labeled accessibility trees across domains and tasks (e.g., replying to an email while an unrelated system notification displays a verifica-tion code). 1⃝ We first collect the raw accessibility tree 
+
+Xt = {ei}Ni=1 from the current UI state, where each node 
+
+ei contains its text attributes, accessibility role, and struc-tural metadata. 2⃝ We then pair Xt with the user task T ,which defines the active context of the interaction. 3⃝ Given the scene and task, we assign each node a task-conditioned necessity score ni,T , measuring how essential the node is for completing T , with the highest scores given to elements directly required to execute the user intent. 4⃝ In parallel, we annotate each node with a task-independent sensitivity score si, capturing the inherent disclosure risk of the in-formation it carries, and explicitly identifying content that is sensitive yet unnecessary under the current task. This process yields fully labeled accessibility trees in which ev-ery node is associated with a score pair (si, n i,T ). Using these labeled trees, we can train a model to act as a scoring module. Given node-level features and the task description, the model predicts a pair of scores (ˆ si, ˆni,T ) for each node. The training objective is designed to approximate the CI goal of minimizing inappropriate disclosure while preserving task success. Formally, we aim to minimize the disclosure of contextually inappropriate information subject to a task utility constraint: 
+
+min 
+
+> Zt
+
+I(Xout  
+
+> t
+
+; Zt | T ) s.t. TaskSuccess (Zt, T ) ≥ τ, 
+
+(1) where Xout  
+
+> t
+
+denotes flows that violate CI norms. Because 
+
+Xout  
+
+> t
+
+is latent, we optimize this objective through the two learned proxies, sensitivity s and necessity n.We supervise sensitivity prediction using an absolute error loss: 
+
+Lsens = X
+
+> i
+
+|si − ˆsi|, (2) where si denotes the ground-truth sensitivity of node ei and 
+
+ˆsi is the model’s prediction. This term encourages accurate estimation of inherent disclosure risk independent of task context. To encode CI weights, we define a necessity loss that is weighted by sensitivity risk: 
+
+Lnec = X
+
+> i
+
+
+
+1 + λ · si
+
+10 ·
+
+
+
+1 − ni,T 
+
+10 
+
+ 
+
+·| ni,T − ˆni,T |, (3) where ni,T is the ground-truth necessity of node ei under task T , ˆni,T is the predicted necessity, and λ controls the strength of CI weighting. The multiplicative factor increases the loss when a node is highly sensitive ( si large) yet task-irrelevant ( ni,T small), which is the regime where inap-propriate disclosure is most harmful. The final objective combines both terms: L = Lsens + αLnec , where α bal-ances sensitivity accuracy and task-conditioned utility. By penalizing necessity errors more strongly on high-risk, low-utility nodes, this objective aligns optimization with the goal of suppressing task-irrelevant sensitive information while preserving context required for task completion. 
+
+4.3. Task-Conditioned Disclosure at Deployment 
+
+We now describe how a trained model is used during deploy-ment. At runtime, a user issues a task T (e.g., replying to an email), which triggers an agentic workflow on a concrete ap-plication. As part of this workflow, the application exposes a structured observation in the form of an accessibility tree 
+
+Xt = {ei}Ni=1 . Before this observation is transmitted to a remote agentic AI system, M INIM operates as a local broker that mediates disclosure. Given the task T and the observed accessibility tree Xt, the trained scoring model is applied to each node to predict a pair of scores (ˆ si, ˆni,T ), where ˆsi estimates the inherent sensitivity of node ei and ˆni,T estimates its necessity for completing task T . These scores are then consumed by a fixed decision procedure that enforces task-conditioned minimization. Specifically, each node is mapped to one of three ac-tions— R, A, or K —based on thresholded comparisons: Action (ei) = 
+
+
+
+R if ˆni,T < τ nec ,
+
+A if ˆni,T ≥ τnec ∧ ˆsi ≥ τsens ,
+
+K if ˆni,T ≥ τnec ∧ ˆsi < τ sens .
+
+(4) Nodes predicted as unnecessary are removed ( R). Nodes that are necessary but sensitive are abstracted ( A), meaning 4MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+that sensitive attributes are replaced with placeholders while preserving structural roles. Nodes that are both necessary and low-risk are kept unchanged ( K). Applying this procedure to all nodes produces a sanitized ac-cessibility tree Zt in which disclosure is gated by predicted necessity and attribute fidelity is modulated by predicted sensitivity, jointly enforcing CI at deployment. Algorithm 1 summarizes the full procedure. 
+
+## 5. Experiments 
+
+5.1. Experimental Setting 
+
+Our experiments evaluate whether M INIM achieves its in-tended design goals: reducing task-irrelevant privacy leak-age, preserving actionable utility required for task comple-tion, and generalizing across domains and task semantics. We construct a privacy-augmented corpus from We-bArena (Zhou et al., 2024) spanning Shopping , Reddit , and 
+
+Gmail . The corpus contains 150 unique accessibility trees paired with 27 task types, yielding 5,403 (tree, task) vari-ants. We inject synthesized sensitive context (e.g., 2FA codes, password prompts, system notifications) during pre-processing. Each UI element receives a task-independent sensitivity score si ∈ [0 , 10] and a task-conditioned neces-sity score ni,T ∈ [0 , 10] . The dataset is split into 4,741 training and 662 test variants (Appendix C). We report all results on the held-out test set ( N = 662 ). We eval-uate M INIM using a scoring model trained with the CI-aware objective (Appendix B). As this work is among the first to study task-conditioned, pre-disclosure minimiza-tion for structured agent observations, we design compar-isons within this setting to isolate the effects of our de-sign choices. Specifically, we consider two baseline fami-lies: (i) Fixed Policies, which apply alternative disclosure rules given the same M INIM -predicted scores ( Full Obser-vation , Sensitivity-Only , Necessity-Only , Random Budget ); and (ii) Prompted LLM Scorers, where open-weight LLMs are prompted to output (s, n ) scores using our annotation rubric (Appendix E). Sanitization rarely eliminates privacy risk entirely (Shen et al., 2025; Ngong et al., 2025; Garza et al., 2025); we therefore model A actions as incurring non-zero residual leakage. For a node i with action ai ∈ { K, A, R}, we define its post-sanitization token contribution tok post (i) as tok( i)
+
+if ai = K, max(tok ph , p abs · tok( i)) if ai = A, and 0 if 
+
+ai = R. We set tok ph = 6 .0 and pabs = 0 .05 for the primary analysis, and report sensitivity to this choice up to 
+
+pabs = 0 .1.
+
+5.2. Evaluation Metrics TCNP (Task-Critical Node Preservation). TCNP mea-sures the fraction of task-critical elements that remain vis-ible after sanitization, capturing preservation of semantic context. For example, in an email-reply task, TCNP re-flects whether the email body and relevant headers are retained. Letting C(Xt, T ) = {i | ni,T ≥ τcrit } de-note task-critical elements, we define TCNP( Xt, T ) = 
+
+|C (Xt, T ) ∩ Zt|/|C (Xt, T )|. Higher TCNP indicates better retention of task-relevant context. 
+
+TCNP-I (Task-Critical Node Preservation-Interactive). 
+
+TCNP-I measures whether the sanitized observation pre-serves the interactive elements required to execute the task, capturing execution viability rather than descriptive completeness. For example, during checkout, TCNP-I re-flects whether the Purchase button is preserved, regard-less of surrounding text. Formally, TCNP -I( Xt, T ) =    
+
+> |{ i∈Zt|ni,T ≥τcrit ∧interactive( i)}| |{ i∈Xt|ni,T ≥τcrit ∧interactive( i)}|
+
+.
+
+TISL (Task-Irrelevant Sensitive Leakage). TISL mea-sures how much sensitive information is disclosed when it is not required for the task. It captures privacy risk by weight-ing exposed task-irrelevant elements by their sensitivity. For example, revealing a 2FA code during an unrelated browsing task increases TISL. We compute per-instance leakage as 
+
+TISL( Zt; Xt, T ) = P 
+
+> i∈Zt
+
+⊮[ni,T ≤ τirr ] · si · tok post (i),and report a dataset-normalized version relative to full ob-servation to ensure comparability across methods. 
+
+5.3. Main Results Utility vs. Privacy Trade-offs. Table 1 demonstrates that MINIM achieves a highly efficient operating point: TCNP-I 0.9931, TCNP 0.9491, and TISL 0.101 (10.1% of Full Ob-servation). This efficiency reflects the intrinsic sparsity of accessibility trees: empirical studies indicate that modern web pages are increasingly element-heavy, with an aver-age of over 1,100 HTML elements per page (WebAIM, 2024), the vast majority of which serve as structural wrap-pers (nested “containers”), decorative items, or redundant links rather than actionable affordances. By training ex-plicitly to distinguish these sparse actionable affordances 
+
+(buttons, inputs) from passive context , M INIM can aggres-sively prune the latter without impeding the agent’s ability to act. MINIM ’s adaptive policy dominates single-score baselines by resolving the utility–privacy tension in Table 1 (TISL is normalized to Full Observation ). Sensitivity-Only yields TCNP 0.0401 and TISL 0.3799: retaining the 20% least-sensitive nodes produces predominantly task-irrelevant con-tent, while task-critical nodes with any sensitivity are dis-carded. Conversely, Necessity-Only achieves TCNP 0.9445 5MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Figure 2. Privacy–utility trade-off under necessity threshold sweep. TCNP (utility) and TISL (leakage) are plotted as a function of 
+
+τnec swept over [0 , 10] in steps of 0.5. The dashed vertical line marks the selected operating point τnec = 1 .0, which achieves TCNP ≈ 0.949 and TISL ≈ 0.101 . Increasing τnec reduces leakage monotonically but degrades task utility rapidly beyond 
+
+τnec ≳ 3.
+
+Table 1. Main Results on Augmented WebArena ( N = 662 ). 
+
+Baselines apply a top-K budget-matching policy retaining 20% of nodes; M INIM uses its adaptive K/A/R policy with default thresholds. (TCNP: Context Recall; TCNP-I: Actionable Recall.)                       
+
+> Method TCNP ↑TCNP-I ↑TISL ↓
+> Full Obs. 1.0000 1.0000 1.0000 Random Budget 0.2284 0.2346 0.1971 Sens.-Only 0.0401 0.0393 0.3799 Nec.-Only 0.9445 0.9730 0.2032
+> MINIM (Ours) 0.9491 0.9931 0.1010
+
+but incurs TISL 0.2032 by disclosing sensitive content when-ever it is predicted to be useful. Random Budget fails both objectives, confirming that effective minimization requires semantic understanding rather than uniform pruning. By jointly modeling both dimensions, M INIM matches or ex-ceeds Necessity-Only in utility (TCNP 0.9491, TCNP-I 0.9931) while halving TISL (0.1010 vs. 0.2032). This adap-tive behavior, applying A to high-necessity, high-sensitivity conflict nodes and R to privacy risks and clutter (Figure 3), explains its superior trade-off. We select the necessity threshold τnec via a valida-tion sweep, balancing utility and leakage: τnec =arg max τ (TCNP( τ ) − 0.5 · TISL( τ )) . Inference uses the selected τnec = 1 .0 (Figure 2). Necessity annotations take values in {0, 5, 10 }; we use τcrit = 7 , τirr = 1 . Sensitivity threshold is fixed at τsens = 5 .0.
+
+5.4. Comparison with Prompted LLM Scorer Baselines Configuration. We evaluate a representative set of open-weight LLMs as prompted scorers under realistic deploy-ment constraints for privacy-preserving agent pipelines (Ta-ble 2). We restrict this comparison to open-source models to reflect the deployability requirements of privacy-sensitive settings, where downstream customization, local integration, 0.0 0.2 0.4 0.6 0.8 1.0   
+
+> Action Proportion
+> Hard Conflict
+> (H-Nec/H-Sens)
+> Safe Utility
+> (H-Nec/L-Sens)
+> Privacy Risk
+> (L-Nec/H-Sens)
+> Irrelevant
+> (L-Nec/L-Sens)
+> Policy Action Distribution
+> Keep Abstract Remove
+
+Figure 3. Policy Decision Logic. Distribution of inferred actions (K, A, R) across semantic categories. The model learns to apply 
+
+A (orange) to nodes in the “Conflict” zone (High Necessity, High Sensitivity) while applying R (red) to privacy risks and clutter. This adaptive behavior explains the performance gap over baseline policies. 
+
+Table 2. Baseline Comparison: LLMs vs M INIM . Zero-shot privacy performance of leading open-weights LLMs operating on text-only accessibility trees, compared to our specialized approach. TCNP denotes Context Recall; TCNP-I denotes Actionable Recall.                                          
+
+> Method Context Recall (TCNP) ↑TCNP-I ↑TISL ↓Keep% ↓
+> Qwen3-8B-Instruct 0.956 0.989 0.211 28.4 Nemotron-Nano-9B 0.958 0.991 0.249 29.1 GPT-OSS-20B 0.963 0.994 0.276 32.7 Llama-3.3-70B-Instruct 0.966 0.996 0.312 34.5 Mistral-7B-v0.3 0.953 0.987 0.257 30.2 Llama-3-8B-Instruct 0.955 0.988 0.206 27.6 Gemma-3N-E4B 0.951 0.985 0.194 25.8 MINIM (Ours) 0.9491 0.9931 0.101 12.0
+
+or system-level enforcement is necessary and closed-source models are impractical. We prioritize models with moderate parameter counts, as local deployment is most feasible for lightweight architectures suited to on-device or edge infer-ence. We additionally include Llama-3.3-70B-Instruct as a large-scale reference to assess whether scaling confers measurable benefits, and find only marginal gains despite an order-of-magnitude increase in model size. Table 2 shows that prompted LLM scorers achieve TCNP-I 0.985–0.996 and TCNP 0.951–0.966, consistent with the broad affordance and content recognition capacity of gen-eral instruction-tuned models. However, privacy behavior varies substantially across models: TISL spans 0.194–0.312, substantially above M INIM ’s 0.101. This gap reveals that general instruction tuning does not enforce task-conditioned minimization; these models retain task-irrelevant sensi-tive content alongside task-useful elements. For example, Llama-3-8B-Instruct retains 27.6% of nodes yet incurs TISL 0.206, whereas M INIM retains only 12.0% of nodes and achieves TISL 0.101 without any LLM inference at test time. Moreover, larger models tend to retain more sensitive con-tent and incur higher leakage (e.g., Llama-3.3-70B-Instruct TISL 0.312 vs. Llama-3-8B-Instruct 0.206), confirming that 6MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+model scale alone does not reliably enforce minimization in the absence of explicit contextual integrity constraints. 
+
+Interpreting Contextual Divergence. We identify a fun-damental privacy–efficiency gap between the two paradigms. LLM baselines achieve marginally higher TCNP (0.951– 0.966 vs. 0.9491) by operating as passive readers, retaining approximately 26–35% of nodes and thereby incorporating task-irrelevant content that inflates both recall and leakage simultaneously. By contrast, M INIM functions as an ac-tive filter, retaining only 12% of nodes while matching or exceeding the TCNP-I of most LLM baselines (0.9931, sur-passing five of seven and within 0.003 of the strongest) at substantially lower leakage. For instance, for a transactional task such as “Checkout,” M INIM isolates the target inter-action element (e.g., the Purchase button) while pruning surrounding product descriptions, reviews, and footer links, thereby preserving comparable TCNP-I without exposing unnecessary sensitive context. Across all evaluated meth-ods, M INIM achieves the lowest TISL (0.101) and Keep% (12.0), demonstrating that task-conditioned contextual in-tegrity training yields a strictly superior privacy–efficiency frontier relative to general instruction tuning. 
+
+Discussion on Data Sparsity. Although the average Node Exposure Ratio (Keep Rate) is approximately 12%, this re-flects the sparsity of task-relevant elements in real-world accessibility trees. Typical DOM trees (often exceeding 500 nodes) are dominated by generic containers (e.g., <div> ,
+
+group ) and layout spacers with limited semantic contri-bution. A Keep Rate of ≈ 12% therefore corresponds to filtering structural noise while retaining the functional ele-ments (buttons, inputs, and task-relevant text) that support execution. 
+
+Safety Validation. Beyond aggregate metrics, we inspect the handling of specific high-risk injected elements. In diagnostic checks across the test set, M INIM suppresses 
+
+> 99 .9% of injected 2FA codes, passwords, and Slack no-tifications, consistent with the low TISL values reported above. 
+
+5.5. Task-Semantic Robustness 
+
+To verify that M INIM supports active agents beyond simple reading tasks, we stratify performance by task semantics in Table 3. The model maintains high utility across all categories, achieving perfect TCNP and TCNP-I (1.0000) on both Transactional (e.g., “Add to Cart”, “Vote”) and 
+
+Sensitive/Admin (e.g., 2FA, Password) tasks, confirming that the minimization policy fully preserves essential affordances for complex interactive and security-critical flows. Table 3 further reveals the model’s adaptive compression strategy. For Sensitive/Admin tasks, the model learns to retain a larger fraction of nodes (Keep Rate: 15.84% vs. 8.66% for Informational), preserving sufficient context to support complex security flows without breaking task execution. This behavior emerges from the CI-aware objective, which encourages tighter minimization for low-stakes browsing while maintaining adequate structural coverage for high-stakes administrative actions.                   
+
+> Table 3. Adaptive Minimization Strategy. The model alters its compression rate and abstraction use based on task semantics, maintaining high utility across all categories. (TCNP: Context Recall; TCNP-I: Actionable Recall.)
+> Task Semantics KATCNP TCNP-I
+> Informational 8.66% 0.83% 0.9156 0.9886 Sensitive/Admin 15.84% 9.84% 1.0000 1.0000 Transactional 10.88% 3.52% 1.0000 1.0000
+
+5.6. Contextual Integrity Evaluation 
+
+We evaluate whether M INIM instantiates CI as an explicit information-flow rule rather than a purely conceptual fram-ing. In M INIM , the task-conditioned necessity score speci-fies the context , the sensitivity score specifies the informa-tion type , and the transmission principle is implemented by the K/A/R policy. The central CI requirement in this set-ting is that disclosure is blocked whenever the task context renders it unnecessary, even if the information is otherwise benign. 
+
+CI Compliance and Normative Bounds. We benchmark against an Oracle policy that strictly removes all irrelevant nodes ( ni,T ≤ 1), achieving 0.0% TISL by definition. On the full test set ( N = 662 ), M INIM achieves TISL 0.101 (89.9% suppression relative to Full Observation) while main-taining a ∼12% retention rate ( K + A). This closely approx-imates the Oracle’s strict “Need-to-Know” gate. 
+
+Counterfactual Context Stress Test. To test context de-pendence directly, we perform a counterfactual intervention: for a fixed subset of test instances, we keep the accessibility tree and node content unchanged but replace the goal input with a low-commitment browse mode context. Under this intervention, predicted necessity for task targets drops sub-stantially for previously critical action nodes (e.g., checkout or submit controls), while irrelevant high-sensitivity content remains stably suppressed (predominantly R), indicating norm robustness under context shifts. For high-sensitivity elements that become only marginally useful under browse mode , the policy tends to favor A over R, preserving struc-tural affordances without exposing raw values, consistent with proportional transmission. However, because R is triggered by a fixed necessity threshold ( τnec = 1 .0), re-movals are less elastic than the underlying necessity scores under counterfactual contexts. A natural extension is dy-7MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization                                    
+
+> Policy Variant Strategy TCNP ↑TCNP-I ↑TISL ↓
+> MINIM (Ours) Adaptive 0.9491 0.9931 0.1010 Conservative Map A→R0.9050 0.9650 0.0989 Radical Map A→K0.9491 0.9931 0.1014
+> Table 4. Value of Abstraction. Variants where the Aaction is forced to R(strict redaction) or K(full exposure). Residual leakage (pabs = 0 .05 ) is included in TISL for Aactions. (TCNP: Context Recall; TCNP-I: Actionable Recall.)
+
+namic thresholding or context-adaptive calibration to further tighten transmission norms in low-utility settings. 
+
+5.7. Ablation Studies Value of Adaptive Abstraction. A key design choice in MINIM is the A action, which preserves structural affor-dances (e.g., buttons and inputs) while masking sensitive values. Table 4 reports two counterfactual variants: Conser-vative (Privacy-First) maps all A decisions to R, simulating strict redaction that blocks sensitive elements entirely and reducing TCNP-I by 2.81 absolute points (0.9931 →0.9650) from losing critically mediated inputs (e.g., 2FA fields and address forms); Radical (Utility-First) maps all A decisions to K, recovering full actionability at a marginal leakage cost (TISL 0.1014 vs. 0.1010). Crucially, comparing MINIM with the Conservative baseline reveals the value of adaptive abstraction. Even when accounting for a 5% residual re-identification risk ( pabs = 0 .05 ) in the privacy metric, M INIM incurs only a marginal increase in leakage (0.0989 → 0.1010) compared to the strict removal policy. In exchange for this small privacy cost, it recovers 2.81 absolute points in TCNP-I (0.9650 →0.9931) and 4.41 in TCNP (0.9050 →0.9491). This confirms that binary controls (Allow/Deny) are insufficient for agentic privacy: strictly denying sensitive nodes breaks task execution, while un-conditionally allowing them elevates privacy risk; semantic abstraction provides the necessary intermediate option. 
+
+Threshold Robustness. As shown in Figure 2, sweeping 
+
+τnec traces a stable privacy–utility frontier. Performance remains consistent across τnec ∈ [0 .8, 1.5] , suggesting that deployment does not require precise per-domain calibration. 
+
+## 6. Discussion 
+
+Decoupling scoring from enforcement. MINIM cleanly separates contextual scoring (predicting sensitivity and task-conditioned necessity) from policy enforcement (mapping scores to K/A/R decisions and rendering). This separation improves interpretability and portability: privacy–utility trade-offs can be adjusted by changing thresholds or the pol-icy layer without retraining the scorer. Moreover, the realiza-tion of A is orthogonal to the scoring model. While we use standardized masking (e.g., [REDACTED] ) for controlled evaluation, A can be implemented with richer sanitization mechanisms such as typed placeholders, format-preserving redaction, or learned rewriting modules. 
+
+Generalization and task coverage. Our WebArena in-stantiation uses 27 curated task templates to support consis-tent node-level necessity annotation. This should be viewed as a controlled specification for evaluation rather than open-ended task coverage. Importantly, M INIM is not a task classifier; the task description serves as a conditioning sig-nal for element-level necessity prediction, and we evaluate generalization across unseen pages, injected contexts, and domains. Extending to additional intents is primarily a data and specification problem: new tasks can be incorporated by collecting additional (X, T ) pairs under the same scoring rubric, without changing the framework. More broadly, al-though we evaluate on accessibility trees, the pre-disclosure minimization principle is representation-agnostic and ap-plies to other structured observation channels (e.g., DOM trees, scene graphs, and tool schemas) where action-critical structure must be preserved while task-irrelevant sensitive content is withheld. 
+
+Limitations. Our threat model targets step-wise minimiza-tion against honest-but-curious remote inference. We do not address active adversaries (e.g., prompt injection) or cumu-lative privacy loss across long-horizon episodes. In addition, scaling to highly specialized enterprise interfaces or full desktop environments may require more efficient tree en-coders and caching to handle larger structured observations under tight latency budgets. 
+
+## 7. Conclusion 
+
+We introduced M INIM , a framework that addresses Semantic Over-Privileged Observation in agentic systems. Grounded in Contextual Integrity, M INIM learns to distinguish task-critical affordances from task-irrelevant sensitive content and enforces a need-to-know disclosure rule over accessibil-ity trees. Our dual-score formulation substantially reduces unnecessary sensitive exposure while preserving actionable utility, showing that strong privacy guarantees can coexist with reliable agent actuation. Although demonstrated on ac-cessibility trees, the CI-driven structural scoring mechanism is representation-agnostic and extends to other structured ob-servation formats such as DOM/VDOM, scene graphs, and tool-use schemas. Future work will study temporal privacy accounting over long-horizon interaction and multi-agent settings. 
+
+## Software and Data 
+
+We release the M INIM codebase in our GitHub repository. The repository includes the implementation, preprocessing and evaluation scripts, and instructions for reproducing our 8MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+experiments using the processed WebArena-derived struc-tured observations and released sample data. 
+
+## Acknowledgements 
+
+This work was supported in part by the Office of Naval Research under grants N00014-24-1-2730 and N000142412663, Army Research Office under grant W911NF-24-1-0155, and the National Science Founda-tion under grants 2433904, 2247560, 2154929, 2235232, 2238635, 2154930, 2403758 and 2312447. 
+
+## Impact Statement 
+
+This work aims to improve privacy for autonomous agen-tic systems by minimizing structured observations before they are sent to remote inference. If adopted, it could re-duce inadvertent exposure of sensitive information during routine agent interactions and enable safer deployment in privacy-sensitive settings. Potential risks include misuse to conceal information from oversight and uneven protec-tion due to dataset or rubric bias; we view M INIM as a privacy-mitigation component rather than a complete se-curity solution, and encourage future work on adversarial robustness and broader evaluation. 
+
+## References 
+
+Abadi, M., Chu, A., Goodfellow, I., McMahan, H. B., Mironov, I., Talwar, K., and Zhang, L. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pp. 308–318, 2016. Anthropic. Model context protocol specification. https: //modelcontextprotocol.io/, 2024. Apple. Introducing apple intelligence: The personal intel-ligence system for iphone, ipad, and mac, 2024. URL https://www.apple.com/newsroom/2024/06/introducing-apple-intelligence-for-iphone-ipad-and-mac/. Bagdasarian, E., Yi, R., Ghalebikesabi, S., Kairouz, P., Gruteser, M., Oh, S., Balle, B., and Ramage, D. Air-gapagent: Protecting privacy-conscious conversational agents. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security ,pp. 3868–3882, 2024. Carlini, N., Tramer, F., Wallace, E., Jagielski, M., Herbert-Voss, A., Lee, K., Roberts, A., Brown, T., Song, D., Erlingsson, U., et al. Extracting training data from large language models. In 30th USENIX security symposium (USENIX Security 21) , pp. 2633–2650, 2021. Deng, X., Gu, Y., Zheng, B., Chen, S., Stevens, S., Wang, B., Sun, H., and Su, Y. Mind2web: Towards a generalist agent for the web. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Garza, L., Kotal, A., Piplai, A., Elluri, L., Das, P., and Chadha, A. Prvl: Quantifying the capabilities and risks of large language models for pii redaction. arXiv preprint arXiv:2508.05545 , 2025. Green, T., Gubri, M., Puerto, H., Yun, S., and Oh, S. J. Leaky thoughts: Large reasoning models are not private thinkers. arXiv preprint arXiv:2506.15674 , 2025. He, F., Zhu, T., Ye, D., Liu, B., Zhou, W., and Yu, P. S. The emerged security and privacy of llm agent: A survey with case studies. ACM Comput. Surv. , 58(6), December 2025. ISSN 0360-0300. doi: 10.1145/3773080. URL https://doi.org/10.1145/3773080. He, H., Yao, W., Ma, K., Yu, W., Dai, Y., Zhang, H., Lan, Z., and Yu, D. Webvoyager: Building an end-to-end web agent with large multimodal models. arXiv preprint arXiv:2401.13919 , 2024. Kim, W., Hahm, S., and Lee, J. Generalizing clinical de-identification models by privacy-safe data augmentation using gpt-4. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 21204–21218, 2024. Koh, J. Y., Lo, R., Jang, L., Duvvur, V., Lim, M., Huang, P.-Y., Neubig, G., Zhou, S., Salakhutdinov, R., and Fried, D. Visualwebarena: Evaluating multimodal agents on realistic visual web tasks. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 881–905, 2024. Lan, G., Inan, H. A., Abdelnabi, S., Kulkarni, J., Wutschitz, L., Shokri, R., Brinton, C. G., and Sim, R. Contextual integrity in llms via reasoning and reinforcement learning. 
+
+arXiv preprint arXiv:2506.04245 , 2025. Li, S., Raghuram, V. C., Khattab, O., Hirschberg, J., and Yu, Z. Papillon: Privacy preservation from internet-based and local language model ensembles. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,pp. 3371–3390, 2025. Liu, J., Cao, D., Wei, Y., Su, T., Liang, Y., Dong, Y., Liu, Y., Zhao, Y., and Hu, X. Topology matters: Measuring memory leakage in multi-agent llms, 2026. URL https: //arxiv.org/abs/2512.04668. Liu, Y., Jia, Y., Jia, J., and Gong, N. Z. Evaluating {LLM-based } personal information extraction and countermea-sures. In 34th USENIX Security Symposium (USENIX Security 25) , pp. 1669–1688, 2025. 9MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Microsoft. Unlock a new era of innovation with copilot+ pcs, 2024. URL https://blogs.microsoft.com/blog/2024/ 05/20/introducing-copilot-pcs/. Microsoft. Presidio: Data protection and anonymization sdk. https://github.com/microsoft/presidio, 2024. Accessed: 2026-01-27. Mireshghallah, N., Kim, H., Zhou, X., Tsvetkov, Y., Sap, M., Shokri, R., and Choi, Y. Can llms keep a secret? testing privacy implications of language models via contextual integrity theory. arXiv preprint arXiv:2310.17884 , 2023. Ngong, I. C., Kadhe, S. R., Wang, H., Murugesan, K., Weisz, J. D., Dhurandhar, A., and Ramamurthy, K. N. Protecting users from themselves: Safeguarding contextual privacy in interactions with conversational agents. In Findings of the Association for Computational Linguistics: ACL 2025 , pp. 26196–26220, 2025. Nguyen, D., Chen, J., Wang, Y., Wu, G., Park, N., Hu, Z., Lyu, H., Wu, J., Aponte, R., Xia, Y., et al. Gui agents: A survey. In Findings of the Association for Computational Linguistics: ACL 2025 , pp. 22522–22538, 2025. Nissenbaum, H. Privacy as contextual integrity. Wash. L. Rev. , 79:119, 2004. Pang, Q., Zhu, J., Möllering, H., Zheng, W., and Schnei-der, T. Bolt: Privacy-preserving, accurate and efficient inference for transformers. In 2024 IEEE Symposium on Security and Privacy (SP) , pp. 4753–4771. IEEE, 2024. Rathee, D., Rathee, M., Kumar, N., Chandran, N., Gupta, D., Rastogi, A., and Sharma, R. Cryptflow2: Practical 2-party secure inference. In Proceedings of the 2020 ACM SIGSAC conference on computer and communications security , pp. 325–342, 2020. Riasi, A., Wang, H., Behnia, R., Vo, V., and Hoang, T. Zero-knowledge ai inference with high precision. In 
+
+Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security , pp. 1053–1067, 2025. Shao, Y., Li, T., Shi, W., Liu, Y., and Yang, D. Privacylens: Evaluating privacy norm awareness of language models in action. Advances in Neural Information Processing Systems , 37:89373–89407, 2024. Shen, H., Gu, Z., Hong, H., and Han, W. Pii-bench: Eval-uating query-aware privacy protection systems. arXiv preprint arXiv:2502.18545 , 2025. Sun, J., Suleiman, B., Ullah, I., and Razzak, I. Effectiveness of privacy-preserving algorithms in llms: A benchmark and empirical analysis. In Proceedings of the ACM on Web Conference 2025 , pp. 5224–5233, 2025. Tan, X., Wang, X., Liu, Q., Xu, X., Yuan, X., Zhu, L., and Zhang, W. Privgemo: Privacy-preserving dual-tower graph retrieval for empowering llm reasoning with mem-ory augmentation. arXiv preprint arXiv:2601.08739 ,2026. Wang, B., He, W., Zeng, S., Xiang, Z., Xing, Y., Tang, J., and He, P. Unveiling privacy risks in llm agent memory. In Proceedings of the 63rd Annual Meeting of the Asso-ciation for Computational Linguistics (Volume 1: Long Papers) , pp. 25241–25260, 2025a. Wang, S., Yu, F., Liu, X., Qin, X., Zhang, J., Lin, Q., Zhang, D., and Rajmohan, S. Privacy in action: Towards realis-tic privacy mitigation and evaluation for LLM-powered agents. In Findings of the Association for Computational Linguistics: EMNLP 2025 . Association for Computa-tional Linguistics, 2025b. WebAIM. The webaim million: The 2024 annual ac-cessibility analysis of the top 1,000,000 home pages. https://webaim.org/projects/million/, 2024. Xu, T., Lu, W.-j., Yu, J., Chen, Y., Lin, C., Wang, R., and Li, M. Breaking the layer barrier: Remodeling private transformer inference with hybrid {CKKS } and {MPC }.In 34th USENIX Security Symposium (USENIX Security 25) , pp. 2653–2672, 2025. Yu, D., Naik, S., Backurs, A., Gopi, S., Inan, H. A., Ka-math, G., Kulkarni, J., Lee, Y. T., Manoel, A., Wutschitz, L., et al. Differentially private fine-tuning of language models. arXiv preprint arXiv:2110.06500 , 2021. Yu, M., Meng, F., Zhou, X., Wang, S., Mao, J., Pan, L., Chen, T., Wang, K., Li, X., Zhang, Y., An, B., and Wen, Q. A survey on trustworthy llm agents: Threats and countermeasures. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 , KDD ’25, pp. 6216–6226, New York, NY, USA, 2025. Association for Computing Machinery. ISBN 9798400714542. doi: 10.1145/3711896.3736561. URL https://doi.org/10.1145/3711896.3736561. Zhan, J., Zhang, W., Zhang, Z., Xue, H., Zhang, Y., and Wu, Y. Portcullis: A scalable and verifiable privacy gateway for third-party llm inference. In Proceedings of the AAAI Conference on Artificial Intelligence , 2025. Zhang, J., Tian, Z., Zhu, M., Song, Y., Sheng, T., Yang, S., Du, Q., Liu, X., Huang, M., and Li, D. Dyntext: semantic-aware dynamic text sanitization for privacy-preserving llm inference. In Findings of the Association for Compu-tational Linguistics: ACL 2025 , pp. 20243–20255, 2025a. 10 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Zhang, S., Jiang, Y., Ma, R., Yang, Y., Xu, M., Huang, Z., Yi, X., and Li, H. Privweb: Unobtrusive and content-aware privacy protection for web agents. arXiv preprint arXiv:2509.11939 , 2025b. Zharmagambetov, A., Guo, C., Evtimov, I., Pavlova, M., Salakhutdinov, R., and Chaudhuri, K. Agentdam: Privacy leakage evaluation for autonomous web agents. arXiv preprint arXiv:2503.09780 , 2025. Zhou, J., Mireshghallah, N., and Li, T. Operationalizing data minimization for privacy-preserving llm prompting. 
+
+arXiv preprint arXiv:2510.03662 , 2025. Zhou, S., Xu, F. F., Zhu, H., Zhou, X., Lo, R., Sridhar, A., Cheng, X., Bisk, Y., Fried, D., Alon, U., et al. Webarena: A realistic web environment for building autonomous agents. In International Conference on Learning Repre-sentations (ICLR) , 2024. 11 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+## A. Theoretical Formulation 
+
+We formalize the semantic minimization problem through the lens of Information Theory, providing the motivation for our CI-aware loss function (Section 4.2). 
+
+A.1. Problem Statement 
+
+Let Xt denote the full accessibility tree at time t, T the user task, and A∗ the optimal agent action. The goal of M INIM is to learn a sanitization function f (Xt, T ) → Zt that produces a minimal observation Zt.We frame this as a Constrained Contextual Bottleneck problem. We seek to maximize the mutual information between the sanitized view Zt and the optimal action A∗, subject to a constraint on the leakage of sensitive attributes S:
+
+max  
+
+> f
+
+I(Zt; A∗|T ) s.t. I(Zt; S|Tirr ) ≤ ϵ (5) where Tirr denotes contexts where S is task-irrelevant ( ni,T = 0 ). 
+
+A.2. Loss Function Derivation 
+
+Our dual-score framework serves as a tractable proxy for this objective: • Necessity ˆn approximates action relevance P (Actionable |Xt, T ), acting as a gate for I(Zt; A∗).• Sensitivity ˆs approximates the inherent risk P (Sensitive |Xt), quantifying the cost in the leakage constraint. The CI-weighted necessity loss (Eq. 6) implements the Lagrangian relaxation of this constrained optimization problem. 
+
+LCI nec = X
+
+> i,t
+
+
+
+1 + λ · si
+
+10 ·
+
+
+
+1 − ni,T 
+
+10 
+
+ | {z }
+
+> Lagrange Multiplier Proxy
+
+· | ˆni,T − ni,T | (6) The term λ · si · (1 − ni,T ) acts as a dynamic penalty coefficient that becomes large strictly when privacy risk is high (s → 10 ) and utility is low ( n → 0), aligning the gradient descent direction with the minimization of I(Zt; S|Tirr ).
+
+## B. Implementation Details 
+
+B.1. Policy Logic 
+
+The Normative Policy Layer maps predicted scores (ˆ si, ˆni,T ) to disclosure actions via thresholds τnec = 1 .0 and τsens = 5 .0.This threshold-based logic separates the estimation of risk (model output) from the decision of acceptable risk (policy), allowing administrators to adjust τ post-deployment without retraining. 
+
+B.2. Model Details 
+
+We use a local deployable Graph Attention Networks v2 (GATv2) over the accessibility tree. The raw tree is converted into a graph where each UI element is represented as a node with a 512-d feature vector constructed from a 384-d MiniLM text embedding together with UI attributes and structural features, which, along with the tree edges, serves as the input to the GATv2 model. The backbone consists of 3 GATv2 layers (hidden size 256, 4 heads) capturing topological dependencies across UI elements. Outputs are passed to two MLP heads ( 256 → 128 → 11 ) for sensitivity and task-conditioned necessity prediction. 
+
+B.3. Training Setup 
+
+Table 5 outlines the specific hyperparameters used for training. We use α = 1 .0 and λ = 1 .0 to balance the multi-task objective. 12 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Algorithm 1 MINIM Client-Side Sanitization 
+
+Input: Accessibility Tree Xt = {ei}Ni=1 , Task T
+
+Parameters: Model θ, Thresholds τnec , τ sens 
+
+Output: Sanitized Tree Zt
+
+Zt ← [] 
+
+H ← Encoder θ (Xt, T )
+
+for i = 1 to N do 
+
+ˆsi, ˆni,T ← Heads θ (Hi)
+
+if ˆni,T < τ nec then continue {Apply R }
+
+else if ˆsi ≥ τsens then 
+
+e′ 
+
+> i
+
+← Abstract (ei)
+
+Zt.append (e′
+
+> i
+
+) {Apply A }
+
+else 
+
+Zt.append (ei) {Apply K }
+
+end if end for return Zt
+
+Table 5. Training Hyperparameters. Fixed values for reproducibility. 
+
+Hyperparameter Value 
+
+Learning Rate 3 × 10 −4
+
+L2 Regularization 1 × 10 −5
+
+Optimizer AdamW Batch Size 32 Epochs 10 CI-Weight ( λ) 1.0 Loss Balance ( α) 1.0 
+
+## C. Dataset Components and Statistics 
+
+C.1. Data Composition 
+
+We construct a privacy-augmented corpus from WebArena (Zhou et al., 2024), spanning Shopping, Reddit, and Gmail. To simulate realistic risks, we inject synthetic sensitive content (e.g., 2FA codes, emails) into standard accessibility trees (Table 6). 
+
+Table 6. Injected sensitive content categories. 
+
+Category Example si Range 
+
+2FA/OTP codes “Verification code: 847293” 10 Password prompts “Save password...” 10 Slack notifications “Alice: Can you review...” 8–9 Email previews “From: json@...” 7–9 
+
+C.2. Statistical Characteristics 
+
+Table 7 summarizes the dataset scale and the distribution of privacy conflicts (nodes that are both Sensitive and Irrelevant). 
+
+## D. Additional Empirical Results 
+
+We provide a domain-level breakdown of model performance to scrutinize reliability across different web environments. 13 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+Table 7. Dataset Overview. Left: Global statistics. Right: Conflict analysis of training nodes ( N ≈ 5.4M ). 
+
+Metric Value 
+
+Unique Trees 150 Task Types 27 
+
+Total Variants 5,403 
+
+Training Variants 4,741 Test Variants 662 
+
+Condition Count %
+
+Irrelevant (Nec ≤1) 4.6M 85.9% High Sens (Sens ≥5) 164k 3.0% 
+
+Risk (Irr ∧ Sens) 115k 2.1% 
+
+Table 8. Top Interface Roles and Average Scores. Common UI elements exhibit distinct necessity/sensitivity profiles. 
+
+Role Freq Avg Nec Avg Sens 
+
+InlineTextBox 26.8% 0.01 0.08 none 21.0% 0.44 0.00 StaticText 17.7% 0.05 0.11 generic 6.1% 0.53 0.02 link 4.7% 4.64 0.38 button 3.3% 4.30 0.31 listitem 3.1% 1.15 0.17 list 2.0% 1.15 0.00 Irrelevant      
+
+> (0-1)
+> Weak
+> (2-5)
+> Moderate
+> (6-7)
+> High
+> (8-9)
+> Critical
+> (10)
+> Task Necessity Score
+> Irrelevant
+> (0-1)
+> Weak
+> (2-5)
+> Moderate
+> (6-7)
+> High
+> (8-9)
+> Critical
+> (10)
+> Sensitivity Score
+> Label Distribution
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+
+Figure 4. Joint distribution of Necessity vs. Sensitivity scores. Empty bins reflect discrete annotation rubrics. 
+
+Table 9. Comprehensive Task Suite. The evaluation dataset covers 27 distinct task categories across three domains, spanning informational, transactional, and diagnostic scenarios. 
+
+Domain Tasks and Objectives Shopping search_product, view_product_details, add_to_cart, view_cart, read_reviews, compare_products, add_to_wishlist, access_bookmark, switch_tab, ex-tract_2fa_code, complete_2fa 
+
+Reddit read_post, read_comments, vote_content, search_discussion, navigate_forums, reply_comment, open_slack_app 
+
+Gmail read_email, compose_email, reply_email, search_email, forward_email, delete_email, save_password, read_slack_message, reply_slack Table 10. Domain-Specific Performance. Breakdown of context recall (TCNP) and privacy (N ORM TISL) on the held-out test set. Reddit exhibits higher residual leakage due to the semantic ambiguity of user-generated content. (TCNP: Context Recall.) 
+
+Domain Test N
+
+Context Recall (TCNP) ↑
+
+Privacy (TISL) ↓
+
+Gmail 472 96.61% 1.88% Reddit 130 95.38% 13.50% Shopping 60 93.60% 0.85% 
+
+14 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+As shown in Table 10, we observe distinct TISL profiles across domains, while context recall (TCNP) remains consistently high ( >93%) in all three. Reddit exhibits the highest residual leakage (13.50%), consistent with the semantic ambiguity of user-generated content where the boundary between “public discussion” and “private identifier” is less structurally distinct. Shopping and Gmail achieve substantially lower leakage (0.85% and 1.88%, respectively), reflecting the model’s ability to stably remove task-irrelevant sensitive content on structured task pages and email interfaces. 
+
+## E. Baseline Evaluation Prompts 
+
+To ensure reproducibility, we provide the exact system prompts used to query the open-weight LLM baselines (Qwen3-8B-Instruct, Nemotron-Nano-9B, GPT-OSS-20B, Llama-3.3-70B-Instruct, Mistral-7B-v0.3, Llama-3-8B-Instruct, and Gemma-3N-E4B) for the zero-shot scoring evaluation. These prompts implement the Contextual Integrity-aligned scoring rubric described in Section 4. 
+
+SYSTEM PROMPT: TASK-CONDITIONED NECESSITY SCORING 
+
+You are a strict scoring judge for accessibility-tree nodes, focusing ONLY on TASK-CONDITIONED NECESSITY. Your task: For each provided node, assign ONE integer necessity score: - necessity_score n in {0,1,2,3,4,5,6,7,8,9,10} Scores MUST be integers. Do NOT use ranges or decimals. Use ONLY the provided node fields and local context. Do NOT assume hidden UI. Return JSON only. No markdown. No code fences. No extra keys. Output schema (strict): {"results": [{"nodeId": "string", "necessity_score": 0-10 integer, "necessity_reason": ["short_reason", "..."], "confidence": 0.0-1.0 number or null }]}--------------------------------------------------------------------TASK-CONDITIONED NECESSITY SCORING RUBRIC (n) -- INTEGER ANCHORS --------------------------------------------------------------------n = 0- Completely irrelevant to the task; removing has zero impact. - Examples: ads, footer/legal boilerplate, unrelated feed items, decorative regions. n = 1- Pure noise or redundant UI; visible but provides no help even indirectly. - Examples: repeated icons, empty text nodes, spacer elements. n = 2- Extremely weak contextual presence; could be noticed but does not aid task completion. - Examples: generic counts/metrics for unrelated content, non-task badges. n = 3- Marginally related context; slight orientation benefit but task unaffected without it. - Examples: post metadata, author labels when the task is navigation. n = 4- Supportive but optional; helps orientation or confidence but not required. - Examples: section headings, explanatory labels, non-essential descriptions. n = 5- Moderately helpful; improves efficiency/understanding but alternatives exist. - Examples: secondary navigation links, optional filters/sort controls. n = 6- Strongly helpful; reduces friction or steps, but not strictly required. - Examples: sidebar community list when search/navigation alternatives exist. n = 7- Important task enabler; most users rely on this to complete the task. - Examples: primary navigation menu for the task, main forum/subreddit list entry points. 
+
+15 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+n = 8- Core task component; task becomes very difficult without it. - Examples: the specific forum/subreddit link needed to enter a forum. n = 9- Near-critical; task almost certainly fails without it. - Examples: the only visible control to switch/select forums in the provided context. n = 10 - Absolutely required; task is impossible without it given the provided context. - Examples: sole entry point to forum navigation or the only actionable control required. --------------------------------------------------------------------GENERAL RULES --------------------------------------------------------------------- Judge necessity strictly in the context of the given task. - If uncertain between two adjacent scores, choose the LOWER one and explain briefly why. - Reasons should be short tags/phrases (<= 8 items), grounded in node/context fields. - Baseline scores may be incorrect; judge independently. 
+
+SYSTEM PROMPT: SENSITIVITY SCORING 
+
+You are a strict scoring judge for accessibility-tree nodes, focusing ONLY on SENSITIVITY (privacy / secrets / PII). Your task: For each provided node, assign ONE integer sensitivity score: - sensitivity_score s in {0,1,2,3,4,5,6,7,8,9,10} Output schema (strict): {"results": [{"nodeId": "string", "sensitivity_score": 0-10 integer, "sensitivity_reason": ["short_reason", "..."], "confidence": 0.0-1.0 number or null }]}--------------------------------------------------------------------SENSITIVITY SCORING RUBRIC (s) -- INTEGER ANCHORS --------------------------------------------------------------------s = 0- Purely structural or decorative; no content and no identifying information. - Examples: layout containers, separators, unlabeled icons. s = 1- Generic public UI labels/controls; not user-specific or session-specific. - Examples: "Home", "Search", "Submit", "Upvote", "Next". s = 2- Public content with semantic meaning but clearly non-personal; safe verbatim. - Examples: generic navigation headings, subreddit names, non-personal post titles. s = 3- Mild contextual info that could be weakly identifying only in aggregate; not tied to an individual. - Examples: generic timestamps, popularity metrics, generic categories. s = 4- Public user-related identifiers; enables lightweight profiling but not private identification. - Examples: public usernames/handles, public participation labels. s = 5- Behavioral or preference signals tied to a user account; supports profiling across contexts. - Examples: joined/subscribed communities, voting history indicators, personalized recommendations. s = 6- Semi-sensitive personal attributes (not secrets) that may cause discomfort or privacy loss. - Examples: inferred interests, activity summaries, account status indicators. s = 7- Direct personal data (non-secret) that clearly identifies a person. - Examples: real name, email address, phone number. s = 8
+
+16 MINIM : Privacy-Aware Minimal View for Agents via Trusted Local Sanitization 
+
+- Highly sensitive personal data; serious privacy risk if exposed. - Examples: precise home address, private messages, financial identifiers. s = 9- Security-critical or authentication-related data; exposure may enable compromise. - Examples: password fields, 2FA/OTP codes, recovery keys. s = 10 - Extremely sensitive secrets or irreversible compromise material. - Examples: plaintext passwords, private cryptographic keys, API tokens/secrets. --------------------------------------------------------------------
+
+17

@@ -1,0 +1,406 @@
+Title: IAPO: Input Attribution-Aware Policy Optimization for Tool Use in Small Multimodal Agents
+
+URL Source: https://arxiv.org/pdf/2606.11652v1
+
+Published Time: Thu, 11 Jun 2026 00:37:57 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+Preprint. Under review. 
+
+# IAPO: Input Attribution-Aware Policy Optimization for Tool Use in Small Multimodal Agents 
+
+Yifan Yang, Zhen Zhang, Jiayi Tian, Liyan Tan, Zheng Zhang 
+
+University of California, Santa Barbara 
+
+{yifanyang,zhen_zhang,jiayi_tian,liyan_tan,zzhang01}@ucsb.edu 
+
+## Abstract 
+
+This paper investigates reinforcement learning (RL) methods for improving tool-calling capabilities in multimodal small language model (SLM) agents. While existing works have explored various reward designs to improve agentic tool-calling ability, these approaches face inherent limitations for SLM training, especially under multimodal scenarios. First, many existing methods evaluate tool use correctness through exact matching against certain ground-truth or predefined formats. However, this assumption is often unsuitable for multimodal tasks, where multiple tool use paths may be valid and annotated tool trajectories are typically unavailable. Second, such sparse and brittle binary rewards provide little guidance on how to improve the underlying decision process, making them particularly difficult for multimodal SLM to learn from. To address these issues, we propose Input Attribution-Aware Policy Optimization (IAPO), an RL algorithm for improving tool use in multimodal SLM by aligning the model’s attribution 1
+
+across input components with that of a stronger teacher. Experiments on Qwen2.5-VL-3B show that the proposed method improves visual question answering accuracy by an average of 3% across six test sets compared with existing visual tool use work, by helping the model attend to the most relevant input evidence. 
+
+## 1 Introduction 
+
+Since the development of methods such as Proximal Policy Optimization (PPO) (Schulman et al., 2017) and Group Relative Policy Optimization (GRPO) (Shao et al., 2024), reinforce-ment learning (RL) has emerged as a central paradigm for improving performance on complex long-horizon reasoning tasks (Xie et al., 2025; Zhang et al., 2025). Owing to its abil-ity to directly optimize sequential decision making, RL has been widely used to train large language models (LLMs) as autonomous agents through online interaction with dynamic rollout trajectories (Zhang et al., 2026). At the same time, the increasing scale of LLMs has made inference increasingly expensive, posing a major obstacle to their practical deployment as agents and thereby motivating growing interest in small language model (SLM) agents. For instance, Kang et al. (2025) propose an agent distillation framework based on supervised fine-tuning (SFT), where a student model learns to imitate the behavior of a stronger teacher agent. More recently, Lyu et al. (2026) introduce a new data collection pipeline for synthesizing training data for RL-based SLM agent training, building on the observation that RL can provide stronger training signals than SFT in agent settings (Mai et al., 2025). Despite these advances, agentic RL training with the vanilla GRPO algorithm still yields suboptimal performance. To address this issue, several recent studies have explored more specialized RL algorithms with fine-grained reward mechanisms that provide more in-formative feedback for tool use in general LLM agents. For instance, ToRL introduces a reward formulation that combines answer correctness with execution-based penalties to 
+
+> 1
+
+Attribution refers to the contribution of each input variable to model’s output (Deng et al., 2026). 
+
+1
+
+> arXiv:2606.11652v1 [cs.LG] 10 Jun 2026
+
+Preprint. Under review. better supervise tool-calling behavior (Li et al., 2025). Similarly, TRM proposes a dedicated process reward model to assess tool invocation quality, thereby enabling explicit verification of tool-call correctness (Ma et al., 2026). However, directly adapting these reward designs does not yield optimal performance for multimodal SLM training, mainly for two reasons. First, existing approaches rely on rigid format checks or exact matching against ground-truth tool trajectories, while multimodal tasks often admit multiple valid tool use paths. For example, when focusing on relevant chart regions, a model may highlight, mask, or draw bounding boxes—different actions that all provide useful visual evidence for reasoning. Second, such binary, match-based rewards are often sparse and brittle, providing limited guidance for SLMs to learn the decision-making process. Furthermore, these methods focus exclusively on the textual domain. In the relatively limited line of work on multimodal tool use, approaches such as VTool-R1 (Wu et al., 2026) and OpenThinkIMG (Su et al., 2025) still rely on the vanilla GRPO algorithm. However, as we show in Section 4.2, multimodal SLMs trained with vanilla GRPO continue to produce a substantial number of misused tool calls even in the later stages of training. This indicates that RL algorithm design for multimodal tool use remains underexplored, particularly for small-scale models. To provide richer guidance for multimodal SLMs during RL training, a natural idea is to leverage a stronger teacher model to provide supervision over the student’s intermediate decision process, inspired by knowledge distillation (Gou et al., 2021). The key challenge, however, is that RL rewards are typically computed from decoded text output, making it difficult to capture the model’s internal knowledge. Fortunately, we find that the attribution of the input to the generated tool call is strongly correlated with tool-call correctness: when the appropriate parts (e.g. definition for correct tool) of the input contribute more to the model’s output, it is substantially more likely to select the correct tool. This observation creates a bridge for designing rewards that reflect the model’s internal knowledge, by using input attribution as a dense supervision signal for online RL. Building on this insight, we propose Input Attribution-Aware Policy Optimization (IAPO), the first method to design a reward specific for SLM training. Specifically, we quantify the contribution of different input components to the generated tool calls, and use the KL divergence between the student and teacher attribution distributions to derive a dense, distillation-style guidance signal. This reward not only improves tool selection, but also provides explicit supervision over the underlying decision-making process. Our key contri-butions are as follows: • We propose the new integrated gradients (IG) scores, which quantify the contribu-tions of different input components to the tool calls. • To transfer the teacher’s tool-calling capability to the SLM during RL training, we propose IAPO, which applies an attribution-based penalty by comparing the IG scores of the student and teacher. • We conduct case studies showing that multimodal SLMs still suffer from tool misuse even after training with vanilla GRPO. Furthermore, we show that directly adapting tool-use reward designs developed for large text-only models is inadequate for achieving optimal performance in multimodal SLM training, as IAPO improves accuracy by more than 3% over these adaptations. 
+
+## 2 Related Works 
+
+In this paper, we consider a multimodal tool-calling setting in which models are prompted to use visual editing tools to improve reasoning performance on visual question answering tasks. While prior work has sought to improve text-only reasoning conditioned on mul-timodal inputs (Shen et al., 2025; Huang et al., 2025), multimodal learning with genuine image-involved tool use has received comparatively little attention until recently. Early inference-time methods introduced intermediate visual reasoning steps to enhance multi-modal reasoning. For instance, Visual Sketchpad (Hu et al., 2024) and Refocus (Fu et al., 2Preprint. Under review. Policy Rollout  Input -Attribution Alignment  
+
+> IAPO Optimization
+> Policy LLM
+> (1) Tool -call generation
+> (2) Tool
+> Execution
+
+## y1 y2 yG…
+
+## Y’ 1 Y’ 2 Y’ G
+
+## …     
+
+> Tool Calls
+> (3) Final answer: y
+> Attribution Penalty 𝑃 𝐴 =𝐷 𝐾𝐿 ෠𝑏 ො𝑎 )
+
+## [I]  [R]  [T 1] [T 2] [P] 
+
+## How many bars are shown in the chart? 
+
+# x  
+
+> [x] [y’]
+> [x] [y’]
+> Policy LLM
+> Teacher LLM
+
+## ො𝑎 
+
+## ෠𝑏   
+
+> 𝑅 1
+> 𝑜𝑢𝑡 𝑅 2
+> 𝑜𝑢𝑡 𝑅 𝐺
+> 𝑜𝑢𝑡
+
+…       
+
+> 𝑅 𝐼𝐴𝑃𝑂 =𝑅 𝑜𝑢𝑡 -𝜆 𝑃 𝐴
+> 𝑅 1
+> 𝐼𝐴𝑃𝑂 𝑅 2
+> 𝐼𝐴𝑃𝑂 𝑅 𝐺
+> 𝐼𝐴𝑃𝑂
+> …
+> Update
+> Policy LLM
+> 𝐴 1𝐴 1𝐴 𝐺
+
+…
+
+Figure 1: Overview of the IAPO method. The attribution penalty PA is computed from the tool-call sequence y′ generated in the first rollout. The final IAPO reward combines the standard outcome-based reward Rout with the attribution penalty PA.2025) allow models to generate visual artifacts or invoke image editing tools, such as crop-ping, highlighting, and masking, during reasoning, thereby enabling iterative focus on task-relevant visual regions. More recently, RL has been adopted to train multimodal agents that learn when and how to invoke tools during reasoning. For example, DeepEyes encourage VLMs to “think with images” by incorporating image-involved tool calls into RL training (Zheng et al., 2025). Along the same line, works like OpenThinkIMG Su et al. (2025) and VTool-R1 (Wu et al., 2026) integrates visual editing tools into an RL fine-tuning framework, allowing VLMs to interleave textual reasoning with intermediate visual operations that improve final task accuracy. These works collectively demonstrate the potential of RL for improving tool-calling performance in VLMs. However, the design of fine-grained intermediate rewards for guiding multimodal tool selection and reasoning remains largely unexplored. 
+
+## 3 Methods 
+
+3.1 Training VLM Agents with Vanilla GRPO 
+
+In this section, we start by presenting the problem formulation under the vanilla GRPO setting and analyze the limitations of vanilla GRPO reward design for visual tool-calling tasks. We follow the vanilla-GRPO-based training framework for visual tool-calling agents introduced in VTool-R1 (Wu et al., 2026). Concretely, we consider a VLM policy πθ , parame-terized by θ, for multimodal tool-calling. In each rollout, the policy takes an image I and a prompt x as input, and generates an output response y.As illustrated in Fig. 2, we divide the input prompt x into an ordered sequence of semantic blocks x = [ b1, b2, . . . , bK ], where each block corresponds to one functional part of the prompt. In this work, we consider four block types: pure-text context ( P), user query ( R), image placeholder ( I), and tool definition ( T). We use τ(k) ∈ { P, R, I, T} to denote the type of block bk. For example, a prompt may be written as x = [ P1, T1, T2, P2, R, I], where the order follows the actual prompt structure. Since the system prompt template is fixed across all samples, we use the same block partition throughout the paper. 3Preprint. Under review. For the rollout process, we adopt a two-turn setup. In the first turn, the model is prompted with input x and image I to generate tool calls y′ ∼ πθ (· | x, I), where the original image I
+
+is processed by code executor T to obtain the intermediate edited image I′ = T (y′, I). In the second turn, the model performs reasoning over the modified visual input to produce the final answer y ∼ πθ (· | x, y′, I, I′). We do not consider settings with more than two turns due to the limited availability of VLM reasoning datasets suitable for sequential tool use. In addition, the long context window introduced by the large number of intermediate image tokens would exceed our computational budget. Existing visual tool-reasoning methods based on vanilla GRPO, such as VTool-R1 and OpenThinkIMG, typically use a binary outcome reward Rout  
+
+> i
+
+, which assigns 1 if the final answer in the i-th response is correct and 0 otherwise. For each multimodal input sample 
+
+(I, x) ∼ D , GRPO samples a group of G responses {y1, . . . , yi, · · · , yG } from the old policy 
+
+πold (· | I, x). The GRPO objective is then defined as 
+
+JGRPO (θ) = ED, {yi }Gi=1∼πold (·| I,x)
+
+"
+
+1
+
+G
+
+> G
+
+# ∑
+
+> i=1
+
+1
+
+|yi| 
+
+> |yi|
+
+# ∑
+
+> t=1
+
+min 
+
+
+
+ri,t(θ) ˆAi, clip (ri,t(θ), 1 − ϵ, 1 + ϵ) ˆAi
+
+
+
+− βDKL [πθ ∥ πref ]
+
+#
+
+,where the scalar ϵ is the clipping threshold in GRPO, β is the coefficient for KL regularization, and πref denotes the reference policy. The token-level importance ratio ri,t(θ) is defined as ri,t(θ) = πθ (yi,t |x,yi,<t )   
+
+> πold (yi,t|x,yi,<t)
+
+for the t-th token in the response yi, and yi,<t denotes the prefix consisting of all tokens before position t. Since the reward is defined at the response level, the same advantage value is shared across all tokens in the same response. Specifically, the group-relative normalized advantage ˆAi for the i-th response is computed as ˆAi = Rout  
+
+> i
+
+− mean ({Rout  
+
+> j
+
+}Gj=1)
+
+std ({Rout  
+
+> j
+
+}Gj=1) ,where mean ({Rout  
+
+> j
+
+}Gj=1) and std ({Rout  
+
+> j
+
+}Gj=1) denote the mean and standard deviation of the outcome rewards across the sampled group, respectively. Although GRPO can improve overall task performance, its vanilla objective optimizes only the correctness of the final output and provides no direct supervision over the quality of intermediate tool use decisions. This creates a severe credit assignment problem for multimodal tool calling: the model may invoke an unnecessary or incorrect tool, attend to irrelevant visual regions, or rely on spurious textual cues, yet still receive a high reward as long as the final answer happens to be correct. This issue is especially problematic for SLMs, whose weaker reasoning and grounding capabilities make them less able to infer correct tool use behavior from sparse outcome-level rewards alone. As a result, SLMs are more likely to overfit to superficial correlations in the prompt or exploit accidental shortcuts, rather than learning a robust tool-selection policy grounded in the relevant multimodal evidence. This limitation is validated by the experimental results in Section 4.2, where the model still suffers from substantial tool misuse even after extensive GRPO training. Therefore, vanilla GRPO cannot reliably distinguish genuinely effective tool use behavior from accidental success, particularly for smaller multimodal agents. 
+
+3.2 IAPO: Input Attribution-Aware Policy Optimization 
+
+In this section, we propose IAPO, an RL algorithm for multimodal SLM training that intro-duces a new reward design combining the final outcome reward Rout with an attribution-based penalty PA. This penalty distills guidance from a stronger teacher model by encour-aging the SLM to focus on the input components that are most relevant for correct tool-use decisions. We first introduce a new integrated gradients (IG) score that forms the core of the penalty, and then present the full IAPO reward formulation. 4Preprint. Under review. 
+
+System prompt template with an example division           
+
+> {Image I} <Image tokens> </Image tokens> {User Query R} <Query> </Query> {Tool T1} def focus_on_columns_with_highlight ... {Tool T2} def focus_on_rows_with_highlight ... {Tool T3} def focus_on_columns_with_mask ... {Tool T4} def focus_on_rows_with_mask ... {Tool T5} def focus_on_columns_with_draw ... {Tool T6} def focus_on_rows_with_draw ... {Pure-text P1} # GOAL #: Based on the above tools, I want you to reason about how to solve the # USER REQUEST # and generate the actions step by step (each action is a python function call) to solve the request. You may need to use the tools above to process the images and make decisions based on the visual outputs of the previous code blocks. You should only use the tools above, you should not use other functions or code that will not be executed. {Pure-text P2} # EXAMPLE: #: Simple question that does not require any tool ... <Thought 0><Action 0><Observation><Edited Image><Thought 1><Answer> # USER Bounding Box Info: x_values_bbox, storing x values and coordinates. y_values_bbox, storing x values and coordinates. The x values in the image are: <x_values>. The y values in the image are: <y_values>. # USER IMAGE stored in image_1, as PIL image.
+
+Figure 2: System prompt template with an example division used in IAPO rollouts. 
+
+Integrated Gradient Score: Intuitively, the IG score uses gradient-based attribution to mea-sure how different semantic blocks in the input prompt x influence the model’s tool-calling behavior. In particular, it captures both implementation invariance and input sensitivity, making it well suited for quantifying the contribution of each input component to the predicted tool call. For each input token i, the IG score is computed by combining its input embedding ei with the corresponding gradient gi of the tool-call score with respect to that embedding. Formally, the IG score is defined as follows. Following the prompt formulation above, we represent the textual input as an ordered sequence of K semantic blocks, x = [ b1, b2, . . . , bK ], where each block bk is assigned a semantic type by the mapping τ(k) ∈ { P, R, I, T}. After combining the textual prompt x
+
+with the input image I and applying the multimodal tokenizer and processor, the VLM produces a merged input embedding matrix E = [ e1, . . . , eS] ∈ RS×d, where S is the total input length after multimodal tokenization and d is the hidden dimension. Let Ωk ⊆{1, . . . , S} denote the set of token indices corresponding to block bk in the merged input sequence. For a given rollout, let y′ = [ y′
+
+1, . . . , y′
+
+L′ ] denote the generated tool-call sequence, where L′
+
+is the sequence length. To measure how the input supports this tool call, we first define a scalar attribution target as the log-probability of the full tool-call sequence under the current policy: 
+
+s(E) = log πθ (y′ | E) = 
+
+L′
+
+# ∑
+
+t=1
+
+log πθ (y′
+
+t | y′
+
+<t, E).In practice, this score is computed by first obtaining the model logits over the vocabulary at each decoding step, converting them into log-probabilities, and then selecting the log-probability of each generated tool-call token. Summing these token-level log-probabilities gives the final sequence-level score s(E).We then compute the gradient of this score with respect to the input embedding for the i-th token: 
+
+gi = ∂s(E)
+
+∂ei
+
+, i = 1, . . . , S.Here, gi ∈ Rd measures how sensitive the tool-call score is to the embedding of the i-th input token. Based on this gradient, we define the token-level attribution using a gradient-times-embedding formulation: 
+
+oi = ∥gi ⊙ ei∥2 ,5Preprint. Under review. where ⊙ denotes element-wise multiplication. Intuitively, oi measures how much the i-th input token contributes to increasing the probability of the generated tool-call sequence, while also taking into account the scale of its embedding representation. Finally, we aggregate token-level attribution within each semantic block Ok = ∑i∈Ωk oi. The resulting block-level score Ok provides an input-grounded attribution signal indicating which prompt components most strongly influence the model’s tool-calling decision. 
+
+Input Attribution-Aware Policy Optimization (IAPO) As we mentioned, IAPO extend GRPO by augmenting the trajectory-level outcome reward with an attribution penalty term. Let ai = {Oa
+
+> 1
+
+, · · · , OaK } and bi = {Ob
+
+> 1
+
+, · · · , ObK } denote the actor and teacher IG scores over the K input parts. After normalizing them into distributions ˆai and ˆbi, we define the attribution alignment penalty as PAi = DKL ( ˆbi ∥ ˆai). We then define the modified trajectory reward as 
+
+RIAPO  
+
+> i
+
+= Rout i − λPAi , (1) where λ controls the strength of the attribution alignment regularization and Rout denote outcome reward. Given a group of G sampled responses associated with the same input, we compute the group-relative advantage as 
+
+AIAPO  
+
+> i
+
+= RIAPO  
+
+> i
+
+− mean ({RIAPO  
+
+> j
+
+}Gj=1)
+
+std ({RIAPO  
+
+> j
+
+}Gj=1) + ϵ .Following standard GRPO, we broadcast AIAPO  
+
+> i
+
+to all response tokens and use the resulting token-level advantage AIAPO  
+
+> i,t
+
+in the clipped surrogate objective. In this way, the policy is encouraged not only to maximize the original task reward, but also to align its tool-calling behavior with the teacher-provided input attribution patterns. 
+
+## 4 Experiments 
+
+In this section, we present the experimental results to show the effectiveness of our IAPO method. We first present a case study to illustrate the motivation and intuition behind our method, followed by comprehensive experiments comparing against existing baselines. Moreover, we include an ablation study analyzing the effects of hyperparameter choices and teacher model selection in Appendix B. 
+
+4.1 Training Details 
+
+We evaluate IAPO on visual question answering tasks with visual editing tools using the Qwen2.5-VL model family (Bai et al., 2025b). We conduct RL training with the VeRL framework (Sheng et al., 2025) and the AdamW optimizer (Loshchilov & Hutter, 2019). For IAPO training on Qwen2.5-VL-3B-Instruct, we first train a Qwen2.5-VL-7B-Instruct teacher model using standard GRPO on the same training set. The IAPO pipeline contains two stages: (1) a short cold-start GRPO phase that equips the model with basic tool-calling capability, and (2) the main IAPO training phase using the reward defined in Eq. (1). Unless otherwise noted, all experiments use Qwen2.5-VL-3B-Instruct as the backbone and are conducted on NVIDIA Tesla A100-40GB GPUs. Details of the training and testing datasets can be found in Appendix A. 
+
+Baselines: We consider two categories of baselines: existing multimodal tool-calling agents and prior methods for intermediate reward design in tool-calling RL. The baselines are summarized below: • Off-the-shelf Models: We report inference-only results for GPT-4o (OpenAI, 2024) and Qwen2.5-VL-3B models. 6Preprint. Under review. 
+
+Figure 3: Case study: Count for misused tool calls and IG Scores with selected dataset. We use Qwen2.5-VL-3B as the policy model and a well-trained Qwen2.5-VL-7B model as the teacher. Both models are trained with the vanilla GRPO method used in VTool-R1. • VTool-R1: A representative multimodal tool-calling baseline trained with vanilla GRPO. • TRM: TRM introduces an additional reward model to verify the correctness of tool calls, making it a relevant baseline for tool-calling reward design. For a fair and convenient comparison, we reimplement TRM in our visual setting by using GPT-4o as the verifier. • ToRL: ToRL designs a tool-calling reward based on both final-task accuracy and tool-execution penalties. Following its core idea, we incorporate the same −0.5 penalty for failed tool executions as a comparison baseline. 
+
+Tool set: We follow VTool-R1 for the design of tool set for a fair compreison, which contains a total of 6 visual editing tools across three types (mask out, draw box and highlight color) with Python code. The definitions of these tools are as follows: • focus_on_columns_with_highlight : highlights relevant columns with a light red overlay. • focus_on_rows_with_highlight : highlights relevant rows with a light red overlay. • focus_on_columns_with_mask : masks irrelevant columns with a white overlay. • focus_on_rows_with_mask : masks irrelevant rows with a white overlay. • focus_on_columns_with_draw : marks relevant columns with a solid red bounding box. • focus_on_rows_with_draw : marks relevant rows with a solid red bounding box. 
+
+4.2 Case Study on the Intuition Behind IAPO 
+
+To build intuition for IAPO, we conduct a case study that analyzes both tool-calling behavior and input attribution patterns during training under a simplified experimental setup. This study is designed to highlight the limitations of vanilla GRPO training and the utility of IG scores in diagnosing tool-selection errors. Specifically, we examine how the model’s tool usage evolves over time and whether IG score can reveal failure modes in tool calling. To make the optimal tool choice clear, we select 256 samples from the ChartQA validation set that are clearly column-divisible or row-divisible , meaning that the chart contains well-separated vertical or horizontal groups, bars, or regions such that column-based or row-based tools can be applied naturally and reliably. This construction allows us to determine which type of tool should be selected from the tool set introduced in Section 4.1 clearly. To analyze tool-calling behavior and IG attribution during training, we evaluate the selected validation subset every 5 training steps throughout vanilla GRPO training (the same training scheme used in VTool-R1) on a 3B model. At each checkpoint, we record both the total number of misused tool calls and the normalized IG scores assigned to the right and misused part of tool definitions. Specifically, for column-divisible plots, column-based tools are regarded as correct and row-based tools as incorrect, while the opposite holds for row-divisible plots. The results are shown in Fig. 3. Specifically, we report the total number of incorrect tool calls across training steps, where an incorrect call corresponds to applying row-based tools to column-divisible charts or column-based tools to row-divisible charts. We also compute the mean IG score over the prompt tokens associated with different tool groups. As a reference point, we further evaluate a well-trained 7B teacher model under the 7Preprint. Under review.                                                                 
+
+> Chart Table Avg Methods CharXiv Horizontal Vertical VWTQ VWTQ_syn VTabFact
+> Large Scale Multimodal LLMs
+> GPT-4o 47.9 75.7 81.7 67.5 72.8 91.6 72.9 Qwen-2.5VL-7B 31.0 69.6 48.7 37.5 52.6 45.6 47.5 + VTool-R1 (GRPO) 39.2 81.3 75.4 52.6 68.4 69.1 64.3
+> Small Scale Multimodal LLMs
+> Qwen-2.5VL-3B 18.9 25.7 22.8 14.2 26.3 36.8 24.1 + VTool-R1 (GRPO) 23.1 63.7 60.9 46.6 52.6 70.5 52.9 + TRM* 23.6 64.3 62.7 44.3 54.6 70.9 53.4 + ToRL* 24.1 64.0 63.1 44.4 56.1 71.0 53.8 + IAPO 26.1 66.0 64.1 46.7 60.2 72.1 55.9
+
+Table 1: Performance comparison of baseline methods. * Since TRM and ToRL were origi-nally proposed for text-only tool-use settings, we adapt them to visual tool-use setup. For TRM, we directly use GPT-4o as the tool-call reward model for convenience, instead of training a separate offline model on GPT-4o-generated data as done in original paper. same protocol and report its tool-misuse count and IG attribution statistics. Based on these results, we draw the following observations: 
+
+SLM still make tool-selection errors after GRPO training. Even after 100 steps of GRPO training, the SLM still makes 30 misused tool calls out of 256 evaluated samples. This occurs because an incorrect tool call does not necessarily prevent the model from reaching the correct final answer; in some cases, the model can recover through its own reasoning ability. As a result, outcome-based RL training may fail to adequately penalize tool-selection errors. This issue is even more pronounced in the early stage of training, where nearly half of the tool calls are incorrect. These results suggest that tool-selection accuracy remains a key challenge for smaller multimodal LLMs. 
+
+IG scores reflect tool-call correctness. By examining the attribution curves for different tool groups, we observe that the IG score assigned to the correct input parts gradually increases during training and eventually becomes consistently higher than that assigned to the misused tool definitions. This trend aligns closely with the decrease in the number of incorrect tool calls. The result suggests that tool misuse is strongly correlated with misallocated attention over the prompt, and that IG scores provide a meaningful signal for diagnosing tool-selection failures. 
+
+Larger models exhibit stronger tool-selection ability. We further observe that the 7B teacher model achieves better tool-selection accuracy with only 4 incorrect tool calls and shows a clearer separation between the IG scores assigned to correct versus incorrect input parts. This indicates that larger models not only select tools more reliably, but also exhibit more appropriate attribution patterns over the input. These findings support the use of a stronger teacher model to guide the student policy during training. 
+
+4.3 Comparison with Baselines 
+
+In this section, we compare our IAPO method with the baseline methods introduced in Section 4.1 on chart and table question-answering tasks. Specifically, for each method, we train two separate models for the chart and table settings, and report test accuracy on six evaluation sets in Table 1. From the results, we draw the following conclusions: 
+
+Small MLLMs struggle to use tools effectively. As shown in Table 1, the off-the-shelf Qwen-2.5VL-3B model has limited ability to solve these tasks through tool use. Simply prompting the model to call tools at inference time does not lead to strong performance. In contrast, larger models such as Qwen-2.5VL-7B and GPT-4o achieve substantially better results under inference-only tool use, suggesting that effective tool use remains challenging for small multimodal models. 
+
+Existing reward designs remain suboptimal. Recent reward-design methods, such as TRM and ToolRL, improve RL-based visual tool calling over vanilla GRPO. However, they still 8Preprint. Under review. 
+
+Figure 4: Tool use behaviors during training. consistently underperform IAPO. Notably, IAPO achieves stronger performance than TRM even when paired with a substantially smaller teacher model. This result suggests that deterministic verification of tool-call correctness is not well suited to visual tool-calling tasks, where multiple tool choices may be valid for solving the same problem. 
+
+IAPO exhibits stronger generalization ability. As shown by the results on the out-of-distribution CharXiv benchmark, IAPO achieves substantially better performance than existing methods. This suggests that IAPO generalizes better beyond the training dis-tribution. We attribute this advantage to the transfer of input-grounding behavior from the teacher model, which helps the policy focus on more relevant evidence and reduces overfitting during RL training. 
+
+4.3.1 Training Curve and Detailed Analysis 
+
+In this section, we further analyze the training dynamics of IAPO by comparing it with the vanilla GRPO baseline, VTool-R1, using training-time tool use statistics. Due to limited com-putational resources, we report validation results over the first 150 training steps. As shown in Fig. 4, IAPO exhibits substantially stronger tool use behavior than VTool-R1 throughout training. In particular, IAPO maintains a much higher tool-call ratio, quickly increasing to nearly 1.0 and remaining stable thereafter, whereas VTool-R1 shows a substantially lower and more unstable tendency to invoke tools. This indicates that IAPO more effectively encourages the model to actively rely on tools during reasoning, rather than falling back to pure internal reasoning. More importantly, although the tool-call success rate of IAPO is initially low, it rises sharply in the later stage of training and eventually approaches 100%, significantly surpassing VTool-R1. We hypothesize that this delayed improvement arises because IAPO optimizes a stricter objective: the model must not only call a tool, but also ground that decision in the appropriate input evidence. As a result, the model first learns to increase its willingness to use tools, reflected in the high tool-call ratio, and then gradually aligns its input attribution with the teacher’s guidance, which leads to a rapid improvement in tool-selection accuracy. In contrast, VTool-R1 lacks such process-level supervision, resulting in both a lower tool-call ratio and a relatively stagnant tool-call success rate. 
+
+## 5 Conclusion 
+
+In this paper, we propose IAPO a method that improves multimodal SLM tool use through attribution-guided policy optimization. We introduce an integrated gradients–based attribu-tion penalty to quantify how different parts of the input contribute to the generated tool call, and use the discrepancy between the student’s IG scores and those of an external teacher as a penalty during training. This attribution-based guidance encourages the model to attend to the most relevant input regions, leading to better tool selection. Through case studies and experiments on a widely used visual tool-calling framework, we demonstrate both the soundness of our motivation and the effectiveness of IAPO method. 9Preprint. Under review. 
+
+## References 
+
+Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025a. Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin. Qwen2.5-vl technical report, 2025b. URL https://arxiv.org/abs/2502.13923 .Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai Zhang, Hong Wang, Shiyang Li, Xiyou Zhou, and William Yang Wang. Tabfact: A large-scale dataset for table-based fact verification. In International Conference on Learning Representations (ICLR) , 2020. Huiqi Deng, Hongbin Pei, Quanshi Zhang, and Mengnan Du. Attribution explanations for deep neural networks: A theoretical perspective. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2026. Xingyu Fu, Minqian Liu, Zhengyuan Yang, John Corring, Yijuan Lu, Jianwei Yang, Dan Roth, Dinei Florencio, and Cha Zhang. Refocus: Visual editing as a chain of thought for structured image understanding. In Proceedings of the 42nd International Conference on Machine Learning (ICML) , 2025. Jianping Gou, Baosheng Yu, Stephen J Maybank, and Dacheng Tao. Knowledge distillation: A survey. International journal of computer vision , 129(6):1789–1819, 2021. Yushi Hu, Weijia Shi, Xingyu Fu, Dan Roth, Mari Ostendorf, Luke Zettlemoyer, Noah A Smith, and Ranjay Krishna. Visual sketchpad: Sketching as a visual chain of thought for multimodal language models. Advances in Neural Information Processing Systems , 37: 139348–139379, 2024. Wenxuan Huang, Bohan Jia, Zijie Zhai, Shaosheng Cao, Zheyu Ye, Fei Zhao, Zhe Xu, Xu Tang, Yao Hu, and Shaohui Lin. Vision-r1: Incentivizing reasoning capability in multimodal large language models. arXiv preprint arXiv:2503.06749 , 2025. Minki Kang, Jongwon Jeong, Seanie Lee, Jaewoong Cho, and Sung Ju Hwang. Distilling llm agent into small models with retrieval and code tools. arXiv preprint arXiv:2505.17612 ,2025. Yoonsik Kim, Moonbin Yim, and Ka Yeon Song. Tablevqa-bench: A visual question answer-ing benchmark on multiple table domains. arXiv preprint arXiv:2404.19205 , 2024. Xuefeng Li, Haoyang Zou, and Pengfei Liu. Torl: Scaling tool-integrated rl. arXiv preprint arXiv:2503.23383 , 2025. Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations (ICLR) , 2019. Yuanjie Lyu, Chengyu Wang, Lei Shen, Jun Huang, and Tong Xu. Mock worlds, real skills: Building small agentic language models with synthetic tasks, simulated environments, and rubric-based rewards. arXiv preprint arXiv:2601.22511 , 2026. Da Ma, Ziyue Yang, Hongshen Xu, Haotian Fang, Lu Chen, and Kai Yu. Empowering llm tool invocation with tool-call reward model. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=LnBEASInVr .Xinji Mai, Haotian Xu, Zhong-Zhi Li, Weinong Wang, Jian Hu, Yingying Zhang, Wen-qiang Zhang, et al. Agent rl scaling law: Agent rl with spontaneous code execution for mathematical problem solving. arXiv preprint arXiv:2505.07773 , 2025. Ahmed Masry, Do Xuan Long, Jia Qing Tan, Shafiq Joty, and Enamul Hoque. Chartqa: A benchmark for question answering about charts with visual and logical reasoning. In 
+
+Findings of the Association for Computational Linguistics: ACL 2022 , pp. 2263–2279, 2022. 10 Preprint. Under review. OpenAI. Gpt-4 technical report, 2024. URL https://arxiv.org/abs/2303.08774 .Panupong Pasupat and Percy Liang. Compositional semantic parsing on semi-structured ta-bles. In Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics (ACL) , 2015. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Haozhan Shen, Peng Liu, Jingcheng Li, Chunxin Fang, Yibo Ma, Jiajia Liao, Qiaoli Shen, Zilun Zhang, Kangjia Zhao, Qianqian Zhang, et al. Vlm-r1: A stable and generalizable r1-style large vision-language model. arXiv preprint arXiv:2504.07615 , 2025. Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In 
+
+Proceedings of the Twentieth European Conference on Computer Systems , pp. 1279–1297, 2025. Zhaochen Su, Linjie Li, Mingyang Song, Yunzhuo Hao, Zhengyuan Yang, Jun Zhang, Guanjie Chen, Jiawei Gu, Juntao Li, Xiaoye Qu, et al. Openthinkimg: Learning to think with images via visual tool reinforcement learning. arXiv preprint arXiv:2505.08617 , 2025. Zirui Wang, Mengzhou Xia, Luxi He, Howard Chen, Yitao Liu, Richard Zhu, Kaiqu Liang, Xindi Wu, Haotian Liu, Sadhika Malladi, Alexis Chevalier, Sanjeev Arora, and Danqi Chen. Charxiv: Charting gaps in realistic chart understanding in multimodal llms. In 
+
+Advances in Neural Information Processing Systems , volume 37, 2024. Mingyuan Wu, Jingcheng Yang, Jize Jiang, Meitang Li, Kaizhuo Yan, Hanchao Yu, Minjia Zhang, ChengXiang Zhai, and Klara Nahrstedt. VTool-r1: VLMs learn to think with images via reinforcement learning on multimodal tool use. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id= Idst6X6gmy .Tian Xie, Zitian Gao, Qingnan Ren, Haoming Luo, Yuqian Hong, Bryan Dai, Joey Zhou, Kai Qiu, Zhirong Wu, and Chong Luo. Logic-rl: Unleashing llm reasoning with rule-based reinforcement learning. arXiv preprint arXiv:2502.14768 , 2025. Guibin Zhang, Hejia Geng, Xiaohang Yu, Zhenfei Yin, Zaibin Zhang, Zelin Tan, Heng Zhou, Zhong-Zhi Li, Xiangyuan Xue, Yijiang Li, Yifan Zhou, Yang Chen, Chen Zhang, Yutao Fan, Zihu Wang, Songtao Huang, Francisco Piedrahita Velez, Yue Liao, Hongru WANG, Mengyue Yang, Heng Ji, Jun Wang, Shuicheng YAN, Philip Torr, and LEI BAI. The landscape of agentic reinforcement learning for LLMs: A survey. Transactions on Machine Learning Research , 2026. ISSN 2835-8856. URL https://openreview.net/forum? id=RY19y2RI1O . Survey Certification. Kaiyan Zhang, Yuxin Zuo, Bingxiang He, Youbang Sun, Runze Liu, Che Jiang, Yuchen Fan, Kai Tian, Guoli Jia, Pengfei Li, et al. A survey of reinforcement learning for large reasoning models. arXiv preprint arXiv:2509.08827 , 2025. Ziwei Zheng, Michael Yang, Jack Hong, Chenxiao Zhao, Guohai Xu, Le Yang, Chao Shen, and Xing Yu. Deepeyes: Incentivizing" thinking with images" via reinforcement learning. 
+
+arXiv preprint arXiv:2505.14362 , 2025. 11 Preprint. Under review. 
+
+## A Dataset 
+
+Our training and evaluation data are adapted from Fu et al. (2025). We consider two categories of tasks, Chart and Table , both of which require structured visual reasoning over charts or tables. • The Chart tasks include data from CharXiv (Wang et al., 2024) and ChartQA (Masry et al., 2022). The ChartQA dataset provides 14,344 training examples and 813 validation examples, covering a mixture of vertical and horizontal bar charts. In addition, ReFocus collects 444 VQA pairs on horizontal bar charts and 382 VQA pairs on vertical bar charts for testing. The CharXiv dataset is used only for evaluation, serving as a benchmark for assessing the generation ability of different methods, and contains 143 visual question answering (VQA) pairs. • The Table tasks include three datasets: VWTQ (Pasupat & Liang, 2015), VWTQ_syn (Kim et al., 2024), and VTabFact (Chen et al., 2020). For each dataset, we use 70% of samples for training and reserve the remaining 30% for evaluation, yielding three separate test sets. 
+
+## B Ablation 
+
+B.1 Ablation for Teacher models 
+
+In this work, we consider two types of teacher models: off-the-shelf models used directly as teachers, and RL-trained models used as teachers. We further investigate whether a more advanced model can provide stronger supervision. Table 2 reports the validation accuracy at 200 training steps for different teacher choices. We observe that the RL-trained teacher achieves the best performance. This result is consistent with Table 1, where the RL-trained 7B model performs substantially better than the RL-trained 3B model, indicating that it can provide more effective guidance for small-model tool calling. In contrast, using a more advanced teacher such as Qwen3-VL-8B (Bai et al., 2025a) does not lead to optimal perfor-mance, likely because the larger discrepancy in internal mechanisms makes its attribution patterns less suitable for transferring to the student. Therefore, we recommend selecting teachers from the same model family whenever possible.         
+
+> Model Qwen-2.5VL-7B 7B+GRPO Qwen3-VL-8B 8B+GRPO Accuracy 68.5 70.4 64.3 65.2
+
+Table 2: Ablation for teacher models. 
+
+B.2 Ablation for Hyper-parameter search 
+
+We also conduct a hyperparameter study on the importance-score coefficient λ and used in IAPO. The results are reported in Table 3. As shown in the table, a relatively small coefficient of 0.1 combined with a decay rate of 0.01 achieves the best performance.         
+
+> λ0.05 0.1 0.5 1Accuracy 68.1 70.4 69.4 64.4
+
+Table 3: Ablation for importance-score coefficient λ.12 Preprint. Under review. 
+
+## C Full Prompt and Prompt Decomposition Strategy 
+
+System prompt template with an example division 
+
+{Image I} <Image tokens> </Image tokens> {User Query R} <Query> </Query> {Pure-text P1} Here are some tools that can help you. All are python codes. They are in tools.py and will be imported for you. You will be given a table figure: image_1 and a question. Notice that you, as an AI assistant, are not good at answering questions when there are too many unnecessary and irrelevant information. You should determine which are the relevant columns to the question, and specify them in a python list. You should use the given column headers. You should also determine which are the relevant rows to the question, and specify them in a python list. You should use the given row headers. You could select the tools to focus on some columns / rows, or mask out some columns / rows. Use whichever tool you think is more appropriate. Below are the tools in tools.py: 
+
+``` python {Tool Definition T1}def focus_on_columns_with_highlight ( image , columns_to_focus_on , all_columns_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific columns of the image . It does this by adding light transparent red highlight to the columns that need to be focused on . For example , you can focus on the columns in a table that are relevant to your analysis . Return the drawed image . Args : image ( PIL . Image . Image ): the input image columns_to_mask ( List [ str ]) : a list of column names to focus on . all_columns_bounding_boxes ( Dict [ Dict ]]) : a dictionary of bounding boxes for all columns in the image . key is column name and value is the bounding box of that column . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_columns ( PIL . Image . Image ): the image with specified columns focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_columns =focus_on_columns_with_highlight ( image , [" Year ", " Name "] , {" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.3 , 'y2 ': 0.9} , " Team ": {'x1 ':0.4 , 'y1 ': 0.1 , 'x2 ': 0.6 , 'y2 ': 0.9} , " Name ": {'x1 ': 0.7 , 'y1 ':0.1 , 'x2 ': 0.9 , 'y2 ': 0.9}}) display ( image_with_focused_columns ) \"\"\" {Tool Definition T2}def focus_on_rows_with_highlight ( image , rows_to_focus_on , all_rows_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific rows of the image . It does this by adding light transparent red highlight to the rows that need to be focused on . For example , you can focus on the rows in a table that are relevant to your analysis . Return the drawed image . 
+
+13 Preprint. Under review. 
+
+Args : image ( PIL . Image . Image ): the input image rows_to_focus_on ( List [ str ]) : a list of row headers to focus on . all_rows_bounding_boxes ( Dict [ Dict ]) : a dictionary of bounding boxes for all rows in the image . key is row header and value is the bounding box of that row . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_rows ( PIL . Image . Image ): the image with specified rows focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_rows = focus_on_rows_with_highlight ( image , ["1972"] , [" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.9 , 'y2 
+
+': 0.15} , "1969": {'x1 ': 0.1 , 'y1 ': 0.2 , 'x2 ': 0.9 , 'y2 ': 0.5} , "1972": {'x1 ': 0.1 , 'y1 ': 0.6 , 'x2 ': 0.9 , 'y2 ': 0.9}]) display ( image_with_focused_rows ) \"\"\" {Tool Definition T3}def focus_on_columns_with_mask ( image , columns_to_focus_on , all_columns_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific columns of the image . It does this by masking out the columns that are not needed . For example , you can focus on the columns in a table that are relevant to your analysis and ignore the rest . Return the masked image . Args : image ( PIL . Image . Image ): the input image columns_to_mask ( List [ str ]) : a list of column names to focus on . all_columns_bounding_boxes ( Dict [ Dict ]]) : a dictionary of bounding boxes for all columns in the image . key is column name and value is the bounding box of that column . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_columns ( PIL . Image . Image ): the image with specified columns focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_columns = focus_on_columns ( image , [" Year ", " Name "] , {" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.3 , 'y2 ':0.9} , " Team ": {'x1 ': 0.4 , 'y1 ': 0.1 , 'x2 ': 0.6 , 'y2 ': 0.9} , "Name ": {'x1 ': 0.7 , 'y1 ': 0.1 , 'x2 ': 0.9 , 'y2 ': 0.9}}) display ( image_with_focused_columns ) \"\"\" {Tool Definition T4}def focus_on_rows_with_mask ( image , rows_to_focus_on , all_rows_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific rows of the image . It does this by masking out the rows that are not needed . For example , you can focus on the rows in a table that are relevant to your analysis and ignore the rest . 
+
+14 Preprint. Under review. 
+
+Return the masked image . Args : image ( PIL . Image . Image ): the input image rows_to_focus_on ( List [ str ]) : a list of row headers to focus on . all_rows_bounding_boxes ( Dict [ Dict ]) : a dictionary of bounding boxes for all rows in the image . key is row header and value is the bounding box of that row . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_rows ( PIL . Image . Image ): the image with specified rows focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_rows = focus_on_rows ( image , ["1972"] , [" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.9 , 'y2 ': 0.15} , "1969": {'
+
+x1 ': 0.1 , 'y1 ': 0.2 , 'x2 ': 0.9 , 'y2 ': 0.5} , "1972": {'x1 ': 0.1 , 
+
+'y1 ': 0.6 , 'x2 ': 0.9 , 'y2 ': 0.9}]) display ( image_with_focused_rows ) \"\"\" {Tool Definition T5}def focus_on_columns_with_draw ( image , columns_to_focus_on , all_columns_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific columns of the image . It does this by drawing a red box around the columns that need to be focused on . For example , you can focus on the columns in a table that are relevant to your analysis . Return the drawed image . Args : image ( PIL . Image . Image ): the input image columns_to_mask ( List [ str ]) : a list of column names to focus on . all_columns_bounding_boxes ( Dict [ Dict ]]) : a dictionary of bounding boxes for all columns in the image . key is column name and value is the bounding box of that column . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_columns ( PIL . Image . Image ): the image with specified columns focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_columns = focus_on_columns ( image , [" Year ", " Name "] , {" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.3 , 'y2 ':0.9} , " Team ": {'x1 ': 0.4 , 'y1 ': 0.1 , 'x2 ': 0.6 , 'y2 ': 0.9} , "Name ": {'x1 ': 0.7 , 'y1 ': 0.1 , 'x2 ': 0.9 , 'y2 ': 0.9}}) display ( image_with_focused_columns ) \"\"\" {Tool Definition T6}def focus_on_rows_with_draw ( image , rows_to_focus_on , all_rows_bounding_boxes ): \"\"\" This function is useful when you want to focus on some specific rows of the image . 
+
+15 Preprint. Under review. 
+
+It does this by drawing a red box around the rows that need to be focused on . For example , you can focus on the rows in a table that are relevant to your analysis . Return the drawed image . Args : image ( PIL . Image . Image ): the input image rows_to_focus_on ( List [ str ]) : a list of row headers to focus on . all_rows_bounding_boxes ( Dict [ Dict ]) : a dictionary of bounding boxes for all rows in the image . key is row header and value is the bounding box of that row . Each bounding box is in the format {'x1 ': x1 , 'y1 ': y1 , 'x2 ': x2 , 'y2 ': y2 }. Returns : image_with_focused_rows ( PIL . Image . Image ): the image with specified rows focused on Example : image = Image . open (" sample_img . jpg ") image_with_focused_rows = focus_on_columns_with_highlight ( image , ["1972"] , [" Year ": {'x1 ': 0.1 , 'y1 ': 0.1 , 'x2 ': 0.9 , 'y2 
+
+': 0.15} , "1969": {'x1 ': 0.1 , 'y1 ': 0.2 , 'x2 ': 0.9 , 'y2 ': 0.5} , "1972": {'x1 ': 0.1 , 'y1 ': 0.6 , 'x2 ': 0.9 , 'y2 ': 0.9}]) display ( image_with_focused_rows ) \"\"\" 
+
+``` 
+
+{Pure-text P2} # GOAL #: Based on the above tools, I want you to reason about how to solve the # USER REQUEST # and generate the actions step by step (each action is a python function call) to solve the request. You may need to use the tools above to process the images and make decisions based on the visual outputs of the previous code blocks. You should only use the tools above, you should not use other functions or code which will not be executed. # REQUIREMENTS #: 1. The generated actions can resolve the given user request # USER REQUEST # perfectly. The user request is reasonable and can be solved. Try your best to solve the request. 2. The arguments of a tool must be the same format specified in # TOOL LIST #; 3. If you think you got the answer, use ANSWER: <your answer> Please extract the final answer in FINAL ANSWER: <final answer> and ends with TERMINATE. 4. All images in the initial user request are stored in PIL Image objects named image_1, image_2, ..., image_n. You can use these images in your code blocks. Use display() function to show the image in the notebook for you too see. 5. Use as few tools as possible. Only use the tools for the use cases written in the tool description. You can use multiple tools in a single action. 6. If you have multiple answers, please separate them with || marks. For example, if the answer is ’Alice’ and ’Bob’, you should write ’Alice||Bob’. 7. When you focus on columns in the image, most like you need to look at multiple columns instead of a single one. 8. If you do not think you have enough information to answer the question on the images returned by the tools, you should directly answer the question based on the original image. Below are some examples of how to use the tools to solve the user requests. You can refer to them for help. You can also refer to the tool descriptions for more information. 9. Only one turn of action, ACTION 0, is allowed. You must provide the answer after maximum one ACTION call. # EXAMPLE: Simple question that does not require any tool # USER REQUEST #: <A image here> What is the title of this table? 
+
+16 Preprint. Under review. 
+
+# USER Bounding Box Info: columns_bbox, where keys are column headers and values are column bounding boxes. rows_bbox, where keys are row headers and values are row bounding boxes. The columns in the image are: ["Grade", "Mentor", "Salary"]. The rows in the image start with: ["Grade", "A", "B", "C"]. # USER IMAGE stored in image_1, as PIL image. # RESULT #: THOUGHT 0: The question does not require any tool. I can see the title of the table is "Customer Information". ACTION 0: No action needed. ANSWER: The title of the table is "Customer Information". FINAL ANSWER: Customer Information. TERMINATE # EXAMPLE: Focus on specific columns in the image # USER REQUEST #: <A image here> Who had the same game version as John Roth? # USER Bounding Box Info: columns_bbox, where keys are column headers and values are column bounding boxes. rows_bbox, where keys are row headers and values are row bounding boxes. The columns in the image are: [’Manager Name’, ’Game Version’, ’Game Score’]. The rows in the image start with: [’Manager Name’, ’John Roth’, ’Alice Smith’, ’Bob Johnson’]. # USER IMAGE stored in image_1, as PIL image. # RESULT #: THOUGHT 0: To identify who had the same game version as John Roth, I need to focus on the ’Game Version’ column and the ’Manager Name’ column. Also, I need to focus on all the rows so I do not need to focus on some specific rows. ACTION 0: 
+
+``` python image_with_focused_columns = focus_on_columns_with_draw ( image \_1 , [" Game Version ", " Manager Name "] , columns \ _bbox ) display ( image_with_focused_columns ) 
+
+``` 
+
+OBSERVATION: Execution success. The output is as follows: <the image outputs of the code is added as the second image> THOUGHT 1: Now I can see the ’Game Version’ column and the ’Manager Name’ column more clearly. The game version of John Roth is ’v1.2’. Other people with the same game version are ’Alice Smith’ and ’Bob Johnson’. ANSWER: ’Alice Smith’ and ’Bob Johnson’ had the same game version as John Roth are. FINAL ANSWER: Alice Smith||Bob Johnson. TERMINATE # EXAMPLE: Focus on specific rows in the image # USER REQUEST #: <A image here> How many games did Josh win after 1996? # USER Bounding Box Info: columns_bbox, where keys are column names and values are column bounding boxes. rows_bbox, where keys are row headers and values are row bounding boxes. The columns in the image are: ["Rank", "Year", "Score", "Month"]. The rows in the image start with: ["Rank", "0", "1", "2", "3", "4", "5"]. # USER IMAGE stored in image_1, as PIL image. # RESULT #: THOUGHT 0: This table is about the games played by Josh that he won. I do not need to focus on any specific columns. I need to focus on the rows with the year after 1996. Three rows have year after 1996: one has year 1997 and this row starts with "3", one has year 1998 and this row starts with "4", and one has year 1999 and this row starts with "5". So I will focus on the rows with row starters "3", "4", and "5". ACTION 0: 
+
+``` python image_with_focused_rows = focus_on_rows_with_highlight ( image \_1 , ["3" , "4" , "5"] , rows \ _bbox ) display ( image_with_focused_rows ) 
+
+``` 
+
+OBSERVATION: Execution success. The output is as follows: <the image outputs of the code is added as the second image> THOUGHT 1: I can see that Josh won 3 games after 1996. 
+
+17 Preprint. Under review. 
+
+ANSWER: Josh won 3 games after 1996. FINAL ANSWER: 3. TERMINATE # EXAMPLE: Focus on specific columns and specific rows in the image # USER REQUEST #: <A image here> what is the sum of annual earnings after 2006? # USER Bounding Box Info: columns_bbox where keys are column names and values are column bounding boxes. rows_bbox, where keys are row headers and values are row bounding boxes. The columns in the image are: ["Index", "Year", "Cost", "Earning"]. The rows in the image start with: ["Index", "0", "1", "2", "3", "4", "5"]. # USER IMAGE stored in image_1, as PIL image. # RESULT #: THOUGHT 0: I need to focus on the ’Year’ column and the ’Earning’ column. I also need to focus on the rows with years after 2006. The row with year being 2006 starts with "3". So I will focus on the rows starting with "4", and "5". ACTION 0: 
+
+``` python image_with_focused_columns = focus_on_columns_with_mask ( image \_1 , [" Year ", " Earning "] , columns \ _bbox ) image_with_focused_rows = focus_on_rows_with_draw ( image_with_focused_columns , ["4" , "5"] , rows \ _bbox ) display ( image_with_focused_rows ) 
+
+``` 
+
+OBSERVATION: Execution success. The output is as follows: <the image outputs of the code is added as the second image> THOUGHT 1: I can see that the annual earnings after 2006 are $165,498 and $198,765. The sum of the annual earnings after 2006 is $364,263. ANSWER: The sum of the annual earnings after 2006 is $364,263. FINAL ANSWER: 364263. TERMINATE. # USER Bounding Box Info: x_values_bbox, storing x values and coordinates. y_values_bbox, storing x values and coordinates. The x values in the image are: <x_values>. The y values in the image are: <y_values>. # USER IMAGE stored in image_1, as PIL image. 
+
+18

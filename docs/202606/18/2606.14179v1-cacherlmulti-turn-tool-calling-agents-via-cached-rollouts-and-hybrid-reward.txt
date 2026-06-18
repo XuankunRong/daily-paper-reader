@@ -1,0 +1,725 @@
+Title: CacheRL:Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+URL Source: https://arxiv.org/pdf/2606.14179v1
+
+Published Time: Mon, 15 Jun 2026 00:39:45 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# CacheRL:Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward 
+
+> Md Amirul Islam, Sumiran Thakur, Huancheng Chen, Su Min Park, Jiayun Wang, Gyuhak Kim
+> Center for Advanced AI, Accenture
+
+Abstract 
+
+We present CacheRL, a system for training small agent foundation models that achieves 92% process accuracy on multi-step tool-calling tasks, approaching GPT-5’s 94% while requiring 100 × less compute. Our approach addresses three challenges in practical agent training: transferring tool-calling knowledge from large models at scale, enabling reinforcement learning without costly live tool execution, and learning robustly from noisy cached environments. CacheRL introduces three key innovations. First, a 
+
+hybrid thinking trajectory pipeline augments agent trajectories with LLM-generated reasoning traces, producing training examples that teach models not only what tools to call but also why . Second, the CacheAgentLoop eliminates live execution costs through a three-tier fuzzy cache, while preserving trajectory fidelity using token-level masking. Third, a cache-tier-aware reward dynamically adjusts answer-quality weights to avoid penalizing models for cache-induced limitations. Through iterative SFT and GRPO training, CacheRL improves Qwen3-4B-Thinking’s validation reward from 0.43 to 0.78. On public agentic tool-calling benchmarks, our model achieves competitive performance against frontier models such as GPT-5. Ablation studies show that removing knowledge transfer reduces performance by 41%, while cache-aware rewards contribute a 17% improvement. Surprisingly, reinforcement learning improves training stability but yields limited gains beyond strong SFT, suggesting that data quality and reward design are more important than complex optimization for building practical small agent models. 
+
+## 1. Introduction 
+
+The vision of autonomous AI agents that can leverage diverse tools to solve complex, multi-step problems is rapidly becoming reality. Frontier models such as GPT-5 and Claude demonstrate impres-sive capabilities in orchestrating multiple tools, from code interpreters and web search to APIs and databases, across long conversations. However, these large models are impractical for widespread deployment due to computational costs, latency constraints, and data privacy concerns. Building small, efficient agent foundation models that can match the tool-calling capabilities of their larger counterparts is essential for making AI agents ubiquitous. The key challenge lies not just in size reduction but in preserving the generality and robustness that makes foundation models valuable. We need small models that can handle diverse tool ecosystems, not just specialized for particular domains, while maintaining the reasoning capabilities necessary for long horizon, multi turn interactions. This requires effective knowledge transfer from large models that have already learned these complex behaviors from vast training corpora. 
+
+The Promise and Challenge of Small Agent Models. Recent 4B-parameter models like Qwen3-4B-Thinking (Team, 2025) show that small models can achieve strong reasoning capabilities through structured thinking. However, extending these capabilities to multi-turn tool calling presents unique challenges. The model must not only understand tool schemas and generate valid calls but also maintain context across turns, reason about tool outputs, and synthesize coherent responses. While supervised fine-tuning (SFT) can teach basic tool-calling mechanics, it struggles with the compositional  
+
+> ©2026 Accenture. All rights reserved
+> arXiv:2606.14179v1 [cs.CL] 12 Jun 2026 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+complexity of real-world agent tasks where tools must be chained creatively and errors must be handled gracefully. Reinforcement learning (RL) offers a path forward by optimizing for end-to-end task completion rather than mimicking demonstrations. However, applying RL to train small agent foundation models faces three critical barriers: 
+
+Challenge 1: Knowledge Transfer at Scale. Small models lack the vast pretraining that enables large models to generalize across diverse tools. Effective knowledge transfer requires more than just copying tool calls, it needs to capture the reasoning process behind tool selection and usage. Thinking-mode models (Team, 2025; DeepSeek-AI, 2025) that separate internal reasoning from user-facing output offer a mechanism for this transfer, but generating high-quality reasoning traces at scale while preserving the fidelity of actual tool execution is non-trivial. Most existing agent datasets lack such structured reasoning, containing only surface-level trajectories without explanatory logic. 
+
+Challenge 2: RL Training Without Live Execution. Traditional RL requires environment interaction, but live tool execution during training is prohibitive. Each rollout involves multiple API calls with associated latency (seconds per call), costs (API fees), and risks (unintended side effects). With modern RL algorithms like GRPO (Shao et al., 2024) requiring reaasonable number of rollouts per prompt across thousands of training steps, the cumulative cost makes live execution infeasible. Prior work either restricts to single-turn interactions (Qian et al., 2025) or accepts these costs (Jin et al., 2025), limiting scalability. 
+
+Challenge 3: Learning from Imperfect Environments. When replacing live execution with cached results to address Challenge 2, a new problem emerges: cache quality varies dramatically. Exact matches provide perfect fidelity, but novel tool calls during exploration return approximate or generic results. Standard reward models penalize these mismatches, creating systematic noise that corrupts learning signals. The model may receive negative rewards not for poor tool selection but for cache limitations, a fundamental attribution problem that existing approaches don’t address. 
+
+Our Approach: CacheRL for Small Agent Foundation Models. We present CacheRL, a compre-hensive system designed to train small agent foundation models through effective knowledge transfer and cache-aware reinforcement learning: 1. Knowledge Transfer via Hybrid Thinking Trajectories (Section 3): We develop a scalable pipeline that augments diverse agent trajectories with structured reasoning from GPT-5. The pipeline intelligently classifies existing content and generates causal explanations for tool choices, creating rich training data that teaches small models the why behind tool calling, not just the what . This addresses the knowledge transfer challenge by distilling frontier model reasoning into a form learnable by small models. 2. CacheAgentLoop for Scalable RL Training (Section 4.3): We introduce a connected rollout mechanism with a three-tier fuzzy cache (exact, fuzzy, best-effort) that eliminates live execution while preserving trajectory structure through token-level masking. This makes RL training practical at scale, reducing per-rollout cost from dollars to fractions of a cent—while maintaining sufficient fidelity for learning. 3. Cache-Tier-Aware Reward Design (Section 4.4): Our hybrid reward system dynamically adjusts the weight between outcome-based (LLM-as-judge) and process-based (deterministic) signals based on cache quality. When cache matches are exact, we trust the judge fully; when approximate, we shift weight toward process metrics. This prevents the model from being 
+
+> 2CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+penalized for cache limitations while maintaining strong learning signals where data quality permits. 4. Iterative Training Pipeline (Sections 4.2 and 4.5): We employ an iterative cycle of SFT, rejection sampling with GPT-5, and GRPO optimization. High-scoring trajectories from RL are fed back into SFT, creating a virtuous cycle where the model’s best behaviors are reinforced through multiple modalities. This approach transforms Qwen3-4B-Thinking from a general reasoning model into a capable agent foundation model, improving validation reward from 0.43 to 0.78. 
+
+Main Contributions 
+
+1. First system for training small agent foundation models via cached RL: We present CacheRL, enabling efficient RL training of 4B-parameter models for multi-turn tool calling without live execution, reducing costs by 100 ×.2. Hybrid thinking trajectory pipeline for knowledge transfer: A scalable approach to augment trajectories with structured reasoning from GPT-5, teaching small models causal understanding of tool usage across 1,185 unique tools. 3. Cache-tier-aware reward design: Novel dynamic weighting between outcome and process rewards based on cache quality, solving the attribution problem when learning from imperfect environments. 4. Strong performance at 2.4% model size: Our 4B model achieves 92% process accuracy on multi-step tool calling, approaching GPT-5’s 94%, and demonstrating that small models can serve as practical agent foundation models. 
+
+Key Insights. Our extensive analysis across various configurations reveals surprising insights about training small agent models: 
+
+• Data quality dominates : Ablation studies show that removing high-quality knowledge transfer causes a 41.2% performance drop, far exceeding the impact of RL optimization itself. 
+
+• Reward design matters : Removing cache-tier-aware weighting causes a 17.2% performance drop by incorrectly penalizing the model for cache limitations rather than actual model errors. 
+
+• RL provides stability, not gains : While GRPO training remains stable (unprecedented for multi-turn tasks), the actual reward improvement beyond a strong SFT baseline is minimal. 
+
+• Scale enables generalization : Training on 44K diverse trajectories spanning 1,185 unique tools creates a foundation model capable of generalizing to new tool combinations, not just memorizing specific patterns. These findings suggest that the path to strong small agent models lies primarily in systematic knowl-edge transfer and intelligent training design rather than sophisticated RL algorithms, with important implications for where the field should focus effort. CacheRL demonstrates that 4B-parameter mod-els can achieve robust multi-turn, multi-tool capabilities, offering a practical blueprint for building deployable agent foundation models. 
+
+## 2. Related Work 
+
+Small Model Development and Knowledge Distillation. The challenge of building capable small models has driven extensive research in knowledge distillation (Hinton et al., 2015) and model 
+
+> 3CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+compression. Recent work shows that small models (1-7B parameters) can achieve remarkable performance through careful training. Phi-3 (Abdin et al., 2024) demonstrates that 3.8B models can match much larger models on reasoning tasks through high-quality synthetic data. Gemma-2B (Team et al., 2024) and Qwen3-4B (Team, 2025) further show that small models can serve as strong foundation models when trained on curated data. However, these works focus primarily on single-turn capabilities like reasoning and code generation. Extending small models to complex multi-turn agent behaviors—where they must orchestrate diverse tools over long horizons—remains an open challenge that we address through systematic knowledge transfer from large models. 
+
+Agent Foundation Models and Tool Calling. The evolution from language models to agent models represents a fundamental shift in AI capabilities. While large models like GPT-5, Claude, and Gemini have demonstrated impressive tool-calling abilities, they achieve this through massive scale (70B+ parameters) and extensive training on tool-use data. Recent efforts to build smaller agent models include Gorilla (Patil et al., 2023), which specializes in API calling through retrieval augmentation, and ToolAlpaca (Tang et al., 2023), which uses self-instruct techniques. However, these models typically focus on specific tool domains or single-turn interactions. Our work differs in targeting a true foundation model for agents—one that can generalize across diverse tool ecosystems (1,185 unique tools in our training) and handle complex multi-turn scenarios through structured reasoning. 
+
+RL for LLM Reasoning and Tool Use. Reinforcement learning has emerged as a powerful tech-nique for improving LLM capabilities beyond supervised learning. DeepSeek-R1 (DeepSeek-AI, 2025) showed that GRPO with simple outcome rewards can elicit sophisticated reasoning behaviors, establish-ing the iterative SFT–RL–rejection sampling cycle we adopt. For tool calling specifically, ToolRL (Qian et al., 2025) applies RL in single-turn settings using Jaccard similarity for reward, while Search-R1 (Jin et al., 2025) extends to multi-turn retrieval with token masking—a technique we build upon. SWE-RL (Wei et al., 2025) demonstrates RL for software engineering tasks. However, these works either operate on large models where training is expensive, restrict to narrow tool domains, or use single-turn interactions. We show that RL can be made practical for training small, general-purpose agent models through our cache-based approach and tier-aware rewards. 
+
+Synthetic Data and Trajectory Generation. The quality of training data is paramount for small models that lack the vast pretraining of larger counterparts. Self-instruct (Wang et al., 2023) and Alpaca (Taori et al., 2023) pioneered using large models to generate training data for smaller ones. For agent tasks, Toolformer (Schick et al., 2024) introduced self-supervised tool-use learning where models annotate their own training data with API calls. AgentInstruct (Mitra et al., 2024) scales this to millions of trajectories using programmatic generation. Our hybrid thinking trajectory pipeline extends these approaches by not just generating tool calls but also the causal reasoning behind them, using GPT-5 to explain why specific tools and arguments were chosen. This deeper level of knowledge transfer—teaching the reasoning process, not just the actions—is crucial for small models to generalize beyond their training distribution. 
+
+Challenges in Multi-Turn RL Training. Training agents with RL in multi-turn settings faces unique challenges that single-turn settings avoid. Credit assignment becomes difficult when rewards are delayed across many steps (Sutton & Barto, 2018). The action space explodes combinatorially with the number of available tools and possible arguments. Most critically, environment interaction becomes prohibitively expensive—a problem noted but not solved in prior work. WebShop (Yao et al., 2022) and InterCode (Yang et al., 2024) provide simulated environments, but these cover limited tool 
+
+> 4CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+sets. Our CacheAgentLoop addresses this by replacing live execution with a three-tier cache system, making multi-turn RL training practical at scale while our cache-tier-aware reward ensures learning signals remain informative despite cache limitations. 
+
+LLM-as-Judge and Reward Modeling. Using LLMs to evaluate other models has become common practice (Zheng et al., 2024), with MT-Bench demonstrating high correlation with human preferences. For RL training, Eureka (Ma et al., 2023) uses GPT-4 to design reward functions for robotics, while Constitutional AI (Bai et al., 2022) uses AI feedback for alignment. However, LLM judges exhibit inconsistency—the same output may receive different scores across evaluations, creating noise in RL training. We address this through our hybrid reward design that dynamically adjusts judge weight based on cache quality, reducing reliance on the judge when underlying data is unreliable. This selective trust mechanism is, to our knowledge, novel in the context of RL training for agents. 
+
+Thinking Modes and Reasoning Traces. The separation of internal reasoning from external output, popularized by chain-of-thought prompting (Wei et al., 2022) and formalized in thinking modes (Team, 2025), provides a mechanism for knowledge transfer. O1 (OpenAI, 2024) and DeepSeek-R1 (DeepSeek-AI, 2025) demonstrate that models can learn to generate extensive internal reasoning before producing answers. We extend this paradigm to tool calling, where reasoning must explain not just final answers but the entire trajectory of tool selection and usage. Our classification-based approach—distinguishing existing reasoning from user-facing content before generation—ensures we preserve the fidelity of actual tool execution while augmenting with explanatory reasoning, a critical balance for training reliable agent models. Our work synthesizes insights from these diverse threads to address a pressing need: building small, deployable agent foundation models that can handle real-world tool diversity and complexity. By combining knowledge transfer, cache-based RL, and intelligent reward design, CacheRL provides a practical blueprint for training the next generation of AI agents. 
+
+## 3. Knowledge Transfer via Thinking Trajectories 
+
+Training small agent foundation models requires high-quality data that captures not only what tools to call, but also why large models select and chain tools. While existing agent datasets contain trajectories, they lack the structured reasoning essential for knowledge transfer. We develop a hybrid pipeline that augments these trajectories with causal reasoning from GPT-5, creating rich training data for small models. 
+
+3.1. The Knowledge Transfer Challenge 
+
+Training thinking-mode models (Team, 2025) for tool calling requires trajectories where every assistant turn contains explicit reasoning inside <think> tags. This reasoning must explain the decision process: why this specific tool was chosen from available alternatives, how previous results inform the current action, and what outcome is expected. However, existing agentic reasoning datasets for tool calling, such as Toucan, Toolathlon, and agent collections, contain only surface level tool calls without explanatory traces. Simply generating new trajectories from scratch would lose the diversity and real-world complexity of existing data. Instead, we need to augment existing trajectories with reasoning while preserving their authentic tool interactions. This ensures small models learn from real tool execution patterns across 1,185 unique tools, not simplified synthetic scenarios. 
+
+> 5CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Turn 1 
+
+> Step 1
+> System
+> User 1
+> Classify: User-facing Action: Generate
+> Reasoning 1
+> Tool call 1
+> G
+> Step 2
+> Tool result 1
+> Classify: Reasoning Action: Wrap
+> Reasoning 2
+> Tool call 2
+> W
+> Step 3
+> Tool result 2
+> Classify: Final turn Action: Generate
+> Reasoning 3
+> Answer 1
+> G
+
+Turn 2 
+
+> Step 1
+> User 2
+> Classify: User-facing Action: Generate
+> Reasoning 4
+> ...
+> G
+> G = Generated reasoning, W = Wrapped existing reasoning
+
+Figure 1 | Hybrid thinking trajectory pipeline for knowledge transfer from GPT-5 to smaller models. This intelligent pipeline processes 44,449 tool-calling trajectories by classifying each assistant message and applying targeted augmentation: User-facing messages trigger generation of new causal reasoning via GPT-5 explaining why specific tools are selected, Reasoning messages are wrapped in <think> tags preserving existing analytical content (saving 15-20% API costs), and Final turns always generate comprehensive reasoning to ensure complete explanations. All original tool calls and results are preserved to maintain trajectory authenticity while adding structured reasoning that teaches smaller models the “why” behind tool selection. 
+
+3.2. Hybrid Pipeline Architecture 
+
+Our pipeline (Figure 1) processes trajectories turn-by-turn, making intelligent decisions about when to generate new reasoning versus preserving existing analytical content. This selective approach reduces API costs while maintaining quality. 
+
+Intelligent Classification. Not all trajectories require generated reasoning traces. Many already contain analytical elements, such as calculations, algorithmic descriptions, and step by step procedures, that provide valid reasoning signals. We classify each assistant message using GPT-5 with structured prompts, identifying whether content is: 
+
+• Analytical reasoning : Numerical computations, matrices, algorithmic steps, or explicit analysis. These are wrapped directly in <think> tags without generation. 
+
+• User-facing content : Greetings, summaries, status updates, or brief responses. These trigger new reasoning generation to explain the underlying decision process. This classification saves 15–20% of API calls while preserving authentic reasoning where it exists. 
+
+Causal Reasoning Generation. Effective knowledge transfer requires reasoning that explains 
+
+causality , rather than merely describing procedure. Our generator takes the full conversation context, up to 128K tokens, together with the known next action , and produces reasoning that: (1) identifies information gaps that motivate the tool choice, (2) explains why the selected tool is preferable to available alternatives, (3) anticipates expected outcomes and how they advance the task, and (4) synthesizes evidence from multiple tool results when generating final answers. For example, instead of procedural narration (“I will call read_file with config.py”), the generator produces causal explanation 
+
+> 6CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+> Non-Final Path – Classify & Route
+> Input Trajectory
+> For Each Assistant Message
+> Is Final Message?
+> Classifier LLM
+> (GPT-5)
+> Generator LLM
+> (GPT-5)
+> Always Generate
+
+<think> Block 
+
+> Wrap in
+
+<think> 
+
+> No API call
+> Generate New
+
+<think> Block    
+
+> GWG
+> Assemble:
+
+<think>     
+
+> + Original Content
+> Enhanced Trajectory
+> No
+> user_facing
+> Yes reasoning
+> G= Generated reasoning W= Wrapped existing reasoning
+
+Figure 2 | Detailed flowchart of the thinking trajectory augmentation pipeline. Each of 44,449 input trajectories flows through message-level processing: assistant messages are classified as either 
+
+reasoning (analytical content that gets wrapped in <think> tags) or user-facing (responses that trigger GPT-5 to generate causal explanations). Final messages always receive comprehensive reasoning generation. The pipeline preserves all original tool calls and results while injecting structured reasoning, producing enhanced trajectories that teach smaller models both what tools to call and why to call them. (“The config file likely contains API keys based on the directory structure. I should examine it before the main code to understand the authentication setup.”). Figure 2 illustrates the detailed flow of our trajectory enhancement pipeline. Each assistant mes-sage undergoes intelligent processing based on its position and content type, ensuring appropriate reasoning is added while minimizing redundant API calls. 
+
+Example Generated Data. Consider a multi-tool weather analysis task: 
+
+User: Compare weather in Tokyo and NYC for travel planning. <think> The user is asking for a travel-oriented weather comparison, not only the raw weather values. I need to retrieve current conditions for both cities and then compare them using travel-relevant criteria such as temperature comfort, outdoor activity suitability, precipitation risk, humidity, packing needs, and itinerary flexibility. Because this is a comparison task, I should not make a recommendation after checking only one city. I need weather data for both Tokyo and NYC under the same schema, then synthesize the results. I will first call 
+
+> 7CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+the weather tool for Tokyo, then call it for NYC, and finally explain which destination currently has more favorable conditions for travel. </think> I’ll check the current weather conditions for both cities and compare them from a travel-planning perspective. <tool_call>{"name": "get_weather", "args": {"city": "Tokyo"}}</tool_call> <tool_result>{"temp": 18, "condition": "sunny", "humidity": 65}</tool_result> <think> Tokyo currently has mild and favorable travel weather. A temperature of 18 °C is comfortable for walking, sightseeing, and spending time outdoors. The sunny condition suggests low disruption risk for outdoor plans such as parks, markets, temples, observation decks, and city walks. Humidity at 65% is moderate. It may feel slightly humid during long walks, but it is unlikely to be a major constraint. I still need the NYC result before making a final recommendation, because the user asked for a comparison rather than a single-city summary. </think> <tool_call>{"name": "get_weather", "args": {"city": "NYC"}}</tool_call> <tool_result>{"temp": 12, "condition": "rainy", "humidity": 85}</tool_result> <think> Now I can compare both cities. Tokyo: * 18 °C is mild and comfortable for most travelers. * Sunny weather supports outdoor sightseeing and flexible movement. * 65% humidity is moderate and manageable. * Travel implication: Tokyo is suitable for walking-heavy itineraries, outdoor attractions, photography, and flexible sightseeing. NYC: * 12 °C is cooler and may require warmer layers. * Rain makes outdoor sightseeing less convenient and can slow movement between attractions. * 85% humidity means the air may feel damp and uncomfortable. * Travel implication: NYC is still manageable, but the traveler should prepare for rain, use waterproof shoes, carry a rain jacket or umbrella, and prioritize indoor attractions. The causal reason for recommending Tokyo is not simply that it is warmer. Tokyo is both warmer and dry, which reduces weather-related friction across transportation, sightseeing, and packing. NYC has a higher chance of discomfort because rain and high humidity affect walking, visibility, photography, and outdoor plans. </think> Based on current conditions, Tokyo is the better option for outdoor travel today. It is 18 °C and sunny with moderate humidity, making it 
+
+> 8CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+comfortable for walking, sightseeing, and flexible outdoor plans. NYC is cooler and less convenient for outdoor travel: it is 12 °C, rainy, and humid. If you choose NYC, pack a rain jacket, waterproof shoes, and warmer layers, and consider indoor attractions as backup plans. Overall recommendation: Tokyo is currently more travel-friendly, while NYC requires more weather preparation. 
+
+The generated reasoning explains why multiple API calls are needed (comparison requires both data points) and how results inform the recommendation (temperature difference, precipitation status). This causal understanding transfers to the small model during training. 
+
+Preserving Real Tool Interactions. Unlike fully synthetic approaches, we preserve all original tool calls and results. Exact function names, arguments, and IDs are kept unchanged, ensuring that models learn real invocation patterns. We also retain authentic API responses, error messages, and edge cases rather than replacing them with idealized outputs. This preserves causality across the trajectory, as each turn’s reasoning builds on real results from previous turns. This preservation is critical for training reliable agents. Models learn actual cause-effect relationships (“HTTP 429 error means rate limiting”) rather than simplified patterns that don’t transfer to deployment. 
+
+3.3. Scaling Knowledge Transfer Managing Long Contexts. Multi-turn trajectories span up to 100K+ tokens and include as many as 34 tool calls. We handle this using progressive context building, where each turn receives the full enhanced history up to that point. To improve API efficiency, we use token-stratified batching that groups trajectories by length. When a trajectory exceeds the 128K-token limit, we apply graceful truncation by removing the oldest turns first. 
+
+Quality at Scale. From source trajectories, our pipeline produces valid thinking trajectories after filtering. Each trajectory averages 5 tool calls and 487 thinking tokens, providing rich training signal. At $25–50 per 10K trajectories using GPT-5, the full dataset costs approximately $110–220—a fraction of training a large model from scratch. The pipeline enables systematic knowledge transfer from frontier models to small models, teaching them the reasoning patterns that underlie effective tool use. This forms the foundation for our subsequent RL training, where the model learns to apply this transferred knowledge to new scenarios. 
+
+## 4. CacheRL: Practical RL for Agent Foundation Models 
+
+With knowledge successfully transferred from large models (Section 3), we now face the challenge of training small models to apply this knowledge effectively. We present CacheRL, a two-stage system that first establishes base capabilities through supervised fine-tuning, then optimizes performance via reinforcement learning with our cache-based infrastructure. Figure 3 shows the complete system architecture. 
+
+> 9CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Figure 3 | CacheRL system overview. Stage 1 : Qwen3-4B-Thinking is fine-tuned on 44K thinking trajectories with structured reasoning, establishing base tool-calling capabilities. Stage 2 : The SFT model undergoes GRPO training with the CacheAgentLoop generating efficient multi-turn rollouts using cached tool results. A cache-tier-aware reward dynamically adjusts weights based on data quality, preventing the model from being penalized for cache limitations while maintaining strong learning signals. 
+
+4.1. Problem Formulation 
+
+We formalize multi-turn tool calling as a sequential decision process where a policy 𝜋 𝜃 generates trajectories 𝜏 = (𝑠 1, 𝑜 1, 𝑠 2, 𝑜 2, . . . , 𝑠 𝑛 ) given a user query 𝑞 and tool schemas T . Each 𝑠 𝑖 represents model generation (reasoning, tool calls, or answers) and 𝑜 𝑖 represents environment feedback (tool results). At the token level, we maintain a binary mask m where 𝑚 𝑖 = 1 for model-generated tokens and 𝑚 𝑖 = 0 for environment-injected tokens, ensuring gradients flow only through model decisions. Our objective maximizes expected reward while preventing divergence from the SFT baseline: 
+
+max  
+
+> 𝜃
+
+𝔼 𝜏 ∼𝜋 𝜃 [𝑅 (𝜏 )] − 𝛽 KL (𝜋 𝜃 ∥𝜋 ref ) (1) where 𝑅 (𝜏 ) is our cache-tier-aware reward and 𝛽 = 0.15 provides strong regularization. 
+
+4.2. Stage 1: Building the Foundation Initial SFT on Diverse Tools. We fine tune Qwen3-4B-Thinking on our full dataset of thinking trajectories spanning 1,185 unique tools, from weather APIs to code execution to financial databases. Each trajectory contains structured reasoning at every step, teaching the model not just tool syntax but the decision process behind tool selection. Training uses full fine-tuning (not LoRA) to maximize knowledge absorption, with sequence lengths up to 132K tokens. 
+
+> 10 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Figure 4 | CacheAgentLoop enabling efficient multi-turn generation. The model generates rea-soning and tool calls (mask=1), which trigger cache lookup. Pre-computed results are injected with mask=0, maintaining trajectory structure without live execution. The cache tier (exact/fuzzy/best-effort) is tracked for reward adjustment. This approach reduces per-rollout cost from dollars to fractions of a cent while preserving multi-turn reasoning fidelity. 
+
+Iterative Refinement via Rejection Sampling. Following initial training, we apply rejection sam-pling (DeepSeek-AI, 2025) to address a critical weakness: meta-reasoning in final answers. We score a subset of trajectories using GPT-5, retaining 673 highest-quality samples (score ≥3/5). In preliminary experiments, we explored training with different dataset subsets: a 3,689-sample subset alone showed reduced performance, but combining it with the 673 high-quality samples improved validation reward from 0.43 to 0.76. Our final model uses the complete dataset for maximum coverage. 
+
+4.3. Stage 2: Cache-Based RL Training 
+
+The core innovation of CacheRL is making multi-turn RL training practical through intelligent caching. Traditional approaches face a dilemma: offline generation is fast but unrealistic (no actual tool feedback), while online execution is realistic but prohibitively expensive (thousands of API calls per step). We introduce a third path: connected rollouts with cached tool results. 
+
+4.3.1. CacheAgentLoop Architecture 
+
+The CacheAgentLoop (Figure 4) implements connected generation within VERL (Sheng et al., 2024): 1. Generate : Model produces reasoning and tool calls, stopping at </tool_call> boundaries 2. Extract : Parse tool name and arguments from structured output 3. Cache Lookup : Query pre-computed results using our three-tier system 
+
+> 11 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Algorithm 1: CacheAgentLoop: Cache-augmented agent rollout algorithm enabling efficient multi-turn RL training. The algorithm generates model outputs with token-level masking (mask=1), performs three-tier cache lookup for tool results, and injects cached responses with mask=0 to exclude them from gradient computation. This approach maintains trajectory fidelity while reducing per-rollout cost by 100 × compared to live tool execution. 
+
+Input: Prompt 𝑝 ; policy model 𝜋 𝜃 ; tool-result cache C; maximum rollout length 𝑇 
+
+Output: Trajectory 𝜏 = {( 𝑥 𝑖 , 𝑚 𝑖 )} 𝑁 𝑖 =1, where 𝑚 𝑖 ∈ { 0, 1}|𝑥 𝑖 | marks generated versus cached tokens  
+
+> 1
+
+Goal. Generate an agent trajectory in which model-produced tokens are trained with mask value 1, while cached tool results are injected with mask value 0 to avoid optimizing on non-generated content.  
+
+> 2
+
+𝜏 ← ∅ ; // Initialize rollout trajectory  
+
+> 3
+
+𝑐 ← Tokenize ( 𝑝 ); // Encode initial prompt  
+
+> 4
+
+𝑡 ← 0; 
+
+> 5
+
+while 𝑡 < 𝑇 do  
+
+> 6
+
+𝑡 ← 𝑡 + 1;
+
+// Policy generation  
+
+> 7
+
+(𝑥 𝑡 , _) ← 𝜋 𝜃 .Generate (𝑐 ); // Autoregressive agent step  
+
+> 8
+
+𝜏 ← 𝜏 ∪ {( 𝑥 𝑡 , 1|𝑥 𝑡 | )} ; // Train on generated tokens  
+
+> 9
+
+if IsFinalAnswer (𝑥 𝑡 ) then  
+
+> 10
+
+break ; // Rollout completed  
+
+> 11
+
+if not ContainsToolCall (𝑥 𝑡 ) then  
+
+> 12
+
+break ; // No further tool interaction required // Tool-call parsing  
+
+> 13
+
+(𝑢 𝑡 , 𝑎 𝑡 ) ← ExtractToolCall (𝑥 𝑡 ); // 𝑢 𝑡 : tool name, 𝑎 𝑡 : arguments // Tiered cache retrieval  
+
+> 14
+
+(˜𝑟 𝑡 , 𝑞 𝑡 ) ← CacheRetrieve (C , 𝑢 𝑡 , 𝑎 𝑡 ); // 𝑞 𝑡 : cache tier  
+
+> 15
+
+if 𝑞 𝑡 = Exact then  
+
+> 16
+
+˜𝑟 𝑡 ← C [ 𝑢 𝑡 , 𝑎 𝑡 ]; // Exact tool and argument match  
+
+> 17
+
+else if 𝑞 𝑡 = Fuzzy then  
+
+> 18
+
+˜𝑟 𝑡 ← FuzzyMatch (C , 𝑢 𝑡 , 𝑎 𝑡 ); // Nearest valid cached response  
+
+> 19
+
+else if 𝑞 𝑡 = BestEffort then  
+
+> 20
+
+˜𝑟 𝑡 ← FallbackResult (C , 𝑢 𝑡 ); // Tool-level fallback  
+
+> 21
+
+else  
+
+> 22
+
+˜𝑟 𝑡 ← NullResult (𝑢 𝑡 , 𝑎 𝑡 ); // Graceful cache miss // Cached result injection  
+
+> 23
+
+𝑧 𝑡 ← FormatToolResult (˜𝑟 𝑡 , 𝑞 𝑡 ); // Serialize result and tier metadata  
+
+> 24
+
+𝑦 𝑡 ← Tokenize (𝑧 𝑡 ); 
+
+> 25
+
+𝜏 ← 𝜏 ∪ {( 𝑦 𝑡 , 0| 𝑦 𝑡 | )} ; // Do not train on cached result tokens // Context update  
+
+> 26
+
+𝑐 ← Concat (𝜏 ); // Append generated text and injected result  
+
+> 27
+
+return 𝜏 ;
+
+4. Inject : Append cached result with mask=0, pre-closing thinking blocks to guide next generation 5. Continue : Re-tokenize and repeat until final answer This maintains the multi-turn structure essential for learning sequential reasoning while eliminating execution costs. 
+
+Algorithm 1 details the CacheAgentLoop implementation. The key innovations are: (1) maintaining                             
+
+> 12 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+> <th ... /th> <tc ... /tc> usr data ... /th> The 52F ...
+> 1111110000111
+> Tokens
+> Mask
+> Thinking Tool Call Cached (mask=0) Final Answer Model-generated (mask=1) Cached injection (mask=0)
+
+Figure 5 | Token-level response masking in CacheAgentLoop ensures proper gradient attribution. 
+
+Blue tokens represent model-generated content ( mask=1 ) including reasoning and tool calls, which receive policy gradient updates during GRPO training. Gray tokens are injected cached tool results (mask=0 ), excluded from loss computation to prevent the model from being trained on environment responses it didn’t generate. This selective masking maintains learning signal integrity while enabling efficient cached rollouts. separate masks for generated vs. cached tokens to enable proper credit assignment, (2) the three-tier cache fallback ensuring trajectory continuity, and (3) pre-closing thinking blocks in injections to guide subsequent generation. This approach scales to trajectories with 30+ tool calls while maintaining sub-second latency per rollout. 
+
+4.3.2. Three-Tier Fuzzy Cache 
+
+The cache stores all pairs (tool call, result) extracted from training data, implementing intelligent fallback: 
+
+• Tier 1 - Exact : Hash-based lookup returns perfect matches (50% hit rate) 
+
+• Tier 2 - Fuzzy : Jaccard similarity finds similar calls when exact fails 
+
+• Tier 3 - Best-effort : Returns any result for the tool when arguments don’t match This tiered approach ensures every tool call receives some result, maintaining trajectory continuity. However, non-exact matches introduce noise—addressed by our cache-aware reward design. 
+
+4.3.3. Critical Technical Details 
+
+Token Alignment. Direct tokenization preserves boundary alignment when injecting cached results (Figure 5). We tokenize injections as isolated strings rather than re-tokenizing entire conversations. 
+
+Thinking Mode Handling. Pre-closing thinking blocks ( </think>\n\n ) in injected content guides the model toward producing answers rather than endless reasoning loops. Setting min_tokens=150 
+
+for initial generation prevents premature termination before tool calls, reducing failure rate from 42% to 13%. 
+
+4.4. Cache-Tier-Aware Reward Design 
+
+The key insight driving our reward design (Figure 6): when cache quality varies, so should reward attribution. We dynamically adjust the weight between outcome and process signals based on cache tier: 
+
+𝑅 = 𝛼 (𝜏 ) · 𝑅 answer + ( 1 − 𝛼 (𝜏 )) · 𝑅 process (2) 
+
+> 13 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Figure 6 | Cache-tier-aware hybrid reward. The worst cache match tier across all tool calls in a rollout determines the dynamic weight 𝛼 . Exact matches ( 𝛼 =0.6) give full weight to the GPT-5 answer judge, enabling accurate quality assessment when tool results are reliable. Fuzzy and best-effort matches progressively reduce the judge’s influence. Generic matches ( 𝛼 =0) rely entirely on the deterministic process score, ensuring the model is never penalized for answers built on incorrect cached data. 
+
+Cache Tier 𝛼 Focus Rationale 
+
+Exact match 0.60 Answer quality Trust data, evaluate output Fuzzy match 0.30 Process > answer Data uncertain, reward structure Best-effort 0.10 Process only Wrong data, judge tool-calling 
+
+Table 1 | Cache-tier-aware reward weighting coefficients. The weight 𝛼 determines the balance between answer quality (LLM-as-judge) and process quality (deterministic metrics) based on cache match fidelity. Exact matches (50% of rollouts) trust answer evaluation more heavily ( 𝛼 =0.60), while fuzzy (17%) and best-effort (33%) matches shift toward process metrics to avoid penalizing models for cache-induced errors. 
+
+Answer Quality (LLM-as-Judge). GPT-5 evaluates final answers against ground truth on a 0–5 scale, with explicit tolerance for alternative valid responses. Meta-reasoning patterns (“Let me check...”) trigger automatic zero scores, providing clear gradient against thinking leakage. 
+
+> 14 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Process Quality (Deterministic). Rule-based evaluation rewards structural quality: valid tool names (40%), thinking blocks (15%), non-empty answers (25%), and tool diversity (10%). This provides non-zero signal even when answers fail, breaking the zero-advantage problem where entire GRPO groups score identically. This adaptive approach ensures the model learns robust tool-calling patterns despite imperfect training data, critical for practical deployment where exact matches are rare. 
+
+4.5. GRPO Training 
+
+We train the policy using Group Relative Policy Optimization (GRPO) (Shao et al., 2024) with LoRA adaptation of rank 128. For each prompt, we generate a group of 𝑁 = 16 rollouts and optimize the clipped GRPO objective with KL regularization against a reference policy. The GRPO objective is: 
+
+JGRPO (𝜃 ) = 𝔼 𝑞 ∼D , {𝑜 𝑖 }𝑁 𝑖 =1∼𝜋 𝜃 old (· | 𝑞 )
+
+"
+
+1
+
+𝑁 
+
+> 𝑁
+
+∑︁ 
+
+> 𝑖 =1
+
+1
+
+Í|𝑜 𝑖 | 
+
+> 𝑡 =1
+
+𝑚 𝑖,𝑡 + 𝜖 mask  
+
+> |𝑜 𝑖 |
+
+∑︁ 
+
+> 𝑡 =1
+
+𝑚 𝑖,𝑡 min 𝜌 𝑖,𝑡 (𝜃 ) ˆ𝐴 𝑖 ,
+
+clip  𝜌 𝑖,𝑡 (𝜃 ), 1 − 𝜖 clip , 1 + 𝜖 clip 
+
+ ˆ𝐴 𝑖 
+
+!
+
+− 𝛽𝐷 KL [𝜋 𝜃 (· | 𝑞 ) ∥ 𝜋 ref (· | 𝑞 )] 
+
+#
+
+.
+
+(3) The token-level importance ratio is: 
+
+𝜌 𝑖,𝑡 (𝜃 ) = 𝜋 𝜃 (𝑜 𝑖,𝑡 | 𝑞, 𝑜 𝑖,<𝑡 )
+
+𝜋 𝜃 old (𝑜 𝑖,𝑡 | 𝑞, 𝑜 𝑖,<𝑡 ) . (4) The relative advantage for each rollout is computed by normalizing trajectory-level rewards within each rollout group: 
+
+ˆ𝐴 𝑖 = 𝑅 𝑖 − 𝜇 𝑅 
+
+𝜎 𝑅 + 𝜖 std 
+
+. (5) Here, 𝑅 𝑖 denotes the trajectory-level reward for rollout 𝑜 𝑖 , 𝜇 𝑅 and 𝜎 𝑅 are the group-level reward mean and standard deviation, 𝜖 clip is the clipping coefficient, 𝜖 std is a small constant for numerical stability, 
+
+𝜖 mask prevents division by zero when no generated tokens are present, and 𝛽 controls the strength of KL regularization. The token mask 𝑚 𝑖,𝑡 ∈ { 0, 1} ensures that policy-gradient updates flow only through model-generated tokens. Cached tool-result tokens receive 𝑚 𝑖,𝑡 = 0, preventing the model from being optimized on non-generated content. In our experiments, we set 𝛽 = 0.15 to maintain strong KL regularization during cached rollouts. Training on 8 H100 GPUs processes batches of 16 prompts with 16 rollouts per prompt, with each optimization step taking approximately 15–20 minutes. The CacheAgentLoop enables this scale by replacing expensive live tool execution with cached execution while preserving token-level masking for correct policy optimization. 
+
+4.6. From Knowledge Transfer to Deployed Agents 
+
+CacheRL bridges the gap between knowledge transfer (Section 3) and practical deployment. By making RL training feasible at scale, we enable small models to refine their transferred knowledge 
+
+> 15 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+through thousands of multi-turn interactions. The cache-tier-aware reward ensures learning remains robust despite imperfect data, while the connected rollout structure preserves the sequential reasoning essential for real-world tool use. This systematic approach transforms Qwen3-4B-Thinking from a general reasoning model into a capable agent foundation model, demonstrating that small models can achieve complex tool-calling capabilities through careful design rather than massive scale. 
+
+## 5. Experiments 
+
+5.1. Data 
+
+Our training data consists of 44,449 multi-turn tool-calling conversations derived from diverse sources: Toucan (84%), agent data (9%), Toolathlon (3%), and specialized collections (4%). Each sample contains a user query, tool schemas (median 5 tools, max 84), and an expected trajectory including tool calls with structured reasoning inside <think> tags and a user-facing final answer. The data spans domains including weather forecasting, code execution, document management, web search, chemical databases, financial APIs, and infrastructure management. 
+
+Cache Construction. The ToolResultCache is built by extracting all (tool call, tool result) pairs from the training trajectories, yielding 40,850 exact cache entries across 1,185 unique tool names. During training rollouts, approximately 50% of the model’s tool calls achieve exact cache matches, with the remainder receiving fuzzy (17%) or best-effort (33%) matches—motivating our cache-tier-aware reward design. 
+
+Clean Ground Truth. We preprocess each sample to extract the clean ground truth, the visible answer after the last </think> tag. Statistics: min=20 chars, median=801 chars, mean=1,073 chars, max=17,620 chars. The natural length variation reflects task complexity without artificial normalization. 
+
+Validation Set. A held-out set of 120 samples is used for periodic evaluation (every 5 training steps) with greedy decoding (temperature=0). 
+
+Dataset Configurations. Our experiments explore multiple dataset configurations to isolate different factors: 
+
+• Full dataset (44,449 samples) : The complete thinking trajectory dataset from our pipeline, used in final CacheRL training. 
+
+• SFT subset (3,689 samples) : An initial subset used for preliminary SFT experiments to test training approaches. 
+
+• Connected generation subset (1,000 samples) : High-quality samples with connected trajec-tory generation for ablation studies. 
+
+• Rejection samples (673 samples) : Additional high-scoring trajectories ( ≥3/5) from rejection sampling, combined with the SFT subset in later experiments. These configurations represent our experimental timeline: initial exploration with smaller subsets, followed by full-scale training once optimal settings were identified.                              
+
+> 16 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+> Parameter Value Parameter Value
+> Base model Qwen3-4B-Thinking GRPO rollouts ( 𝑁 )16 LoRA rank / 𝛼 128 / 128 Temperature (train/val) 0.8 / 0.0 Learning rate 1×10 −6Top-𝑝 0.95 LR warmup 5% Repetition penalty 1.1 Batch size 16 ×16 rollouts KL coeff. ( 𝛽 )0.15 Prompt / response len. 16K / 32K tokens Entropy coeff. 0.001 Gradient clipping 1.0 Framework VERL + vLLM
+
+Table 2 | Training hyper-parameters for Group Relative Policy Optimization (GRPO) stage. Con-figuration used to fine-tune Qwen3-4B-Thinking model with LoRA adaptation on 44,449 thinking trajectories, optimizing the cache-tier-aware hybrid reward. 
+
+5.2. Training Configuration 5.3. Baselines and Ablations 
+
+We compare the following configurations to isolate the contribution of each component: 
+
+• SFT baseline : The combined SFT model from Stage 1 without RL training. This serves as the reference policy for KL regularization. 
+
+• v1 : Initial reward design with 70% GPT-5 judge score and 30% process quality, trained on 1,527 samples with LoRA rank 32. 
+
+• v2 : Adds meta-reasoning detection that clamps the answer score to 0 for thinking-style outputs, with reward weights adjusted to 60% judge score and 40% process quality. 
+
+• v3 : Introduces cache-tier-aware reward weighting based on cache match quality (Table 1) and fixes the cache exact-match rate from 1% to 50%. 
+
+• v4 : Uses the same cache-tier-aware reward as v3 but scales training to 44,449 samples, a 29 ×
+
+increase over the initial dataset. 
+
+5.4. SFT Model Evaluation 
+
+Before presenting RL results, we evaluate the SFT models on comprehensive tool-calling benchmarks to establish baseline capabilities. We compare Qwen3-4B-Thinking variants with different training configurations against GPT-5 and the base Qwen3-4B-Instruct model. 
+
+Key Findings from SFT Evaluation. Figure 7 provides a comprehensive quantitative comparison across models. The evaluation reveals several important insights: 
+
+• Thinking mode advantage : Qwen3-4B-Thinking significantly outperforms Qwen3-4B-Instruct across all metrics, demonstrating the value of structured reasoning for tool-calling tasks. 
+
+• Connected generation matters : Models trained with connected generation ( ✓) consistently outperform offline-generated models, particularly on multi-step tasks (0.920 vs. 0.836 process accuracy). 
+
+• LoRA vs. Full fine-tuning : LoRA adaptation preserves more base capabilities, achieving better memory recall (34/37) compared to full fine-tuning (29/37) with the same data. 
+
+• Quality over quantity : The 1000-sample high-quality dataset with connected generation outperforms the larger 3689-sample dataset without it, highlighting the importance of training data fidelity. 
+
+> 17 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Figure 7 | Quantitative comparison of CacheRL against baselines. Left: Multi-step tool-calling accuracy shows CacheRL achieves 92% process accuracy, approaching GPT-5’s 94% while significantly outperforming base models. Middle: Memory and recall tasks demonstrate comparable performance to GPT-5 on structured reasoning. Right: Efficiency comparison reveals CacheRL operates at 2.4% of GPT-5’s model size with 0.01 × training cost through cached RL, while maintaining competitive performance. Table 3 | Multi-step and multi-turn tool-calling evaluation results on ACEBench benchmark comparing GPT-5, base Qwen3-4B models, and various fine-tuned configurations. End-to-end measures complete trajectory success while Process Accuracy evaluates tool-calling correctness independent of final answer quality. Generation type: × indicates offline generation without tool feedback, ✓ indicates connected generation with actual tool results injected during rollouts.                                     
+
+> Multi-Step Multi-Turn Model Gen. End-to-end Proc. Acc. End-to-end Proc. Acc.
+> GPT-5 N/A 17/20 0.943 15/30 0.778 Qwen3-4B-Instruct N/A 3/20 0.251 4/30 0.362 Qwen3-4B-Thinking N/A 14/20 0.888 9/30 0.694 Qwen3-4B-Think + LoRA (3689) ×13/20 0.836 11/30 0.703 Qwen3-4B-Think + Full (3689) ×13/20 0.763 8/30 0.612 Qwen3-4B-Think + Full (1000) ✓16/20 0.920 9/30 0.695
+
+These results establish our SFT model (Qwen3-4B-Thinking + Full fine-tuning on 1000 connected samples) as a strong baseline for subsequent RL training. 
+
+5.5. RL Training Results 
+
+Table 5 summarizes the validation reward across all RL configurations. The SFT model establishes a strong baseline (0.76), and each subsequent improvement addresses a specific bottleneck. 
+
+Training Dynamics. The validation reward for the final configuration (v6 + 44K data) remains remarkably stable at 0.756 ± 0.007 throughout 200+ training steps, with no collapse or degradation. This stability—achieved through aggressive KL regularization ( 𝛽 = 0.15 ) and the large dataset preventing overfitting—contrasts with earlier configurations using 1,527 samples where validation declined after ∼10 steps. 
+
+> 18 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Table 4 | Memory-based tool-calling evaluation comparing GPT-5, base Qwen3-4B, and fine-tuned variants. Memory KV tests key-value recall accuracy from stored data across 37 test cases. Memory Rec Sum evaluates recursive summarization capabilities across 13 complex multi-step tasks. Higher scores indicate better structured reasoning and tool-calling consistency.                                                      
+
+> Model Gen. Mem. KV Mem. Rec Sum Traj. Acc. Acc.
+> GPT-5 N/A 37/37 13/13 Qwen3-4B-Instruct N/A 17/37 9/13 Qwen3-4B-Thinking N/A 34/37 12/13
+> Qwen3-4B-Think + LoRA (3689) ×31/37 13/13 Qwen3-4B-Think + Full (3689) ×28/37 9/13 Qwen3-4B-Think + LoRA (1000) ✓34/37 13/13
+> Qwen3-4B-Think + Full (1000) ✓29/37 10/13
+> Configuration Val (step 0) Val (best) ΔKey change
+> v1 original SFT 0.432 0.452 —Baseline v2 + meta penalty 0.458 0.465 +0.013 Meta-reasoning penalty v3 + rejection SFT 0.502 0.522 +0.057 Rejection sampling v4 + combined SFT 0.607 0.614 +0.092 Combined SFT data v5 cache-tier-aware 0.711 0.742 +0.128 Cache tier weighting v6 + 44K data 0.756 0.779 +0.037 29 ×more data
+
+Table 5 | Validation reward progression across iterative CacheRL configurations, showing cumulative improvements from v1 baseline to final v6 system. Validation reward combines GPT-5 answer quality scores and deterministic process metrics, evaluated on 120 held-out samples. Each configuration builds upon the previous, with Δ showing incremental gains. Key improvements include meta-reasoning detection (+0.013), rejection sampling (+0.057), combined SFT data (+0.092), cache-tier-aware rewards (+0.128), and 29 × data scaling (+0.037). 
+
+5.5.1. Ablation Study 
+
+To quantify the contribution of each component, we conduct systematic ablations starting from the full CacheRL system and progressively removing key elements: The ablation results reveal clear priorities for building small agent models: 
+
+• Thinking trajectories are essential : Removing GPT-5’s structured reasoning (-41.2%) or thinking mode entirely (-47.1%) causes catastrophic degradation, confirming that explicit reasoning is fundamental for tool-calling capabilities. 
+
+• Cache design enables scale : The three-tier cache with fuzzy matching is critical—using exact matches only causes 50% of rollouts to fail. Cache-tier-aware rewards prevent this noise from corrupting learning (-17.2% without). 
+
+• Data scale matters : Expanding from 1.5K to 44K samples provides 21.2% improvement through better coverage of tool diversity. 
+
+• RL contributes marginally : Pure SFT achieves 97% of the full system’s performance, suggest-ing that with sufficient data quality, RL fine-tuning provides polish rather than fundamental capability. 
+
+Reward Decomposition. The batch-level statistics reveal the reward composition: the deterministic process score averages 0.94 (near ceiling), while the GPT-5 answer score averages 0.34 with high 
+
+> 19 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Table 6 | Ablation study quantifying the contribution of each CacheRL component by systematic removal from the full v6 system (0.779 validation reward). Validation reward combines answer quality (GPT-5 judge) and process metrics on 120 held-out samples. Critical components include GPT-5 reasoning (-41.2%), thinking mode (-47.1%), and three-tier cache design (-30.4%). Notably, GRPO provides only marginal improvement over SFT baseline (-3.0%), suggesting data quality dominates over RL optimization.                                   
+
+> Configuration Val Reward ΔKey Finding Full CacheRL (v6 + 44K) 0.779 —Complete system
+> Data Components
+> w/o GPT-5 reasoning 0.458 -41.2% Raw trajectories lack causal understanding w/o rejection sampling 0.687 -11.8% Lower quality SFT baseline w/ 1.5K data (not 44K) 0.614 -21.2% Limited diversity hurts generalization
+> Cache & Reward Design
+> w/o cache tiers (exact only) 0.542 -30.4% 50% rollouts fail without fallback w/o tier-aware rewards 0.645 -17.2% Cache noise corrupts learning w/ static 60/40 weights 0.713 -8.5% Suboptimal credit assignment
+> Training Components
+> w/o GRPO (SFT only) 0.756 -3.0% RL provides minor gains w/o KL regularization 0.621 -20.3% Model diverges from stable region w/o thinking mode 0.412 -47.1% Cannot learn multi-step reasoning
+
+variance across cache tiers. For exact-match rollouts, the average reward is 0.63; for fuzzy matches, 0.73 (higher due to reduced answer weight); for best-effort, 0.81 (dominated by process score). This tier-aware weighting ensures that the gradient signal primarily reflects model quality for exact-match rollouts, while non-exact rollouts contribute stable process-based learning signal. 
+
+Tool-Calling Behavior. The model maintains an average of 4.5 tool calls per rollout across training, with a tool-calling rate of approximately 85% at step 0 (models that make at least one tool call). The GPT-5 score distribution shows 48.8% of answers receiving partial credit (score 2/5), 7.4% receiving perfect scores (5/5), and 30.1% scoring 0/5 (primarily from cache mismatches or empty answers). 
+
+## 6. Analysis 
+
+6.1. Effect of Minimum Token Generation 
+
+Without min_tokens , 42% of training rollouts produced no tool calls in step 0. Token count analysis revealed a clear bimodal distribution: failed rollouts terminated at a median of 39 tokens (just a brief thinking fragment before EOS), while successful tool calls required a median of 134 tokens (P25=100, P75=210). Setting min_tokens=150 for step 0 only reduced the no-tool-call rate to 13%. The remaining 13% represent cases where the model generates 150+ tokens of reasoning but genuinely decides the task doesn’t require tool calls. Applying min_tokens to all steps (not just step 0) caused the opposite problem—the model was forced to generate 150+ tokens at every step, leading to tool over-chaining (4.2 turns vs. the expected 3.2). 
+
+> 20 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+6.2. Effect of Cache Quality 
+
+A critical discovery was that the exact_cache and name_cache in our ToolResultCache were inconsistent: entries added from training trajectories were stored in the name cache but not indexed in the exact hash table. This caused exact match rates of just 1% even when the requested tool call and cached tool call had identical arguments. After synchronizing both caches, exact match rates rose to approximately 50%, with the remainder split between fuzzy (17%) and best-effort (33%) matches. The cache-tier-aware reward (Table 1) addresses the remaining noise from non-exact matches. Without tier weighting, the model receives unfair negative reward for answers built on incorrect cached data—the model called the right tool with reasonable arguments, but received wrong results due to argument mismatch. With tier weighting, these rollouts are evaluated primarily on process quality (tool selection, reasoning structure) rather than answer correctness. 
+
+6.3. Effect of Rejection Sampling 
+
+Analysis of GPT-5 scores on the initial 1,527 expected trajectories showed that only 44% (673 samples) scored ≥3/5 on answer quality. The remaining 56% had mediocre expected answers. Training the SFT model on the combined dataset (original 3,689 + curated 673) improved the validation reward from 0.432 to 0.607—without this data enhancement, performance drops by 41.2% as shown in our ablation study. However, rejection sampling also introduced a side effect: the 673 curated samples averaged only 1.5 tool calls per trajectory (from the GRPO data filtered to ≤5 calls), compared to 8.1 in the original SFT data. Training on the curated samples alone reduced the tool-calling rate from 83% to 52%. Combining both datasets restored the tool-calling diversity while retaining the answer quality improvement. 
+
+6.4. LoRA Rank and Model Capacity 
+
+We compared LoRA rank 32 (updating ∼2% of parameters) against rank 128 ( ∼8%) on the same reward and data. Both configurations produced nearly identical validation curves (0.80 ±0.01), confirming that model capacity is not the bottleneck for RL improvement. We also attempted full fine-tuning (all parameters), but this exceeded GPU memory on 8 ×H100 when combined with the reference model and vLLM rollout engine required by GRPO. 
+
+6.5. Data Scale 
+
+Scaling from 1,527 to 44,449 training prompts (29 ×) had two effects: (1) it prevented the validation decline observed with small datasets (where val peaked at step 10 then dropped), producing stable training for 200+ steps; (2) the validation reward range shifted slightly upward (0.755 ±0.007 vs. 0.73 ±0.02). However, RL still did not produce sustained improvement above the SFT baseline, suggesting that the ceiling is set by the reward signal quality and cache fidelity rather than data diversity. 
+
+6.6. What Worked and What Didn’t 
+
+Figure 7 summarizes the key findings from our iterative development process. 
+
+> 21 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Table 7 | Impact of key design decisions during iterative CacheRL development, showing relative improvements when adding each feature to the system. Combined SFT data provides the largest gain (+41%), followed by cache-tier rewards (+17%) and rejection sampling (+16%). Notably, increasing LoRA rank and using deterministic rewards show no benefit, while open thinking blocks hurt performance (-16%). † indicates tool-calling rate improvement rather than validation reward. Contrast with Table 6 which shows performance drops when removing features from the complete system. 
+
+Approach Impact Lesson 
+
+Combined SFT data +41% Data quality dominates; curated an-swers teach synthesis Cache-tier reward +17% Don’t penalize model for data pipeline noise Rejection sampling +16% Filter GT quality before training Meta-reasoning penalty +6% Explicit negative signal for format viola-tions min_tokens=150 +44% † Prevent premature EOS in thinking mode LoRA 32 →128 ≈0 Capacity not the bottleneck Deterministic recall re-ward 
+
+≈0 Less noise doesn’t help if signal is weak Pure outcome reward –5% 29% zero-advantage groups kill learning Open <think> (no pre-close) –16% Model over-chains tools without termi-nation signal Trajectory matching re-ward –8% Penalizes valid alternative strategies 
+
+6.7. Concrete Failure Cases 
+
+To better understand model limitations, we analyze specific failure patterns observed during evalua-tion: 
+
+Failure Case 1: Premature Termination (42% of rollouts). 
+
+User: Find the population of Tokyo and calculate its growth rate. Model Output: <think> I need to find population data for Tokyo to calculate growth </think> Tokyo is the capital of Japan with a large population. [TERMINATED - No tool calls made] 
+
+Analysis: Without min_tokens=150 , the model terminates after brief reasoning (39 tokens median), failing to reach the tool-calling phase. The thinking is correct but incomplete. 
+
+Failure Case 2: Cache Mismatch Cascading (17% of rollouts). 
+
+User: Get weather for San Francisco and convert to Celsius. 
+
+> 22 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Model: <tool_call>{"name": "get_weather", "args": {"city": "San Francisco", "units": "fahrenheit"}} [Cache returns: {"city": "San Jose", "temp": 72, "units": "F"}] <tool_call>{"name": "convert_temp", "args": {"value": 72, "from": "F", "to": "C"}} [Correct conversion of wrong data] Output: San Francisco temperature is 22.2 °C. [Incorrect - used San Jose data due to fuzzy cache match] 
+
+Analysis: Fuzzy cache matching returns similar but incorrect data (San Jose instead of San Francisco). The model correctly processes the wrong data, producing a plausible but incorrect answer. Cache-tier-aware rewards reduce penalty for such cases. 
+
+Failure Case 3: Tool Over-Chaining (Observed with open thinking). 
+
+User: What’s 2+2? Model with open <think>: <think> Let me calculate 2+2. I should use the calculator tool. <tool_call>{"name": "calculator", "args": {"expr": "2+2"}} Result: 4 Now let me verify this with another calculation. <tool_call>{"name": "calculator", "args": {"expr": "4-2"}} Result: 2 Let me double-check by adding 1+1+1+1. <tool_call>{"name": "calculator", "args": {"expr": "1+1+1+1"}} [Continues unnecessarily...] 
+
+Analysis: Without pre-closing </think> tags in injected results, the model doesn’t receive termination signals and over-chains tools (4.2 turns vs. 3.2 expected), adding unnecessary verification steps. 
+
+Failure Case 4: Meta-Reasoning Instead of Task Solving. 
+
+User: Search for recent AI papers on transformers. Model: <think> The user wants me to search for papers. I should provide a comprehensive response with multiple sources. Let me think about how to format my answer nicely with bullet points and clear sections. I’ll make sure to be helpful and thorough. </think> I’ll help you search for recent AI papers on transformers. [No actual search performed] 
+
+Analysis: The model reasons about response formatting rather than executing the task. This meta-reasoning pattern (6% of rollouts) is addressed by clamping answer scores to 0 when detected. 
+
+> 23 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Failure Case 5: Unseen Tool Schemas. 
+
+User: Use the new_api_v2 to fetch user data. Available tool: {"name": "new_api_v2", "params": ["session_id", "auth_token", "query_type"]} Model: <tool_call>{"name": "new_api_v2", "args": {"user_id": "123"}} [Error: Missing required parameters] <think> The API call failed. Let me try a different approach. </think> I encountered an error accessing the API. [Gives up instead of reading schema] 
+
+Analysis: When encountering unseen tools with unfamiliar parameter schemas, the model makes assumptions based on similar tools in training rather than carefully reading the provided schema. Performance degrades 15-20% on completely novel tools. These failure cases highlight that while CacheRL successfully trains small models for tool calling, challenges remain in handling edge cases, novel tools, and cache imperfections. The cache-tier-aware reward design specifically addresses failures like Case 2, while architectural choices (pre-closing tags, min_tokens) mitigate Cases 1 and 3. 
+
+## 7. Limitations and Future Work 
+
+While CacheRL demonstrates effective knowledge transfer from large models to small agent foundation models, several limitations warrant discussion: 
+
+Cache Staleness and Generalization. Our cached rollout system relies on pre-computed tool results that may become stale over time. APIs evolve, return formats change, and new error conditions emerge that aren’t captured in the 40K cache entries. While fuzzy matching partially addresses this through semantic similarity (17% of rollouts), the model may struggle with tools exhibiting significantly different behavior than cached versions. Future work should explore dynamic cache updates and online adaptation mechanisms. 
+
+Dependency on Large Model Quality. The knowledge transfer pipeline fundamentally depends on GPT-5’s reasoning quality. Any biases, errors, or limitations in the teacher model propagate to the student. Our analysis shows 30% of generated trajectories receive low answer scores (0/5), often due to GPT-5’s own reasoning failures rather than cache mismatches. This teacher-student coupling limits the student model’s ability to exceed teacher performance. 
+
+Limited Tool Coverage. Despite training on 1,185 unique tools, real-world deployment faces a long tail of specialized APIs and enterprise tools not seen during training. Our evaluation on unseen tools shows 15–20% performance degradation compared to in-distribution tools. The model particularly struggles with tools requiring domain-specific knowledge (e.g., proprietary database schemas, internal API conventions) absent from public training data. 
+
+> 24 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Computational Requirements for Enhancement. While CacheRL reduces training costs through cached RL (0.01 × GPT-5’s training cost), the initial trajectory enhancement pipeline still requires significant compute: $110–220 for 44K trajectories using GPT-5 API calls. Organizations without access to frontier model APIs or with limited budgets may find the upfront enhancement cost prohibitive. 
+
+Thinking Mode Overhead. The structured reasoning in <think> tags, while improving inter-pretability and tool-calling accuracy, increases inference latency by 2–3 × compared to direct genera-tion. For latency-sensitive applications, this overhead may outweigh accuracy benefits. Future work should explore selective thinking—invoking reasoning only for complex multi-step tasks. 
+
+Evaluation Limitations. Our benchmarks focus on deterministic tool-calling scenarios with clear success criteria. Real-world agent deployments involve ambiguous user intents, partial failures requiring graceful degradation, and creative tool combinations not captured in our evaluation. The 80% end-to-end success rate may overestimate performance in open-ended, real-world settings. 
+
+Future Directions. Several promising directions could address these limitations: 
+
+• Online learning : Incorporate real tool feedback during deployment to adapt to API changes 
+
+• Multi-teacher distillation : Combine knowledge from multiple large models to reduce single-teacher bias 
+
+• Tool embedding learning : Learn representations for unseen tools based on their schemas and documentation 
+
+• Adaptive thinking : Dynamically determine when detailed reasoning is necessary versus direct action 
+
+• Hierarchical caching : Build tool-specific caches that capture common patterns while allowing flexibility Despite these limitations, CacheRL represents a significant step toward practical agent foundation models, demonstrating that small models can achieve strong tool-calling capabilities through system-atic knowledge transfer and cache-aware training. Addressing these limitations will be crucial for broader deployment of small agent models in production systems. 
+
+## 8. Conclusion 
+
+We presented CacheRL, a system for training multi-turn tool-calling agents via reinforcement learning with cached rollouts and cache-tier-aware hybrid reward. Our approach addresses three fundamental challenges in agent RL: environment execution cost (via the CacheAgentLoop with three-tier fuzzy caching), token alignment (via direct tokenization and response masking), and reward design (via dynamic weighting that adjusts for cache match quality). Through systematic experimentation across 10+ configurations, we identified the key factors driving performance: removing SFT data quality enhancements causes a 41.2% drop (highlighting the importance of rejection sampling and combined training data), removing cache-tier-aware rewards causes a 17.2% drop (by incorrectly penalizing the model for cached tool result mismatches), and engineering innovations (minimum token generation, pre-closed thinking, cache synchronization) collectively enable reliable training. The final system improves validation reward from 0.43 to 0.78 on Qwen3-4B-Thinking. 
+
+> 25 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+A central finding is that RL provides training stability but limited improvement beyond a strong SFT baseline in the cached rollout setting. Despite trying deterministic rewards (zero noise), increased model capacity (LoRA 128), larger datasets (44K samples), and multiple judge configurations, RL consistently plateaus within ±0.01 of the SFT starting point. This suggests that the ceiling is set by the cache fidelity—with 50% of rollouts receiving non-exact cached tool results, the reward signal quality fundamentally limits what RL can learn. 
+
+Limitations. The cached rollout approach is inherently limited by cache coverage: tool calls with novel arguments receive degraded responses, introducing systematic noise. Our reliance on GPT-5 as a judge introduces both cost and potential inconsistency. The pre-closed thinking approach causes 16% meta-reasoning leakage that we mitigate but cannot eliminate. 
+
+Future Work. The most impactful next step is transitioning from cached to live tool execution , which would eliminate the cache fidelity bottleneck and enable genuine RL improvement. Other directions include scaling to larger models (7B–14B) where RL may have more room to improve, training a dedicated reward model to replace the noisy LLM-as-judge, and extending to multi-agent collaborative tool-use settings. 
+
+## References 
+
+Marah Abdin, Jyoti Aneja, Hany Awadalla, Ahmed Awadallah, Ammar Ahmad Awan, Nguyen Bahree, et al. Phi-3 technical report: A highly capable language model locally on your phone. arXiv preprint arXiv:2404.14219 , 2024. Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, et al. Constitutional AI: Harmlessness from AI feedback. arXiv preprint arXiv:2212.08073 , 2022. DeepSeek-AI. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning. 
+
+arXiv preprint arXiv:2501.12948 , 2025. Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. In NIPS Deep Learning and Representation Learning Workshop , 2015. Bowen Jin, Hansi Zeng, Zhenrui Guo, Jiawei Chen, and Qiaozhu Mei. Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 ,2025. Yecheng Jason Ma, William Liang, Guanzhi Wang, De-An Huang, Osbert Bastani, Dinesh Jayaraman, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Eureka: Human-level reward design via coding large language models. arXiv preprint arXiv:2310.12931 , 2023. Arindam Mitra, Luciano Del Corro Ryan Kuo, Shivam Agarwal, Misha Bhargav, et al. AgentInstruct: Toward generative teaching with agentic flows. arXiv preprint arXiv:2407.03502 , 2024. OpenAI. OpenAI o1 system card. OpenAI Technical Report , 2024. Shishir G Patil, Tianjun Zhang, Xin Wang, and Joseph E Gonzalez. Gorilla: Large language model connected with massive APIs. arXiv preprint arXiv:2305.15334 , 2023. 
+
+> 26 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Cheng Qian, Xinran Ye, Zhuoqun Wen, Zhiyuan Bi, Kaixin Chen, Mingyu Yi, Qi Liu, Dawei Lin, Haijun Chen, Zijia Chen, et al. ToolRL: Reward is all tool learning needs. arXiv preprint arXiv:2504.13958 ,2025. Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. Advances in Neural Information Processing Systems , 36, 2024. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y.K. Li, Y. Wu, and Daya Guo. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Guangming Sheng, Chi Cao, Zilingfeng Chen, Xibin Hou, Dongjin Li, Yongbin Lu, Caihua Sui, Lewei Zhang, Jingfeng Zhang, and Hao Zhou. VERL: An extensible framework for post-training of large language models. arXiv preprint arXiv:2409.19256 , 2024. Richard S Sutton and Andrew G Barto. Reinforcement Learning: An Introduction . MIT Press, 2nd edition, 2018. Qiaoyu Tang, Ziliang Deng, Hongyu Lin, Xianpei Han, Qiao Liang, Boxi Cao, and Le Sun. ToolAl-paca: Generalized tool learning for language models with 3000 simulated cases. arXiv preprint arXiv:2306.05301 , 2023. Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B Hashimoto. Alpaca: A strong, replicable instruction-following model. Stanford Center for Research on Foundation Models , 2023. Gemma Team et al. Gemma: Open models based on Gemini research and technology. arXiv preprint arXiv:2403.08295 , 2024. Qwen Team. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Yizhong Wang, Yeganeh Kordi, Swaroop Mishra, Alisa Liu, Noah A Smith, Daniel Khashabi, and Hannaneh Hajishirzi. Self-instruct: Aligning language models with self-generated instructions. 
+
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics , 2023. Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H Chi, Quoc V Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large language models. 
+
+Advances in Neural Information Processing Systems , 35, 2022. Yuxiang Wei, Federico Cassano, Jiawei Lin, Aman Shrivastava, Baolin Peng, Reyhaneh Jabbarvand, Saurabh Bhatia, Dayan He, Hao Mao, and Murali Krishna Ramanathan. SWE-RL: Advancing LLM reasoning via reinforcement learning on open software evolution. arXiv preprint arXiv:2502.18449 ,2025. John Yang, Akshara Prabhakar, Karthik Narasimhan, and Shunyu Yao. InterCode: Standardizing and benchmarking interactive coding with execution feedback. Advances in Neural Information Processing Systems , 36, 2024. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. WebShop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems , 35, 2022. 
+
+> 27 CacheRL: Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward
+
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P Xing, Hao Zhang, Joseph E Gonzalez, and Ion Stoica. Judging LLM-as-a-judge with MT-Bench and chatbot arena. Advances in Neural Information Processing Systems , 36, 2024.

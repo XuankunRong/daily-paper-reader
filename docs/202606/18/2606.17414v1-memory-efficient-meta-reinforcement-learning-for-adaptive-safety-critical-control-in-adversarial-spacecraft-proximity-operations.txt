@@ -1,0 +1,622 @@
+Title: Memory-Efficient Meta-Reinforcement Learning for Adaptive Safety-Critical Control in Adversarial Spacecraft Proximity Operations
+
+URL Source: https://arxiv.org/pdf/2606.17414v1
+
+Published Time: Wed, 17 Jun 2026 00:30:36 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# (Preprint) AAS XX-XXX MEMORY-EFFICIENT META-REINFORCEMENT LEARNING FOR ADAPTIVE SAFETY-CRITICAL CONTROL IN ADVERSARIAL SPACECRAFT PROXIMITY OPERATIONS 
+
+Alejandro Posadas-Nava *, Richard Linares †
+
+, Minduli Wijayatunga ‡
+
+Autonomous spacecraft rendezvous and proximity operations (RPO) require con-trollers that guarantee safety under thrust constraints while minimizing fuel ex-penditure. Input-constrained control barrier functions (ICCBFs) provide a control method for nonlinear systems with actuation constraints that construct a forward-invariant safe set. Previous work has shown that learning class-K functions defin-ing the ICCBF recursion via meta reinforcement learning (meta-RL) yields a ro-bust, non-greedy approach to safety-critical control in RPO. This paper extends that framework further by investigating the performance of three recurrent network architectures (Long Short Term Memory (LSTM), Gated Recurrent Unit (GRU), Selective State Space Model (Mamba)) and two training algorithms (Proximal Pol-icy Optimization (PPO) and Soft Actor Critic (SAC)) to identify the best setup for tuning ICCBF class-K functions via meta-RL. In addition to cooperative test cases, performance is evaluated in the presence of adversarial behavior where the target spacecraft behaves in a way that worsens the safety of the chaser spacecraft. Re-sults indicate that state space models such as Mamba when used with PPO achieve superior task completion, safety, and fuel-savings compared to other architectures, across all cooperative and uncooperative scenarios tested. 
+
+INTRODUCTION 
+
+Autonomous rendezvous and proximity operations (RPO) increasingly require a spacecraft to maneuver in close proximity to objects whose properties are uncertain and, in some settings, actively uncooperative. This requires the spacecraft controls to meet safety guarantees under bounded thrust and significant model uncertainty, conserve propellant, and execute within the limited computational budget available on flight hardware. Classical guidance and control (G&C) architectures that separate trajectory planning from safety enforcement provide only weak guarantees under these coupled constraints. These approaches are rooted in optimal control and mathematical programming. 1 Indirect methods derived from Pontrya-gin’s minimum principle yield fuel-optimal solutions with high precision, though their convergence is notoriously sensitive to initialization and problem scaling. 2 Direct methods based on convex and successive convex programming trade some optimality for reliability and speed, 3–5 and have matured into computationally tractable pipelines for trajectory design and guidance in debris re-moval and servicing missions, 6 including end-to-end close-range rendezvous frameworks validated 
+
+> *Researcher, AeroAstro, MIT, 77 Massachusetts Avenue, Cambridge, MA 02139-4307.
+> †Associate Professor and Rockwell International Career Development Professor, AeroAstro, MIT, 77 Massachusetts Av-enue, Cambridge, MA 02139-4307.
+> ‡Assistant Professor, Department of Aerospace Engineering, University of Illinois, Urbana-Champaign, 104 S Wright St, Urbana, IL 61801.
+
+1
+
+> arXiv:2606.17414v1 [cs.LG] 16 Jun 2026
+
+on hardware testbeds. 7 Receding-horizon schemes such as model predictive control (MPC) further embed constraint handling within online re-optimization. 8 However, the guarantees these methods provide are certified only with respect to the assumed model. Their optimality and constraint sat-isfaction can degrade under unmodeled dynamics, navigation error, and parameter uncertainty, and robustness must be recovered indirectly through conservative margins, disturbance bounding, or repeated replanning. Moreover, these formulations offer no principled mechanism to infer hidden physical parameters or anticipate non-cooperative target behavior from the observation history. In contrast, reinforcement learning (RL) offers a complementary set of strengths. By training closed-loop policies over distributions of dynamics, disturbances, and sensing conditions, RL pro-duces controllers that adapt online to conditions unseen at design time while requiring only inex-pensive forward inference onboard. It has consequently been applied across the spacecraft G&C spectrum, from six-degree-of-freedom planetary landing 9 and robust interplanetary trajectory de-sign 10 to autonomous guidance for proximity operations. 11 In the RPO context specifically, RL-based guidance has been shown to maintain target observability, safety margins, and low fuel con-sumption under angles-only navigation in far-range rendezvous. 12 Meta-RL extends this further: by equipping the policy with memory, the agent implicitly performs system identification within an episode, adapting to hidden parameters and time-varying environments without explicit estima-tors. 13, 14 However, RL by itself provides no formal guarantees. Constraints are typically encoded as reward penalties, so satisfaction is achieved only in expectation and only on the training dis-tribution; a single constraint violation during a close-approach maneuver can be mission-ending. This shortcoming has spurred safe-RL mechanisms such as shielding 15 and run-time assurance for spacecraft docking and inspection, 16, 17 and more broadly motivates hybrid architectures in which a learned policy is paired with a certificate-bearing safety mechanism that retains hard guarantees regardless of what the policy outputs. 18 
+
+Control Barrier Functions (CBFs) offer such a mechanism, enforcing forward invariance of a prescribed safe set through a real-time quadratic program (QP) that minimally alters a nominal command. 19 Input-Constrained CBFs (ICCBFs) extend this guarantee to systems with bounded actuation by recursively composing the barrier with a hierarchy of class-K functions to construct an input-admissible inner safe set. 20 While well suited to address thrust limits and position-only constraints in RPO, conventional ICCBFs use a fixed class-K function hierarchy. This renders the filter conservative and myopic, as it can shrink the feasible set unnecessarily, expend excess fuel, and behave sub-optimally near constraint boundaries. Recent work has addressed this limitation by parameterizing and learning the class-K hierar-chy. Alongside data-driven approaches that represent barrier and certificate functions with neural networks, 21 a first line of work demonstrated that RL can tune non-greedy ICCBF parameteriza-tions within a unified two-stage framework, recovering fuel efficiency without sacrificing the safety certificate. 18 This was subsequently generalized through meta-reinforcement learning (meta-RL), in which a recurrent policy is trained over distributions of hidden physical parameters and disturbances to shape the full inner safe set online. 22 That study established that a learned, memory-based param-eterization reduces conservatism and fuel consumption relative to fixed ICCBFs while preserving safety, with a recurrent Long Short-Term Memory (LSTM) policy proving especially effective in the more complex, partially observed inspection task. This paper extends that framework by sys-tematically investigating the design space of the learned safety filter to identify the best setup for tuning the ICCBF class-K functions via meta-RL. It investigates: 21. Sequence-modeling architecture. Three recurrent network architectures including the LSTM used in prior work, the lighter Gated Recurrent Unit (GRU), 23 and the selective state-space model (Mamba) 24 with linear-time inference are benchmarked against one another to deter-mine which best balances safety, fuel efficiency, and task completion within onboard com-putational limits, demonstrating that this choice is a decisive rather than incidental design decision. 2. Training algorithm. On-policy Proximal Policy Optimization (PPO) 25 is compared against the off-policy, entropy-regularized Soft Actor-Critic (SAC) 26 under identical conditions to characterize the fuel–safety trade-off that each induces. 3. Adversarial robustness. In addition to cooperative test cases, adversarial docking and adver-sarial inspection scenarios are introduced, in which the target spacecraft deliberately maneu-vers to worsen the safety of the chaser or deny sensor coverage, and the robustness of each architecture–algorithm configuration is assessed. All combinations are validated through Monte Carlo studies on one-dimensional cruise control, two-dimensional docking, and three-dimensional inspection under distributions of hidden parame-ters, state and thrust uncertainties. For the docking and inspection, adversarial behavior cases are also investigated. 
+
+THEORETICAL BACKGROUND 
+
+ICCBFs are a mathematical framework for constructing input-admissible inner safe sets. They account for actuation limits by restricting the safe state space to a smaller inner safe set. This guar-antees that for every state within this inner set, there exists a feasible control command that respects physical thrust constraints while keeping the system and its future states safe. While traditional ICCBFs have fixed class-K functions, the heirachy of class-K functions can be learned using RL, as done in Ref. 22. The system dynamics are governed by the control-affine system 
+
+˙x = f (x) + g(x)u, (1) where f and g are sufficiently smooth, x ∈ X ⊂ Rn, and u ∈ U ⊂ Rm. Here, x is the system state, 
+
+f (x) the natural drift, g(x) the control effectiveness (the degree to which the control influences the evolution of the state), and u the control input. Because the goal of ICCBFs is to keep the system safe, a safety function h(x) is defined that maps the state to a safety score, and the effect of the environment dynamics and control inputs on that score is predicted over time. Lie derivatives describe the rate of change of a function along the system trajectory, enabling prediction of the change in the safety score under both the natural drift (when no control is applied) and the applied control. The Lie derivatives of h(x) with respect to 
+
+f (x) and g(x) are 
+
+Lf h(x) = ∇h(x) · f (x), Lgh(x) = ∇h(x) · g(x). (2) Using Eq. (2), the rate of change of the safety function is 
+
+˙h(x) = Lf h(x) + Lgh(x)u. (3) 3Input-Constrained CBFs 
+
+The safe set, represented by a continuously differentiable function h(x), does not inherently ac-count for physical actuation limits. Under classical Control Barrier Function (CBF) theory, forward invariance of this safe set is guaranteed if the control input u satisfies 
+
+Lf h(x) + Lgh(x)u ≥ − α(h(x)) , (4) where α is a class-K function. However, if a spacecraft lies on the boundary of the safe set while traveling with high tangential momentum, the control input required to satisfy this classical con-dition may exceed the physical thrust limits of the system. The dynamics would then prevent the system from remaining safe at subsequent timesteps. The ICCBF framework therefore strength-ens standard CBF theory by constructing a stricter condition, bN (x), that prevents the system from approaching the boundary of the original safe set with excessive momentum. Beginning from the foundational safety rule b0(x) = h(x), input awareness is introduced by computing a recursive se-quence of functions that evaluates the current condition against the system dynamics and the input constraints U, using a hierarchy of class-K functions {αi}N −1 
+
+> i=0
+
+:
+
+bi+1 (x) = inf  
+
+> u∈U
+
+[Lf bi(x) + Lgbi(x)u + αi(bi(x))] . (5) The recursion is repeated, generating progressively stricter functions b1, b 2, . . . , b N , until it yields a subset that is intrinsically forward-invariant under the bounded inputs. This final, converged function defines the operational inner safe set, and forward invariance is enforced by any locally Lipschitz feedback satisfying 
+
+Lf bN (x) + LgbN (x)u ≥ − αN (bN (x)) . (6) It is this learned hierarchy {αi}Ni=0 that the meta-RL policy parameterizes. 
+
+Time-Sampled Execution 
+
+The system dynamics evolve in continuous time, as in Eq. (1). Sensing and control updates, however, are typically executed at discrete instants on digital hardware. Intuitively, this is analogous to a person navigating a maze who can open their eyes only briefly once every few seconds: during the intervals when their eyes are closed, no guarantee can be made that they will not collide with a wall. Let tk = kT denote the sampling instants, where T > 0 is the constant sampling time step. Under a time-sampled implementation with a zero-order hold (ZOH), the control input is updated only at tk and held constant between updates, i.e, 
+
+u(t) = uk, t ∈ [tk, t k+1 ), uk ∈ U (7) where uk is computed from the sampled state xk ≜ x(tk). The resulting trajectory segment on the interval [tk, t k+1 ) is the solution to the continuous dynamics with the initial condition x(tk) = xk
+
+and the constant input uk. Then, the state update can be written in the following integral form. 
+
+xk+1 = xk +
+
+Z T
+
+> 0
+
+(f (x(tk + τ )) + g(x(tk + τ )) uk) dτ (8) 4Note that enforcing a continuous-time CBF exclusively at the sampling instants does not guarantee that the system will stay in the safe set during the inter-sample period (tk, t k+1 ) unless inter-sample effects are explicitly bounded or incorporated into the condition. 22 In this work, a control margin is utilized to accomplish this. 
+
+Meta-Reinforcement Learning 
+
+Reinforcement learning (RL) treats sequential decision-making as an agent interacting with an environment and refining its behavior through trial and error. 27 Meta-RL generalizes this from learning a single policy for a single task M to learning an adaptation mechanism over a distribution of related tasks M ∼ p(M), where each M is drawn from a task family M.28 Tasks within the family differ in parameters such as mass, thrust limits, or disturbance levels, so the behavior that is optimal for a given instance depends on properties that are not fully revealed by an instantaneous observation. A policy πθ can take the form of either a feed-forward mapping or a recurrent dynamical system. In the feed-forward case, a multilayer perceptron (MLP) maps the current observation directly to an action, ak = πθ(ok), producing a memoryless decision rule. In the recurrent case, an internal hidden state augments the mapping, ak = πθ(ok, sk) with sk+1 = ϕθ(sk, ok, ak), where sk is the hidden state and ϕθ is its update function, allowing the policy to accumulate information across timesteps. This memory enables within-episode inference of the hidden task parameters and the corresponding adaptation, which makes recurrent policies well suited to meta-RL. 29 
+
+METHODOLOGY 
+
+Given the system in Eq. (1), the goal of this work is to extend the study of the meta-RL ICCBF framework in Ref. 22. This framework consists of three parts. 1. The ICCBF recursion that creates a smaller subset of the safe set 2. A time-sampled margin, which maintains forward invariance despite discrete control updates. 3. An agent able to output dynamic, learned class-K parameters, θi,k , where αi(sk) = θi,k .A single convex quadratic program (QP) computes the control at each time step. This study considers agents that combine two RL algorithms (PPO and SAC) with three recurrent network architectures (LSTM, GRU, and Mamba), with performance measured through fuel savings and the safety score. 
+
+Quadratic Program Formulation 
+
+At runtime, the safe set is enforced by solving a convex QP at each sampling instant k. The QP modifies the nominal control command to ensure constraint satisfaction while respecting the actu-ation limits uk ∈ U . When the controller’s only active objective is to maintain safety, the baseline QP minimizes the total control effort ∥uk∥2 subject to the time-sampled ICCBF constraint, 22 which incorporates both the learned terminal class-K gain θN,k and the DA-computed inter-sample margin 
+
+ˆνk(T, xk), defined below. 5Enforcing a continuous-time ICCBF only at the sampling instants does not guarantee safety dur-ing the inter-sample interval (tk, t k+1 ) under a zero-order hold. 22 To recover strict forward invari-ance for all t ≥ 0, a control margin ˆνk(T, xk) is added to the discrete ICCBF inequality, bounding the worst-case evolution of the barrier over one sample step. Computing this margin exactly re-quires the local Lipschitz constants of the barrier terms and the maximum bounds of the dynamics, which in turn demand numerically intensive grid-search maximization at every step. 30 Following the formulation of Wijayatunga et al., 22 Differential Algebra (DA) is instead used to compute con-servative interval enclosures of the required Lipschitz constants and dynamics bounds over a local hyper-rectangle around xk, yielding an efficiently computed upper bound ˆνk(T, xk). Replacing the exact margin with this bound allows the time-sampled safety filter to be resolved with a single lightweight convex QP per control cycle. The complete derivation of this margin is given in Ref. 22. For goal-directed tasks, a relaxed CLF constraint is added to the QP to encode convergence to the target without compromising safety. The resulting formulation is 
+
+u∗ 
+
+> k
+
+= arg min    
+
+> uk∈Rm, ϵ k≥012
+
+∥uk∥2 + p ϵ 2
+
+> k
+
+s.t. Lf bN (xk) + LgbN (xk)uk + θN,k bN (xk) ≥ ˆνk(T, xk),Lf V (xk) + LgV (xk)uk ≤ − cV,k V (xk) + ϵk,
+
+uk ∈ U ,
+
+(9) where p > 0 weights the CLF slack variable ϵk. Because the terminal ICCBF condition is affine in the control input, the optimization is a strictly convex QP, ensuring the computational efficiency required for high-rate flight execution. 22 
+
+Meta-RL Formulation 
+
+The parameter-tuning problem is posed as an episodic, discrete-time control task. At each sam-pling instant tk, the agent observes the system state and outputs the ICCBF class-K parameters θk
+
+(and, where a CLF is present, the gain cV,k ), which together shape the geometry of the inner safe set enforced by the QP. 
+
+Network Architecture and Sequence Modeling Because the optimal class-K parameters depend on physical properties that are not observable from a single state, the policy must integrate the trajectory history to infer the hidden dynamics. Both the actor and critic therefore use separate feature extractors followed by an independent recurrent sequence module. To assess how the choice of temporal-inference mechanism affects performance, independent agents are trained with three sequence-modeling network architectures: an LSTM, a GRU, and a Mamba (selective state-space) module. For each scenario, one policy is trained per backbone with each of the two algorithms (PPO and SAC), giving six training runs per scenario. The PPO and SAC update procedures are detailed in Appendix A. 
+
+Domain Randomization and Uncertainty To train a policy that generalizes across the task fam-ily, each episode randomizes the initial state, the hidden physical parameters, and the sensing and actuation noise. These distributions are detailed below. 
+
+Initial State and Hidden Parameter Distributions Each training episode begins by drawing an initial condition together with a set of environmental parameters, such as the deputy mass, the maximum thrust umax , and the keep-in/keep-out zone sizes, so that the meta-RL agent is exposed 6Table 1 : Hidden parameter variations per episode (nominal value with relative deviation δi). Adapted from Ref. 22 
+
+Category Cruise Control Docking Inspection 
+
+Deputy mass m 1650 kg (±20% ) 1000 kg (±10% ) 12 kg (±10% )Max thrust umax 0.25 N (±20% ) 0.25 kN (±10% ) 1.0 N (±10% )Max velocity vmax 24 .0 m s −1 (±20% ) – –Lead vehicle velocity v0 13 .89 m s −1 (±10% ) – –Deputy radius RD – – 5 m (±10% )Chief radius RC – 2.4 m (±10% ) 10 m (±10% )Chief spin rate ω – 0.6◦ s−1 (±10% ) –Chief orbit radius r – 6771 km (±10% ) 6771 km (±10% )Approach cone half-angle γ – 10 ◦ (±10% ) –KIZ radius Rmax – – 800 m (±10% )
+
+to a distribution of task instances rather than a single nominal scenario, which improves robustness and limits overfitting. The initial state x0 is drawn from a bounded admissible set X0 ⊆ S , and a vector of hidden parameters p ∈ Rnp is sampled from a hyper-rectangle centered on the nominal values ¯p. Each component is sampled independently as 
+
+pi ∼ Uniform   (1 − δi) ¯ pi, (1 + δi) ¯ pi
+
+ , i = 1 , . . . , n p, (10) where ¯pi is the nominal value of the ith parameter and δi > 0 sets its relative variation. The per-case values of δi are listed in Table 1. Within each Monte Carlo dataset, the parameter samples are held fixed across all controllers, so that performance differences reflect only the ICCBF tuning mechanism. 
+
+State Errors Sensing errors are modeled as additive zero-mean Gaussian noise on the true state. At each step k, the state presented to the agent is 
+
+xEk = xk + ϵxk , ϵxk ∼ N  0, σ2
+
+> x
+
+I , (11) where σx = [ σr, σv]⊤ collects the position- and velocity-error standard deviations listed in Table 2. 
+
+Thrust Errors Actuation errors are introduced by perturbing the magnitude and direction of the commanded control u⋆k before propagation. With u⋆k = [ ux, u y, u z ]⊤ expressed in the control frame, the magnitude uk = ∥u⋆k∥2 and the out-of-plane and in-plane angles (β, γ ) are perturbed independently, and the executed command is reconstructed and saturated to umax :
+
+uk = ∥u⋆k∥2, β = sin −1
+
+ uz
+
+uk
+
+
+
+, γ = tan −1
+
+ ux
+
+uy
+
+
+
+, (12) 
+
+uEk = uk (1 + δu) , βE = β + δβ , γE = γ + δγ , (13) 
+
+uk = uEk
+
+
+
+cos βE sin γE
+
+cos βE cos γE
+
+sin βE
+
+ , uk ← umax 
+
+max( umax , ∥uk∥2) uk, (14) where δu ∼ N (0 , σ 2
+
+> u
+
+), δβ ∼ N (0 , σ 2 
+
+> β
+
+), and δγ ∼ N (0 , σ 2 
+
+> γ
+
+). The corresponding standard deviations are given in Table 2. 7Table 2 : Standard deviations of the thrust and state uncertainties applied. 
+
+Noise source Cruise Control Docking Inspection 
+
+σu 0.1 0.05 0.05 
+
+σγ – 0.1◦ 0.1◦
+
+σβ – – 0.1◦
+
+σr (each axis) 2 m 0.1 m 0.1 m 
+
+σv (each axis) 0.5 m s −1 2 mm s −1 2 mm s −1
+
+Observation At each step, the environment supplies an observation Sk carrying enough infor-mation to estimate the value of a candidate action. For numerical stability and consistent feature scaling, the observation is min–max normalized to the interval [−1, 1] :
+
+S∗ 
+
+> k
+
+= 2 
+
+ Sk − Smin 
+
+Smax − Smin 
+
+
+
+− 1, (15) where Smin and Smax bound the components of S. For the cruise-control and docking cases, the ob-servation is the noisy state, Sk = xEk . For inspection it is augmented to Sk = [ xEk , θ S , n insp , ˆd]⊤,where θS is the Sun angle, ninsp the number of inspected points, and ˆd a unit vector toward the largest cluster of remaining uninspected points, obtained by K-means clustering. 31 
+
+Reward Function The agent’s objective is to minimize control effort (fuel) while strictly avoid-ing task failure and maintaining safety. 22 The per-step reward penalizes the magnitude of the com-manded nominal control ∥u∗
+
+> k
+
+∥2, promoting fuel-efficient trajectories, together with a failure flag and a safety-violation term: 
+
+rk = −wu∥u∗
+
+> k
+
+∥2 − wfail Pfail − wh max(0 , −hk+1 ) , (16) where wu, wfail , and wh are positive weights, hk+1 is the safety value at the next state, and the failure flag terminates the episode when the QP solver becomes infeasible or a safety constraint is violated, 
+
+Pfail =
+
+(
+
+1, QP infeasible or solver failure ,
+
+0, otherwise . (17) For tasks that use a CLF to encode goal-reaching, a terminal penalty is added at the episode horizon tf to penalize failure to converge to the target: 
+
+Rk =
+
+(
+
+rk, tk < t f ,rk − wV PV , tk ≥ tf , (18) where wV > 0 and the terminal penalty activates only if the minimum CLF value over the episode, 
+
+min j V (xj ), fails to fall below a convergence threshold ρV :
+
+PV =
+
+(
+
+min j V (xj ), min j V (xj ) > ρ V ,
+
+0, otherwise . (19) For the inspection scenario, which has no CLF, the per-step reward in Eq. (16) is augmented with a positive reward proportional to the number of newly inspected surface points, encouraging coverage alongside fuel economy. 8RESULTS Test Cases 
+
+Cooperative Scenarios The three cooperative test cases including a one-dimensional cruise-control problem, a two-dimensional docking problem, and a three-dimensional inspection problem are adopted directly from the meta-RL ICCBF study of Wijayatunga et al., 22 which in turn draws the cruise-control and docking problems from 20 and the inspection problem from. 31 They are summa-rized below for completeness; the full dynamics, safety constraints, and CLFs are given in. 22 
+
+• Cruise Control A didactic, non-RPO benchmark in which a deputy follows a lead vehicle moving at a constant speed v0. With state x = [ d, v ]⊤ comprising the headway distance d
+
+and the deputy velocity v, the dynamics are 
+
+ ˙d
+
+˙v
+
+
+
+=
+
+v0 − v
+
+− F (v)
+
+> m
+
+
+
++
+
+ 0
+
+g0
+
+
+
+u, U = {u : |u| ≤ umax }, (20) where F (v) = 0 .1 + 5 v + 0 .25 v2 is a resistive drag, m is the deputy mass, and g0 is a control-scaling constant. Collision avoidance defines the safe set through the CBF 
+
+h(x) = d − 1.8 v ≥ 0, (21) and a CLF drives the deputy toward the speed limit vmax :
+
+V (x) = ( v − vmax )2. (22) • Docking with a Coorperative Target. A planar rendezvous in which a deputy must reach the rotating docking port of a chief while remaining within a line-of-sight cone (Figure 1). The state is x = [ px, p y, v x, v y, ϕ ]⊤, where (px, p y) and (vx, v y) are the chaser’s relative position and velocity and ϕ is the docking-port orientation, evolving as ˙ϕ = ω. The relative translational motion follows the Clohessy–Wiltshire (CW) dynamics with thrust acceleration as the control input, 
+
+˙px = vx, ˙py = vy, ˙ϕ = ω, 
+
+˙vx = 3 n2px + 2 nv y + ux 
+
+> m
+
+, ˙vy = −2nv x + uy 
+
+> m
+
+, (23) where n is the chief’s mean motion and ∥u∥ ≤ umax . The line-of-sight requirement defines the CBF 
+
+h(x) = ¯rcp · ˆe
+
+∥¯rcp ∥ − cos γ ≥ 0, (24) with cone half-angle γ, cone axis ˆe = [cos ϕ, sin ϕ]⊤, port offset ρ, and ¯rcp = [ px −
+
+ρ cos ϕ, p y − ρ sin ϕ]⊤ the vector from the port to the chaser. Convergence to the port is encoded by the CLF 
+
+V (x) = 
+
+
+
+vx + px − ρ cos ϕ
+
+10 
+
+2
+
++
+
+
+
+vy + py − ρ sin ϕ
+
+10 
+
+2
+
+. (25) 9Figure 1 : Spacecraft docking problem. • Inspecting a Cooperative Target. A three-dimensional problem in which a deputy circum-navigates a spherical chief to inspect discretized points on its surface (Figure 2). With state 
+
+x = [ r⊤, v⊤]⊤ ∈ R6, where r = [ x, y, z ]⊤ and v are the relative position and velocity in the chief-centered LVLH frame, the motion follows the CW equations 
+
+¨x = 3 n2x + 2 n ˙y + ux 
+
+> m
+
+, ¨y = −2n ˙x + uy 
+
+> m
+
+, ¨z = −n2z + uz 
+
+> m
+
+, (26) with ∥u∥∞ ≤ umax . Three constraints define the safe set—a keep-out zone (KOZ), a keep-in zone (KIZ), and a sensor Sun-exclusion condition: 
+
+h1(x) = ∥r∥ − (RC + RD) ≥ 0, (27) 
+
+h2(x) = Rmax − ∥ r∥ ≥ 0, (28) 
+
+h3(x) = θb − αFOV /2 ≥ 0, (29) where RC and RD are the chief and deputy radii, Rmax is the KIZ radius, θb is the sensor boresight–Sun angle, and αFOV is the sensor field of view. Because surface coverage cannot be expressed as a CLF, a learned nominal control policy replaces the CLF term and the ICCBF acts as a supervisory safety filter. 
+
+Adversarial Scenarios In addition to cooperative docking and inspection scenarios, in which the target remains passive, this section explores the same test cases under adversarial target behavior. • Docking with an Adversarial Target. The target acts as an adversary by choosing ωk+1 =˙ϕk+1 to minimize h(x). After the kth step, it evaluates h under a small perturbation ∆ω to the current rotation rate. 
+
+h+0 = h0(px,k +1 , p y,k +1 , v x,k +1 , v y,k +1 , ϕ k+1 + ( ωk + ∆ ω)T ) (30) 
+
+h− 
+
+> 0
+
+= h0(px,k +1 , p y,k +1 , v x,k +1 , v y,k +1 , ϕ k+1 + ( ωk − ∆ω)T ) (31) where T is the simulation timestep. The target then applies an update to its rotation rate in the direction that reduces safety as follows 
+
+ωk+1 =
+
+(
+
+ωk − ∆ωmax if h− 
+
+> 0
+
+< h +0 ,ωk + ∆ ωmax if h− 
+
+> 0
+
+≥ h+0 . (32) 10 Figure 2 : Spacecraft inspection problem. rs and rb denote the vector that points from the Sun to the target and the vector that points from the chaser to the target respectively. αF OV denotes the field of view of the chaser, and θb is the angle between the chaser’s sensor boresight and the Sun. Then, it clips to admissible bounds such that 
+
+ωk+1 = clip (ωk+1 , ω min , ω max ) . (33) We use [ωmin , ω max ] = [0 , 0.7 deg/s ] and ∆ω = ∆ ωmax = 0 .02 deg/s. The chaser’s ICCBF controller only receives a the stale estimate of ωk that lags by one time-step. • Inspecting an Adversarial Target. The chief applies a small impulsive maneuver at each step that increases the relative separation, modeled as a disturbance on the deputy’s discrete CW dynamics directed radially outward: 
+
+xk+1 = Φ( T )xk + Γ( T )udep ,k − Γ( T )dk, dk = −∆vk
+
+rk
+
+∥rk∥ , (34) where Φ( T ) and Γ( T ) are the CW state-transition and input matrices, udep ,k is the deputy con-trol, and rk = [ px, p y, p z ]⊤ is the deputy position relative to the chief, so that dk pushes the deputy away from the target. At episode reset, a total maneuver budget ∆vtotal ∼ U (0 .5, 5.0) m/s is sampled and spread evenly across the N -step horizon, ∆vk = ∆ vtotal /N .
+
+Experimental Setup 
+
+Training was conducted over a maximum of 100 ,000 episodes per run, distributed across 28 to 32 parallel environments, accumulating approximately 20 million timesteps. The recurrent network architectures were trained with Backpropagation Through Time (BPTT). To mitigate recurrent-state initialization error during updates, a burn-in period (20 to 100 steps, depending on the domain) was used to warm up the hidden states before gradients were accumulated. The primary hyperparameters are summarized below. • PPO: learning rate ≈ 3 × 10 −4 (constant or decaying by domain), discount factor γ = 0 .995 ,GAE λ = 0 .95 , clip parameter ϵ = 0 .2, and entropy coefficient cent = 0 .01 .11 • SAC: learning rate ≈ 3 × 10 −4, target smoothing coefficient τ = 0 .005 , automatic target-entropy tuning (floor 0.05 ), and a replay buffer of 50 ,000 to 100 ,000 transitions. • Networks: the MLP feature extractors used 2 to 3 hidden layers with 64 to 256 nodes per layer. For a fair comparison, the hidden-state dimension ( dmodel ) of the LSTM, GRU, and Mamba2 modules was matched (32 to 256 units, depending on domain complexity). 
+
+Evaluation Methodology 
+
+To assess performance, safety, and efficiency, the evaluation phase was decoupled from training. For each scenario, a fixed bank of 500 pre-generated initial conditions and environment-parameter randomizations (e.g., mass and inertia) was established. Using a static bank guarantees that every policy is evaluated on the exact same sequence of test cases regardless of training algorithm or recurrent backbone, enabling a direct comparison. During evaluation, the policies were executed deterministically: for PPO, the action-distribution means were used; for SAC, the exploration noise was disabled. This ensures that performance differences arise solely from the learned representa-tions. Each controller was assessed using the following three metrics. 1. Safety: the fraction of episodes in which the state remained within the safe set h(x, t ) ≥ 0
+
+for the entire horizon (or until the goal was reached). 2. Fuel / control effort: the accumulated control effort over the trajectory, reported as total ∆v
+
+or the integral of the control magnitude R ∥u(t)∥ dt .3. Task performance: domain-specific success criteria, including time of flight (TOF) to the target state, docking-angle error, and the final percentage of the target surface inspected. Figures 3 and 4 and Table 3 summarize the results across the three cooperative scenarios and the two adversarial scenarios, respectively. Detailed results follow. 
+
+Cruise Control 
+
+As shown in Table 3, the Cruise Control task is well within the capabilities of all evaluated models. Every combination achieves a safety rate of nearly 99 .0% . However, Mamba2+PPO dis-tinguishes itself by exhibiting the lowest mean fuel usage. Figure 5 shows the PPO-trained results, with phase-space trajectories in (d, v ) colored by total thrust (top), the CBF value h(t) against the 
+
+h = 0 safety boundary (middle), and the Lyapunov function V (t) (bottom). This figure shows that the Mamba2+PPO undercuts LSTM+PPO and GRU+PPO on fuel. All architectures fail to fully satisfy the CLF with V (t) plateauing near 100 –150 rather than converging to zero.This behavior is a consequence of the reward structure prioritizing fuel over the CLF leading the agent to reduce its velocity during its approach. In future work, higher weighting for the CLF satisfaction condition in the RL reward will be explored to avoid this. Figure 6 shows the analogous results for the three SAC-trained network architectures, but the median fuel consumptions are considerably higher than PPO’s. 
+
+Docking with a Coorperative Target 
+
+As seen in Table 3 LSTM and GRU models achieve the highest safety metrics but a 0.0% dock rate, suggesting that the agents failed to learn how to reach the docking target within the given train-ing time. Conversely, Mamba2+PPO achieves a 95 .0% successful dock rate while maintaining a 12 Figure 3 : Performance of all setups across the three cooperative mission scenarios. Triangle: Cruise Control, Circle: Docking, Square: In-spection. 
+
+> Figure 4
+
+: Performance of all setups across the two adversarial mission scenarios. Circle: Docking, Square: Inspection. 
+
+97 .9% safety margin. The lowest median fuel consumption is observed for LSTM+SAC, however at a docking success rate of 0%. Instead, Mamba2 offers the second lowest median fuel consump-tion rate, with much higher rate of docking success. Figure 7 evaluates the spacecraft docking scenario under nominal conditions for three PPO-trained architectures: LSTM+PPO, GRU+PPO, and Mamba2+PPO. The top row shows planar XY position trajectories of the chaser spacecraft, overlaid with a rotating docking-cone obstacle at its start and end orientations to illustrate the time-varying geometry of the safety constraint. The middle row plots the CBF value h(t) over time, where h < 0 indicates a constraint violation, with the h = 0 boundary clearly marked. The bottom row shows the Lyapunov function V (t). Analogous to the PPO docking group, Figure 8 evaluates the standard spacecraft docking scenario for three SAC-trained architectures. 
+
+Inspecting a Cooperative Target 
+
+The Inspection scenario pushes the agents further, requiring them to balance goal-oriented nav-igation against fuel efficiency and strict safety constraints. Figures 9 and 10 show the PPO- and SAC-trained network architectures, with one architecture per column and rows giving the XY tra-jectories over the KIZ annulus, the KOZ barrier hKOZ (t) = ∥rb∥ − (RC + RD), the KIZ barrier 
+
+hKIZ (t) = Rmax − ∥ rb∥, the Sun-exclusion barrier hSUN (t), and the cumulative inspection cover-age. Table 3 reveals a safety collapse for SAC: both GRU+SAC and Mamba2+SAC record a 0.0% 
+
+safety rate. Among the PPO variants, GRU+PPO reaches high coverage ( 98 .11 points) but inef-ficiently, consuming far more fuel (Thrust μ = 1042 .96 ) at only 67 .8% safety. Mamba2+PPO is again the best pairing, achieving near-complete coverage ( 99 .55% median) and the highest safety (99 .4% ) with a stable, efficient thrust profile ( σ = 115 .44 ). 13 Table 3 : Performance summary across the cooperative and adversarial scenarios. Fuel is reported as mean ± std with quartiles [Q1, Q 2, Q 3] (N ·s for Cruise Control, m/s otherwise). “Safe” is the fraction of safe episodes; “Compl.” is the docking-success rate (Docking) or mean surface coverage (Inspection). Best value per column within each task in bold.                                                                                                                                                                                                        
+
+> Task Case μ±σ[Q1, Q 2, Q 3]Safe (%) Compl. (%)
+> Cruise Control LSTM+PPO 4.02 ±0.440 [3 .99 ,4.07 ,4.14] 98.8 –LSTM+SAC 3.53 ±0.497 [3 .29 ,3.58 ,3.84] 98.9 –GRU+PPO 3.29 ±0.514 [3 .04 ,3.38 ,3.63] 98.8 –GRU+SAC 3.98 ±0.416 [3 .93 ,4.03 ,4.12] 99 .0–Mamba2+PPO 2.62 ±0.355 [2.47 ,2.60 ,2.79 ]98.9 –Mamba2+SAC 3.90 ±0.449 [3 .81 ,3.97 ,4.09] 98.8 –Cooperative Docking LSTM+PPO 7.64 ±2.97 [5 .02 ,7.15 ,10 .6] 98 .30.00 LSTM+SAC 5.23 ±1.05 [4.53 ,5.09 ,5.97 ]98.2 0.00 GRU+PPO 6.90 ±2.47 [4 .90 ,6.25 ,8.81] 98 .30.00 GRU+SAC 7.39 ±1.63 [6 .67 ,7.08 ,7.85] 4.80 2.20 Mamba2+PPO 6.26 ±1.70 [5 .14 ,6.02 ,7.17] 97.9 95 .0
+> Mamba2+SAC 6.06 ±1.88 [4 .74 ,5.21 ,7.73] 98 .348.6 Cooperative Inspection LSTM+PPO 8.31 ±4.30 [6 .02 ,7.04 ,8.80] 94.4 97.7 LSTM+SAC 20 .1±11 .0[12 .5,16 .6,22 .4] 6.40 76.5 GRU+PPO 9.69 ±4.24 [6 .50 ,7.69 ,13 .9] 67.8 98.1 GRU+SAC 20 .7±21 .9[8 .48 ,9.64 ,25 .2] 0.00 37.4 Mamba2+PPO 6.59 ±1.38 [5.71 ,6.55 ,7.58 ]99 .499 .6
+> Mamba2+SAC 9.20 ±6.78 [7 .78 ,8.40 ,9.06] 0.00 27.7 Adversarial Docking LSTM+PPO 6.77 ±2.92 [4 .58 ,6.27 ,8.27] 95 .695.1 GRU+PPO 7.24 ±2.68 [5 .24 ,7.05 ,9.74] 88.3 74.3 Mamba2+PPO 5.18 ±1.87 [3.47 ,5.39 ,6.82 ]95.4 95 .2
+> Adversarial Inspection LSTM+PPO 7.79 ±2.80 [6 .17 ,7.09 ,8.38] 95.6 98.4 GRU+PPO 9.69 ±4.24 [6 .50 ,7.69 ,13 .9] 67.8 98.1 Mamba2+PPO 5.29 ±1.37 [4.32 ,5.22 ,6.07 ]99 .099 .4
+
+Docking with an Adversarial Target. 
+
+To assess robustness under unpredictable, actively evasive conditions, the models were evaluated on adversarial variants of the docking and inspection scenarios; given PPO’s superior cooperative performance, only the PPO variants were carried forward. For adversarial docking, the GRU backbone degrades sharply, falling to an 88 .3% safety rate and a 74 .3% docking-success rate. LSTM+PPO and Mamba2+PPO remain robust, with comparable docking success ( ∼ 95% ) and safety ( ∼ 95 .5% ). Mamba2+PPO is the most fuel-efficient of the three, reaching the target with lower mean ∆v (5.18 vs. 6.77 m/s) and lower variance ( 1.87 vs. 
+
+2.92 ), indicating a more efficient and stable policy learned from fewer interactions. Figure 11 shows the adversarial docking trajectories for the three PPO network architectures, with the layout mirroring the cooperative docking figure. 
+
+Inspecting an Adversarial Target. 
+
+Table 3 demonstrates that all three models maintain excellent coverage against the adversarial target, inspecting roughly 98 –99% of the target points, but they rely on markedly different control strategies to achieve this. The RNN-based models expend considerably more fuel countering the ad-14 Figure 5 : PPO cruise control trajectories versary’s evasive maneuvers ( 7.79 and 9.69 m/s mean ∆v for LSTM+PPO and GRU+PPO, respec-tively), and GRU+PPO does so while sacrificing safety ( 67 .8% safe episodes). Mamba2+PPO, by contrast, dominates on every metric. It requires the least control effort ( 5.29 m/s) with the narrow-est distribution ( σ = 1 .37 m/s), while simultaneously achieving the highest safety rate ( 99 .0% vs. 
+
+95 .6% for LSTM+PPO) and the highest coverage ( 99 .4% ). This across-the-board advantage high-lights the superior capacity of selective state space models for handling complex, multi-objective control problems, even in hostile environments. Figure 12 presents results for the adversarial in-spection scenario evaluated on the three PPO-trained architectures. The figure layout mirrors the standard inspection figure. 
+
+DISCUSSION 
+
+Three observations emerge from these results. First, the performance gap between configurations scales with task difficulty. In Cruise Control all pairings are separated only by fuel, but in dock-ing only Mamba2 learns to complete the task, in inspection the SAC variants collapse, and under adversarial behavior Mamba2+PPO consumes roughly 30 –45% less fuel than the RNN-based poli-cies while matching or exceeding their safety and coverage. This illustrates that architecture and algorithm choices must be validated according to the difficulty of the problem. Second, Mamba2’s advantage is plausibly rooted in its linear, input-gated hidden-state recurrence, which, unlike the saturating nonlinear updates of the LSTM and GRU, mitigates the vanishing-gradient problem over long horizons and allows the policy to infer hidden task parameters and adversarial behavior from the full observation history. Third, the systematic underperformance of SAC reflects a mismatch 15 Figure 6 : SAC cruise control trajectories between entropy-regularized, off-policy learning and the thin feasible sets of safety-critical control: the maximum-entropy objective injects stochasticity that repeatedly drives the agent across tight constraint boundaries, while replayed transitions generated under earlier class-K parameterizations leave the value estimates stale with respect to the current safety filter. On-policy methods such as PPO that learn only from data generated by the current filter can avoid this problem. 
+
+CONCLUSION 
+
+This paper extended a previously developed meta-RL framework for tuning the class-K functions of ICCBFs by benchmarking three recurrent network architectures (LSTM, GRU, and Mamba2) and two training algorithms (PPO and SAC) across cruise control, docking, and inspection scenarios, including adversarial variants in which the target actively degrades the chaser’s safety or sensor cov-erage. Monte Carlo evaluation under hidden-parameter, state, and thrust uncertainty showed that the choice of sequence model and training algorithm is fairly decisive rather than incidental, and that the performance gap between configurations widens with task complexity. On-policy PPO consistently outperformed off-policy SAC, whose entropy-driven exploration and stale replayed transitions led to safety collapse in the docking and inspection tasks. Among the network architectures, Mamba2 paired with PPO provided the best overall balance: it was the only configuration to achieve a high docking success rate ( 95 .0% ) while preserving safety ( 97 .9% ), attained near-complete inspection coverage ( 99 .6% ) at the highest safety rate ( 99 .4% ), and retained this advantage under adversar-ial behavior, where it achieved the highest safety and coverage at 30 –45% lower fuel consumption than the RNN-based alternatives. These results indicate that selective state-space models are well 16 Figure 7 : PPO docking trajectories suited to learned safety filters for proximity operations. Future work will include adapting off-policy methods to the non-stationary safe set induced by the learned filter, and validating the framework on flight-representative hardware. 
+
+ACKNOWLEDGMENT 
+
+Research was sponsored by the Department of the Air Force Artificial Intelligence Accelerator and was accomplished under Cooperative Agreement Number FA8750-19-2-1000. The views and conclusions contained in this document are those of the authors and should not be interpreted as representing the official policies, either expressed or implied, of the Department of the Air Force or the U.S. Government. The U.S. Government is authorized to reproduce and distribute reprints for Government purposes notwithstanding any copyright notation herein. 
+
+USE OF ARTIFICIAL INTELLIGENCE 
+
+AI tools were used in the preparation of this manuscript to improve the clarity of the technical writing. All scientific content, including the problem formulation, theoretical development, inter-pretation of results, and conclusions, is the sole intellectual contribution of the authors. The authors reviewed and verified all AI-generated text, and take full responsibility for the accuracy and integrity of the work. 17 Figure 8 : SAC docking trajectories 
+
+> Figure 9
+
+: PPO inspection trajectories 18 Figure 10 : SAC inspection trajectories 
+
+> Figure 11
+
+: PPO adversarial docking trajectories 19 Figure 12 : PPO adversarial inspection trajectories 20 APPENDIX: A Algorithm 1 Recurrent Meta-RL via PPO (On-Policy) 
+
+Require: Task E; recurrent actor πθ , critic Vϕ; rollout length T , burn-in K, epochs E, clip ϵ, GAE (γ, λ ).
+
+1: Initialise θ, ϕ ; context C ← 0K×N
+
+2: for each PPO update do 
+
+3: // — Phase 1: Rollout — 
+
+4: ha, hc ← 0
+
+5: for t = 1 to T do 
+
+6: at, log πt, ha ← πθ (st, ha)
+
+7: vt, hc ← Vϕ(st, hc)
+
+8: st+1 , R t, d t ← E .STEP 
+
+ ICCBF-QP (at, st)
+
+9: if d(i) 
+
+> t
+
+= true then ha
+
+> [: ,i ]
+
+, hc 
+
+> [: ,i ]
+
+← 0
+
+10: end if 
+
+11: Store (st, a t, R t, d t, v t, log πt) in B
+
+12: end for 
+
+13: // — Phase 2: GAE — 
+
+14: vT +1 ← Vϕ(sT +1 , hc); ˆAT +1 ← 0
+
+15: for t = T downto 1 do 
+
+16: ˆAt ← (Rt + γv t+1 − vt) + γλ ˆAt+1 
+
+17: end for 
+
+18: // — Phase 3: Update with Burn-In — 
+
+19: C ← B .OBS T −K:T ▷ save tail as burn-in context for next update 
+
+20: for epoch e = 1 to E do 
+
+21: for each minibatch M ∼ B do 
+
+22: Run πθ , V ϕ over [C, M] from h = 0; discard first K outputs 
+
+23: ˆA ← ( ˆA − μ ˆA)/σ ˆA
+
+24: r ← exp(log π′ 
+
+> t
+
+− log πt)
+
+25: L ← − Emin( r ˆA, clip( r, 1±ϵ) ˆA) + cV LV − cHH
+
+26: Update θ, ϕ via ∇L ; clip ∥∇∥ 2 ≤ δg
+
+27: if cKL > δ KL then break 
+
+28: end if 
+
+29: end for 
+
+30: end for 
+
+31: end for 
+
+21 Algorithm 2 Recurrent Meta-RL via SAC (Off-Policy) 
+
+Require: Task E; recurrent actor πθ , twin critics Qϕ1 , Q ϕ2 , target critics ¯Qϕ1 , ¯Qϕ2 ; chunk length L, burn-in 
+
+K, Polyak τ , entropy coef α.
+
+1: Initialise θ, ϕ 1:2 , ¯ϕ1:2 ← ϕ1:2 , log α; replay buffer D of capacity M
+
+2: h ← 0; collect Nstart random transitions into D
+
+3: for each environment step do 
+
+4: // — Collection — 
+
+5: at, h ← πθ (st, h)
+
+6: st+1 , R t, d t ← E .STEP 
+
+ ICCBF-QP (at, st)
+
+7: if dt = true then h ← 0
+
+8: end if 
+
+9: Store (st, a t, R t, d t) in chunk collector; flush complete chunks of length K+L to D
+
+10: if step mod train freq = 0 and |D| ≥ batch size then 
+
+11: for gradient steps iterations do 
+
+12: // — Burn-In Split — 
+
+13: Sample batch of sequences (K+L) from D
+
+14: C ← seq :K ; (s, a, R, s′, d ) ← seq K: ▷ first K steps warm up the RNN; loss on last L
+
+15: // — Critic Update — 
+
+16: a′, log π′ ← πθ (s′, d, C +1 ) ▷ context shifted by 1 for next-obs 
+
+17: y ← R + γ(1 − d)min i ¯Q ¯ϕi (s′, a ′) − α log π′
+
+18: LQ ← P2 
+
+> i=1
+
+MSE  Qϕi (s, a, C), y 
+
+19: Update ϕ1:2 via ∇ϕLQ; clip ∥∇∥ 2 ≤ δg
+
+20: // — Actor Update — 
+
+21: ˜a, log π ← πθ (s, d, C)
+
+22: Lπ ← Eα log π − min i Qϕi (s, ˜a, C)
+
+23: Update θ via ∇θ Lπ ; clip ∥∇∥ 2 ≤ δg
+
+24: // — Entropy Coefficient Update — 
+
+25: Lα ← E−α(log π + ¯H); update log α via ∇L α; clamp α ≥ αmin 
+
+26: // — Polyak Update — 
+
+27: ¯ϕi ← τ ϕ i + (1 −τ ) ¯ϕi ▷ soft update target critics 
+
+28: end for 
+
+29: end if 
+
+30: end for 
+
+22 REFERENCES 
+
+[1] J. T. Betts, “Survey of Numerical Methods for Trajectory Optimization,” Journal of Guidance, Control, and Dynamics , Vol. 21, No. 2, 1998, pp. 193–207, 10.2514/2.4231. [2] M. C. Wijayatunga, R. Armellin, and L. Pirovano, “Exploiting Scaling Constants to Facilitate the Con-vergence of Indirect Trajectory Optimization Methods,” Journal of Guidance, Control, and Dynamics ,Vol. 46, No. 5, 2023, pp. 958–969, 10.2514/1.G007091. [3] P. Lu and X. Liu, “Autonomous Trajectory Planning for Rendezvous and Proximity Operations by Conic Optimization,” Journal of Guidance, Control, and Dynamics , Vol. 36, No. 2, 2013, pp. 375–389, 10.2514/1.58436. [4] D. Malyuta, T. P. Reynolds, M. Szmuk, T. Lew, R. Bonalli, M. Pavone, and B. Ac ¸ıkmes ¸e, “Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajecto-ries Reliably and Efficiently,” IEEE Control Systems Magazine , Vol. 42, No. 5, 2022, pp. 40–113, 10.1109/MCS.2022.3187542. [5] N. Bernardini, M. C. Wijayatunga, N. Baresi, and R. Armellin, “State-Dependent Trust Region for Successive Convex Optimization of Spacecraft Trajectories,” 33rd AAS/AIAA Space Flight Mechanics Meeting , Austin, TX, 2023. [6] M. C. Wijayatunga, R. Armellin, H. Holt, L. Pirovano, and A. A. Lidtke, “Design and Guidance of a Multi-Active Debris Removal Mission,” Astrodynamics , Vol. 7, No. 4, 2023, pp. 383–399, 10.1007/s42064-023-0159-3. [7] M. C. Wijayatunga, J. Guinane, N. D. Wallace, and X. Wu, “An Autonomous, End-to-End, Convex-Based Framework for Close-Range Rendezvous Trajectory Design and Guidance with Hardware Testbed Validation,” 2026, 10.48550/arXiv.2602.12421. [8] A. Weiss, M. Baldwin, R. S. Erwin, and I. Kolmanovsky, “Model Predictive Control for Spacecraft Rendezvous and Docking: Strategies for Handling Constraints and Case Studies,” IEEE Transactions on Control Systems Technology , Vol. 23, No. 4, 2015, pp. 1638–1647, 10.1109/TCST.2014.2379639. [9] B. Gaudet, R. Linares, and R. Furfaro, “Deep Reinforcement Learning for Six Degree-of-Freedom Planetary Landing,” Advances in Space Research , Vol. 65, No. 7, 2020, pp. 1723–1741, 10.1016/j.asr.2019.12.030. [10] A. Zavoli and L. Federici, “Reinforcement Learning for Robust Trajectory Design of Interplane-tary Missions,” Journal of Guidance, Control, and Dynamics , Vol. 44, No. 8, 2021, pp. 1440–1453, 10.2514/1.G005794. [11] L. Federici, B. Benedikter, and A. Zavoli, “Deep Learning Techniques for Autonomous Spacecraft Guidance During Proximity Operations,” Journal of Spacecraft and Rockets , Vol. 58, No. 6, 2021, pp. 1774–1785, 10.2514/1.A35076. [12] M. C. Wijayatunga, R. Armellin, and H. Holt, “Robust Trajectory Design and Guidance for Far-Range Rendezvous Using Reinforcement Learning with Safety and Observability Considerations,” Aerospace Science and Technology , Vol. 159, 2025, p. 109996, 10.1016/j.ast.2025.109996. [13] L. Federici, A. Scorsoglio, A. Zavoli, and R. Furfaro, “Meta-Reinforcement Learning for Adaptive Spacecraft Guidance During Finite-Thrust Rendezvous Missions,” Acta Astronautica , Vol. 201, 2022, pp. 129–141, 10.1016/j.actaastro.2022.08.047. [14] G. Fereoli, H. Schaub, and P. Di Lizia, “Meta-Reinforcement Learning for Spacecraft Proximity Op-erations Guidance and Control in Cislunar Space,” Journal of Spacecraft and Rockets , Vol. 62, No. 3, 2025, pp. 706–718, 10.2514/1.A36100. [15] M. Alshiekh, R. Bloem, R. Ehlers, B. K¨ onighofer, S. Niekum, and U. Topcu, “Safe Reinforcement Learning via Shielding,” Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 32, 2018. [16] K. Dunlap, M. Mote, K. Delsing, and K. L. Hobbs, “Run Time Assured Reinforcement Learning for Safe Satellite Docking,” Journal of Aerospace Information Systems , Vol. 20, No. 1, 2023, pp. 25–36, 10.2514/1.I011126. [17] D. v. Wijk, K. Dunlap, M. Majji, and K. L. Hobbs, “Safe Spacecraft Inspection via Deep Reinforcement Learning and Discrete Control Barrier Functions,” Journal of Aerospace Information Systems , Vol. 21, No. 12, 2024, pp. 996–1013. [18] M. Wijayatunga, N. Wallace, S. Sukkarieh, and R. Armellin, “Learning Safety-Guaranteed, Non-Greedy Control Barrier Functions Using Reinforcement Learning,” 2026. [19] A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath, and P. Tabuada, “Control Barrier Functions: Theory and Applications,” 2019. [20] D. R. Agrawal and D. Panagou, “Safe Control Synthesis via Input Constrained Control Barrier Func-tions,” 2021 60th IEEE Conference on Decision and Control (CDC) , IEEE, Dec. 2021, p. 6113–6118, 10.1109/cdc45484.2021.9682938. 
+
+23 [21] C. Dawson, S. Gao, and C. Fan, “Safe Control With Learned Certificates: A Survey of Neural Lyapunov, Barrier, and Contraction Methods for Robotics and Control,” IEEE Transactions on Robotics , Vol. 39, No. 3, 2023, pp. 1749–1767, 10.1109/TRO.2022.3232542. [22] M. C. Wijayatunga, R. Linares, and R. Armellin, “Meta-Reinforcement Learning for Robust and Non-greedy Control Barrier Functions in Spacecraft Proximity Operations,” 2026. [23] J. Chung, C. Gulcehre, K. Cho, and Y. Bengio, “Empirical Evaluation of Gated Recurrent Neural Net-works on Sequence Modeling,” 2014. [24] T. Dao and A. Gu, “Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality,” 2024. [25] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Proximal Policy Optimization Algo-rithms,” 2017. [26] T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine, “Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor,” 2018. [27] R. S. Sutton and A. G. Barto, Reinforcement Learning: An Introduction . The MIT Press, second ed., 2018. [28] J. Beck, R. Vuorio, E. Liu, Z. Xiong, L. Zintgraf, C. Finn, and S. Whiteson, A Tutorial on Meta-Reinforcement Learning . Foundations and Trends in Artificial Intelligence Series, Now Publishers, 2025. [29] B. Gaudet, R. Linares, and R. Furfaro, “Adaptive guidance and integrated navigation with reinforcement meta-learning,” Acta Astronautica , Vol. 169, 2020, pp. 180–190, https://doi.org/10.1016/j.actaastro.2020.01.007. [30] J. Breeden, K. Garg, and D. Panagou, “Control Barrier Functions in Sampled-Data Systems,” IEEE Control Systems Letters , Vol. 6, 2022, p. 367–372, 10.1109/lcsys.2021.3076127. [31] D. Van Wijk, K. Dunlap, M. Majji, and K. Hobbs, “Safe Spacecraft Inspection via Deep Reinforcement Learning and Discrete Control Barrier Functions,” Journal of Aerospace Information Systems , Vol. 21, No. 12, 2024, pp. 996–1013, 10.2514/1.I011391. 
+
+24
