@@ -1,0 +1,608 @@
+Title: EnvRL: Learn from Environment Dynamics in Agentic Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.17680v1
+
+Published Time: Wed, 17 Jun 2026 00:45:28 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# ENV RL: Learn from Environment Dynamics in Agentic Reinforcement Learning 
+
+Zhitong Wang ∗∗♠ , Songze Li ∗♡ , Hao Peng ♠, Shuzheng Si ♠,Yi Wang ♡, Maosong Sun ♠, Juanzi Li ♠♠Department of Computer Science and Technology, Tsinghua University 
+
+> ♡
+
+Shanghai AI Laboratory 
+
+https://github.com/zt-wang19/EnvRL 
+
+Abstract 
+
+Reinforcement learning (RL) has emerged as a powerful paradigm for training Large Language Models (LLMs) as agents. However, conventional RL methods for long-horizon agentic tasks often struggle with sparse outcome rewards. Intuitively, this overlooks the rich environment dynamics information contained in rollout interaction trajectories. We argue that the interaction experience inherently serves as an implicit supervision signal, reveals the underlying environmental transition mechanisms, and enables the agent to construct a more accurate internal model of the environment. Therefore, in this work, we investigate how to leverage this additional signal to improve policy learning. Specifically, we propose ENV RL ,a framework that incorporates environment dynamics learning into agentic RL via two auxiliary objectives: state prediction and inverse dynamics . By jointly optimizing with the primary RL objective, we encourage the agent to internal-ize environment dynamics from its own interaction, leading to more effective decision-making. Extensive experiments on two long-horizon agentic benchmarks demonstrate that E NV RL achieves significant improvements on success-rates over RL-only baselines, e.g., when trained with GRPO, lifting Qwen-2.5-1.5B-Instruct from 72.8% to 77.4% on ALFWorld, and from 56.8% to 67.0% on WebShop. 
+
+1 Introduction The fridge 1 is open. 
+
+> In it, you see a
+> tomato 1...and a
+> potato 1.
+> open fridge 1
+> You arrive at loc 7.
+> The fridge 1 is closed.
+> successful completion
+> take tomato 1
+> from fridge 1
+
+Unused 
+
+Unused 
+
+Used 
+
+Figure 1: Interaction process in agentic RL. Exist-ing agentic RL methods assign credit primarily from sparse, trajectory-level outcome rewards (e.g., “suc-cessful completion”), while the rich environmental feedback during interactions is under-explored. Large language models (LLMs) are increas-ingly deployed as autonomous agents to han-dle complex tasks, ranging from utilizing soft-ware tools [ 34 , 35 ] to interacting with the physical world [ 13 , 10 ]. These tasks ne-cessitate multi-turn interactions with the en-vironment, demanding not only strong lan-guage understanding but also robust long-horizon planning capabilities derived from the model [ 22 , 47 , 43 , 32 ]. Consequently, Reinforcement Learning (RL) has emerged as a standard paradigm to train LLMs as agents [ 11 , 38 , 27 ]. By learning through trial-and-error, RL allows agents to explore the en-vironment and discover effective strategies di-rectly from environmental feedback, rather than relying solely on expert trajectories. 
+
+> ∗Equal contribution. Preprint.
+> arXiv:2606.17680v1 [cs.LG] 16 Jun 2026
+
+However, prevailing agentic RL algorithms, such as GRPO [ 31 ] and RLOO [ 1], predominantly rely on outcome-based rewards, where the environment provides binary feedback only upon the completion of an episode. Such sparse environment feedback poses a severe challenge for learning in long-horizon, multi-turn contexts [ 45 , 18 , 38 ]. In contrast, we argue that the feedback available from the environment is much richer than mere outcomes. As shown in Figure 1, while the agent interacts with the environment, it generates experience that implicitly carries dense signals, describing how the environment evolves in response to actions and revealing the underlying transition mechanism [ 6, 15 ]. Learning from these signals enables the agent to understand the dynamics of the environment and identify meaningful trajectories within vast state spaces [ 7, 30 ]. Motivated by this, we aim to investigate how to harness the environment dynamics contained in experience to enhance agentic RL. In this work, we propose a simple yet effective framework, ENV RL , that enables agents to con-tinuously learn environment dynamics as extra supervision signals during RL updates. Concretely, we explore two strategies to transform experiences into self-supervision signals to introduce the environment dynamics for agentic RL. 1) State-Prediction (SP), which models forward environment dynamics by predicting the next state given the current state and action, encouraging the agent to capture how its actions shape subsequent observations. 2) Inverse-Dynamics (ID), which trains the agent to infer the action that caused a particular state transition, thereby strengthening the agent’s un-derstanding of the causal link between its behavior and environmental changes. By jointly optimizing SP and ID alongside the RL objective, E NV RL allows the agent to internalize environment dynamics from accumulated experience and make superior decisions. Importantly, E NV RL reuses rollout data generated during RL and requires only a single additional forward pass per update, introducing negligible computational overhead. We evaluate our method on two representative long-horizon agentic benchmarks, ALFWorld [ 32 ]and WebShop [ 43 ], across multiple model scales and reinforcement learning baselines. Results show that E NV RL consistently improves success rate over standard policy optimization methods, including GRPO [ 31 ], for both 1.5B and 7B models. On Qwen2.5 - 1.5B-Instruct with GRPO, it yields +4.6% on ALFWorld and +10.2% on WebShop. Comparable gains hold at 7B and when applied on stronger baselines such as GiGPO [ 5], indicating complementary benefits beyond improved policy optimization alone. Overall, E NV RL offers a lightweight and general approach for LLM agents to learn from environment dynamics, consistently boosting agentic RL across different settings. 
+
+2 Preliminaries 
+
+2.1 Task Formulation 
+
+We consider an agent interacting with a textual environment over discrete time steps, which can be formalized as a Partially Observable Markov Decision Process (POMDP) defined by (S, A, P, R, γ ).At each time step t, the agent receives a natural language observation st ∈ S and selects a textual action at ∈ A according to a policy πθ (at | ht), where ht = ( s0, a 0, . . . , s t) denotes the interaction history up to time t and θ denotes the trainable parameters of the underlying language model that parameterizes the policy. The environment then transitions to a new observation st+1 governed by the dynamics P(st+1 | st, a t). An episode corresponds to a multi-turn interaction trajectory 
+
+τ = ( s0, a 0, s 1, . . . , s T ), representing the complete sequence of observations and actions exchanged between the agent and the environment, where T denotes the episode horizon. An episode ends either upon successful task completion or when the maximum number of interaction steps T is reached. In agentic environments, an observation st typically consists of textual descriptions of the current environment state, such as scene descriptions, available objects, or webpage information, while an action at is expressed as a text-based command, typically selected from an environment-provided set of admissible actions that define the valid operations at the current state. 
+
+2.2 Reinforcement Learning Objective 
+
+We consider outcome-based reinforcement learning, where each trajectory τ is assigned a scalar reward R(τ ) reflecting overall task success. We adopt Group Relative Policy Optimization (GRPO) as our baseline due to its critic-free design and stable advantage estimation [31]. 2Inverse Dynamics 
+
+→𝐀 𝐀   
+
+> (𝐀 )𝐀 𝐀 +𝐀
+> (𝐀 )𝐀 𝐀
+> (𝐀 )
+
+State Prediction 
+
+→𝐀 𝐀  
+
+> (𝐀 )𝐀 𝐀 +𝐀
+> (𝐀 )
+> 𝐀 𝐀
+> (𝐀 )
+
+RL  
+
+> 𝐀 (𝐀 )𝐀 (𝐀 )
+
+→
+
+𝐀 (𝐀 ) 𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀 +𝐀  
+
+> (𝐀 )
+
+𝐀 T
+
+> (𝐀 )
+
+𝐀 (𝐀 ) 𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀 +𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀 
+
+> (𝐀 )
+
+𝐀 (k) 𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀 +𝐀  
+
+> (𝐀 )
+
+𝐀 𝐀 
+
+> (𝐀 )
+
+𝐀 (𝐀 )
+
+𝐀 (𝐀 )
+
+𝐀 (𝐀 )
+
+𝐀 = 𝐀 𝐀𝐀 + 𝐀 (𝐀 ) 𝐀 𝐀𮠀 + 𝐀 (𝐀 )𝐀 𝐀𬀀 
+
+# LLM Agent 
+
+# Environment 
+
+action obs 
+
+Phase 1: Interaction Phase 2: Reward Calculation 
+
+Phase 3: EnvRL Calculation Phase 4: Update 
+
+Joint Optimization Figure 2: Overview of our E NV RL framework. The LLM agent interacts with the environment to collect multiple rollouts, each producing an outcome reward. We then reuse the rollout trajectories to construct two auxiliary self-supervised training signals: State Prediction (SP) trains the agent to predict how the environment state changes after an action, and Inverse Dynamics (ID) trains the agent to infer which action caused a given state transition. In parallel, the outcome rewards are used for standard RL updates. Finally, we jointly optimize the agent with the RL objective and the two auxiliary objectives (with weights decaying over training), and repeat this process iteratively. Specifically, the policy samples a group of K trajectories {τ (k)}Kk=1 with corresponding returns 
+
+{R(k)}Kk=1 . The RL objective is defined and formulated as: 
+
+LRL (θ) = −Ek,t 
+
+
+
+min 
+
+ πθ (ak,t | hk,t )
+
+πθold (ak,t | hk,t ) ˜Ak, clip 
+
+ πθ (ak,t | hk,t )
+
+πθold (ak,t | hk,t ) , 1 − ϵ, 1 + ϵ
+
+
+
+˜Ak
+
+ 
+
++ β KL( πθ ∥πref )
+
+(1) where πθ and πθold denote the current and the old policies, and hk,t represents the interaction history up to step t. ˜Ak is the efficiently computed group-relative advantage, calculated as ˜Ak =    
+
+> Rk−mean( {Rj}Kj=1 )std( {Rj}Kj=1 )+ ϵ
+
+.
+
+Since our method is orthogonal to the choice of reinforcement learning algorithm, it can be combined with any policy optimization method. To verify the robustness of our approach against a stronger RL baseline, we additionally employ GiGPO [ 5], an advanced group-based policy optimization method featuring more fine-grained credit assignment. Results in Section 4 demonstrate that our method consistently yields further improvements even when built upon this stronger RL baseline. 
+
+3 Method 
+
+3.1 Overview 
+
+In this section, we present the design details of our method. Our central idea is to uncover the environment dynamics information as implicit supervision signals from the agent’s interaction experience and integrate them into the reinforcement learning (RL) process. Specifically, we design two objectives to achieve this. The first one is the state-prediction objective, which trains the agent to predict how the environment state will change, and the other one is the inverse-dynamics objective, which asks the agent to infer what action caused a given state transition. Finally, we treat these two objectives as auxiliary objectives and jointly optimize them together with the RL objective during training. The overall training process is shown in Figure 2. 33.2 State Prediction 
+
+Learning predictive models of environment dynamics has long been a powerful paradigm in se-quential decision-making. Prior work has shown that training agents to anticipate state transitions 
+
+p(st+1 |st, a t) enables them to simulate future trajectories and foresee the long-term consequences of their behaviors, deriving more robust policies [7, 28, 8]. Motivated by this mechanism, we first introduce the State Prediction (SP) objective. Given the current state st and the chosen action at, the agent is trained to predict the next environment state 
+
+st+1 . In our setting, this state is instantiated as the next-step textual observation. By explicitly anticipating the consequences of its actions, the agent can internalize environment dynamics through its own interaction experience. Specifically, we formulate the SP learning objective as: 
+
+LSP (θ) = −E(st,a t,s t+1 )∼D πθ [log pθ (st+1 | st, a t)] . (2) Here, the transition tuples (st, a t, s t+1 ) are derived from rollout trajectories collected under the current policy πθ . Each trajectory τ = ( s0, a 0, s 1, . . . , s T ) is decomposed into consecutive tuples 
+
+{(st, a t, s t+1 )}T −1 
+
+> t=0
+
+, serving as self-supervised training samples. Our approach is fully on-policy: training data is generated by the current policy and discarded after each update. In practice, since 
+
+st+1 is a textual observation, this objective reduces to the standard token-level cross-entropy loss, akin to supervised fine-tuning on self-generated interaction experience. 
+
+3.3 Inverse Dynamics 
+
+Although the SP objective provides valuable forward-looking supervision to help the agent understand how the environment evolves, this alone is insufficient. For effective decision-making, the agent must also reason backwards to understand exactly how its actions influence the environment. Prior work has shown that inverse dynamics—predicting the causal action between consecutive states—encourages representations to filter out extraneous observation details and focus strictly on agent-controllable aspects [ 25 , 2 ]. Motivated by this, we introduce Inverse Dynamics (ID) as a complementary objective. Given two consecutive states (st, s t+1 ), the agent is trained to recover the action at that caused the transition. We formulate the ID learning objective as: 
+
+LID (θ) = −E(st,a t,s t+1 )∼D πθ [log pθ (at | st, s t+1 )] . (3) Here, the transition tuples (st, a t, s t+1 ) are obtained in the same manner as those used in the SP objective. Together, SP and ID provide a bidirectional model of environment dynamics: SP captures how actions shape future states, while ID captures which actions explain observed state changes. 
+
+3.4 Joint Online Optimization 
+
+We design a joint online optimization approach for the agent to dynamically update its understanding of the environment during the RL process. Specifically, we treat the SP and ID tasks as auxiliary objectives and combine them with the original RL objective to form the overall optimization objective. At each update step, the total learning objective is: 
+
+L(θ) = LRL (θ) + λSP LSP (θ) + λID LID (θ), (4) where λSP and λID are hyperparameters controling the contribution of each auxiliary objective. However, maintaining fixed auxiliary coefficients throughout training presents a dilemma: large weights can dominate the learning objective and hinder policy improvement in later stages when the agent should focus on reward maximization; conversely, small weights provide insufficient guidance during early training when environment dynamics are still being learned. To resolve this tension, we introduce a coefficient decay mechanism that gradually reduces the contribution of auxiliary objectives as training progresses, formulated as: 
+
+LENV RL (θ; t) = LRL (θ) + λSP (t) LSP (θ) + λID (t) LID (θ), (5) where λSP (t) and λID (t) are time-dependent coefficients, controlled by a cosine decay schedule: 
+
+λSP (t) = λSP · 12
+
+
+
+1 + cos 
+
+
+
+π tTmax 
+
+ 
+
+,λID (t) = λID · 12
+
+
+
+1 + cos 
+
+
+
+π tTmax 
+
+ 
+
+,
+
+(6) 4where t denotes the current training step and Tmax is the total number of training steps. This schedule ensures a smooth transition without abrupt changes in optimization dynamics. With this design, the agent receives dense supervision from auxiliary objectives in the early phase, encouraging it to capture environment dynamics. As training proceeds, the auxiliary coefficients gradually decay, allowing the optimization to smoothly shift toward the primary RL objective. 
+
+4 Experiments 
+
+4.1 Experimental Setup Benchmarks. We evaluate our method on two widely-used long-horizon agentic benchmarks: ALFWorld and WebShop. ALFWorld [ 32 ] is a text-based interactive environment that simulates household tasks. Each task requires the agent to complete multi-step object manipulation goals. The benchmark consists of six task types: Pick , Look , Clean , Heat , Cool , and Pick2 . We use the standard train/test split and report success rates on the test set. Success is determined by whether the agent achieves the specified goal within the maximum allowed steps. WebShop [ 43 ] is a simulated e-commerce environment where agents must search and purchase products that match given user instructions. The task involves navigating a product catalog, and selecting the item that best matches the requirements. For ALFWorld, we compute the success rate for each task type, as well as the overall success rate across all task types. For WebShop, we report the score metric (measuring attribute-level matching between the purchased item and the instruction) and the overall success rate. 
+
+Baselines. We compare against the following baselines. For prompting-based baselines, we include Prompting, which directly prompts the model with task instructions and represents zero-shot perfor-mance, and ReAct [ 44 ], which interleaves reasoning traces (thoughts) and actions to generate explicit reasoning steps before taking actions. For RL-based baselines, we use GRPO [ 31 ], a group-based RL algorithm, as our primary baseline, and GiGPO [ 5], a more advanced group-based policy opti-mization method with finer-grained credit assignment. Our method, denoted as E NV RL, improves these RL baselines by incorporating the auxiliary objectives described in 3, noted as E NV RL-GRPO and E NV RL-GiGPO. For reference, we also include results from two powerful proprietary models, GPT-4o [24] and Gemini-2.5-Pro [4], both evaluated using direct prompting. 
+
+Implementation Details. We use Qwen2.5-1.5B/7B-Instruct [ 41 ] as our base policy models. We follow the training configuration of the verl-agent framework [ 5]. Specifically, we use a batch size of 16, set the group size to K=8 for group-based RL, and train for 150 steps with a learning rate of 1e-6 using AdamW optimizer. For our E NV RL method, we additionally introduce auxiliary objectives with initial coefficients λSP = λID = 0 .2 for 1.5B models and λSP = λID = 0 .1 for 7B models. All experiments are conducted on 8 ×A100 gpus. The prompts used are listed in Appendix A. 
+
+4.2 Main Results 
+
+Table 1 demonstrates the effectiveness of incorporating the auxiliary objectives into RL training for long-horizon agentic tasks. While powerful proprietary models (e.g., GPT-4o, Gemini-2.5-Pro) and prompting-based approaches struggle on benchmarks like ALFWorld and WebShop, outcome-based RL methods like GRPO and GiGPO substantially improve agent capabilities. For instance, on the 1.5B model, GiGPO achieves an 86.7% success rate on ALFWorld and 67.4% on WebShop. However, standard RL lacks environment dynamics modeling, limiting its ability to fully exploit supervision signals from the environment. E NV RL addresses this limitation by jointly optimizing the SP and ID auxiliary objectives with RL, yielding consistent improvements across baseline algorithms and model scales. On the 1.5B model, E NV RL-GRPO improves ALFWorld success rate from 72.8% to 77.4% (+4.6 points) and WebShop from 56.8% to 67.0% (+10.2 points). Improvement remains consistent with GiGPO, the stronger RL baseline. GiGPO + E NV RL reaches 91.8% on ALFWorld (+5.1 points) and 74.2% on WebShop (+6.8 points). These benefits persist at the 7B scale, with GiGPO + E NV RL achieving peak performances of 94.5% and 76.3%, respectively. Ultimately, these results validate that learning from environment dynamics provides valuable training signals that effectively complement sparse task rewards, enabling the agent to make better decisions in long-horizon tasks. 5Table 1: Main results of E NV RL. We report task-wise success rates (%) for six sub-tasks and the overall average (All) for ALFWorld, and performance in terms of Score and Success rate (Succ.) for WebShop. Results are averaged over 3 random seeds, with standard deviations shown where possible. 
+
+Method ALFWorld WebShop 
+
+Pick Look Clean Heat Cool Pick2 All Score Succ. 
+
+Backbone Model: Proprietary Model 
+
+GPT-4o 75.3 60.8 31.2 56.7 21.6 49.8 48.0 31.8 23.7 Gemini-2.5-Pro 92.8 63.3 62.1 69.0 26.6 58.7 60.3 42.5 35.9 
+
+Backbone Model: Qwen2.5-1.5B-Instruct 
+
+Prompting 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23.1 5.2 ReAct 17.4 20.5 15.7 6.2 7.7 2.0 12.8 40.1 11.3 GRPO 85.3 ±1.5 53.7 ±8.0 84.5 ±6.8 78.2 ±7.9 59.7 ±5.0 53.5 ±5.6 72.8 ±3.6 75.8 ±3.5 56.8 ±3.8
+
+ENV RL-GRPO 85.9 ±2.3 53.9 ±6.9 85.0 ±4.5 82.0 ±4.7 76.8 ±3.9 71.9 ±4.4 77.4 ±3.8 83.0 ±2.1 67.0 ±2.6
+
+GiGPO 94.4 ±5.9 67.5 ±4.6 94.8 ±3.8 94.4 ±7.8 79.8 ±4.7 76.4 ±5.4 86.7 ±1.7 83.5 ±1.8 67.4 ±4.5
+
+ENV RL-GiGPO 95.0 ±3.3 70.8 ±6.4 94.9 ±4.6 97.7 ±3.5 94.1 ±4.8 94.7 ±4.7 91.8 ±3.5 88.2 ±2.5 74.2 ±3.7
+
+Backbone Model: Qwen2.5-7B-Instruct 
+
+Prompting 33.4 21.6 19.3 6.9 2.8 3.2 14.8 26.4 7.8 ReAct 48.5 35.4 34.3 13.2 18.2 17.6 31.2 46.2 19.5 GRPO 90.8 ±5.1 66.1 ±6.7 89.3 ±5.4 74.7 ±6.9 72.5 ±5.4 64.7 ±7.3 77.6 ±5.2 79.3 ±2.8 66.1 ±3.7
+
+ENV RL-GRPO 92.6 ±4.3 77.5 ±5.4 92.9 ±3.9 79.7 ±3.0 77.4 ±3.7 71.1 ±6.2 80.4 ±3.9 81.8 ±1.9 68.6 ±2.3
+
+GiGPO 97.7 ±1.6 82.7 ±7.9 98.8 ±1.6 83.7 ±7.2 89.3 ±8.2 79.2 ±6.6 90.8 ±1.3 86.2 ±2.6 75.2 ±3.8
+
+ENV RL-GiGPO 98.3 ±1.5 92.2 ±4.5 98.9 ±0.8 93.8 ±6.9 93.3 ±3.5 94.6 ±3.0 94.5 ±4.0 88.4 ±4.9 76.3 ±4.7
+
+4.3 Ablation Study 
+
+Table 2: Ablation study of E NV RL. We con-duct experiments by respectively removing SP, removing ID, removing the decay sched-ule, and applying a linear decay schedule (in-stead of the cosine schedule). 
+
+Setting ALFWorld WebShop 
+
+ENV RL-GRPO 77.4 67.0 
+
+w/o ID 73.5 64.5 w/o SP 71.9 66.0 w/o decay 74.2 62.8 w/ linear decay 76.3 64.2 ENV RL-GiGPO 91.8 74.2 
+
+w/o ID 89.3 71.4 w/o SP 86.3 72.9 w/o decay 88.5 71.1 w/ linear decay 90.5 72.3 
+
+Impact of auxiliary objectives We conduct an ablation study on both benchmarks and RL base-lines. Starting from the full E NV RL, we remove each component individually while keeping all other settings fixed. We choose Qwen2.5-1.5B-Instruct as the base policy model. Results are shown in Ta-ble 2. On ALFWorld, removing SP causes the largest drop ( 77 .4 → 71 .9 for GRPO and 91 .8 → 86 .3 for GiGPO). we attribute this to the highly logical state transitions in this environment, which requires rigor-ous reasoning to make precise predictions. In con-trast, removing ID has a relatively minor impact be-cause ALFWorld observations implicitly encode ac-tion information, thereby reducing the difficulty of inverse reasoning. On WebShop, where observations are noisy web pages, ID is more influential than SP (e.g., 67 .0 → 64 .5 and 74 .2 → 71 .4 when removing ID), suggesting the importance for agents to identify meaningful actions from complex and informative observations. 
+
+Impact of decay mechanism As shown in Table 2, disabling the decay mechanism consistently degrades performance (with a drop of up to 4.2 points on WebShop), indicating that perpetually optimizing auxiliary tasks ultimately hinders the learning of the primary objective. This is further corroborated by the entropy loss dynamics observed during RL training, as depicted in Figure 3 (left). Without decay, the entropy loss remains persistently unstable, preventing the policy from fully converging on the main task. In contrast, applying a decay mechanism allows the entropy to smoothly converge to a stable minimum, ensuring the agent properly fine-tunes its policy. Furthermore, we evaluated a linear decay schedule, which performs slightly worse than cosine decay but remains superior to the no-decay baseline. We attribute this gap to the rapid early-stage reduction of the auxiliary weight under linear decay, leading to insufficient learning of the environment dynamics during the initial phase. Consequently, we adopt the cosine decay schedule as default for our method. 60 20 40 60 80 100 120 140        
+
+> Training Step
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> Entropy Loss
+> WebShop
+> Cos Decay
+> Linear Decay
+> No Decay
+> 020 40 60 80 100 120 140
+> Training Step
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> ALFWorld
+> Cos Decay
+> Linear Decay
+> No Decay
+> 0
+> 1/128
+> 1/64
+> 1/32
+> 1/16
+> 1/8
+> 1/4
+> 1/2
+> 1
+> Fraction of Experience Data
+> 60
+> 65
+> 70
+> 75
+> Success Rate (%)
+> EnvRL-GRPO (ALFWorld)
+> EnvRL-GRPO (WebShop)
+
+Figure 3: Empirical analysis of E NV RL. Left: Effect of decay schedules (cosine, linear, and no decay) on entropy loss during RL training. Right: Effect of the fraction of experience data used for training on agent success rate across ALFWorld and WebShop environments. 0 20 40 60 80 100 120 140                         
+
+> Training Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success Rate
+> ALFWorld
+> EnvRL-GRPO
+> GRPO
+> EnvRL reaches baseline
+> @ step 109
+> 020 40 60 80 100 120 140
+> Training Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 ALFWorld
+> EnvRL-GiGPO
+> GiGPO
+> EnvRL reaches baseline
+> @ step 116
+> 020 40 60 80 100 120 140
+> Training Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 WebShop
+> EnvRL-GRPO
+> GRPO
+> EnvRL reaches baseline
+> @ step 91
+> 020 40 60 80 100 120 140
+> Training Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 WebShop
+> EnvRL-GiGPO
+> GiGPO
+> EnvRL reaches baseline
+> @ step 94
+
+Figure 4: Success rate over training iterations. The orange lines represent our method, and the blue lines represents the original RL baseline. 
+
+Impact of Experience Data Scale ENV RL enables the agent to learn from environment dynamics by reformulating experience data into SP and ID tasks. To investigate how the scale of data affects the learning , we evaluate our model using varying proportions of the total experience data to form the SP and ID objective. Specifically, we use 1/128, 1/64, 1/32, 1/16, 1/8, 1/4, and 1/2 of the full experience dataset to train E NV RL-GRPO, comparing them against baselines trained with RL only (fraction = 0) and with full experience data (fraction = 1). All experiments are conducted on the Qwen2.5-1.5B-Instruct model. Results are visualized in Figure 3 (right). The results largely align with our expectations: performance generally improves as more experience data is utilized. On both benchmarks, we observe a consistent upward trend in success rate as the data fraction increases. Notably, even a small fraction of experience data (e.g., 1/128) already provides measurable gains over the RL-only baseline, and performance continues to improve as more data becomes available. This suggests that the auxiliary objectives effectively extract useful supervision from experience, and the benefits scale with the amount of experience data. 
+
+4.4 Analysis Sample Efficiency. To evaluate the sample efficiency of E NV RL, we report the success rate during the RL training process in Figure 4. Augmenting both GRPO and GiGPO with E NV RL consistently yields faster performance gains and higher final performance on both ALFWorld and WebShop. To quantify sample efficiency, we identify the earliest training step at which E NV RL first reaches the final performance level of the RL baseline (marked with ⋆ in the figure). Across all four settings, ENV RL achieves equivalent performance to the fully-trained RL baseline using only ∼68.5% of the total training steps on average (ranging from 60.7% to 77.9%), demonstrating that E NV RL not only improves the performance ceiling but also substantially accelerates convergence. Interestingly, sometimes in the early stage of training, E NV RL slightly lags behind the RL baseline. We attribute th is to the relatively large coefficients of the auxiliary objectives at the beginning, during which the model prioritizes learning environment dynamics. As the coefficients gradually decay, the model quickly shifts back to optimizing task rewards and catches up, which aligns with our expectations. 
+
+Inference Efficiency. To further understand the behavioral improvements brought by our method, we plot the Cumulative Distribution Function (CDF) of interaction turns and response lengths for successful episodes in Figure 5. The leftward shift of curves across all sub-figures clearly indicates that our method requires fewer interaction turns and shorter responses to solve tasks. The reduced number of turns shows that learning from environment dynamics deepens the agent’s understanding 710 20 30 40 50            
+
+> Interaction Turns
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> ALFWorld
+> GRPO
+> EnvRL-GRPO
+> 46810 12
+> Interaction Turns
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> WebShop
+> GRPO
+> EnvRL-GRPO
+> 0500 1000 1500 2000
+> Response Length (chars)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> ALFWorld
+> GRPO
+> EnvRL-GRPO
+> 200 400 600 800
+> Response Length (chars)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> WebShop
+> GRPO
+> EnvRL-GRPO
+
+Figure 5: Cumulative Distribution Function (CDF) of interaction turns (left) and response lengths (right, measured in characters) for successful episodes on ALFWorld and WebShop. Dashed vertical lines indicate the mean values of the respective distributions. Across both environments, E NV RL-GRPO consistently shifts the distributions to the left compared to the GRPO baseline, demonstrating that it achieves task success with fewer interactions and more concise textual outputs. Table 3: Out-of-Distribution (OOD) evaluation on ALFWorld, measured by success rate (%). 
+
+Backbone Model GRPO GiGPO 
+
+Baseline +E NV RL Baseline +E NV RL Qwen2.5-1.5B-Instruct 61.19 64.43 75.12 78.84 
+
+Qwen2.5-7B-Instruct 66.45 70.18 79.23 81.76 
+
+of action-state causalities, rendering its decision-making more precise and cutting down on redundant exploratory behaviors. Similarly, shorter response lengths highlight that the agent becomes more confident and decisive, producing effective actions without excessive thinking overhead. Table 4: Hyperparameter sensitivity analysis of the initial auxiliary coefficient λ.
+
+Model Size λ ALFWorld WebShop 
+
+1.5B 
+
+λ = 0 72.8 56.8 
+
+λ = 0 .1 76.3 64.9 
+
+λ = 0 .2 77.4 67.0 
+
+λ = 0 .4 72.3 57.8 7B 
+
+λ = 0 77.6 66.1 
+
+λ = 0 .1 81.9 68.6 
+
+λ = 0 .2 80.0 67.3 
+
+λ = 0 .4 78.7 66.2 
+
+Hyperparameter Sensitivity. Despite the de-cay mechanism of the auxiliary coefficient, the initial value is critical for the whole optimiza-tion process. We conduct a grid search for the two initial coefficients, λSP and λID , to justify our choices and analyze its sensitivity. Based on our initial findings that individual tuning of these two hyperparameters yields marginal differences, for simplicity, we maintain λSP = λID = λ
+
+throughout our experiments. As shown in Ta-ble 4, we can conclude that an excessively high λ
+
+hinders the learning of the primary task, whereas a λ that is too low leads to insufficient learning of environment dynamics. The 1.5B model peaks at 
+
+λ = 0 .2, while the 7B model peaks at λ = 0 .1. We attribute this to the stronger environmental priors in larger models, thus requiring less auxiliary supervision. Overall, it shows that the performance is relatively robust to the choice of this hyperparameter within the [0 .1, 0.2] range. 
+
+Generalization and Task Versatility. To verify that E NV RL captures underlying environment dynamics rather than overfitting to specific tasks, we evaluate its performance on ALFWorld OOD (Out-of-Distribution) scenarios. Specifically, we employ the models trained on the standard ALF-World training set and evaluate them directly on the OOD test set, which features entirely novel room configurations and unseen object types [ 32 ]. As shown in Table 3, E NV RL maintains a significant margin over the baseline, confirming that internalizing environment dynamics provides robust priors that generalize to unseen configurations. Furthermore, to extend the diversity of tasks, we conduct additional experiments on the SearchQA benchmark, which focuses on information-seeking scenarios. Detailed numerical results and setup for SearchQA experiments are provided in Appendix B. 820    
+
+> 40
+> 60
+> 80
+> 100
+> 120
+> 140
+> 160 154.6
+> 14.3
+> Rollout Compute
+> Old Prob
+> Compute
+> Ref Prob
+> Update
+> Policy
+> Compute
+> SP&ID Loss
+> 0
+> 2
+> 4
+> 4.2 4.3
+> 1.6
+> Time (s)
+
+Table 5: Time cost of RL training components. We report the average time spent on environment rollouts, probability computations, policy updates, and our auxiliary objective calculations. 
+
+Computational Efficiency To quantify the computational efficiency of our method, we mea-sure the time breakdown of each training com-ponent and report their average time cost dur-ing training, as shown in Figure 5. The overall training time is dominated by environment inter-action (R OLLOUT , 154.6s) and policy optimiza-tion (U PDATE POLICY , 14.3s). In contrast, our auxiliary objectives introduce only a negligible overhead (1.6s). This is because E NV RL reuses the rollout trajectories already generated by RL and requires only a single additional forward pass per update to compute the state-prediction and inverse-dynamics losses, without additional sampling or separate model training. As a result, ENV RL incurs negligible extra computational overhead in practice. 
+
+5 Related Works 
+
+Agentic Reinforcement Learning. Reinforcement Learning (RL) has evolved from a basic align-ment tool for single-turn tasks into a core framework for enabling LLMs to act as autonomous agents in complex environments. Early research applied classical algorithms like DQN[ 23 ] and PPO [ 29 ] to discrete environments such as games [ 33 ] and control [ 17 ]. To tackle complex real-world tasks such as web navigation [ 43 , 47 ], software operation [ 40 ], and multi-tool orchestration [ 39 , 22 ], group-based RL methods such as GRPO [ 31 ] are being increasingly adapted [ 11 , 38 ] for their computational efficiency and stable advantage estimation. However, a fundamental challenge in these multi-turn, long-horizon scenarios is the sparsity of environmental feedback, which provides limited supervi-sion signals and leads to insufficient agent training [ 3]. To address this, existing research has has made significant strides in identifying intermediate states to develop fine-grained credit assignment schemes [ 5, 16 , 37 , 19 ]. While effective, our work is largely orthogonal to these methods, focusing on mining implicit supervision signals directly from environment dynamics. This perspective treats interaction experience as a rich, independent information source, allowing our method to complement reward-centric RL methods and achieve superior performance through their integration. 
+
+Learning from Environment Dynamics Effective decision-making in long-horizon tasks requires agents to move beyond relying solely on sparse outcome rewards [ 20 , 18 ]. By learning from environment dynamics, agents can exploit the rich structural information latent in their interaction trajectories, which reveals the underlying transition mechanisms of the environment[ 6, 15 ]. World models offer a practical way to achieve this by serving as explicit internal simulators that enable agents to anticipate state transitions and plan actions through latent imagination, thereby significantly enhancing sample efficiency and generalization [ 7, 8 , 28 , 46 ]. Our work is closely related to this line of research. We aim to enable agents to capture transition mechanisms through exploration in new environments, and treat it as additional supervision signal to facilitate superior decision-making. 
+
+6 Conclusions 
+
+We present E NV RL, a RL framework that enables LLM agents to learn from environment dynamics for more efficient decision-making. E NV RL integrates two auxiliary objectives—state prediction and inverse dynamics—with primary RL objective, and jointly optimizes them with a weight-decay mechanism. Empirically, E NV RL consistently improves performance across different long-horizon agentic environments, model scales, and RL baselines, demonstrating its generalizability and complementarity to agentic RL algorithms. We hope this work can provide a new perspective on agentic RL mechanics, contributing to develop more robust, sample-efficient, and autonomous agents capable of increasingly complex real-world interactions. 9References 
+
+[1] Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Üstün, and Sara Hooker. 2024. Back to basics: Revisiting reinforce style optimization for learning from human feedback in llms. [2] David Brandfonbrener, Ofir Nachum, and Joan Bruna. 2023. Inverse dynamics pretraining learns good representations for multitask imitation. In Proceedings of the 37th International Conference on Neural Information Processing Systems , NIPS ’23, Red Hook, NY, USA. Curran Associates Inc. [3] Xinning Chen, Xuan Liu, Yanwen Ba, Shigeng Zhang, Bo Ding, and Kenli Li. 2024. Selective learning for sample-efficient training in multi-agent sparse reward tasks. In Proceedings of the Thirty-Third International Joint Conference on Artificial Intelligence, IJCAI-24 , pages 8384–8388. International Joint Conferences on Artificial Intelligence Organization. Sister Conferences Best Papers. [4] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, et al. 2025. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. Preprint , arXiv:2507.06261. [5] Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 .[6] David Ha and Jürgen Schmidhuber. 2018. World models. [7] Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. 2019. Dream to control: Learning behaviors by latent imagination. [8] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. 2024. Mastering diverse domains through world models. Preprint , arXiv:2301.04104. [9] Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop QA dataset for comprehensive evaluation of reasoning steps. In Proceedings of the 28th International Conference on Computational Linguistics , pages 6609–6625, Barcelona, Spain (Online). International Committee on Computational Linguistics. [10] Physical Intelligence, Kevin Black, Noah Brown, James Darpinian, Karan Dhabalia, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Manuel Y. Galliker, Dibya Ghosh, Lachy Groom, Karol Hausman, Brian Ichter, Szymon Jakubczak, Tim Jones, Liyiming Ke, Devin LeBlanc, Sergey Levine, Adrian Li-Bell, Mohith Mothukuri, Suraj Nair, Karl Pertsch, Allen Z. Ren, Lucy Xiaoyang Shi, Laura Smith, Jost Tobias Springenberg, Kyle Stachowicz, James Tanner, Quan Vuong, Homer Walke, Anna Walling, Haohuan Wang, Lili Yu, and Ury Zhilinsky. 2025. π0.5: a vision-language-action model with open-world generalization. [11] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 .[12] Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer. 2017. TriviaQA: A large scale distantly supervised challenge dataset for reading comprehension. In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 1601–1611, Vancouver, Canada. Association for Computational Linguistics. [13] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, Quan Vuong, Thomas Kollar, Benjamin Burchfiel, Russ Tedrake, Dorsa Sadigh, Sergey Levine, Percy Liang, and Chelsea Finn. 2024. Openvla: An open-source vision-language-action model. arXiv preprint arXiv:2406.09246 .[14] Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Kenton Lee, Kristina Toutanova, Llion Jones, Matthew Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natural questions: A benchmark for question answering research. Transactions of the Association for Computational Linguistics , 7:452–466. 10 [15] Yann LeCun and Courant. 2022. A path towards autonomous machine intelligence version 0.9.2, 2022-06-27. [16] Jiazheng Li, Yawei Wang, David Yan, Yijun Tian, Zhichao Xu, Huan Song, Panpan Xu, and Lin Lee Cheong. 2025. Salt: Step-level advantage assignment for long-horizon agents via trajectory graph. Preprint , arXiv:2510.20022. [17] Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa, David Silver, and Daan Wierstra. 2019. Continuous control with deep reinforcement learning. Preprint , arXiv:1509.02971. [18] Minhua Lin, Zongyu Wu, Zhichao Xu, Hui Liu, Xianfeng Tang, Qi He, Charu Aggarwal, Hui Liu, Xiang Zhang, and Suhang Wang. 2025. A comprehensive survey on reinforcement learning-based agentic search: Foundations, roles, optimizations, evaluations, and applications. [19] Xiaoqian Liu, Ke Wang, Yuchuan Wu, Fei Huang, Yongbin Li, Junge Zhang, and Jianbin Jiao. 2025. Agentic reinforcement learning with implicit step rewards. Preprint , arXiv:2509.19199. [20] Junyu Luo, Weizhi Zhang, Ye Yuan, Yusheng Zhao, Junwei Yang, Yiyang Gu, Bohan Wu, Binqi Chen, Ziyue Qiao, Qingqing Long, Rongcheng Tu, Xiao Luo, Wei Ju, Zhiping Xiao, Yifan Wang, Meng Xiao, Chenwu Liu, Jingyang Yuan, Shichang Zhang, Yiqiao Jin, Fan Zhang, Xian Wu, Hanqing Zhao, Dacheng Tao, Philip S. Yu, and Ming Zhang. 2025. Large language model agent: A survey on methodology, applications and challenges. Preprint , arXiv:2503.21460. [21] Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das, Daniel Khashabi, and Hannaneh Ha-jishirzi. 2023. When not to trust language models: Investigating effectiveness of parametric and non-parametric memories. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 9802–9822, Toronto, Canada. Association for Computational Linguistics. [22] Grégoire Mialon, Clémentine Fourrier, Craig Swift, Thomas Wolf, Yann LeCun, and Thomas Scialom. 2023. Gaia: a benchmark for general ai assistants. [23] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan Wierstra, and Martin A. Riedmiller. 2013. Playing atari with deep reinforcement learning. 
+
+CoRR , abs/1312.5602. [24] OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, Aleksander M ˛ adry, Alex Baker-Whitcomb, Alex Beutel, Alex Borzunov, Alex Carney, Alex Chow, Alex Kirillov, Alex Nichol, Alex Paino, Alex Renzin, Alex Tachard Passos, Alexander Kirillov, Alexi Christakis, Alexis Conneau, Ali Kamali, Allan Jabri, Allison Moyer, Allison Tam, Amadou Crookes, Amin Tootoochian, Amin Tootoonchian, Ananya Kumar, Andrea Vallone, Andrej Karpathy, Andrew Braunstein, Andrew Cann, Andrew Codispoti, Andrew Galu, Andrew Kondrich, Andrew Tul-loch, Andrey Mishchenko, Angela Baek, Angela Jiang, Antoine Pelisse, Antonia Woodford, Anuj Gosalia, Arka Dhar, Ashley Pantuliano, Avi Nayak, Avital Oliver, Barret Zoph, Behrooz Ghorbani, Ben Leimberger, Ben Rossen, Ben Sokolowsky, Ben Wang, Benjamin Zweig, Beth Hoover, Blake Samic, Bob McGrew, Bobby Spero, Bogo Giertler, Bowen Cheng, Brad Lightcap, Brandon Walkin, Brendan Quinn, Brian Guarraci, Brian Hsu, Bright Kellogg, Brydon Eastman, Camillo Lugaresi, Carroll Wainwright, Cary Bassin, Cary Hudson, Casey Chu, Chad Nelson, Chak Li, Chan Jun Shern, Channing Conger, Charlotte Barette, Chelsea Voss, Chen Ding, Cheng Lu, Chong Zhang, Chris Beaumont, Chris Hallacy, Chris Koch, Christian Gibson, Christina Kim, Christine Choi, Christine McLeavey, Christopher Hesse, Claudia Fischer, Clemens Winter, Coley Czarnecki, Colin Jarvis, Colin Wei, Constantin Koumouzelis, Dane Sherburn, Daniel Kappler, Daniel Levin, Daniel Levy, David Carr, David Farhi, David Mely, David Robinson, David Sasaki, Denny Jin, Dev Valladares, Dimitris Tsipras, Doug Li, Duc Phong Nguyen, Duncan Findlay, Edede Oiwoh, Edmund Wong, Ehsan Asdar, Elizabeth Proehl, Elizabeth Yang, Eric Antonow, Eric Kramer, Eric Peterson, Eric Sigler, Eric Wallace, Eugene Brevdo, Evan Mays, Farzad Khorasani, Felipe Petroski Such, Filippo Raso, Francis Zhang, Fred von Lohmann, Freddie Sulit, Gabriel Goh, Gene Oden, Geoff Salmon, Giulio Starace, Greg Brockman, Hadi Salman, Haiming Bao, Haitang Hu, Hannah Wong, Haoyu Wang, Heather Schmidt, Heather 11 Whitney, Heewoo Jun, Hendrik Kirchner, Henrique Ponde de Oliveira Pinto, Hongyu Ren, Hui-wen Chang, Hyung Won Chung, Ian Kivlichan, Ian O’Connell, Ian O’Connell, Ian Osband, Ian Silber, Ian Sohl, Ibrahim Okuyucu, Ikai Lan, Ilya Kostrikov, Ilya Sutskever, Ingmar Kanitschei-der, Ishaan Gulrajani, Jacob Coxon, Jacob Menick, Jakub Pachocki, James Aung, James Betker, James Crooks, James Lennon, Jamie Kiros, Jan Leike, Jane Park, Jason Kwon, Jason Phang, Jason Teplitz, Jason Wei, Jason Wolfe, Jay Chen, Jeff Harris, Jenia Varavva, Jessica Gan Lee, Jessica Shieh, Ji Lin, Jiahui Yu, Jiayi Weng, Jie Tang, Jieqi Yu, Joanne Jang, Joaquin Quinonero Candela, Joe Beutler, Joe Landers, Joel Parish, Johannes Heidecke, John Schulman, Jonathan Lachman, Jonathan McKay, Jonathan Uesato, Jonathan Ward, Jong Wook Kim, Joost Huizinga, Jordan Sitkin, Jos Kraaijeveld, Josh Gross, Josh Kaplan, Josh Snyder, Joshua Achiam, Joy Jiao, Joyce Lee, Juntang Zhuang, Justyn Harriman, Kai Fricke, Kai Hayashi, Karan Singhal, Katy Shi, Kavin Karthik, Kayla Wood, Kendra Rimbach, Kenny Hsu, Kenny Nguyen, Keren Gu-Lemberg, Kevin Button, Kevin Liu, Kiel Howe, Krithika Muthukumar, Kyle Luther, Lama Ahmad, Larry Kai, Lauren Itow, Lauren Workman, Leher Pathak, Leo Chen, Li Jing, Lia Guy, Liam Fedus, Liang Zhou, Lien Mamitsuka, Lilian Weng, Lindsay McCallum, Lindsey Held, Long Ouyang, Louis Feuvrier, Lu Zhang, Lukas Kondraciuk, Lukasz Kaiser, Luke Hewitt, Luke Metz, Lyric Doshi, Mada Aflak, Maddie Simens, Madelaine Boyd, Madeleine Thompson, Marat Dukhan, Mark Chen, Mark Gray, Mark Hudnall, Marvin Zhang, Marwan Aljubeh, Mateusz Litwin, Matthew Zeng, Max Johnson, Maya Shetty, Mayank Gupta, Meghan Shah, Mehmet Yatbaz, Meng Jia Yang, Mengchao Zhong, Mia Glaese, Mianna Chen, Michael Janner, Michael Lampe, Michael Petrov, Michael Wu, Michele Wang, Michelle Fradin, Michelle Pokrass, Miguel Castro, Miguel Oom Temudo de Castro, Mikhail Pavlov, Miles Brundage, Miles Wang, Minal Khan, Mira Murati, Mo Bavarian, Molly Lin, Murat Yesildal, Nacho Soto, Natalia Gimelshein, Natalie Cone, Natalie Staudacher, Natalie Summers, Natan LaFontaine, Neil Chowdhury, Nick Ryder, Nick Stathas, Nick Turley, Nik Tezak, Niko Felix, Nithanth Kudige, Nitish Keskar, Noah Deutsch, Noel Bundick, Nora Puckett, Ofir Nachum, Ola Okelola, Oleg Boiko, Oleg Murk, Oliver Jaffe, Olivia Watkins, Olivier Godement, Owen Campbell-Moore, Patrick Chao, Paul McMillan, Pavel Belov, Peng Su, Peter Bak, Peter Bakkum, Peter Deng, Peter Dolan, Peter Hoeschele, Peter Welinder, Phil Tillet, Philip Pronin, Philippe Tillet, Prafulla Dhariwal, Qiming Yuan, Rachel Dias, Rachel Lim, Rahul Arora, Rajan Troll, Randall Lin, Rapha Gontijo Lopes, Raul Puri, Reah Miyara, Reimar Leike, Renaud Gaubert, Reza Zamani, Ricky Wang, Rob Donnelly, Rob Honsby, Rocky Smith, Rohan Sahai, Rohit Ramchandani, Romain Huet, Rory Carmichael, Rowan Zellers, Roy Chen, Ruby Chen, Ruslan Nigmatullin, Ryan Cheu, Saachi Jain, Sam Altman, Sam Schoenholz, Sam Toizer, Samuel Miserendino, Sandhini Agarwal, Sara Culver, Scott Ethersmith, Scott Gray, Sean Grove, Sean Metzger, Shamez Hermani, Shantanu Jain, Shengjia Zhao, Sherwin Wu, Shino Jomoto, Shirong Wu, Shuaiqi, Xia, Sonia Phene, Spencer Papay, Srinivas Narayanan, Steve Coffey, Steve Lee, Stewart Hall, Suchir Balaji, Tal Broda, Tal Stramer, Tao Xu, Tarun Gogineni, Taya Christianson, Ted Sanders, Tejal Patwardhan, Thomas Cunninghman, Thomas Degry, Thomas Dimson, Thomas Raoux, Thomas Shadwell, Tianhao Zheng, Todd Underwood, Todor Markov, Toki Sherbakov, Tom Rubin, Tom Stasi, Tomer Kaftan, Tristan Heywood, Troy Peterson, Tyce Walters, Tyna Eloundou, Valerie Qi, Veit Moeller, Vinnie Monaco, Vishal Kuo, Vlad Fomenko, Wayne Chang, Weiyi Zheng, Wenda Zhou, Wesam Manassra, Will Sheu, Wojciech Zaremba, Yash Patil, Yilei Qian, Yongjik Kim, Youlong Cheng, Yu Zhang, Yuchen He, Yuchen Zhang, Yujia Jin, Yunxing Dai, and Yury Malkov. 2024. Gpt-4o system card. Preprint , arXiv:2410.21276. [25] Deepak Pathak, Pulkit Agrawal, Alexei A. Efros, and Trevor Darrell. 2017. Curiosity-driven exploration by self-supervised prediction. In Proceedings of the 34th International Conference on Machine Learning , volume 70 of Proceedings of Machine Learning Research , pages 2778– 2787. PMLR. [26] Ofir Press, Muru Zhang, Sewon Min, Ludwig Schmidt, Noah Smith, and Mike Lewis. 2023. Measuring and narrowing the compositionality gap in language models. In Findings of the Asso-ciation for Computational Linguistics: EMNLP 2023 , pages 5687–5711, Singapore. Association for Computational Linguistics. [27] Yujia Qin, Yining Ye, Junjie Fang, Haoming Wang, Shihao Liang, Shizuo Tian, Junda Zhang, Jiahao Li, Yunxin Li, Shijue Huang, et al. 2025. Ui-tars: Pioneering automated gui interaction with native agents. arXiv preprint arXiv:2501.12326 .12 [28] Julian Schrittwieser, Ioannis Antonoglou, Thomas Hubert, Karen Simonyan, Laurent Sifre, Simon Schmitt, Arthur Guez, Edward Lockhart, Demis Hassabis, Thore Graepel, Timothy Lillicrap, and David Silver. 2019. Mastering atari, go, chess and shogi by planning with a learned model. [29] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. CoRR , abs/1707.06347. [30] Ramanan Sekar, Oleh Rybkin, Kostas Daniilidis, Pieter Abbeel, Danijar Hafner, and Deepak Pathak. 2020. Planning to explore via self-supervised world models. [31] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. [32] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2020. Alfworld: Aligning text and embodied environments for interactive learning. [33] David Silver, Thomas Hubert, Julian Schrittwieser, Ioannis Antonoglou, Matthew Lai, Arthur Guez, Marc Lanctot, Laurent Sifre, Dharshan Kumaran, Thore Graepel, Timothy P. Lillicrap, Karen Simonyan, and Demis Hassabis. 2017. Mastering chess and shogi by self-play with a general reinforcement learning algorithm. CoRR , abs/1712.01815. [34] Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan McLaughlin, Aiden Low, AJ Ostrow, Akhila Ananthram, Akshay Nathan, Alan Luo, Alec Helyar, Aleksander Madry, Aleksandr Efremov, Aleksandra Spyra, Alex Baker-Whitcomb, Alex Beutel, Alex Karpenko, Alex Makelov, Alex Neitz, Alex Wei, Alexandra Barr, Alexandre Kirchmeyer, Alexey Ivanov, Alexi Christakis, Alistair Gillespie, Allison Tam, Ally Bennett, Alvin Wan, Alyssa Huang, Amy McDonald Sandjideh, Amy Yang, Ananya Kumar, Andre Saraiva, Andrea Vallone, Andrei Gheorghe, Andres Garcia Garcia, Andrew Braunstein, An-drew Liu, Andrew Schmidt, Andrey Mereskin, Andrey Mishchenko, Andy Applebaum, Andy Rogerson, Ann Rajan, Annie Wei, Anoop Kotha, Anubha Srivastava, Anushree Agrawal, Arun Vijayvergiya, Ashley Tyra, Ashvin Nair, Avi Nayak, Ben Eggers, Bessie Ji, Beth Hoover, Bill Chen, Blair Chen, Boaz Barak, Borys Minaiev, Botao Hao, Bowen Baker, Brad Lightcap, Brandon McKinzie, Brandon Wang, Brendan Quinn, Brian Fioca, Brian Hsu, Brian Yang, Brian Yu, Brian Zhang, Brittany Brenner, Callie Riggins Zetino, Cameron Raymond, Camillo Lugaresi, Carolina Paz, Cary Hudson, Cedric Whitney, Chak Li, Charles Chen, Charlotte Cole, Chelsea Voss, Chen Ding, Chen Shen, Chengdu Huang, Chris Colby, Chris Hallacy, Chris Koch, Chris Lu, Christina Kaplan, Christina Kim, CJ Minott-Henriques, Cliff Frey, Cody Yu, Coley Czarnecki, Colin Reid, Colin Wei, Cory Decareaux, Cristina Scheau, Cyril Zhang, Cyrus Forbes, Da Tang, Dakota Goldberg, Dan Roberts, Dana Palmie, Daniel Kappler, Daniel Levine, Daniel Wright, Dave Leo, David Lin, David Robinson, Declan Grabb, Derek Chen, Derek Lim, Derek Salama, Dibya Bhattacharjee, Dimitris Tsipras, Dinghua Li, Dingli Yu, DJ Strouse, Drew Williams, Dylan Hunn, Ed Bayes, Edwin Arbus, Ekin Akyurek, Elaine Ya Le, Elana Widmann, Eli Yani, Elizabeth Proehl, Enis Sert, Enoch Cheung, Eri Schwartz, Eric Han, Eric Jiang, Eric Mitchell, Eric Sigler, Eric Wallace, Erik Ritter, Erin Kavanaugh, Evan Mays, Evgenii Nikishin, Fangyuan Li, Felipe Petroski Such, Filipe de Avila Belbute Peres, Filippo Raso, Florent Bekerman, Foivos Tsimpourlas, Fotis Chantzis, Francis Song, Francis Zhang, Gaby Raila, Garrett McGrath, Gary Briggs, Gary Yang, Giambattista Parascandolo, Gildas Chabot, Grace Kim, Grace Zhao, Gregory Valiant, Guillaume Leclerc, Hadi Salman, Hanson Wang, Hao Sheng, Haoming Jiang, Haoyu Wang, Haozhun Jin, Harshit Sikchi, Heather Schmidt, Henry Aspegren, Honglin Chen, Huida Qiu, Hunter Lightman, Ian Covert, Ian Kivlichan, Ian Silber, Ian Sohl, Ibrahim Hammoud, Ignasi Clavera, Ikai Lan, Ilge Akkaya, Ilya Kostrikov, Irina Kofman, Isak Etinger, Ishaan Singal, Jackie Hehir, Jacob Huh, Jacqueline Pan, Jake Wilczynski, Jakub Pachocki, James Lee, James Quinn, Jamie Kiros, Janvi Kalra, Jasmyn Samaroo, Jason Wang, Jason Wolfe, Jay Chen, Jay Wang, Jean Harb, Jeffrey Han, Jeffrey Wang, Jennifer Zhao, Jeremy Chen, Jerene Yang, Jerry Tworek, Jesse Chand, Jessica Landon, Jessica Liang, Ji Lin, Jiancheng Liu, Jianfeng Wang, Jie Tang, Jihan Yin, Joanne Jang, Joel Morris, Joey Flynn, Johannes Ferstad, Johannes Heidecke, John Fishbein, John Hallman, Jonah Grant, Jonathan Chien, Jonathan Gordon, Jongsoo Park, Jordan Liss, Jos Kraaijeveld, Joseph Guay, Joseph Mo, 13 Josh Lawson, Josh McGrath, Joshua Vendrow, Joy Jiao, Julian Lee, Julie Steele, Julie Wang, Junhua Mao, Kai Chen, Kai Hayashi, Kai Xiao, Kamyar Salahi, Kan Wu, Karan Sekhri, Karan Sharma, Karan Singhal, Karen Li, Kenny Nguyen, Keren Gu-Lemberg, Kevin King, Kevin Liu, Kevin Stone, Kevin Yu, Kristen Ying, Kristian Georgiev, Kristie Lim, Kushal Tirumala, Kyle Miller, Lama Ahmad, Larry Lv, Laura Clare, Laurance Fauconnet, Lauren Itow, Lauren Yang, Laurentia Romaniuk, Leah Anise, Lee Byron, Leher Pathak, Leon Maksin, Leyan Lo, Leyton Ho, Li Jing, Liang Wu, Liang Xiong, Lien Mamitsuka, Lin Yang, Lindsay McCallum, Lindsey Held, Liz Bourgeois, Logan Engstrom, Lorenz Kuhn, Louis Feuvrier, Lu Zhang, Lucas Switzer, Lukas Kondraciuk, Lukasz Kaiser, Manas Joglekar, Mandeep Singh, Mandip Shah, Manuka Stratta, Marcus Williams, Mark Chen, Mark Sun, Marselus Cayton, Martin Li, Marvin Zhang, Marwan Aljubeh, Matt Nichols, Matthew Haines, Max Schwarzer, Mayank Gupta, Meghan Shah, Melody Huang, Meng Dong, Mengqing Wang, Mia Glaese, Micah Carroll, Michael Lampe, Michael Malek, Michael Sharman, Michael Zhang, Michele Wang, Michelle Pokrass, Mihai Florian, Mikhail Pavlov, Miles Wang, Ming Chen, Mingxuan Wang, Minnia Feng, Mo Bavarian, Molly Lin, Moose Abdool, Mostafa Rohaninejad, Nacho Soto, Natalie Staudacher, Natan LaFontaine, Nathan Marwell, Nelson Liu, Nick Preston, Nick Turley, Nicklas Ansman, Nicole Blades, Nikil Pancha, Nikita Mikhaylin, Niko Felix, Nikunj Handa, Nishant Rai, Nitish Keskar, Noam Brown, Ofir Nachum, Oleg Boiko, Oleg Murk, Olivia Watkins, Oona Gleeson, Pamela Mishkin, Patryk Lesiewicz, Paul Baltescu, Pavel Belov, Peter Zhokhov, Philip Pronin, Phillip Guo, Phoebe Thacker, Qi Liu, Qiming Yuan, Qinghua Liu, Rachel Dias, Rachel Puckett, Rahul Arora, Ravi Teja Mullapudi, Raz Gaon, Reah Miyara, Rennie Song, Rishabh Aggarwal, RJ Marsan, Robel Yemiru, Robert Xiong, Rohan Kshirsagar, Rohan Nuttall, Roman Tsiupa, Ronen Eldan, Rose Wang, Roshan James, Roy Ziv, Rui Shu, Ruslan Nigmat-ullin, Saachi Jain, Saam Talaie, Sam Altman, Sam Arnesen, Sam Toizer, Sam Toyer, Samuel Miserendino, Sandhini Agarwal, Sarah Yoo, Savannah Heon, Scott Ethersmith, Sean Grove, Sean Taylor, Sebastien Bubeck, Sever Banesiu, Shaokyi Amdo, Shengjia Zhao, Sherwin Wu, Shibani Santurkar, Shiyu Zhao, Shraman Ray Chaudhuri, Shreyas Krishnaswamy, Shuaiqi, Xia, Shuyang Cheng, Shyamal Anadkat, Simón Posada Fishman, Simon Tobin, Siyuan Fu, Somay Jain, Song Mei, Sonya Egoian, Spencer Kim, Spug Golden, SQ Mah, Steph Lin, Stephen Imm, Steve Sharpe, Steve Yadlowsky, Sulman Choudhry, Sungwon Eum, Suvansh Sanjeev, Tabarak Khan, Tal Stramer, Tao Wang, Tao Xin, Tarun Gogineni, Taya Christianson, Ted Sanders, Tejal Patwardhan, Thomas Degry, Thomas Shadwell, Tianfu Fu, Tianshi Gao, Timur Garipov, Tina Sriskandarajah, Toki Sherbakov, Tomer Kaftan, Tomo Hiratsuka, Tongzhou Wang, Tony Song, Tony Zhao, Troy Peterson, Val Kharitonov, Victoria Chernova, Vineet Kosaraju, Vishal Kuo, Vitchyr Pong, Vivek Verma, Vlad Petrov, Wanning Jiang, Weixing Zhang, Wenda Zhou, Wenlei Xie, Wenting Zhan, Wes McCabe, Will DePue, Will Ellsworth, Wulfie Bain, Wyatt Thompson, Xiangning Chen, Xiangyu Qi, Xin Xiang, Xinwei Shi, Yann Dubois, Yaodong Yu, Yara Khak-baz, Yifan Wu, Yilei Qian, Yin Tat Lee, Yinbo Chen, Yizhen Zhang, Yizhong Xiong, Yonglong Tian, Young Cha, Yu Bai, Yu Yang, Yuan Yuan, Yuanzhi Li, Yufeng Zhang, Yuguang Yang, Yujia Jin, Yun Jiang, Yunyun Wang, Yushi Wang, Yutian Liu, Zach Stubenvoll, Zehao Dou, Zheng Wu, and Zhigang Wang. 2025. Openai gpt-5 system card. Preprint , arXiv:2601.03267. [35] GLM Team, Aohan Zeng, Xin Lv, Qinkai Zheng, Zhenyu Hou, Bin Chen, Chengxing Xie, Cunxiang Wang, Da Yin, Hao Zeng, Jiajie Zhang, Kedong Wang, Lucen Zhong, Mingdao Liu, Rui Lu, Shulin Cao, Xiaohan Zhang, Xuancheng Huang, Yao Wei, Yean Cheng, Yifan An, Yilin Niu, Yuanhao Wen, Yushi Bai, Zhengxiao Du, Zihan Wang, Zilin Zhu, Bohan Zhang, Bosi Wen, Bowen Wu, Bowen Xu, Can Huang, Casey Zhao, Changpeng Cai, Chao Yu, Chen Li, Chendi Ge, Chenghua Huang, Chenhui Zhang, Chenxi Xu, Chenzheng Zhu, Chuang Li, Congfeng Yin, Daoyan Lin, Dayong Yang, Dazhi Jiang, Ding Ai, Erle Zhu, Fei Wang, Gengzheng Pan, Guo Wang, Hailong Sun, Haitao Li, Haiyang Li, Haiyi Hu, Hanyu Zhang, Hao Peng, Hao Tai, Haoke Zhang, Haoran Wang, Haoyu Yang, He Liu, He Zhao, Hongwei Liu, Hongxi Yan, Huan Liu, Huilong Chen, Ji Li, Jiajing Zhao, Jiamin Ren, Jian Jiao, Jiani Zhao, Jianyang Yan, Jiaqi Wang, Jiayi Gui, Jiayue Zhao, Jie Liu, Jijie Li, Jing Li, Jing Lu, Jingsen Wang, Jingwei Yuan, Jingxuan Li, Jingzhao Du, Jinhua Du, Jinxin Liu, Junkai Zhi, Junli Gao, Ke Wang, Lekang Yang, Liang Xu, Lin Fan, Lindong Wu, Lintao Ding, Lu Wang, Man Zhang, Minghao Li, Minghuan Xu, Mingming Zhao, Mingshu Zhai, Pengfan Du, Qian Dong, Shangde Lei, Shangqing Tu, Shangtong Yang, Shaoyou Lu, Shijie Li, Shuang Li, Shuang-Li, Shuxun Yang, Sibo Yi, Tianshu Yu, Wei Tian, Weihan Wang, Wenbo Yu, Weng Lam Tam, Wenjie Liang, Wentao Liu, Xiao Wang, Xiaohan Jia, Xiaotao Gu, Xiaoying Ling, Xin Wang, Xing Fan, Xingru Pan, Xinyuan 14 Zhang, Xinze Zhang, Xiuqing Fu, Xunkai Zhang, Yabo Xu, Yandong Wu, Yida Lu, Yidong Wang, Yilin Zhou, Yiming Pan, Ying Zhang, Yingli Wang, Yingru Li, Yinpei Su, Yipeng Geng, Yitong Zhu, Yongkun Yang, Yuhang Li, Yuhao Wu, Yujiang Li, Yunan Liu, Yunqing Wang, Yuntao Li, Yuxuan Zhang, Zezhen Liu, Zhen Yang, Zhengda Zhou, Zhongpei Qiao, Zhuoer Feng, Zhuorui Liu, Zichen Zhang, Zihan Wang, Zijun Yao, Zikang Wang, Ziqiang Liu, Ziwei Chai, Zixuan Li, Zuodong Zhao, Wenguang Chen, Jidong Zhai, Bin Xu, Minlie Huang, Hongning Wang, Juanzi Li, Yuxiao Dong, and Jie Tang. 2025. Glm-4.5: Agentic, reasoning, and coding (arc) foundation models. Preprint , arXiv:2508.06471. [36] Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2022. MuSiQue: Multihop questions via single-hop question composition. Transactions of the Association for Computational Linguistics , 10:539–554. [37] Kangrui Wang, Pingyue Zhang, Zihan Wang, et al. 2025. Vagen: Reinforcing world model reasoning for multi-turn vlm agents. [38] Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, Eli Gottlieb, Yiping Lu, Kyunghyun Cho, Jiajun Wu, Li Fei-Fei, Lijuan Wang, Yejin Choi, and Manling Li. 2025. Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning. [39] Jason Wei, Zhiqing Sun, Spencer Papay, Scott McKinney, Jeffrey Han, Isa Fulford, Hyung Won Chung, Alex Tachard Passos, William Fedus, and Amelia Glaese. 2025. Browsecomp: A simple yet challenging benchmark for browsing agents. Preprint , arXiv:2504.12516. [40] Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao, Toh Jing Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, Yitao Liu, Yiheng Xu, Shuyan Zhou, Silvio Savarese, Caiming Xiong, Victor Zhong, and Tao Yu. 2024. Osworld: Bench-marking multimodal agents for open-ended tasks in real computer environments. Preprint ,arXiv:2404.07972. [41] An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. 2024. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 .[42] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan Salakhutdi-nov, and Christopher D. Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Conference on Empirical Methods in Natural Language Processing (EMNLP) .[43] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. Webshop: Towards scalable real-world web interaction with grounded language agents. [44] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2022. React: Synergizing reasoning and acting in language models. [45] Guibin Zhang, Hejia Geng, Xiaohang Yu, Zhenfei Yin, Zaibin Zhang, Zelin Tan, Heng Zhou, Zhongzhi Li, Xiangyuan Xue, Yijiang Li, Yifan Zhou, Yang Chen, Chen Zhang, Yutao Fan, Zihu Wang, Songtao Huang, Francisco Piedrahita-Velez, Yue Liao, Hongru Wang, Mengyue Yang, Heng Ji, Jun Wang, Shuicheng Yan, Philip Torr, and Lei Bai. 2025. The landscape of agentic reinforcement learning for llms: A survey. [46] Kai Zhang, Xiangchao Chen, Bo Liu, et al. 2025. Agent learning via early experience. [47] Shuyan Zhou, Frank F Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Yonatan Bisk, Daniel Fried, Uri Alon, et al. 2023. Webarena: A realistic web environment for building autonomous agents. arXiv preprint arXiv:2307.13854 .15 A Implementation Details 
+
+This appendix provides the implementation details in E NV RL training. 
+
+A.1 State Prediction Prompt Template 
+
+The state prediction task prompts the model with the current observation, an action, and historical context, asking it to predict the resulting next observation. The template structure is: 
+
+You are an expert agent operating in an interactive environment. Your task is: [TASK_DESCRIPTION] Prior to this step, you have already taken N step(s). Below are the history observations and the corresponding actions you took: [Observation 1: "...", Action 1: "..."] [Observation 2: "...", Action 2: "..."] You are now at step [STEP_NUMBER] and your current observation is: [CURRENT_OBSERVATION] You take the action: [ACTION]. Please predict the observation after taking this action. Present your prediction within <observation> </observation> tags. 
+
+The expected response format is: 
+
+<observation>predicted next observation</observation> 
+
+A.2 Inverse Dynamics Prompt Template 
+
+The inverse dynamics task prompts the model with two consecutive observations and a list of admissible actions, asking it to infer which action caused the transition. The template structure is: 
+
+You are an expert agent operating in an interactive environment. Your task is: [TASK_DESCRIPTION] Prior to this step, you have already taken N step(s). Below are the history observations and the corresponding actions you took: [Observation 1: "...", Action 1: "..."] [Observation 2: "...", Action 2: "..."] You are now at step [STEP_NUMBER]. Your current observation is: [CURRENT_OBSERVATION] In the next timestep, the environment observation becomes: [NEXT_OBSERVATION] You must select exactly one of the following admissible actions to explain the transition: - action_1 - action_2 - action_3 ... Choose the single admissible action that best explains this transition. Present your chosen action within <action> </action> tags. 
+
+The expected response format is: 
+
+<action>predicted action</action> 
+
+16 A.3 Details in Prompt Construction History Window In both prompt templates, we use a sliding window of the most recent 2 observation-action pairs to provide context while maintaining a manageable prompt length. This balances the need for temporal context with computational efficiency, and is consistent with the default configuration in the verl-agent framework [5]. 
+
+Action Shuffling For the inverse dynamics task, admissible actions are randomly shuffled before being presented in the prompt to prevent the model from exploiting positional biases. The ground truth action is always included in the admissible set to ensure the task is solvable. 
+
+Structured Output Both tasks require the model to output predictions within XML-style tags (<observation> and <action> ). This structured format enables reliable extraction of predictions for automated evaluation. 
+
+B SearchQA Experiments 
+
+We also evaluate the multi-turn tool calling performance of E NV RL on search-augmented QA tasks, including single-hop QA datasets (NQ [ 14 ], TriviaQA [ 12 ], and PopQA [ 21 ]) and multi-hop QA datasets (HotpotQA [ 42 ] , 2Wiki [ 9], MuSiQue [ 36 ], and Bamboogle [ 26 ]). Following the trainingsettings in verl-agent [ 5], we employ Qwen2.5-3B-Instruct as the backbone, train the model on NQ and HotpotQA datasets, and test on all 7 benchmarks. As illustrated in Table 6, our method yields consistent improvements across all seven benchmarks compared to the GiGPO baseline, achieving a +1.88% gain in average performance. This enhancement suggests that internalizing environment dynamics remains beneficial even in more stochastic search-based environments. Table 6: Performance on SearchQA benchmarks.                         
+
+> Method NQ TriviaQA PopQA HotpotQA 2Wiki MuSiQue Bamboogle Avg.
+> GiGPO 42.69 60.41 42.13 37.94 37.32 13.07 64.52 43.33 ENV RL-GiGPO 44.55 62.07 45.82 38.32 39.66 13.73 65.32 45.21
+
+C Limitations and Future Work 
+
+Despite its effectiveness, E NV RL has several limitations. First, the current state-prediction objective is designed for LLMs. For multi-modal models such as VLM, this objective remains to be more specific designed. Second, despite the insensitivity of the initial auxiliary weights λSP and λID ,more advanced mechanisms such as self-adaptive tuning should be applied to balance these learning objectives automatically. Finally, the supervision signals from environment dynamics explored in E NV RL are not exhaustive. There should exist various other mechanisms that remain to be investigated. As the comprehensive explorations discussed above are beyond the scope of this paper, we leave them for future work. 17

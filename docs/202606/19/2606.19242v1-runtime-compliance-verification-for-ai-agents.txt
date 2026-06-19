@@ -1,0 +1,455 @@
+Title: Runtime Compliance Verification for AI Agents
+
+URL Source: https://arxiv.org/pdf/2606.19242v1
+
+Published Time: Thu, 18 Jun 2026 01:13:32 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Runtime Compliance Verification for AI Agents 
+
+Nafiseh Kahani 1[0000-0002-9322-0699] , Masoud Barati 1[0000-0001-7829-2240] ,and Diana Addae 1[0009-0009-8833-0488] 
+
+Carleton University, Canada 
+
+{NafisehKahani,MasoudBarati}@cunet.carleton.ca, DianaAddae@cmail.carleton.ca 
+
+Abstract. AI agents now handle personal data through tool use, func-tion calls, and multi-turn dialogue, which can create obligations under the General Data Protection Regulation (GDPR). Current testing prac-tices mainly rely on offline red-teaming or static prompt review, but they do not guarantee at run time that an agent’s behavior follows regulatory rules. We propose C-Trace (Compliance Trace-based Runtime Agent Conformance Enforcement), a verification framework that (i) expresses a subset of GDPR (consent, purpose limitation, data minimization, and the right to erasure) as formal policy predicates over agent execution traces, (ii) uses a runtime monitr that intercepts every tool invocation and model output and rejects non-compliant actions, and (iii) tests the agent with attack dialogues, including DSPy-generated prompts and ver-batim prompts from red-teaming corpora, that try to induce violations. We evaluate the framework on four case studies reframed to GDPR. Under 10% per-category extractor noise (drop-out and over-typing), the monitor keeps attack-success rate at ≤ 12% (below the baselines we com-pare against) and false positives at ≤ 16% , and reaches 0% ASR under perfect extraction. 
+
+Keywords: AI agents, regulations, runtime verification, policy-as-code, red-teaming. 
+
+## 1 Introduction 
+
+AI agents [21,19] are increasingly used as customer-service assistants, health-care triage front-ends, and financial advisors. Unlike a traditional API, an agent decides which tools to call, what arguments to pass, and what to disclose in nat-ural language. Each of these choices can become a regulatory event under the EU General Data Protection Regulation [16]: for example, a lookup_customer call carrying an email is a personal-data processing operation (Art. 4(2)); a free-text response that repeats a stored address is a disclosure that requires a lawful ba-sis (Art. 6). Because tool selection, argument generation, and natural-language disclosure are controlled by the model at run time, the same deployment can be compliant in one dialogue and non-compliant in another, with no change in code, prompt, or model weights.  
+
+> arXiv:2606.19242v1 [cs.SE] 17 Jun 2026 2N. Kahani et al.
+
+Two common testing practices miss this kind of failure. Offline red-teaming [15,5,22] tests the model with curated red-team prompts and reports a score, but the re-port is not enforced at run time and does not observe the session state of the deployed agent. Guardrail libraries [7,17] match patterns in individual inputs and outputs, but they do not track, for instance, whether consent was granted earlier in the same dialogue. GDPR compliance for an agent is therefore a runtime verification prob-lem [10,3,8,4] over its event trace, paired with an in-process attack driver [15,6] that tests the monitor with hostile inputs. The four principles we target are trace properties. Consent (Art. 6, 7), purpose limitation (Art. 5(1)(b)), data minimiza-tion (Art. 5(1)(c)), and right to erasure (Art. 17) each constrain an event based on what happened earlier in the dialogue, so each can be checked as a predicate at every step of the agent loop. We focus on GDPR rather than on a sector-specific regime (HIPAA, GLBA, PCI-DSS) because one predicate library can cover all four case studies (retail, customer support, healthcare, banking/KYC), and because the same principles appear in related regimes such as the EU AI Act, Brazil’s LGPD, California’s CPRA, and Canada’s PIPEDA. The verification engine itself is not new; we reuse existing temporal-logic and policy-as-code tools [2]. Instead, the main contribution is the observation model that turns a natural-language agent run into a typed compliance trace. To our knowledge, this is the first work to apply runtime verification of GDPR obligations to the natural-language execution traces of AI agents. This paper makes three contributions: 
+
+– We map an AI agent whose actions vary across runs (natural-language mes-sages and free-form tool arguments) to a typed event trace annotated with data categories and purposes. Over this trace, the four GDPR principles (consent, purpose limitation, data minimization, right to erasure) become first-order predicates that fire as soon as a violation appears in the prefix. This treats compliance as a runtime property of an event stream, rather than a property of a single message, which stateless guardrails cannot express. 
+
+– An interceptor around the tool-calling loop evaluates the predicates incre-mentally over the live trace, blocks non-compliant events, and generates an audit log. We implement the same policy in three runtimes, the operational Python monitor, an auditor-facing Rego/OPA policy, and MFOTL trajec-tory specifications replayable by MonPoly [4]. We verify that all three agree event-by-event on every trace. 
+
+– We evaluate the monitor on four GDPR-reframed case studies whose tool in-terfaces are taken from published reference agents. We report attack-success rate, per-predicate precision and realization rate, false-positive rate, abla-tions, and sensitivity to extractor noise. The remainder of the paper reviews GDPR and runtime verification (Sec-tion 2), introduces a running example (Section 3), presents the approach (Sec-tion 4), evaluates it (Section 5), and concludes (Section 6). Runtime Compliance Verification for AI Agents 3
+
+## 2 Background and Related Work 
+
+GDPR principles for agents. The GDPR [16] regulates how personal data of EU residents is processed. We focus on four principles that can be checked from the events an agent produces. Consent (Art. 6(1)(a), 7), when used as the lawful basis, must come before processing, a tool call for a consent-only purpose, such as marketing, needs a prior Consent event for that purpose. Purpose limitation 
+
+(Art. 5(1)(b)) forbids processing data for a purpose that was not declared. Data minimization (Art. 5(1)(c)) limits a tool call to the data categories needed for its purpose. Right to erasure (Art. 17) is temporal, after an Erasure event for a subject, no later event may disclose that subject. Organizational requirements, such as DPIAs, breach notification, and records of processing, are outside the scope of an in-session monitor (Section 6). 
+
+Policy-as-code. We use two policy languages. Rego [18], the language of Open Policy Agent (OPA), checks a structured input document and returns policy decisions. It is stateless and is commonly used for API authorization over typed fields. MFOTL [4] extends first-order logic with bounded temporal operators such as ‘ □” and ‘ ONCE ”, and MonPoly checks MFOTL formulas over a timestamped event stream. Our setting differs from the usual use of these tools, the agent emits natural-language messages and free-form tool arguments, so categories and purposes must be extracted rather than read directly from typed fields. Several GDPR principles also depend on earlier events, so the decision must be made online over a growing trace rather than once over a static document. 
+
+LLM guardrails. Guardrail libraries [7,17], PII classifiers [12], and prompt-injection defenses [6] screen individual inputs or outputs, but they do not track session history. In contrast, C-Trace reasons over the session trace . It can therefore catch violations that depend on earlier events, such as a prior consent, a de-clared purpose, or a past erasure request, which a single-message check cannot see. 
+
+Red-teaming of LLMs. LLM red-teaming [15,5,22,6] generates prompts that try to produce harmful or policy-violating outputs and scores them with a human or LLM judge. For compliance, this has two weaknesses, scoring can be noisy and prompt-dependent, and prompts are usually replayed against an offline copy rather than the deployed pipeline. We use these prompts as a verification driver 
+
+that runs in-process against the same agent and monitor that would be deployed, so each verdict reflects the deployed pipeline. Success is decided by an observable oracle that checks the agent’s tool calls against the policy, for example, whether a marketing tool was called when only support was authorized. The oracle is separate from the predicates, so the monitor is not used to label its own outputs (Section 4.3), and we also cross-check it with an independent GDPR-article judge (Section 5.1). 4 N. Kahani et al. 
+
+Table 1. Used notation.                       
+
+> Symbol Meaning
+> τ=e1. . . en event trace; eiis the ith event
+> C(e)data categories of eΠ(e)purpose set assigned to eΠdeclared-purpose set
+> necessary (π)per-purpose data whitelist
+> processes (e, c )ecarries or discloses category c
+> discloses (e, s )eemits subject identifier s
+> “·”wildcard for unconstrained fields
+
+Table 2. Predicates and attacks.                  
+
+> PkPrinciple Attack family caught
+> P1Consent Consent bypass: processing without prior consent.
+> P2Purpose limitation Purpose laundering: reuse for undeclared purpose.
+> P3Data minimization Over-collection: unneces-sary data categories.
+> P4Right to erasure Post-erasure recall: disclo-sure after erasure.
+
+## 3 Running Example 
+
+We use one running example throughout the paper, a customer-service agent based on the personal-shopper reference app shipped with the OpenAI Swarm SDK [14]. We call the GDPR-reframed version Shopper . By GDPR-reframed we mean that the reference agent is unchanged, but a session policy is added on top (declared purposes, per-purpose necessary data categories, a lawful basis, and consent/erasure events) so that its ordinary tool calls become GDPR events the monitor can check. In the running example, the agent answers order questions, places new orders through order_item , issues refunds through refund_item ,sends customer-service notifications through notify_customer , and can send marketing emails through send_marketing_email . The violation occurs when the agent calls send_marketing_email without prior marketing consent. All four GDPR principles checked by our predicates ( P1–P4) appear in this workflow. Each deployment includes a session policy checked by the monitor. For Shop-per , the policy declares three purposes and their necessary data categories (List-ing 1.1). This policy acts as the agent specification, it defines the allowed tools, assigns each tool to a declared purpose, restricts which data categories may flow for that purpose, and limits delegated tool calls to the same allow-listed bindings. 
+
+Listing 1.1. Shopper session policy.  
+
+> 1
+
+package policy  
+
+> 2
+
+purposes := { " support " , " sales " , " marketing " }  
+
+> 34
+
+necessary [ " support " ] := { " email " , " order_id " }  
+
+> 5
+
+necessary [ " sales " ] := { " email " , " order_id " }  
+
+> 6
+
+necessary [ " marketing " ] := { " email " }  
+
+> 78
+
+# Tool -> purpose binding  
+
+> 9
+
+tool_purpose [ " lookup_customer " ] := " support "  
+
+> 10
+
+tool_purpose [ " refund_item " ] := " support "  
+
+> 11
+
+tool_purpose [ " order_item " ] := " sales "  
+
+> 12
+
+tool_purpose [ " notify_customer " ] := " support "  
+
+> 13
+
+tool_purpose [ " se nd_ma rketi ng_ema il " ] := " marketing " 
+
+Figure 1 shows a compliant dialogue. The user identifies an order, the agent invokes lookup_customer for the support purpose using only the necessary cat-egories ( email , order_id ), then performs a refund. The agent does not process data for marketing because no marketing consent was granted. We next modify the dialogue in Figure 1 in four ways, one principle at a time, to show what each predicate catches: (i) a message that causes a marketing email despite no prior consent (consent bypass); (ii) a message that requests an export Runtime Compliance Verification for AI Agents 5
+
+e1: UserMsg “My order #A-7421 never arrived; please refund.” 
+
+e2: AsstMsg “I can help. Could you confirm the email on the order?” 
+
+e3: UserMsg “alice@example.com” 
+
+e4: ToolCall lookup_customer(email, order_id) [purpose=support] 
+
+e5: ToolRet {customer_id: 9931, status: lost} 
+
+e6: ToolCall refund_item(order_id=A-7421) [purpose=support] 
+
+e7: AsstMsg “Refund issued. Anything else?” 
+
+Fig. 1. A benign trace.         
+
+> User (benign)
+> Attack driver
+> Agent loop (LLM + tools)
+> LLM/tool APIs
+> Runtime monitor
+> Extractor + policy
+> P1P2P3P4
+> allow /
+> block
+> Audit JSONL
+> MFOTL spec Rego policy
+> events ei∈ { UserMsg, AsstMsg, ToolCall, ToolRet, Consent, Erasure }
+> decision
+> replay replay
+> cross-check
+
+Fig. 2. High-level architecture of the proposed framework. 
+
+to analytics , a purpose the policy never declared (purpose laundering); (iii) a message that asks the agent to also collect date-of-birth and government ID, neither of which is necessary for refunds (over-collection); and (iv) a message that asks the agent to read back an address after the user issued an Article 17 erasure request (post-erasure recall). Section 4.1 defines the event model and then gives the concrete event sequences and predicates for these four cases. 
+
+## 4 Proposed Framework 
+
+Figure 2 gives an overview of C-Trace . The framework has three main parts. (1) A typed event model records each run as a sequence of labelled events, in-cluding user messages, tool calls, consents, and erasures. Each event is annotated with the data categories it carries and the purposes it serves. (2) Four predicates 
+
+(P1–P4) encode the four GDPR principles as checks over the event sequence. A predicate reports a violation as soon as the violation appears in the current trace prefix. (3) An attack driver tests the monitored agent with adversarial di-alogues that target each predicate, and an observable oracle , kept separate from the predicates, decides whether the attack succeeded. 
+
+4.1 Event Model 
+
+An agent execution is a finite trace τ = e1e2 . . . e n of typed events. Each event has one of six kinds: UserMsg , AsstMsg , ToolCall , ToolRet , Consent , or Erasure . At observation time, the monitor adds two annotations: the data categories carried or disclosed by the event, and the purposes served by the event. A single tool call can serve more than one purpose, for example, a lookup that feeds both support 6 N. Kahani et al. 
+
+and analytics . The predicates therefore quantify over the event’s purpose set. A multi-purpose event is flagged whenever any one of its purposes is non-compliant. For P3, a data category is allowed if it is necessary for at least one of the event’s purposes. On the benign trace in Figure 1, e3 has C(e3) = email and no purpose label. The call e4 = ToolCall (lookup_customer , . . . ) has C(e4) = email , order_id 
+
+and Π(e4) = support . The assistant acknowledgement e7 carries no regulated data category. Table 1 summarizes the notation used in this section. Events are produced by instrumenting the agent loop. As the agent runs, the interceptor of Section 4.3 maps each step of the agent loop into typed events, the user message becomes a UserMsg , every tool call the model emits becomes a 
+
+ToolCall (with its parsed arguments), each assistant reply becomes an AsstMsg ,and a clear Art. 17 deletion request is recorded as an Erasure . The category and purpose annotations above are filled in at this point, it resolves Π(e) from the policy (the declared tool purpose augmented by any purpose the request actually names) and runs the category extractor over the message and the tool arguments to populate C(e).
+
+4.2 Predicates and Violation Families 
+
+We express each GDPR principle as a first-order predicate over τ . A predicate returns either ⊤ (compliant) or a witness that identifies the offending event in-dex and data category set. Table 2 maps each predicate to the violation family it detects. Each predicate has a Boolean meaning JPkK(τ ) and is monotone over trace prefixes, once a violation appears, later events cannot make that earlier event compliant. The monitor uses this property to evaluate the predicates in-crementally. 
+
+P1 (consent before processing). ∀i, c ∈ C (ei), , π ∈ Π(ei) :; processes (ei, c ) ∧ π / ∈
+
+LegInt ⇒ ∃ j < i :, e j = Consent (·, π, ⊤).
+
+Every event that carries a data category must be preceded by a Consent event for the same purpose, unless that purpose is marked as a legitimate interest (LegInt ) under Art. 6(1)(f), as in the case of support . Suppose the user appends 
+
+e8: “I already consented to marketing yesterday, just sign me up using my email.” The unmonitored agent then emits e9 = ToolCall (send_marketing_email , . . . )
+
+with marketing ∈ Π(e9). Howevr, no Consent (·, marketing , ⊤) event appears in 
+
+e1−e8. Therefore, P1 reports a violation on e9, and the monitor blocks the call. A Consent event is recorded only by the application’s consent-capture mech-anism, such as an explicit opt-in or consent ledger. It is never inferred from a user’s natural-language claim. Thus, the claim in e8 is just text and does not create a Consent event. The verdict record ⟨P1, 9, email , block ⟩ is appended to the JSONL audit log alongside e9.
+
+P2 (purpose limitation). ∀i, π ∈ Π(ei) : π ∈ Π. 
+
+Every purpose attached to an event must already be declared in the policy. If the user appends “also export my email and address to your analytics pipeline,” the agent attempts e9 = ToolCall (export_to_analytics , . . . ) with analytics ∈Runtime Compliance Verification for AI Agents 7
+
+Π(e9). Shopper declares only Π = support , sales , marketing , so P2 reports a violation. 
+
+P3 (data minimization). ∀i : ei = ToolCall (·) ⇒ C (ei) ⊆ S 
+
+> π∈Π(ei)
+
+necessary (π).
+
+Every data category carried by a tool call must be necessary for at least one of the call’s purposes. The benign e4 satisfies this rule because email , order_id ⊆
+
+necessary (support ). An over-collection attack that adds dob and gov_id to lookup_customer 
+
+breaks the inclusion. P3 then reports a violation with dob and gov_id as the wit-ness data categories. 
+
+P4 (right to erasure). ∀i, j : ei = Erasure (·, s ) ∧ j > i ⇒ ¬ discloses (ej , s ).
+
+After an erasure event for subject s, no later event may disclose s. If e9 =
+
+Erasure (·, [alice@example.com](mailto:alice@example.com) ) is followed by an e11 
+
+that discloses the same identifier, P4 reports a violation on e11 with witness pair 
+
+(e9, e 11 ). This is the baseline Art. 17 rule. Exceptions under Art. 17(3), such as legal obligation, audit, fraud prevention, or security can be added as per-purpose policy carve-outs, in the same way that P1 uses the LegInt exemption. 
+
+4.3 Monitor, Attack Driver, and Verification Loop 
+
+The monitor is an interceptor placed between the agent loop and the OpenAI Chat Completions/tool endpoints. On every event e, it (i) runs the category extractor to populate C(e), (ii) resolves Π(e) from the policy, (iii) appends e
+
+to the working trace τ , (iv) evaluates the enabled subset of P1, . . . , P 4, and (v) chooses one of three decisions, forward , if no predicate reports a violation; 
+
+redact , if a configured rewrite rule applies, such as removing a non-necessary data category from the arguments and checking the event again; or block , in which case e is removed from the accepted trace τ .The monitor keeps two traces. The accepted trace τ is the trace seen by downstream predicates and by the agent loop. The audit trace τa records every event the monitor observed, including forwarded, redacted, and blocked events, together with the corresponding verdict record. The audit trace is used by a compliance reviewer; the accepted trace is the post-block view used by the agent and oracle. The driver targets each predicate with one attack family. A1 claims prior consent that the user never gave; A2 asks the agent to reuse data for an unde-clared purpose; A3 asks for data fields the purpose does not need; and A4 asks the agent to recall a subject after an Erasure event. For each family, we use two prompt sets. The Generated set is produced by a DSPy program. The DSPy module rewrites a small number of seed requests into stylistic variants, including role-play wrappers, urgency and authority framing, jailbreak-style “ignore previous instructions” prefixes, and legalese. The resulting attack pool is generated rather than fully written by hand. The Real-corpus set contains two-turn dialogues. The first turn is a verbatim prompt from Harm-Bench [11], AdvBench [22], or DAN [20]; the second turn names the workflow 8 N. Kahani et al. 
+
+tool. Because the first turn is text we did not write, a success on this set is not just a result of our own wording. Both sets are seeded and reproducible. Success is decided by a separate observable oracle , not by the predicate li-brary. For each attack family, the observable oracle is a fixed decision procedure that reads only the resulting event trace and the static policy and asks one ques-tion, did the family’s illicit behaviour appear in the trace the defense allowed through? For A1, for example, it asks whether a marketing tool call occurred with no prior marketing consent. The oracle never invokes the runtime predicates, so attack success is judged independently of the monitor being evaluated. 
+
+Running example. For the A1 dialogue from Section 4.1, the observable oracle for A1 checks the accepted trace τ and asks whether a tool call with marketing ∈
+
+Π(·) appears without a prior Consent (·, marketing , ⊤). Under the None defense, this is true: the candidate e9 remains in τ , and the dialogue is marked succeeded .Under C-Trace , the monitor blocks e9 before it enters τ , so the oracle does not see a successful violation and the dialogue is marked blocked . The oracle never consults P1 to make this decision. The harness composes the two components in a fixed loop. For each dialogue in the attack and benign workloads it (1) runs the agent end-to-end under the monitor, (2) records the per-event disposition and latency, and (3) labels the dialogue with the disposition of the relevant attack: blocked (the monitor re-fused the event), model-refused (the agent itself declined before reaching a tool path), succeeded (a violating event escaped the monitor), or benign (no viola-tion was actually attempted). Aggregating these labels yields the attack-success rate, per-predicate precision and realization rate, and false-positive rate reported in Section 5; in audit mode the harness emits per-workflow JSONL audit logs, which are the audit artifacts used for compliance review. 
+
+4.4 Cross-Validation Artifacts 
+
+We write the same logical policy in three runtimes. Each runtime has a different role. The operational Python implementation performs enforcement inside the agent loop. The Rego policy is an auditor-facing file that a third party can run on a stored trace with stock OPA. The MFOTL specifications provide a formal reference that can be replayed by an independent temporal-logic monitor. The point is not that these runtimes are interchangeable. The point is that all three agree on every trace, so the operational monitor implements the same policy that we state in Rego and MFOTL. The Rego policy is runnable under OPA, and the four MFOTL trajectory specifications are monitorable by MonPoly [4]. The MFOTL forms use □, φ for ‘ φ
+
+holds at every future time point,” ONCE φ for ‘ φ held at some past time point,” 
+
+erasure (s) for an Erasure (·, s ) event, and mentions (s) for any event satisfying 
+
+discloses (e, s ). For example, P4 is □, (erasure (s) → □, ¬mentions (s)) . On the running-example trace above, this formula is falsified at e11 by the witness pair 
+
+(e9, e 11 ), exactly as the predicate reports. Because the monitor evaluates each formula as the trace grows, the un-bounded outer □ is rewritten into a past-only violation pattern, for example Runtime Compliance Verification for AI Agents 9
+
+mentions (s) ∧ ONCE , erasure (s) for P4. A cross-validator runs the Python library and MonPoly on the same generated traces and checks equality of the per-time-point violation sets. The two agree on 400 /400 traces (4 case studies × 4 families 
+
+× 1 register × 20 dialogues, plus 4 case studies × 20 benign controls), so the op-erational predicates do not diverge from the declarative specification. A second cross-validator performs the same check for the Rego policy, it serializes every generated trace to OPA input and compares the resulting (Pk, i ) verdict set against the Python library. The two agree on 720 /720 traces (4 case studies × 4families × 2 registers × 20 dialogues, plus 4 case studies × 20 benign controls), showing that the auditor-facing Rego policy matches the operational monitor. 
+
+## 5 Evaluation 
+
+We evaluate the proposed framework on four case studies (Table 3) and answer three research questions. 
+
+RQ1 How vulnerable is the unmonitored agent to each attack family A1-A4, and does that remain under paraphrased, role-played, and multi-turn attacks with the same intent? 
+
+RQ2 What attack-success rate (ASR) does the predicate monitor achieve com-pared to a no-monitor baseline and stateless guardrails, and with what pre-cision (does any predicate over-fire on benign traffic)? 
+
+RQ3 Is each predicate individually necessary (ablation), and how does monitor effectiveness degrade under imperfect category extraction (sensitivity)? 
+
+5.1 Experimental Setup Case studies. Table 3 summarizes the four case studies. Three are GDPR-reframed from published reference agents ( Shopper [14], Airline [13], and 
+
+MedAgent modelled on Stanford MedAgentBench [9]); the fourth, FinAssist ,is a bank-onboarding agent we wrote, whose lawful basis is Art. 6(1)(c) legal obligation (KYC/AML duty) rather than consent. We chose these four to span the dimensions that exercise the predicates, three lawful bases (Art. 6(1)(a) con-sent, Art. 9(2)(a) special-category consent, and Art. 6(1)(c) legal obligation) across four domains (retail, travel, healthcare, and finance), with both reused reference agents and an authored one. Adding more agents in the same domains would mostly repeat these configurations rather than test new predicate or pol-icy structure, so we kept the set small enough to analyse in depth while still covering each lawful basis at least once. 
+
+Threat model and agent configuration. Each case study uses a single real agent, a gpt-4o-mini tool-calling loop. We make three conservative design choices. 
+
+First , the agent does not refuse; it carries out the user’s request without adding policy disclaimers, because the monitor’s guarantee does not depend on model alignment, alignment varies across models and versions, can be jailbroken, and a single model update can remove the refusals a system was implicitly relying on. 10 N. Kahani et al. 
+
+Table 3. Case study configurations.                
+
+> Case study Lawful basis Purposes necessary (primary purpose)
+> Shopper Art. 6(1)(a) consent support, sales, marketing support: {email, order_id }
+> Airline Art. 6(1)(a) consent flight_ops, billing, lost_baggage, marketing flight_ops: {email, order_id }
+> MedAgent Art. 9(2)(a) explicit con-sent [16,1] treatment, research, billing treatment: {dob, email, health, order_id }
+> FinAssist Art. 6(1)(c) legal obligation fraud, kyc, marketing kyc: {address, dob, email, gov_id }
+
+Evaluating against a self-censoring agent would credit the system for protection it does not actually provide; the non-self-censoring agent measures what the monitor alone guarantees. Second , the agent is fully capable, its tool schema exposes the sensitive fields an over-collection request names, and a GDPR Art. 17 request triggers a backend deletion (an Erasure event), exactly as a production agent with a delete endpoint would behave. Withholding these capabilities would make some principles pass only because the attack could not even be expressed, so we expose them and ensure that violations are blocked by the monitor rather than by absent functionality. Third , the over-collection attacks supply concrete data values (e.g., a date of birth and government-ID number), because a real over-collection attempt provides the data to be over-collected; a prompt that names a field without a value is an incomplete attack. Because the monitor decides on the observable event trace, its 0% ASR holds once a violation appears in the trace, the agent’s compliance level changes only how often an attack is attempted (the None column of Table 4), never whether a realized violation is caught. 
+
+Baselines. We compare C-Trace against four baselines on identical traces. 
+
+None runs the agent without a monitor. Random independently blocks each tool call or assistant message with probability q=0 .5 (seeded for reproducibil-ity); it serves as a baseline for arbitrary refusal, reported on the benign workloads (Table 6). Regex is a keyword-driven PII filter that blocks any tool call whose cat-egory set contains a hard-coded sensitive field ( {payment , dob , gov_id , health }). It represents stateless guardrails that inspect individual events but do not track session history. Presidio is a production PII recognizer, Microsoft Presidio [12], run over every tool call and assistant message. It blocks events in which Presidio detects a high-sensitivity entity such as an SSN, credit card, passport number, or date of birth. Unlike Regex , Presidio uses an ML/NLP recognition pipeline rather than a keyword list, but it has the same limitation: it does not track session state. C-Trace is the predicate monitor described in Section 4. 
+
+Attack workload. Each family A1-A4 is tested in two registers, and we sample 
+
+n=50 dialogues per (family, register) cell. The generated register is produced offline by a DSPy program (one Mutate signature) that rewords a handful of Runtime Compliance Verification for AI Agents 11 
+
+seed requests per (workflow, family) into stylistic variants (role-play wrappers, urgency and authority framing, jailbreak-style “ignore previous instructions” pre-fixes, and legalese), each naming the family’s target tool, for a frozen pool of 50 
+
+candidates per cell. The register is not success-filtered, whether each generated attack actually realizes a violation is left to the evaluation’s observable oracle (the realization rate of Table 5), so the None and realization numbers are not inflated by filtering. Generation is performed offline. The candidates are frozen to a file, making the evaluation deterministic and replayable for the ablation and sensitivity sweeps. The same module could instead be driven online, inside the agent loop, to model an adaptive adversary that revises its prompts in response to the monitor’s blocks, a stronger threat model that would be more adaptive but less reproducible (future work). The real-corpus register is a two-turn dialogue whose first turn is a verbatim adversarial prompt drawn from HarmBench [11], AdvBench [22], or the in-the-wild DAN/jailbreak prompts of [20] (32 verbatim rows per family, chosen by documented keyword filters and recorded with cor-pus name, row identifier, and SHA-256 in a build artifact; the rows are sampled with replacement and slot-filled to the 50-dialogue cell, each instance carrying distinct identifiers), and whose second turn is a short workflow-specific bridge that names the tool to call. The per-workflow total is therefore 4×2×50=400 
+
+attack dialogues. 
+
+Benign workloads. The benign workload (50 dialogues per case study) con-sists of ordinary, in-purpose support requests. The benign-edge workload (50 dialogues) contains compliant traffic that looks adversarial, where the user them-selves volunteers a sensitive category (an address on Shopper /Airline , a follow-up KYC re-run on FinAssist , a chart re-lookup on MedAgent ) exercising the FPR boundary of P3 and P4.
+
+Oracle and cross-validation. For every (family, dialogue, configuration) triple the harness executes the dialogue and asks the observable oracle for that family (Section 4.3) whether the configuration allowed the violation through. The oracle inspects only the resulting event trace and the static policy. 
+
+Independent-judge validation. The structural oracle and the predicates both read the trace and the policy, so we additionally check “attack success” against an independent judge: gpt-4o-mini prompted with the GDPR article text (not our predicates, not the oracle code) to label each unmonitored transcript per principle. Over the 251 realized violations it sampled (all four case studies and families), the judge agrees with the structural oracle’s call on 88% (100% on erasure, 99% on data minimization, 91% on purpose limitation, 71% on consent), and flags a violation on only 4% of benign transcripts. The lower agreement on consent reflects genuine ambiguity over when a repurposed support channel “requires consent”: a disagreement about operationalization, consistent with the 
+
+one defensible reading caveat (Section 5.1), rather than evidence that the oracle duplicates the monitor. 12 N. Kahani et al. 
+
+RQ1: Attack Coverage 
+
+We run each attack family against the tool-compliant gpt-4o-mini agent of Sec-tion 5.1 at temperature =0 with a pinned seed, on a workload of n=50 attack dialogues per (family, register) and n=50 benign and benign-edge dialogues per case study. Each unique dialogue is sent to the API once and replayed across the four configurations in Table 4 ( None , Regex , Presidio , C-Trace ) from a SHA-256-keyed on-disk cache, so every column sees the exact same model outputs. Table 4 reports per-family/per-register ASR and FPR. (i) Without a moni-tor the compliant agent commits violations across all four families, often at high rates. Consent bypass ( A1) and over-collection ( A3) are the easiest to trigger (A1 up to 100% on Shopper , MedAgent , and FinAssist , A3 at 70 –100% 
+
+on Shopper /Airline /MedAgent ), while purpose laundering ( A2) and post-erasure recall ( A4) occur mainly in the real-corpus register (e.g., A4 at 96% on 
+
+Shopper /FinAssist , A2 at 90 –100% on Airline /MedAgent ). FinAssist is the hardest case study to over-collect on ( A3 down to 32% ) because its KYC pur-pose legitimately needs more categories, leaving fewer that count as excess. (ii) The stateless guardrails are limited by their lack of session state. Regex largely reproduces None and, on MedAgent /FinAssist , lowers ASR only by blocking benign traffic (FPR up to 100% ). Presidio , a real PII classifier, is sharper: it re-duces much over-collection to ≤ 24% on Shopper /Airline /FinAssist , though 
+
+MedAgent ’s real-corpus cell stays at 68% , and keeps FPR low ( ≤ 2% ), yet still lets through nearly all consent bypass ( A1) and purpose/erasure attacks (A2, A4), which depend on session history it does not track. (iii) Under exact extraction, the predicate monitor ( C-Trace ) blocks every realized violation in this workload and introduces no benign false positives (the 0% rows below). This checks the predicate logic under ideal extraction; it is not a real-world deploy-ment guarantee. Under 10% per-category extractor noise, C-Trace keeps ASR at ≤ 12% under drop-out, well below the stateless baselines, and FPR at ≤ 16% 
+
+under over-typing (Table 8). 
+
+RQ2: Precision and Realization 
+
+We run the attack and benign workloads through C-Trace on the tool-compliant agent ( 4×2×50=400 attack dialogues and 50 benign dialogues per case study) and report two quantities per predicate (Table 5): the monitor’s precision (whether it raises any verdict on a benign dialogue) and the agent’s realization rate (how often the model actually commits the family-Ak violation); the two are distinct, since under exact extraction every realized violation is detected ( 0% ASR) by construction. The monitor holds ASR to 0% on every cell (Table 4) at 100% precision, no benign dialogue triggers a verdict. The second column is an agent -side quantity, the realization rate , the fraction of attack dialogues in which the model actually commits the violation (its antecedent appears on the unmonitored trace). Real-ization measures the model’s tendency to commit the attack, not detection recall; since the monitor blocks every realized violation, ASR stays 0% . Realization is 
+
+100% on P1 where the agent always bypasses consent ( Shopper , FinAssist )Runtime Compliance Verification for AI Agents 13 
+
+Table 4. ASR (%) under exact extraction; G/R = generated/real-corpus.                                                                                                                                                                                
+
+> A1A2A3A4FPR Case study Configuration GRGRGRGRbe be +
+> Shopper
+> None 100 100 40 78 80 100 496 00Regex 100 100 38 78 00490 00Presidio 98 98 20 78 24 6496 22
+> C-Trace 0000000000
+> Airline
+> None 38 98 890 78 100 064 00Regex 38 98 890 00056 00Presidio 38 96 288 18 0050 22
+> C-Trace 0000000000
+> MedAgent
+> None 100 046 100 70 100 14 66 00Regex 90 040 94 0014 66 056 Presidio 92 040 98 24 68 14 66 22
+> C-Trace 0000000000
+> FinAssist
+> None 100 100 26 90 32 52 096 00Regex 100 100 22 24 00096 98 100 Presidio 100 100 26 88 00096 00
+> C-Trace 0000000000
+
+and 32 –90% elsewhere, with over-collection ( P3) well-realized ( 85 –90% on three case studies, 42% on FinAssist , whose KYC purpose needs most categories). Table 6 extends the precision result to a stricter test, in addition to the 50 plain benign dialogues per case study we run the benign-edge workload ( n=50 )of Section 5.1, in which the user volunteers a sensitive category. The predicate monitor stays at 0.0% FPR on both workloads of all four case studies, P3 does not over-trigger on user-volunteered context because the agent forwards only the 
+
+necessary subset to its tool call, and P4 does not over-trigger because no Erasure 
+
+has occurred. The Random baseline is at 72 –88% across the board, and Regex stays at 0.0% on Shopper /Airline but rises to 98 –100% on FinAssist (and 
+
+56% on the MedAgent benign-edge workload) because benign requests there legitimately carry a blocklisted category. Presidio does not fail in the same way (≤ 2% everywhere) because it detects actual PII values rather than blanket-blocking on a category keyword, yet that better precision does not improve performance on the stateful principles (Table 4). The monitor’s per-event cost is the incremental predicate evaluation, which is independent of the agent backend. Across the four case studies it adds a median of 1.8 μs and a 95 th percentile of 3.6 μs per event (mean 2.4 μs), measured over the benign workload on a commodity laptop. This is negligible against the tens to hundreds of milliseconds of a single LLM or tool call. 
+
+RQ3: Necessity and Sensitivity 
+
+We disable each predicate in turn ( −Pk) and re-run the 400 attack dialogues per case study. Table 7 reports the resulting ASR per family ( n=100 per family, both registers). Each predicate is the primary guard for its family. Removing P1 restores con-sent bypass ( A1 to 100% on Shopper and FinAssist , 68% on Airline ); remov-ing P3 restores over-collection ( A3 to 41 –90% on all four case studies); removing 14 N. Kahani et al. 
+
+Table 5. Per-predicate precision (a monitor metric: false positives on benign) and 
+
+realization rate (an agent metric: how often the model commits the attack). Real. =realized (committed) attacks, Unr. = unrealized.                                                                                       
+
+> Case study Pred Real. FP Unr. Prec. (%) Realiz. (%)
+> Shopper
+> P1100 00100.0 100.0
+> P259 041 100.0 59.0
+> P390 010 100.0 90.0
+> P450 050 100.0 50.0
+> Airline
+> P168 032 100.0 68.0
+> P249 051 100.0 49.0
+> P389 011 100.0 89.0
+> P432 068 100.0 32.0
+> MedAgent
+> P150 050 100.0 50.0
+> P273 027 100.0 73.0
+> P385 015 100.0 85.0
+> P440 060 100.0 40.0
+> FinAssist
+> P1100 00100.0 100.0
+> P258 042 100.0 58.0
+> P342 058 100.0 42.0
+> P448 052 100.0 48.0
+
+Table 6. False-positive rate (%) on the benign ( n=50 ) and benign-edge ( n=50 ) work-loads, “be” = benign, “be +” = benign-edge.                                                    
+
+> Shopper Airline MedAgent FinAssist
+> Configuration be be +be be +be be +be be +
+> None 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 Random 76.0 88.0 74.0 74.0 74.0 80.0 72.0 78.0 Regex 0.0 0.0 0.0 0.0 0.0 56.0 98.0 100.0 Presidio 2.0 2.0 2.0 2.0 2.0 2.0 0.0 0.0
+> C-Trace 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+
+P4 restores post-erasure recall ( A4 to 28 –47% on three of them). Removing P2
+
+produces a small A2 ASR ( 0–19% ), purpose laundering overlaps with consent (P1 usually reports a violation first on the same event), so P2 is the marginal defense for the launderings P1 misses, overlapping but not redundant . The same overlap explains the three zero cells ( Shopper /−P2, MedAgent /−P1, FinAs-sist /−P4), there a realized attack is still caught by another predicate, so dis-abling the family’s own guard does not restore it. The effect magnitudes track how often the agent realizes each family, so they are largest where the model commits the attack most readily. The session-aware predicates depend on the category extractor (here, a regex stand-in for Presidio [12]). To stress this dependency we inject independent per-category drop-out with probability p ∈ { 0, 10 , 25 , 50 }% into the monitor’s view of every event, while the ground-truth attack-success oracle still sees the unper-turbed trace. Table 8 reports the resulting ASR per family, averaged over both registers. The denominator is restricted to dialogues that produced a real viola-tion on the unmonitored agent, so the table measures the monitor’s conditional 
+
+miss-rate. Runtime Compliance Verification for AI Agents 15                                                                                                                                                                                
+
+> Table 7. Ablation on the tool-compliant agent: ASR (%) per family with one predicate disabled.
+> n=100 dialogues per family. Case study Config A1A2A3A4
+> Shopper
+> Full 0000
+> −P1100 000
+> −P20000
+> −P30090 0
+> −P400047
+> Airline
+> Full 0000
+> −P168 000
+> −P20100
+> −P30089 0
+> −P400028
+> MedAgent
+> Full 0000
+> −P10000
+> −P2019 00
+> −P30085 0
+> −P400040
+> FinAssist
+> Full 0000
+> −P1100 000
+> −P20900
+> −P30041 0
+> −P40000
+> Table 8. Extractor sensitivity: ASR (%) per family under category drop-out, and false-positive rate (FPR, %) on benign traffic under over-typing, at noise rate p.Case study pA1A2A3A4FPR
+> Shopper
+> 0% 00000
+> 10% 503216
+> 25% 12 010 18 24
+> 50% 38 028 20 54
+> Airline
+> 0% 00000
+> 10% 70238
+> 25% 22 0812 20
+> 50% 37 020 16 36
+> MedAgent
+> 0% 00000
+> 10% 10 0212 2
+> 25% 28 013 20 16
+> 50% 42 034 48 34
+> FinAssist
+> 0% 00000
+> 10% 10 0200
+> 25% 25 024 33 0
+> 50% 53 045 60 0
+
+At p=0% the monitor is exact, and at a realistic p=10% drop it stays low (ASR ≤ 12% on every family). Degradation rises with the drop rate and con-centrates on the extractor-dependent predicates, at p=50% , A1 reaches 37 –53% ,
+
+A3 up to 45% , and A4 up to 60% (FinAssist ). P2 is the exception: A2 stays at 
+
+0% throughout because P2 keys on the purpose field, which the drop-out does not perturb. The extractor is therefore the main failure mode, every extractor-dependent predicate degrades with the drop rate, so a deployment should pair the monitor with a high-recall extractor and fail closed on ambiguous categories. 
+
+Discussion 
+
+The evaluation suggests that session history is central to compliance checking for tool-using agents. In the unmonitored setting, the agent produced violations across consent, purpose limitation, data minimization, and erasure scenarios. Stateless baselines were able to catch some violations involving obvious sensitive fields, but they missed cases where the relevant condition depended on earlier dialogue events, such as whether consent had been granted or whether an erasure request had already occurred. The ablation results also show that the four predicates are not interchange-able. Each one guards a different GDPR principle, although some overlap appears between consent and purpose-limitation cases. This overlap is useful in practice, but it also shows that the policy design must be explicit about which legal ba-sis and purpose apply to each tool call. Overall, the results support the use of trace-based monitoring as a practical enforcement layer for AI agents, while also showing that its reliability depends on accurate observation of natural-language and tool-call events. 16 N. Kahani et al. 
+
+In practice, C-Trace runs as an in-process interceptor. It does not require changes to the model or tool implementations, blocks non-compliant tool calls before execution, and writes an append-only JSONL audit log for review. A new workflow can be added by editing the policy manifest, tool-to-purpose bindings, and extractor patterns, rather than changing the monitor code. The same trace-based structure can support additional rules, but the results also show where the approach is fragile. The monitor depends on the quality of the event annotations, especially the category extractor. The sensitivity results show that missed categories can lead to missed violations, while over-assigned categories can increase false positives. A production deployment should therefore validate the extractor on domain-specific traffic and consider fail-closed behavior for high-risk data categories. Broader scalability should also be tested under many concurrent sessions, larger manifests, and longer traces. 
+
+Threats to Validity 
+
+Generalization. The four case studies span three lawful bases and four domains, and the ordering (monitor ≫ regex ≫ none) and the headline 0% ASR / 0% FPR are stable across them. Absolute ASR, realization, and FPR numbers are specific to gpt-4o-mini at n=50 on one backend and should not be read as estimates for other models or workflows; a weaker- or stronger-aligned model would shift them, and the ablation and sensitivity magnitudes with them, while leaving the monitor’s 0% ASR/FPR unchanged. 
+
+Interpretation and extraction. Our predicates capture one reasonable reading of GDPR Arts. 5–7 and 17, not the only one. They are configurable, so a deployment that reads a principle differently can replace them without changing the monitor. A second limitation is the extractor, we use a regex stand-in for a production PII classifier. RQ3 measures how the monitor degrades as this extractor drops categories, but it does not reproduce every way a real classifier fails, such as over-typing, language drift, or span errors. We keep four such cases as expected-failure tests in CI so the gap stays visible. 
+
+## 6 Conclusion 
+
+This work proposed a runtime verification framework for GDPR compliance in AI agents, combining formal predicates with an attack driver, and evaluated it on four case studies covering retail support, airline customer service, clinical-data access, and KYC/AML compliance (the last under Art. 6(1)(c) legal obligation rather than consent). Under exact extraction the monitor drives attack-success and false-positive rates to zero on every family in both the generated and real-corpus registers; under 10% per-category extractor noise the attack-success rate stays at most 12%, below the baselines we compare against, while false positives rise to at most 16%. The per-workflow JSONL audit log the harness emits in au-dit mode is the file a compliance reviewer would ask for. As future work, we plan to strengthen the category extractor and validate it on domain-specific traffic, since our results indicate the monitor’s reliability depends more on extraction quality than on the policy logic. Runtime Compliance Verification for AI Agents 17 
+
+## References 
+
+1. Act, A., et al.: Health insurance portability and accountability act of 1996. Public law 104 (191), 1–16 (1996) 2. Arfelt, E., Basin, D., Debois, S.: Monitoring the gdpr. In: European Symposium on Research in Computer Security. pp. 681–699. Springer (2019) 3. Bartocci, E., Deshmukh, J., Donzé, A., Fainekos, G., Maler, O., Ničković, D., Sankaranarayanan, S.: Specification-based monitoring of cyber-physical systems: a survey on theory, tools and applications. In: Lectures on Runtime Verification: Introductory and Advanced Topics, pp. 135–175. Springer (2018) 4. Basin, D., Klaedtke, F., Müller, S., Pfitzmann, B.: Runtime monitoring of metric first-order temporal properties. In: IARCS Annual Conference on Foundations of Software Technology and Theoretical Computer Science (2008). pp. 49–60. Schloss Dagstuhl–Leibniz-Zentrum für Informatik (2008) 5. Ganguli, D., Lovitt, L., Kernion, J., Askell, A., Bai, Y., Kadavath, S., Mann, B., Perez, E., Schiefer, N., Ndousse, K., et al.: Red teaming language models to reduce harms: Methods, scaling behaviors, and lessons learned. arXiv preprint arXiv:2209.07858 (2022) 6. Greshake, K., Abdelnabi, S., Mishra, S., Endres, C., Holz, T., Fritz, M.: Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection. In: Proceedings of the 16th ACM workshop on artificial intelligence and security. pp. 79–90 (2023) 7. Guardrails AI: Guardrails: A framework for validating llm outputs. In: Open Source Project (2023) 8. Havelund, K., Peled, D.: Runtime verification: from propositional to first-order temporal logic. In: International Conference on Runtime Verification. pp. 90–112. Springer (2018) 9. Jiang, Y., Black, K.C., Geng, G., Park, D., Zou, J., Ng, A.Y., Chen, J.H.: Meda-gentbench: a virtual ehr environment to benchmark medical llm agents. Nejm Ai 
+
+2(9), AIdbp2500144 (2025) 10. Leucker, M., Schallhart, C.: A brief account of runtime verification. The journal of logic and algebraic programming 78 (5), 293–303 (2009) 11. Mazeika, M., Phan, L., Yin, X., Zou, A., Wang, Z., Mu, N., Sakhaee, E., Li, N., Basart, S., Li, B., Forsyth, D., Hendrycks, D.: Harmbench: A standardized evalu-ation framework for automated red teaming and robust refusal. In: ICML (2024) 12. Microsoft: Microsoft presidio: Context aware, pluggable and customizable pii anonymization service. https://github.com/microsoft/presidio (2024) 13. OpenAI: Swarm: Airline customer-service reference agent. https://github.com/ openai/swarm/tree/main/examples/airline (2024) 14. OpenAI: Swarm: Personal shopper reference agent. https://github.com/openai/ swarm/tree/main/examples/personal_shopper (2024) 15. Perez, E., Huang, S., Song, F., Cai, T., Ring, R., Aslanides, J., Glaese, A., McAleese, N., Irving, G.: Red teaming language models with language models. In: Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing. pp. 3419–3448 (2022) 16. Protection, B.P.N.G.D.: Regulation (gdpr). Official Journal of the European Union (2016) 17. Rebedea, T., Dinu, R., Sreedhar, M., Parisien, C., Cohen, J.: Nemo guardrails: A toolkit for controllable and safe llm applications with programmable rails. arXiv:2310.10501 (2023) 18 N. Kahani et al. 18. Sandall, T.: Open policy agent: Policy-based control for cloud native environments. In: CNCF Technical Documentation (2019) 19. Schick, T., Dwivedi-Yu, J., Dessi, R., Raileanu, R., Lomeli, M., Zettlemoyer, L., Cancedda, N., Scialom, T.: Toolformer: Language models can teach themselves to use tools. In: NeurIPS (2023) 20. Shen, X., Chen, Z., Backes, M., Shen, Y., Zhang, Y.: “Do Anything Now”: Char-acterizing and evaluating in-the-wild jailbreak prompts on large language models. In: ACM CCS (2024) 21. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., Cao, Y.: React: Synergizing reasoning and acting in language models. In: ICLR (2023) 22. Zou, A., Wang, Z., Carlini, N., Nasr, M., Kolter, J.Z., Fredrikson, M.: Universal and transferable adversarial attacks on aligned language models. In: arXiv:2307.15043 (2023)

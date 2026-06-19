@@ -1,0 +1,498 @@
+Title: Steering Generative Reinforcement Learning into Stable Robotic Controller
+
+URL Source: https://arxiv.org/pdf/2606.16572v1
+
+Published Time: Tue, 16 Jun 2026 02:41:26 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Steering Generative Reinforcement Learning into Stable Robotic Controller 
+
+Yixuan Wang 1,∗ Shutong Ding 1,∗ Ke Hu 1,∗ Tianxiang Gui 1
+
+Jingya Wang 1 Ye Shi 1,†
+
+> 1
+
+ShanghaiTech University 
+
+{wangyx12022, dingsht, huke2024 }@shanghaitech.edu.cn 
+
+{wangjingya, shiye }@shanghaitech.edu.cn 
+
+Abstract: Diffusion and flow-based generative policies provide a powerful policy class for reinforcement learning by inducing rich stochastic exploration through iterative action generation. However, the stochasticity of diffusion policies is not suitable for stable and precise control in high-dimensional robotic systems, where small action variations can accumulate into inconsistent motion and reduced robust-ness. To address this issue, we propose SteerGenPO, a latent-space reinforcement learning framework that steers a trained generative policy into a robust determinis-tic robotic controller. The key idea is to replace stochastic latent sampling of the trained generative policy with a learned latent actor that predicts a state-dependent latent input for the generative policies. This separates exploration and control: stochastic generative sampling provides diverse action proposals during policy learning, while deterministic latent steering provides stable and adaptive control at deployment. We evaluate SteerGenPO on six Isaac Lab benchmarks and a Unitree G1 locomotion task. The results show SteerGenPO improves over both classical RL and generative RL baselines, while its deterministic latent steering produces more stable inference-time behaviors and more reliable command responses. 
+
+Keywords: Diffusion Policy; Latent-Space Reinforcement Learning; Robotic Control 
+
+## 1 Introduction 
+
+Recent advances in embodied intelligence have shown that reinforcement learning (RL) algorithms can learn effective control policies across humanoid locomotion, robot arm manipulation, and dexterous hand control [ 1, 2]. However, most of these methods use Gaussian policies like PPO [ 3], which parameterize a unimodal action distribution. While this design is simple and convenient, its unimodal structure can be restrictive in high-dimensional robotic control, where the underlying action distribution may be complex and multi-modal rather than concentrated around a single mode. In parallel, diffusion and flow-based RL methods [ 4, 5, 6 , 7] have emerged as a more expressive alternative. By generating actions through iterative denoising or flow transformations, these generative policies can model complex, multi-modal action distributions. Compared with classical PPO policies, their multimodality also provides stronger exploration during training by producing diverse action proposals. Although diffusion-based RL provides expressive policies and strong exploration during training, we find that the multi-modal stochasticity of diffusion can be harmful when the policy is deployed on real-world robots. In contact-rich and high-dimensional systems, small action variations may accumulate into unstable contacts, inconsistent motion, unnecessary torque oscillations, and reduced 
+
+> ∗
+
+Equal contribution. †Corresponding author. 
+
+> arXiv:2606.16572v1 [cs.RO] 15 Jun 2026
+
+robustness. One common way to avoid this randomness is to use a fixed latent input, such as the zero vector in deterministic deployment variants like [ 7 ]. Although this reduces action variance, it does not intrinsically solve the deployment problem. The zero vector is only the center of the latent prior, not a latent input optimized for task return, and after the nonlinear generative transformation, it may decode to a suboptimal action. As a result, deterministic zero-sampling deployment can improve stability but often sacrifices policy performance. To address this problem, we propose SteerGenPO , a latent-space reinforcement learning framework for steering generative RL policies into stable robotic controllers. SteerGenPO consists of two stages: first, a generative policy is trained with RL, like GenPO [ 5], to provide diverse action proposals and discover high-return behaviors; second, a state-conditioned latent actor is learned to output a latent input for the trained generative policy. In that case, the latent actor replaces both random latent sampling and fixed zero-latent inference at deployment, turning the generative policy into a deterministic stable controller while preserving the expressiveness of the generative policy. To the best of our knowledge, SteerGenPO is the first latent-space RL method designed for reinforcement-learned diffusion or flow policies. Notably, it differs from recent diffusion steering work such as DSRL [ 8], which applies RL in the latent-noise space of a pretrained behavior-cloned diffusion policy. Compared with DSRL, SteerGenPO applies an on-policy paradigm in the second stage and does not require distilling an additional value network for the latent actor. Besides, we also introduce a latent regularization loss that constrains exploration within the reliable support of the latent space, further improving the stability of policy optimization. Finally, we confirm the efficiency of the proposed SteerGenPO in both IsaacLab benchmarks and Unitree G1 locomotion tasks. Our contribution is threefold: • We identify stochastic latent sampling as a key issue for deploying diffusion reinforcement learning policies in real-time robot control, where stable and precise actions are required. • We propose SteerGenPO, a latent-space RL framework that trains a latent-action actor to find optimal deterministic latent noise for generative policies, yielding a more stable and higher-performing controller for robot control. • We conduct extensive evaluations in both Isaac Lab robotic control tasks and a real-world Unitree G1 humanoid locomotion task. The results show that SteerGenPO consistently outperforms classical and diffusion RL baselines, demonstrating its effectiveness for stable robot control. 
+
+## 2 Related Work 
+
+Diffusion-Based Reinforcement Learning Diffusion models represent complex distributions through iterative denoising [ 9, 10 , 11 ], motivating diffusion policies for action or trajectory modeling in robot learning [ 12 , 13 , 14 ]. Much prior work focuses on offline RL, using diffusion models as expressive behavior priors or policy classes [13, 15, 16]. Beyond offline learning, DIPO and QVPO study online model-free diffusion-policy RL [ 17 , 18 ], while Q-score matching trains diffusion policies from rewards in an off-policy setting [ 19 ]. GenPO enables diffusion and flow policies to be trained in an on-policy RL loop by handling the likelihood, entropy, and KL terms required by PPO-style updates [ 5]. These works show the value of stochastic generative sampling for policy learning, but leave open how such policies should be used when stable and repeatable inference is required. 
+
+Latent Space Optimization for Diffusion Models Latent and noise-space optimization has been used to control generative models without retraining them. Guidance methods modify denoising or sampling directions in image and conditional generation [ 20 , 21 ], while diffusion inversion maps samples back to noise trajectories for reconstruction and editing [ 22 ]. Similar ideas appear in planning and robot motion generation, where generative priors are used to sample or optimize structured trajectories [ 14 , 23 ]. For diffusion policies, the latent input determines which action sample emerges. DSRL starts from a behavior-cloned diffusion policy and learns an RL policy over its latent-noise input to improve the pretrained BC policy [ 8], showing that latent-noise optimization can improve diffusion policies without updating the full generative model. 2Diffusion Policies for Humanoid Locomotion RL has enabled stable humanoid locomotion and whole-body behaviors [ 2 , 24 , 25 , 26 ], typically using compact policies with standard action distri-butions. Diffusion-based locomotion provides a more expressive alternative, with applications to real-time legged control, bipedal locomotion on unseen terrain, and legged navigation or motion gen-eration [ 27 , 28 , 29 , 30 , 31 , 32 ]. These works show the promise of generative models for locomotion, but stochastic sampling can introduce variability undesirable for precise and consistent control. Overall, prior work shows how to train expressive diffusion or flow policies, optimize latent or noise variables, and apply generative policies to robot control. SteerGenPO addresses a different problem: making an on-policy generative policy stable and deterministic at inference time. Unlike DSRL, which adapts a behavior-cloned diffusion policy through latent-noise RL, SteerGenPO starts from a policy trained by on-policy generative RL and learns a latent selection policy for deterministic inference. By replacing prior-sampled stochastic inference with state-conditioned deterministic latent selection, SteerGenPO preserves generative policy expressivity while improving stability, precision, and repeatability. Our path-following and Unitree G1 experiments further validate these benefits. 
+
+## 3 Preliminaries 
+
+3.1 Generative Diffusion and Flow Policies 
+
+Generative action policies model the action distribution through a latent sampling process rather than a simple unimodal Gaussian. Diffusion policies generate samples by starting from Gaussian noise and applying a learned denoising process [ 9 , 11 , 12 ]. In the conditional policy setting, this process starts from aK ∼ N (0 , I ) and iteratively denoises it into an action or action sequence a0, allowing diffusion policies to represent multi-modal action distributions. Flow-based policies provide a continuous-time alternative that transports a simple prior distribution to the action distribution through a learned vector field [ 33 ]. A flow model learns a state-conditioned vector field vθ (xt, t, s ) and generates samples by transporting x0 ∼ p0 along dx t/dt = vθ (xt, t, s ).Both diffusion and flow policies can therefore be viewed as latent-variable generators, 
+
+z ∼ p0(z), a = Gθ (s, z ), (1) where p0 is a simple prior and Gθ is a state-conditioned generative map. This abstraction describes how generative policies are trained with reinforcement learning and why latent selection remains a separate inference-time problem. 
+
+3.2 Generative Policies for On-Policy Reinforcement Learning 
+
+The unified generator form in Eq. (1) provides a common view of diffusion and flow policies. To use such policies in on-policy RL, however, one must compute the action density induced by the latent sampling process. The generator induces an implicit action distribution by pushing the latent prior through the state-conditioned map. On-policy likelihood-ratio methods such as PPO [ 3] require action log-likelihoods, entropy estimates, and policy ratios. These quantities are straightforward for Gaussian policies but nontrivial for iterative generative policies. Generative policy optimization methods address this difficulty by constructing invertible generative mappings or by using exact inversion, so that generated actions can be related back to their latent variables [ 34 , 5]. If Gθ (s, ·) is invertible for a fixed state s, the corresponding latent can be recovered as z = G−1 
+
+> θ
+
+(s, a ), and the action likelihood can be computed by change of variables: 
+
+log πθ (a | s) = log p0
+
+ G−1 
+
+> θ
+
+(s, a ) + log det ∂G −1 
+
+> θ
+
+(s, a )
+
+∂a . (2) This makes likelihood-related terms tractable for on-policy updates while retaining the expressive action distributions of generative policies. 3Stage1: GenPO 
+
+Stage2: SteerGenPO      
+
+> Latent actor
+> state 𝐀
+> Generative policy
+> (frozen)
+> 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀
+> action 𝐀
+
+Critic                  
+
+> No Need
+> for Latent
+> Critic
+> 𝐀 ~𝐀 (𝐀 ,𝐀 )
+> Latent
+> sampling
+> state 𝐀
+> action 𝐀 Generative policy
+> (tra ining )
+> 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀
+> state 𝐀
+> state 𝐀 𝐀
+> Zero sampling
+> 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀
+> 𝐀 𝐀 𝐀 𝐀 −𝐀 𝐀 𝐀 −𝐀
+> state 𝐀
+> 𝐀
+> state 𝐀
+> Training Inference
+> Training Inference
+
+Figure 1: Overview of the proposed latent steering framework, where stochastic diffusion sampling is used for exploration during reinforcement learning, while a state-conditioned latent actor replaces random latent sampling at deployment to produce stable and reproducible humanoid locomotion actions. Under this view, the generative policy is trained to improve the expected value of actions obtained by sampling latents from the prior: 
+
+max  
+
+> θ
+
+Es∼dπθ , z ∼p0 [Qπθ (s, G θ (s, z ))] . (3) Thus, stochastic latent sampling is useful during policy learning. However, this objective optimizes the generator under prior-sampled latents and does not specify which latent input should be used for deterministic inference. This motivates the latent-selection problem addressed by SteerGenPO, where we denote the trained executable-action decoder as Dθ (s, z ).
+
+## 4 Method 
+
+We propose SteerGenPO as two reinforcement learning problems defined over different optimization spaces. The first stage follows GenPO and performs policy optimization in the action space of a flow-based generative policy. This stage learns an expressive stochastic action generator by updating the policy parameters with on-policy rollouts. The second stage freezes this generator and performs policy optimization in its latent input space. The goal is no longer to reshape the entire action distribution, but to learn which latent input should be selected for each state so that the frozen generator produces higher-value actions. 
+
+4.1 The Latent Selection Problem in GenPO 
+
+The first stage follows GenPO and trains a stochastic generative policy with on-policy rollouts. Let 
+
+M = ( S, A, P, r, γ ) denote the original control problem, where s ∈ S is the state and a ∈ A ⊂ Rd is the executable action. Given a state s, the policy samples a latent variable from a fixed Gaussian prior, 
+
+z ∼ p0(z) = N (0 , I ), and maps it to an executable action ˜a = Fθ (s, z ) = ( x, y ), a = h(˜ a) = x+y 
+
+> 2
+
+.The GenPO objective can be viewed abstractly as 
+
+Et
+
+h
+
+min 
+
+
+
+ρt(θ) ˆAt, clip( ρt(θ), 1 − ϵ, 1 + ϵ) ˆAt
+
+i 
+
+. (4) where ρt(θ) = pθ (˜ at|st)  
+
+> pθold (˜ at|st)
+
+. During training, this stochastic latent sampling is useful for exploration. At deployment, however, one often needs a deterministic controller. A choice is to set z = 0 , which is the highest-density point of the Gaussian prior. However, this prior-centered inference rule is not always value-aware. 4It is different from a standard Gaussian policy which the deterministic deployment action is usually the learned mean μθ (s), and policy-gradient updates directly move this mean toward high-advantage actions. Therefore, although the mean is not guaranteed to be globally optimal, it is explicitly optimized as the central action of a unimodal policy. By contrast, in a flow-based policy, z = 0 is only the highest-density point of the fixed latent prior. The actual action is obtained after a nonlinear transformation, this prior center is not guaranteed to correspond to the value-maximizing action in the executable action space. This issue is especially important for GenPO because its augmented-action construction maps dummy actions to executable actions through a = x+y 
+
+> 2
+
+. This projection is many-to-one: multiple dummy actions can induce the same executable action. Consequently, high likelihood in the augmented flow space does not uniquely determine which latent should be used for deterministic control. 
+
+4.2 On-Policy Latent Steering Policy 
+
+The above observation suggests a value-aware alternative to prior-centered inference. Rather than using the fixed prior center z = 0 as the deployment latent, we learn a state-conditioned Gaussian latent policy πZϕ (z | s) = N (μϕ(s), Σ) , whose mean is optimized by reinforcement learning. At inference time, the learned mean μϕ(s) serves as the deterministic latent input for the trained GenPO policy. In this way, we transfer the useful deployment property of Gaussian policies to the latent space of a frozen flow-based policy: the deterministic inference latent is no longer the mode of a fixed prior, but the mean of a policy optimized for task return. To this end, we freeze the trained GenPO policy D¯θ (s, z ) = h(F¯θ (s, z )) , and reinterpret its latent input as the action of a new control problem. The latent policy selects z, the frozen GenPO policy maps it to the executable action a = D¯θ (s, z ), and the environment evolves under the original dynamics. This induces a latent-action MDP MZ 
+
+> ¯θ
+
+= ( S, Z, P Z 
+
+> ¯θ
+
+, r Z 
+
+> ¯θ
+
+, γ ), with P Z 
+
+> ¯θ
+
+(s′ | s, z ) = 
+
+P (s′ | s, D ¯θ (s, z )) , and rZ 
+
+> ¯θ
+
+(s, z ) = r(s, D ¯θ (s, z )) − λz ∥z∥22. The latent regularization term keeps the learned latent policy near the reliable region of the GenPO prior and discourages querying out-of-prior latents. We then optimize πZϕ with on-policy PPO in the induced latent-action MDP. Equivalently, the second-stage objective is 
+
+Et
+
+h
+
+min 
+
+
+
+ρZt (ϕ) ˆAZt , clip  ρZt (ϕ), 1 − ϵ, 1 + ϵ ˆAZt
+
+i 
+
+, (5) where ρZt (ϕ) = πZϕ (zt|st)  
+
+> πZϕold (zt|st)
+
+. Compared with the first-stage GenPO objective, the frozen flow policy is no longer updated. The optimization variable changes from the parameters of the generative policy to the parameters of the latent actor. Thus, the purpose of the second stage is not to reshape the entire action distribution, but to learn a value-aware latent selection rule over the action manifold already learned by GenPO. This latent-space formulation converts deterministic latent selection into an on-policy PPO problem. It preserves the training regime of GenPO and avoids introducing a replay buffer or an off-policy latent critic like DSRL. Instead of learning a latent action-value function Q(s, z ), we train a state-value function V Z (s) and compute advantages from on-policy rollouts in MZ 
+
+> ¯θ
+
+. Thus, policy gradients are taken only through the Gaussian latent actor, while the frozen GenPO policy is used solely for forward action generation. 
+
+4.3 Practical Implementation 
+
+We implement our method as a two-stage training pipeline. The first stage follows the practical GenPO implementation, and the second stage trains a lightweight latent actor on top of the frozen GenPO policy. We train a GenPO policy in the original environment. Following GenPO, we include three practical components for stable on-policy training. First, we use the exact augmented-action likelihood to estimate the policy entropy and add an entropy regularization term, which encourages 5Algorithm 1 SteerGenPO 
+
+Stage I: Generative policy training 
+
+1: Initialize conditional flow Fθ and value network Vω .
+
+2: for each training iteration do 
+
+3: Roll out with ξt ∼ p0, ˜at = ( xt, y t) = Fθ (st, ξ t), and at = h(˜ at) = ( xt + yt)/2.
+
+4: Compute log pθ (˜ at | st) by inverting Fθ .
+
+5: Update Fθ , V ω using returns, likelihoods, entropy, and doubled-action consistency. 
+
+6: end for 
+
+7: Freeze Fθ and define Dθ (s, z ) = h(Fθ (s, z )) .
+
+Stage II: Latent steering policy training 
+
+8: Initialize πZϕ (z | s) = N (μϕ(s), σ 20 I) and V Z ; σ0 sets the initial latent exploration scale. 
+
+9: for each latent steering iteration do 
+
+10: Sample zt ∼ πZϕ (· | st) and execute at = Dθ (st, z t) with Dθ fixed. 
+
+11: Use the latent penalty to apply latent regularization: ˜rt = r(st, a t) − λz ∥zt∥22.
+
+12: Update only πϕ, V Z using latent-action log probabilities and returns from ˜rt.
+
+13: end for Inference: Use mean latent action zt = μϕ(st) and execute at = Dθ (st, z t) for deterministic steering. Table 1: Final return on Isaac Lab benchmark tasks. Mean ± standard deviation over 5 seeds. Method Ant Humanoid Franka Anymal-D Unitree Go2 Unitree H1 PPO 145.79 ± 24.64 118.01 ± 41.08 114.61 ± 17.09 13.41 ± 7.09 18.66 ± 1.33 26.31 ± 0.56 GenPO 171.76 ± 14.67 196.64 ± 15.12 147.28 ± 1.06 20.63 ± 0.14 26.69 ± 0.45 24.96 ± 0.25 SteerGenPO 195.94 ± 14.17 222.53 ± 23.24 150.44 ± 2.35 24.12 ± 0.16 28.65 ± 0.54 27.65 ± 0.63 
+
+exploration. Second, we estimate the KL divergence between the current and old GenPO policies, 
+
+bDG 
+
+> KL
+
+= Et [log pθold (˜ at|st) − log pθ (˜ at|st)] , (6) and use it for KL-adaptive learning-rate control. Third, we use the dummy-action compression loss 
+
+LG 
+
+> comp
+
+= Et
+
+∥xt − yt∥22
+
+ , (7) which reduces redundant exploration in the doubled action space and encourages the two dummy components to represent consistent executable actions. 
+
+## 5 Experimental Results 
+
+5.1 Experimental Setup 
+
+We evaluate PPO, GenPO, and SteerGenPO in two settings. First, we use a six-task Isaac Lab [ 35 ]benchmark covering Ant, Humanoid, Franka Arm, Anymal-D, Unitree Go2, and Unitree H1, spanning locomotion, legged control, and manipulation. Second, we evaluate Unitree G1 velocity tracking, transfer the learned policies to MuJoCo [ 36 ] for closed-loop command tracking, and deploy Steer-GenPO on the real G1 robot. Implementation details and hyperparameters are provided in Appendix. 
+
+5.2 Benchmark evaluation 
+
+Figure 2 summarizes the training behavior of PPO, GenPO, and SteerGenPO on the six Isaac Lab benchmark tasks. SteerGenPO reaches higher final returns than both baselines across tasks. GenPO provides a strong generative action prior in the first stage, while the second-stage latent actor further improves the frozen generator with relatively few updates. This shows that the learned generator induces a useful latent action space where state-conditioned latent selection can recover stronger behaviors. 6Figure 2: Two-stage training curves on six Isaac Lab tasks. Stage I trains PPO and GenPO from scratch; Stage II freezes the converged GenPO generator and trains only the SteerGenPO latent actor. Dashed lines indicate final Stage-I returns. Curves show mean ± standard deviation over seeds. Table 1 reports final returns. SteerGenPO achieves the best performance on all six tasks, with the largest gains on Humanoid, Anymal-D, and Unitree , indicating that high-dimensional control benefits most from combining generative action priors with latent steering. The lower standard deviations on most tasks also suggest improved reproducibility. Additional ablations are provided in Appendix. They show that latent selection is critical even when the GenPO generator is fixed: random latents are less stable, the zero latent is a strong deterministic baseline, and the learned state-conditioned latent actor performs best. The ablations also show that the initial latent exploration scale must be chosen carefully to balance adaptation and staying within the reliable operating region of the frozen generator. Overall, SteerGenPO improves final return over PPO by up to 88 .6% and over GenPO by up to 16 .9% ,demonstrating that latent steering turns a stochastic generative policy into a stronger deterministic controller. 
+
+5.3 Humanoid Locomotion Evaluation 
+
+We further evaluate SteerGenPO on the Unitree G1 with the velocity-tracking task. SteerGenPO achieves higher training returns than PPO and GenPO, showing that latent steering remains effective on higher-dimensional humanoid control. Training curves are provided in Appendix. We then evaluate whether this improvement translates to closed-loop path following. 
+
+Closed-loop Path Following in MuJoCo In trajectory tracking, a shared high-level planner converts root-pose error into body-frame velocity commands (vx, v y , ω z ), which are executed by each learned policy. We test triangle, figure-eight, square, S-curve, and zigzag paths, covering sharp turns, repeated reorientation, lateral correction, and yaw control. Figure 3 shows that, under the same planner, SteerGenPO tracks the reference paths more reliably than other methods. On the figure-eight path, GenPO and SteerGenPO progress more uniformly, whereas PPO covers a smaller portion after repeated heading corrections. At sharp turns, SteerGenPO more consistently reorients before advancing, indicating more accurate yaw-command execution. These results show that latent steering improves the stability and precision of generative locomotion policies under structured, time-varying commands. 7Figure 3: Closed-loop command tracking on Unitree G1 in MuJoCo. Rows show policies and columns show reference trajectories. Black curves are predefined reference paths, colored curves are realized root trajectories, and robot snapshots are overlaid every 2 seconds. 
+
+Figure 4: Real-world Unitree G1 walking with the learned SteerGenPO controller. 
+
+Real-world Deployment We further deploy the SteerGenPO controller on the real Unitree G1 robot to verify its sim-to-real feasibility. As shown in Figure 4, the learned controller produces stable forward walking on hardware, with consistent whole-body coordination and no additional real-world fine-tuning. This qualitative deployment result suggests that latent steering preserves the deployable motion prior learned in simulation while improving the reliability of the final controller. 
+
+## 6 Limitation 
+
+Despite its empirical effectiveness, SteerGenPO has several limitations. It relies on the quality and coverage of the first-stage generative policy, since latent steering cannot recover behaviors outside the learned action manifold. Although the second-stage latent training is substantially cheaper than fine-tuning the full generative policy, it still introduces an additional optimization step before deployment. Future work will study more sample-efficient latent policy learning and extend latent steering to broader generative-policy settings and robotic tasks. 
+
+## 7 Conclusion 
+
+We presented SteerGenPO, a latent-space reinforcement learning framework for steering genera-tive policies into stable controllers. The central idea is to convert stochastic latent sampling into deterministic state-conditioned latent steering. During training, stochastic generative sampling pro-vides diverse action proposals and helps discover high-return behaviors. At test time, random latent 8sampling is replaced by a learned latent actor, yielding a deterministic controller that preserves the expressive action manifold learned by the generative policy while producing more reproducible actions. SteerGenPO improves over both PPO and GenPO policies. The resulting controller achieves higher returns and efficient second-stage adaptation. In closed-loop path-following tasks, SteerGenPO also produces more accurate command responses and more stable trajectory tracking performance. These results suggest that latent steering is an effective way to convert stochastic generative policies into deterministic controllers. 
+
+## Acknowledgment 
+
+This work was supported by the National Natural Science Foundation of China (62303319, 62406195), HPC Platform of ShanghaiTech University, and MoE Key Laboratory of Intelligent Perception and Human-Machine Collaboration (ShanghaiTech University), Shanghai Engineering Research Center of Intelligent Vision and Imaging. This work was also supported in part by computational resources provided by Fcloud CO., LTD. 
+
+## References 
+
+[1] V. Makoviychuk, L. Wawrzyniak, Y. Guo, M. Lu, K. Storey, M. Macklin, D. Hoeller, N. Rudin, A. Allshire, A. Handa, and G. State. Isaac gym: High performance gpu-based physics simulation for robot learning, 2021. [2] Z. Zhuang, S. Yao, and H. Zhao. Humanoid parkour learning. arXiv preprint arXiv:2406.10759 ,2024. [3] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [4] A. Z. Ren, J. Lidard, L. L. Ankile, A. Simeonov, P. Agrawal, A. Majumdar, B. Burchfiel, H. Dai, and M. Simchowitz. Diffusion policy policy optimization. arXiv preprint arXiv:2409.00588 ,2024. [5] S. Ding, K. Hu, S. Zhong, H. Luo, W. Zhang, J. Wang, J. Wang, and Y. Shi. Genpo: Generative diffusion models meet on-policy reinforcement learning. arXiv preprint arXiv:2505.18763 ,2025. [6] D. McAllister, S. Ge, B. Yi, C. M. Kim, E. Weber, H. Choi, H. Feng, and A. Kanazawa. Flow matching policy gradients. arXiv preprint arXiv:2507.21053 , 2025. [7] B. Yi, H. Choi, H. G. Singh, X. Huang, T. E. Truong, C. Sferrazza, Y. Ma, R. Duan, P. Abbeel, G. Shi, et al. Flow policy gradients for robot control. arXiv preprint arXiv:2602.02481 , 2026. [8] A. Wagenmaker, M. Nakamoto, Y. Zhang, S. Park, W. Yagoub, A. Nagabandi, A. Gupta, and S. Levine. Steering your diffusion policy with latent space reinforcement learning. arXiv preprint arXiv:2506.15799 , 2025. [9] J. Ho, A. Jain, and P. Abbeel. Denoising diffusion probabilistic models. Advances in neural information processing systems , 33:6840–6851, 2020. [10] J. Song, C. Meng, and S. Ermon. Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 , 2020. [11] Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole. Score-based generative modeling through stochastic differential equations. arXiv preprint arXiv:2011.13456 ,2020. [12] C. Chi, S. Feng, Y. Du, Z. Xu, E. Cousineau, B. Burchfiel, and S. Song. Diffusion policy: Visuomotor policy learning via action diffusion. arXiv preprint arXiv:2303.04137 , 2023. 9[13] Z. Wang, J. J. Hunt, and M. Zhou. Diffusion policies as an expressive policy class for offline reinforcement learning. In The Eleventh International Conference on Learning Representations ,2023. [14] M. Janner, Y. Du, J. B. Tenenbaum, and S. Levine. Planning with diffusion for flexible behavior synthesis. arXiv preprint arXiv:2205.09991 , 2022. [15] B. Kang, X. Ma, C. Du, T. Pang, and S. Yan. Efficient diffusion policies for offline reinforcement learning. Advances in Neural Information Processing Systems , 36:67195–67212, 2023. [16] L. Mao, H. Xu, X. Zhan, W. Zhang, and A. Zhang. Diffusion-dice: In-sample diffusion guidance for offline reinforcement learning. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [17] L. Yang, Z. Huang, F. Lei, Y. Zhong, Y. Yang, C. Fang, S. Wen, B. Zhou, and Z. Lin. Policy representation via diffusion probability model for reinforcement learning. arXiv preprint arXiv:2305.13122 , 2023. [18] S. Ding, K. Hu, Z. Zhang, K. Ren, W. Zhang, J. Yu, J. Wang, and Y. Shi. Diffusion-based reinforcement learning via q-weighted variational policy optimization. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [19] M. Psenka, A. Escontrela, P. Abbeel, and Y. Ma. Learning a diffusion model policy from rewards via q-score matching. In International Conference on Machine Learning , pages 41163–41182. PMLR, 2024. [20] P. Dhariwal and A. Nichol. Diffusion models beat gans on image synthesis. Advances in neural information processing systems , 34:8780–8794, 2021. [21] J. Ho and T. Salimans. Classifier-free diffusion guidance. In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications , 2021. [22] B. Wallace, A. Gokul, and N. Naik. Edict: Exact diffusion inversion via coupled transformations. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 22532–22541, 2023. [23] J. Carvalho, A. T. Le, M. Baierl, D. Koert, and J. Peters. Motion planning diffusion: Learning and planning of robot motions with diffusion models. In 2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 1916–1923. IEEE, 2023. [24] I. Radosavovic, S. Kamat, T. Darrell, and J. Malik. Learning humanoid locomotion over challenging terrain. arXiv preprint arXiv:2410.03654 , 2024. [25] C. Zhang, W. Xiao, T. He, and G. Shi. Wococo: Learning whole-body humanoid control with sequential contacts. arXiv preprint arXiv:2406.06005 , 2024. [26] J. Long, J. Ren, M. Shi, Z. Wang, T. Huang, P. Luo, and J. Pang. Learning humanoid locomotion with perceptive internal model, 2024. URL https://arxiv.org/abs/2411.14386 .[27] X. Huang, Y. Chi, R. Wang, Z. Li, X. B. Peng, S. Shao, B. Nikolic, and K. Sreenath. DiffuseLoco: Real-time legged locomotion control with diffusion from offline datasets. In 8th Annual Conference on Robot Learning , 2024. [28] G. Mothish, M. Tayal, and S. Kolathaya. Birodiff: Diffusion policies for bipedal robot locomo-tion on unseen terrains. arXiv preprint arXiv:2407.05424 , 2024. [29] J. Liu, M. Stamatopoulou, and D. Kanoulas. Dipper: Diffusion-based 2d path planner applied on legged robots. In 2024 IEEE International Conference on Robotics and Automation (ICRA) ,pages 9264–9270. IEEE, 2024. 10 [30] X. Yuan, Z. Shang, Z. Wang, C. Wang, Z. Shan, M. Zhu, C. Bai, X. Li, W. Wan, and K. Harada. Preference aligned diffusion planner for quadrupedal locomotion control. arXiv preprint arXiv:2410.13586 , 2024. [31] G. Tevet, S. Raab, S. Cohan, D. Reda, Z. Luo, X. B. Peng, A. H. Bermano, and M. van de Panne. CLoSD: Closing the loop between simulation and diffusion for multi-task character control. 
+
+arXiv preprint arXiv:2410.03441 , 2024. [32] Y. Fan, T. Gui, K. Ji, S. Ding, C. Zhang, J. Gu, J. Yu, J. Wang, and Y. Shi. One policy but many worlds: A scalable unified policy for versatile humanoid locomotion. arXiv preprint arXiv:2505.18780 , 2025. [33] Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative modeling. In The Eleventh International Conference on Learning Representations , 2023. [34] L. Dinh, J. Sohl-Dickstein, and S. Bengio. Density estimation using real nvp. arXiv preprint arXiv:1605.08803 , 2016. [35] M. Mittal, P. Roth, J. Tigue, A. Richard, O. Zhang, P. Du, A. Serrano-Mu ˜noz, X. Yao, R. Zurbr ¨ugg, N. Rudin, et al. Isaac lab: A gpu-accelerated simulation framework for multi-modal robot learning. arXiv preprint arXiv:2511.04831 , 2025. [36] E. Todorov, T. Erez, and Y. Tassa. Mujoco: A physics engine for model-based control. In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems , pages 5026–5033. IEEE, 2012. doi:10.1109/IROS.2012.6386109. 11 A Isaaclab Benchmark Experiments 
+
+We provide training hyperparameters, network architectures, and task-specific settings used in the experiments. 
+
+A.1 Environmental Details 
+
+We evaluate all methods on six continuous-control tasks in IsaacLab: Isaac-Ant-v0, Isaac-Humanoid-v0, Isaac-Lift-Cube-Franka-v0, Isaac-Velocity-Flat-Anymal-D-v0, Isaac-Velocity-Rough-Unitree-Go2-v0, and Isaac-Velocity-Rough-H1-v0. These tasks cover classic locomotion, robotic manipula-tion, and legged locomotion on both flat and rough terrain. The corresponding observation and action dimensions are (60 , 8) , (87 , 21) , (36 , 8) , (48 , 12) , (235 , 12) , and (256 , 19) , respectively. All training runs use 2048 parallel environments. 
+
+A.2 Hardware Configurations 
+
+All experiments were carried out on a server equipped with two Intel Xeon Gold 5218R CPUs and 8 NVIDIA GeForce RTX 4090 GPUs. Each CPU contains 20 physical cores and supports 2 threads per core, yielding 40 physical cores and 80 logical CPUs in total. The base frequency of the CPUs is 2.10 GHz, with a maximum frequency of 4.00 GHz. The system supports 46-bit physical and 48-bit virtual addressing and is configured with a two-node NUMA topology. The server has 503 GiB of system memory and 2 GiB of swap space. For GPU acceleration, we used 8 NVIDIA GeForce RTX 4090 GPUs, each equipped with 24 GB of memory and connected via PCIe. The GPUs were operated with NVIDIA driver version 575.64.03 and CUDA 12.9. GPU acceleration was used for IsaacLab simulation and neural network optimization. No ECC was enabled during the experiments, and MIG was not available on the GPUs. All methods were evaluated on the same hardware platform. 
+
+A.3 Reinforcement Learning Framework in IsaacLab 
+
+IsaacLab supports multiple reinforcement learning backends, including RSL-RL, RL-Games, SKRL, and Stable-Baselines3. In our experiments, all algorithms are implemented and trained using RSL-RL version 3.1.2. We use the same IsaacLab task interface and the same RSL-RL training pipeline for PPO, GenPO, and SteerGenPO, which avoids differences caused by using different reinforcement learning libraries. PPO is used as the standard on-policy actor-critic baseline. GenPO follows the same on-policy training protocol while replacing the policy representation with a generative policy model. SteerGenPO builds on a pretrained GenPO policy. During SteerGenPO training, the GenPO policy is frozen, and a latent PPO policy is trained to produce latent actions that are mapped to environment actions through the frozen GenPO policy. This setup keeps the environment interface and training pipeline consistent across all methods. 
+
+A.4 Hyperparameters 
+
+The hyperparameter configurations are reported in the appendix tables. For each task, we provide one table comparing PPO, GenPO, and SteerGenPO. The tables include the network architecture, activation function, number of parallel environments, rollout length, GAE parameters, discount factor, learning rates, gradient clipping threshold, entropy coefficient, value loss coefficient, desired KL, and GenPO-specific generative policy parameters. Parameters that are not applicable to PPO are denoted by “/”. For SteerGenPO, the main task-level table reports the configuration same as GenPO. The additional SteerGenPO table reports the additional hyperparameters, including latent actor and critic archi-tectures, activation function, initial action standard deviation, learning rate, number of learning 12 epochs, number of mini-batches, entropy coefficient, value loss coefficient, desired KL, and latent regularization strength. 
+
+Figure 5: Representative rollout snapshots of the trained SteerGenPO policies on the six Isaac Lab benchmark tasks. The benchmarks cover diverse control settings, including locomotion, humanoid control, legged robot control, and robotic manipulation. These qualitative results complement the quantitative benchmark results reported in the main paper. Table 2: Hyper-parameters used in Isaaclab-Ant-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [400,200,100] [400,200,100] [400,200,100] Hidden layers in critic network [400,200,100] [400,200,100] [400,200,100] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 32 32 32 Use GAE True True True Discount for reward γ 0.99 0.99 0.99 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Learning rate for critic 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.01 0.01 0.01 Value loss coefficient 1.0 1.0 1.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.95 0.95 Diffusion std – 3.0 3.0 
+
+## B Ablation Studies 
+
+We conduct two ablations to study how deployment-time latent inputs affect a fixed, frozen GenPO generator. 13 Table 3: Hyper-parameters used in Isaaclab-Humanoid-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [400,200,100] [400,200,100] [400,200,100] Hidden layers in critic network [400,200,100] [400,200,100] [400,200,100] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 32 32 32 Use GAE True True True Discount for reward γ 0.99 0.99 0.99 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 5 × 10 −4 5 × 10 −4 5 × 10 −4
+
+Learning rate for critic 5 × 10 −4 5 × 10 −4 5 × 10 −4
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.0 0.0 0.0 Value loss coefficient 2.0 2.0 2.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.9 0.9 Diffusion std – 3.0 3.0 
+
+B.1 Latent Input Ablation 
+
+First, for each task, we fix a representative GenPO base policy and compare three ways of choosing the latent input: a randomly sampled latent, a fixed zero latent, and our learned state-conditioned latent actor. All three variants use the same underlying generator gθ , so the differences in Table 9 reflect the effect of latent-space guidance rather than changes in the base policy. This controlled comparison shows that the deployment-time latent choice has a large effect even when the generator is fixed. Random latent sampling gives lower returns and less consistent behavior, indicating that the stochasticity useful for exploration during training is not directly suitable for deployment. Zero-latent deployment is also a strong deterministic baseline, since the converged GenPO generator often maps the center of the latent prior to stable high-return actions. 
+
+B.2 Latent Initial Standard Deviation Ablation 
+
+Ablation results in Figure 6 on the initial standard deviation of the policy exploration noise confirms that too little noise leads to insufficient exploration, while excessive noise destabilizes training; the best performance is achieved at a moderate value 0.3 that balances these two factors. 
+
+## C Unitree G1 Walking Experiment 
+
+C.1 Training Framework 
+
+We implement the Unitree G1 walking task based on the Unitree RL Lab framework. Unitree RL Lab provides a modular reinforcement learning pipeline for Unitree legged robots, including robot configuration, actuator modeling, observation construction, reward and termination managers, command sampling, curriculum learning, and domain randomization. The framework is built around massively parallel GPU simulation and allows us to train thousands of environments simultaneously for locomotion policy learning. 14 Table 4: Hyper-parameters used in Isaaclab-Franka-Arm-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [256,128,64] [256,128,64] [256,128,64] Hidden layers in critic network [256,128,64] [256,128,64] [256,128,64] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 24 24 24 Use GAE True True True Discount for reward γ 0.98 0.98 0.98 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 1 × 10 −4 1 × 10 −4 1 × 10 −4
+
+Learning rate for critic 1 × 10 −4 1 × 10 −4 1 × 10 −4
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.006 0.006 0.006 Value loss coefficient 1.0 1.0 1.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.9 0.9 Diffusion std – 3.0 3.0 
+
+Figure 6: Ablation study on the standard deviation (std) of latent initialization. For policy optimization, we use RSL-RL 3.1.2 as the reinforcement learning backend. PPO is trained with the standard on-policy actor-critic runner, while GenPO extends the same training pipeline with a flow-based policy parameterization. SteerGenPO is trained in two stages: the first stage follows the GenPO configuration, and the second stage performs latent-space fine-tuning using a PPO-style runner with additional latent-action control parameters. This implementation choice keeps the environment, observation space, reward definition, and rollout interface consistent across all methods, so that the comparison mainly reflects differences in policy parameterization and optimization strategy. 
+
+C.2 Hardware Setup 
+
+All training experiments are conducted on a workstation equipped with eight NVIDIA GeForce RTX 4090 GPUs, each with 48 GB of memory. The machine uses an Intel Xeon Platinum 8368Q CPU at 15 Table 5: Hyper-parameters used in Isaaclab-Anymal-D-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [128,128,128] [128,128,128] [128,128,128] Hidden layers in critic network [128,128,128] [128,128,128] [128,128,128] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 24 24 24 Use GAE True True True Discount for reward γ 0.99 0.99 0.99 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Learning rate for critic 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.005 0.005 0.005 Value loss coefficient 1.0 1.0 1.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.95 0.95 Diffusion std – 3.0 3.0 2.60 GHz with 152 logical CPU cores and 503 GB of system memory. The NVIDIA driver version is 570.86.10 and the CUDA version is 12.8. Each training run uses two RTX 4090 GPUs. We launch 4096 parallel simulated environments on each GPU, resulting in 8192 environments in total for one training run. This high degree of parallelism is used to accelerate on-policy data collection and stabilize policy optimization for the Unitree G1 walking task. 
+
+C.3 Reward Function Design 
+
+We employ a largely shared reward design across PPO, GenPO, and SteerGenPO. All three methods optimize the same set of locomotion-oriented reward terms, including velocity tracking rewards, survival reward, body stabilization penalties, joint regularization penalties, gait-shaping rewards, and contact-related penalties. This design keeps the task objective consistent across algorithms and isolates the effect of the policy parameterization and optimization strategy. More specifically, the reward consists of 19 terms: horizontal linear velocity tracking, yaw-rate tracking, alive bonus, vertical base velocity penalty, roll/pitch angular velocity penalty, joint velocity penalty, joint acceleration penalty, action-rate penalty, joint-limit penalty, energy penalty, arm-joint deviation penalty, waist-joint deviation penalty, leg-joint deviation penalty, base orientation penalty, base-height penalty, gait reward, foot-sliding penalty, foot-clearance reward, and undesired-contact penalty. The total reward is computed as a weighted sum of these terms: 
+
+rt = X
+
+> i
+
+wiRi, (8) where Ri denotes the i-th reward term and wi denotes its coefficient. Table 10 reports the reward formulae and coefficients used for SteerGenPO training. PPO and GenPO use the same reward terms. The coefficients are shared across algorithms. 16 Table 6: Hyper-parameters used in Isaaclab-Unitree-Go2-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [512,256,128] [512,256,128] [512,256,128] Hidden layers in critic network [512,256,128] [512,256,128] [512,256,128] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 24 24 24 Use GAE True True True Discount for reward γ 0.99 0.99 0.99 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Learning rate for critic 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.01 0.01 0.01 Value loss coefficient 1.0 1.0 1.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.9 0.9 Diffusion std – 3.0 3.0 
+
+C.4 Training Hyperparameters 
+
+Table 11 reports the hyperparameters used for PPO, GenPO, and SteerGenPO. PPO, GenPO, and SteerGenPO Stage 1 use the same rollout and optimization settings whenever applicable, so that the comparison mainly reflects the difference between the standard actor-critic policy and the flow-based policy parameterization. SteerGenPO Stage 2 further fine-tunes the Stage-1 policy in the latent action space. Because latent-space optimization is more sensitive to aggressive updates, we use a more conservative fine-tuning setup with a smaller learning rate, reduced exploration noise, and latent-specific regularization. All numerical settings are provided in Table 11. 
+
+Figure 7: Training curves on Unitree-G1 locomotion task. Stage 1 presents the training curves of both PPO and GenPO. Stage 2 shows the second-stage curve of SteerGenPO. 17 Table 7: Hyper-parameters used in Isaaclab-Unitree-H1-v0. Hyperparameter PPO GenPO SteerGenPO Hidden layers in actor network [512,256,128] [512,256,128] [512,256,128] Hidden layers in critic network [512,256,128] [512,256,128] [512,256,128] Activation elu mish mish Number of environments 2048 2048 2048 Rollout length 24 24 24 Use GAE True True True Discount for reward γ 0.99 0.99 0.99 GAE smoothing parameter λ 0.95 0.95 0.95 Learning rate for actor 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Learning rate for critic 1 × 10 −3 1 × 10 −3 1 × 10 −3
+
+Actor critic grad norm 1.0 1.0 1.0 Entropy coefficient 0.01 0.01 0.01 Value loss coefficient 1.0 1.0 1.0 Desired KL 0.01 0.01 0.01 Diffusion steps – 5 5Compress coefficient λc – 0.01 0.01 Time embedding dimension – 32 32 Hidden layers in time embedding – [256,256] [256,256] Mixing coefficient p – 0.9 0.9 Diffusion std – 3.0 3.0 Table 8: Additional hyperparameters used in SteerGenPO. Hyperparameter Ant Humanoid Franka Arm Anymal-D Unitree-Go2 Unitree-H1 Latent actor hidden layers [400,200,100] [400,200,100] [512,256,128] [128,128,128] [512,256,128] [1024,512,256] Latent critic hidden layers [400,200,100] [400,200,100] [512,256,128] [128,128,128] [512,256,128] [1024,512,256] Latent activation elu elu elu elu elu elu Latent initial action std 0.01 0.01 0.01 0.01 0.001 0.001 Latent learning epochs 3 3 3 3 3 3Latent mini-batches 4 4 4 4 4 4Latent learning rate 2 × 10 −4 5 × 10 −4 3 × 10 −4 3 × 10 −4 2 × 10 −4 2 × 10 −4                        
+
+> Latent entropy coefficient 0.003 0.0 0.008 0.005 0.008 0.008 Latent value loss coefficient 1.0 1.0 1.0 1.0 1.0 1.0 Latent desired KL 0.01 0.005 0.005 0.005 0.005 0.005 Latent penalty strength 0.001 0.001 0.001 0.001 0.001 0.001
+
+Figure 7 illustrates the corresponding training process. Stage 1 shows that both PPO and GenPO are trained from scratch, and Stage 2 demonstrates that SteerGenPO, initialized from the converged GenPO policy of Stage 1, continues to improve the reward. 18 Table 9: Latent-selection ablation on frozen GenPO policies. Mean return ± standard deviation over five evaluation seeds. Method Ant Anymal D Franka Humanoid Unitree-Go2 Unitree-H1 GenPO-random 160 .93 ± 2.94 19 .37 ± 0.53 154 .22 ± 0.62 119 .87 ± 9.54 24 .55 ± 0.57 26 .13 ± 0.42 
+
+GenPO-zero 171 .92 ± 3.27 23 .20 ± 0.40 155 .61 ± 0.12 192 .76 ± 5.14 27 .09 ± 0.25 28 .69 ± 0.67 
+
+SteerGenPO 179 .34 ± 2.81 23 .56 ± 0.35 157 .53 ± 0.37 206 .53 ± 1.66 27 .23 ± 0.47 29 .57 ± 0.41 
+
+Table 10: Reward terms, formulae, and coefficients used for SteerGenPO training. PPO and GenPO use the same reward terms and coefficient values. Reward term Formula Coef. 
+
+Rtrack lin vel xy exp 
+
+
+
+− ∥vcmd  
+
+> xy
+
+−vxy ∥22
+
+0.52
+
+
+
+1.0 
+
+Rtrack ang vel z exp 
+
+
+
+− (ωcmd  
+
+> z
+
+−ωz )2
+
+0.52
+
+
+
+0.5 
+
+Ralive 1 0.15 
+
+Rbase linear velocity v2
+
+z -2.0 
+
+Rbase angular velocity ∥ωxy ∥22 -0.05 
+
+Rjoint vel ∥ ˙q∥22 -0.001 
+
+Rjoint acc ∥¨q∥22 −2.5 × 10 −7
+
+Raction rate ∥at − at−1∥22 -0.01 
+
+Rdof pos limits 
+
+P
+
+i
+
+max( qi − qmax 
+
+i , 0) + max( qmin 
+
+i − qi, 0)  -5.0 
+
+Renergy 
+
+P
+
+i |τi| | ˙qi| −2.0 × 10 −5
+
+Rjoint deviation arms ∥qarms − qdef arms ∥1 -0.1 
+
+Rjoint deviation waists ∥qwaist − qdef waist ∥1 -1.0 
+
+Rjoint deviation legs ∥qlegs − qdef legs ∥1 -1.0 
+
+Rflat orientation ∥gbxy ∥22 -5.0 
+
+Rbase height (h − h⋆)2, h⋆ = 0 .78 -10.0 
+
+Rgait 
+
+P
+
+i 1[ci = 1(ϕi < 0.55)] 1∥vcmd ∥2 > 0.1 , ϕi =(ϕ + ∆ i) mod 1 
+
+0.5 
+
+Rfeet slide 
+
+P
+
+i ∥vfoot ,xy i ∥2 1[ci = 1] -0.2 
+
+Rfeet clearance exp 
+
+
+
+−
+
+P
+
+> i
+
+(zi−z⋆)2 tanh(2 ∥vfoot ,xy i ∥2)0.05 
+
+
+
+, z⋆ = 0 .1 1.0 
+
+Rundesired contacts 
+
+P
+
+j∈B non -ankle 1[Fj > 1] -1.0 19 Table 11: Agent and training hyperparameters for PPO, GenPO, and SteerGenPO. SteerGenPO is trained in two stages: Stage 1 adopts the same configuration as GenPO, while Stage 2 performs latent fine-tuning with a separate set of hyperparameters. SteerGenPO Hyperparameter PPO GenPO Stage 1 Stage 2 Max iterations 20000 20000 20000 10000 Steps per env 24 24 24 24 Learning epochs 5 5 5 5Mini-batches 4 4 4 4Learning rate 1.0e-3 1.0e-3 1.0e-3 2.0e-4 Schedule adaptive adaptive adaptive adaptive 
+
+γ 0.99 0.99 0.99 0.99 
+
+λ 0.95 0.95 0.95 0.95 Entropy coefficient 0.01 0.01 0.01 0.003 Desired KL 0.01 0.01 0.01 0.01 Clip parameter 0.2 0.2 0.2 0.2 Value loss coefficient 1.0 1.0 1.0 1.0 Max grad norm 1.0 1.0 1.0 1.0 Initial action noise std 1.0 1.0 1.0 0.2 Actor hidden dims [512, 256, 128] [512, 256, 128] [512, 256, 128] [1024, 512, 256] Critic hidden dims [512, 256, 128] [512, 256, 128] [512, 256, 128] [1024, 512, 256] Activation ELU ELU ELU ELU Flow steps – 5 5 –Flow mixing parameter – 0.95 0.95 –Time embedding dim – 32 32 –Time MLP dims – [64, 64] [64, 64] –Flow std – 3.0 3.0 –Latent penalty scale – – – 0.03 Latent initstd – – – 0.1 20
