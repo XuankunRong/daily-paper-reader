@@ -1,0 +1,1257 @@
+Title: PACT: Privileged Trace Co-Training for Multi-Turn Tool-Use Agents
+
+URL Source: https://arxiv.org/pdf/2606.16215v1
+
+Published Time: Tue, 16 Jun 2026 01:41:29 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# PACT: Privileged Trace Co-Training for Multi-Turn Tool-Use Agents 
+
+Zhenbang Du 1*, Jun Luo 2*, Zhiwei Zheng 3, Xiangchi Yuan 1, Kejing Xia 1,Dachuan Shi 1, Qirui Jin 1, Qijia He 2, Shaofeng Zou 4, Yingbin Liang 2, Wenke Lee 11Georgia Institute of Technology, 2Ohio State University, 
+
+> 3
+
+University of Pennsylvania, 4Arizona State University 
+
+Abstract 
+
+Multi-turn tool-use agents must reason, call tools, and adapt to observations across several interaction turns. Post-training such agents is challenging, as reinforcement learning often suffers from sparse rewards and weak credit assignment despite matching the prompt-only inference setting, while supervised fine-tuning on expert traces provides dense process su-pervision but can over-constrain the model to fixed trajectories. To tackle this, we propose 
+
+PACT , a Privileged tr Ace Co-Training frame-work for multi-turn tool-use agents. The key idea is to use expert traces only as training-time optimization signals rather than rollout-time hints. PACT keeps rollout generation prompt-only, then uses expert traces to guide optimiza-tion through two complementary signals: atrace-conditioned RL surrogate that evaluates prompt-only rollouts under expert-trace con-text, and a component-aware SFT loss that su-pervises reasoning prefixes and tool-calls with annealed strength. To reduce over-reliance on the training-only trace context, PACT further introduces a prompt-only anchoring. We also provide a latent-trace view that connects the two trace-based objectives and explains how expert traces can guide optimization without being used during rollout generation. Exper-iments on FTRL, BFCL, and ToolHop show that PACT consistently improves over strong SFT- and RL-based baselines, highlighting the value of privileged trace co-training for multi-turn tool-use learning. The project page is available at https://zhenbangdu.github.io/pact-project-page. 
+
+1 Introduction 
+
+Tool-use extends LLMs beyond static text gen-eration by enabling interaction with external re-sources, including search engines (Nakano et al., 2021; Zheng et al., 2025; Song et al., 2025; Jin 
+
+> *
+
+Equal Contribution. Best Baseline  
+
+> Rare Success
+> Training
+> ≠
+> Inference
+> PACT
+> (Ours)
+> Prompt-only Rollout
+> Previous
+> Method
+> User
+> Prompt
+> Trace -guided Optimization
+> Expert Trace
+> Expert Hint
+> Guide
+> More Success
+
+✓
+
+✗
+
+✗ 
+
+> Without Hint
+> With Hint
+> Training
+> =
+> Inference
+> Vanilla PACT
+
+Figure 1: PACT keeps rollouts prompt-only while using expert traces only as privileged optimization signals, improving multi-turn tool-use performance. 
+
+et al., 2025), computational tools (Schick et al., 2023; Gou et al., 2024; Liao et al., 2024), and user-defined APIs (Li et al., 2023; Patil et al., 2024; Xu et al., 2026; Prabhakar et al., 2026). Many practical tool-use tasks are multi-turn, requiring an agent to reason about the current state, construct tool-calls through tool selection and argument spec-ification, incorporate returned observations, and decide whether to continue or produce a final an-swer (Barres et al., 2025; Wang et al., 2025, 2026; Qu et al., 2026). Post-training such agents are therefore challenging because they require learn-ing from final-task outcomes while also handling a multi-turn decision process. Reinforcement Learning (RL) is a natural paradigm, which optimizes the policy from prompt-only rollouts using rewards based on task success or tool-use behavior (Shao et al., 2024; Qian et al., 2026; Yu et al., 2026). This matches inference-time behavior, where no expert trace is available. How-ever, multi-turn tool-use rewards are often sparse or weakly localized, providing limited feedback on which intermediate decisions lead to success or failure (Wei et al., 2025; Qu et al., 2026). And it may struggle to discover successful multi-turn 1
+
+> arXiv:2606.16215v1 [cs.CL] 15 Jun 2026
+
+tool-use trajectories. Expert traces offer comple-mentary information with successful tool-use tra-jectories (Qin et al., 2024; Song et al., 2024; Chen et al., 2023). However, Supervised Fine-tuning (SFT) on these traces learns from fixed targets and can over-constrain the model to a single reference trajectory, even when different tool-use trajectories could solve the same problem (Chen et al., 2025b). Moreover, imitation alone does not directly account for how intermediate reasoning and tool-use deci-sions affect final success (Chen et al., 2025a). These limitations motivate methods that com-bine expert traces with RL, but existing combina-tions do not directly address this setting. Hint-based methods provide expert solutions as addi-tional rollout context, which changes the genera-tion condition and conflicts with prompt-only in-ference (Liu et al., 2025). Joint SFT-RL methods add imitation losses to RL, but are mainly designed for single-turn reasoning traces rather than long interactions with tool-calls and observations (Chen et al., 2025a; Yuan et al., 2025; Zhang et al., 2026). As a result, existing methods either alter how tra-jectories are sampled or apply imitation objectives without accounting for the structure of multi-turn tool-use behavior. We therefore ask how expert traces can guide multi-turn tool-use RL while pre-serving prompt-only rollout .We answer this question with PACT , a
+
+Privileged tr Ace Co-Training framework for multi-turn tool-use agents, as shown in Figure 1. Instead of using expert traces to condition rollouts or treat-ing them as full imitation targets, PACT separates prompt-only rollout generation from trace-based optimization. The policy samples are rolled out from the prompt alone, matching inference-time behavior, while expert traces are used only during optimization. Concretely, PACT introduces two trace-based signals. First, a trace-conditioned RL surrogate evaluates each rollout under the expert trace as privileged context, using the trace to guide the policy update without entering rollout gener-ation. Second, a component-aware SFT loss su-pervises selected reasoning prefixes and complete tool-calls instead of the full trace. With separate annealing schedules for different trace components, it provides early process guidance while gradually reducing over-imitation as training progresses. To reduce over-reliance on the privileged trace context, PACT further incorporates prompt-only anchoring, routing a subset of prompts to standard RL with-out trace-based loss in each optimization step. We further provide a latent-trace view to motivate our objective and explain the role of privileged traces in PACT. Our contributions are summarized below. • We propose PACT, a privileged trace co-training framework for multi-turn tool-use agents. PACT addresses the core tension between expert-trace guidance and prompt-only inference by keeping rollout generation prompt-only and using expert traces only dur-ing optimization. • We introduce two core designs in PACT: trace-conditioned RL and component-aware SFT. The RL surrogate uses expert traces as privi-leged context to guide trace-conditioned RL updates, while the SFT supervises only se-lected reasoning prefixes and tool-calls with component-aware annealing. • We provide a latent-trace view showing how trace-conditioned RL and component-aware SFT jointly guide optimization: one uses expert-trace context for reward-weighted up-dates, while the other learns reusable trace structure without full imitation. • Experiments on multi-turn tool-use bench-marks show that PACT consistently outper-forms strong SFT- and RL-based baselines, highlighting the value of using expert traces for optimization without exposing them dur-ing rollout generation. 
+
+2 Related Work 
+
+Tool-use agents. Tool-use has been studied through prompting and instruction tuning for mod-els that interleave reasoning with external actions, including ReAct, Toolformer and ToolLLM (Yao et al., 2022; Schick et al., 2023; Qin et al., 2024). Recently, another line of work applies RL through interactive environments, reward design, and credit assignment. Some work constructs tool-use en-vironments for RL training (Dong et al., 2025; Ye et al., 2025b), while Agent Lightning decou-ples agent execution from RL optimization (Luo et al., 2025). ToolRL (Qian et al., 2026) instead designs rewards for tool selection and application, and MatchTIR (Qu et al., 2026) further assigns fine-grained credit to tool-integrated reasoning steps. In contrast, PACT does not modify the reward func-tion or environment. It studies how expert traces 2can be used as a privileged training context while rollout generation remains prompt-only. 
+
+Combining SFT and RL. SFT provides dense supervision but can overfit to fixed expert traces, while RL optimizes self-generated rollouts but can be sample inefficient under sparse rewards. Re-cent work combines these two signals in general reasoning settings. UFT (Liu et al., 2025) uses partial-solution hints to bridge imitation and ex-ploration, and BRIDGE (Chen et al., 2025a) uses bilevel optimization to make SFT cooperate with RL. MIFO (Yuan et al., 2025) mitigates forget-ting between SFT and RL, while CHORD (Zhang et al., 2026) balances off-policy expert data with on-policy RL through a global coefficient. Multi-turn tool-use, however, has a richer structure, consist-ing of reasoning, structured tool-calls, and envi-ronmental observations. PACT keeps rollout gen-eration prompt-only and uses expert traces only during optimization, as privileged context for RL likelihood evaluation and process supervision over model-controllable trace components. 
+
+3 Preliminaries 
+
+3.1 Task Formulation 
+
+We consider multi-turn tool-use tasks, where an LLM agent is given a user prompt x and a set of available tools T , and interacts with an external tool environment over multiple turns. At each turn 
+
+t, the agent generates a reasoning step ut and a structured tool-call at, which specifies an invoked tool from T and its arguments. The environment executes the tool-call and returns an observation 
+
+ot, which is appended to the interaction context. The process terminates when the agent produces a final answer y or reaches a predefined maximum number of tool-use turns. A rollout trajectory with T tool-use turns can be written as 
+
+τ =  u1, a 1, o 1, u 2 . . . , u T , a T , o T , y , (1) where ut, at, and y are generated by the agent, while ot is returned by the environment and used only as context for subsequent decisions. The roll-out receives a scalar reward R(x, τ ) that evaluates the final outcome and, when available, intermediate tool-use behavior. In this work, we additionally give each training prompt xi an expert tool-use trace 
+
+h∗ 
+
+> i
+
+=  u∗
+
+> i, 1
+
+, a ∗
+
+> i, 1
+
+, o ∗
+
+> i, 1
+
+, . . . , u ∗  
+
+> i,T ∗
+> i
+
+, a ∗  
+
+> i,T ∗
+> i
+
+, o ∗ 
+
+> i,T ∗
+> i
+
+. (2) The detailed construction of expert traces is de-scribed in Appendix C. To avoid the risk of answer leakage, we exclude the final answer y from the expert trace h∗ 
+
+> i
+
+.
+
+3.2 Post-training with SFT and RL 
+
+Given the rollout trajectories and expert traces defined above, two representative approaches for agentic LLM post-training are SFT and RL. Let πθ
+
+denote the policy parameterized by θ. SFT learns from expert traces, while RL optimizes the policy using rewards from rollouts. 
+
+Supervised Fine-Tuning. Given an expert trace 
+
+h∗ for prompt x, SFT maximizes the likelihood of generating expert tokens. Let Dexp denote the expert-trace dataset, and let n index tokens in the expert trace. The SFT loss is given by 
+
+LSFT = −E(x,h ∗)∼D exp 
+
+hX 
+
+> n
+
+log πθ(h∗ 
+
+> n
+
+| x,h ∗
+
+> <n
+
+)
+
+i
+
+.
+
+(3) This objective provides dense process supervision, but it trains the policy to follow fixed expert traces rather than optimizing the outcomes of its own rollouts. It can also over-constrain learning when multiple valid tool-use trajectories exist. 
+
+Group-based Reinforcement Learning. One of the representative RL methods is Group Relative Policy Optimization (GRPO) (Shao et al., 2024), which estimates relative advantages from multiple rollouts sampled for the same prompt. For each prompt xi, an old policy πold samples a group of 
+
+K rollouts τi,k ∼ πold (· | xi), k = 1 , . . . , K . Each rollout receives a reward R(xi, τ i,k ), and the re-wards are normalized within the group to obtain an advantage Ai,k , or its token-level variant Ai,k,n ,where n indexes positions of tokens generated in the rollout. For a generated token τi,k,n , the prompt-only importance ratio is 
+
+rxi,k,n (θ) = πθ(τi,k,n | xi, τ i,k,<n )
+
+πold (τi,k,n | xi, τ i,k,<n ) . (4) A clipped GRPO loss can then be written as 
+
+Lx 
+
+> RL
+
+= −Ei,k,n 
+
+h
+
+min rxi,k,n Ai,k,n ,
+
+¯rxi,k,n Ai,k,n 
+
+i
+
+,
+
+(5) where ¯rxi,k,n = clip( rxi,k,n , 1 − ϵ, 1 + ϵ). This prompt-only formulation matches inference-time behavior, where the model conditions only on the prompt, without access to expert traces. 3User 
+
+> Prompt
+
+Prompt-only Rollout  
+
+> Policy Model
+> Rollout
+> Rollout
+> ...
+> Rollout
+> ...
+> ...
+> ...
+
+Privileged Trace Co-Training                                  
+
+> Reward &
+> Advantage
+> Expert
+> Trace
+> Component-aware SFT Trace-Conditioned RL
+> Reasoning: Annealed Prefix Tool-call: Annealed Scale
+> Updated
+> Policy Model
+> Reasoning
+> Tool-Call
+> Tool
+> Response
+> Other /
+> Delimiter
+> Not used
+> for Rollout
+> S1 S2 S3 S4
+> ✓✓✓✓
+> L4
+> S1 S2 S3 S4
+> ✓✓
+> L2✗
+> S1 S2 S3 S4 L0✗✗✗✗
+> ✗
+> Training  Process  name arg values
+> name arg values
+> name arg values
+> Compute policy ratio under expert trace has context
+> Expert
+> Trace
+> ✗
+> (as context)
+> Rollout
+> Not used
+> for Ratio
+
+Figure 2: Overview of PACT. Rollouts remain prompt-only, while expert traces are used only during optimization through trace-conditioned RL and component-aware SFT. 
+
+4 Method 
+
+In this section, we introduce PACT as illustrated in Figure 2. 
+
+4.1 Prompt-only Rollout Generation 
+
+PACT begins by generating trajectories under the same input condition as at inference time. For each training prompt xi, the old policy is conditioned only on the input prompt and receives no expert trace, sampling K complete tool-use rollouts 
+
+τi,k ∼ πold (· | xi), k = 1 , . . . , K. (6) This prompt-only sampling rule separates trajec-tory exploration from expert guidance. Unlike hint-guided methods that provide partial expert solu-tions as rollout context (Liu et al., 2025), PACT never exposes h∗
+
+i during rollout generation. The sampled trajectories are therefore used to com-pute rewards and advantages under the inference-aligned rollout distribution. Expert traces are used only after rollout collection, where they provide privileged context for policy optimization as de-scribed in the following sections. 
+
+4.2 Trace-Conditioned RL Surrogate 
+
+After rollout generation, PACT uses expert traces to refine the RL update without altering trajectory sampling. Although the rewards and advantages computed from rollouts determine which sampled trajectories should be reinforced, they provide lim-ited guidance about the intermediate process. To add such guidance, we compute token-level policy ratios under the expert trace as privileged context ,while keeping the sampled rollouts and their advan-tages prompt-only. Specifically, we implement this idea by replacing the prompt-only context in the policy-ratio compu-tation with a privileged trace context. For prompt 
+
+xi with expert trace h∗
+
+i , we define the privileged trace context as 
+
+chi = [ xi; h∗
+
+i ].
+
+We then compute the policy ratio for tokens in the sampled rollout τi,k using chi as context. Let Mi,k 
+
+denote the policy-generated token positions. For 
+
+τi,k,n with n ∈ M i,k , the trace-conditioned policy ratio becomes 
+
+rhi,k,n (θ) = πθ(τi,k,n | chi , τ i,k,<n )
+
+πold (τi,k,n | chi , τ i,k,<n ) . (7) Combining this ratio with the corresponding Ai,k,n 
+
+(Qu et al., 2026) (explained in the Appendix B), we obtain the clipped trace-conditioned RL surrogate 
+
+Lh
+
+RL (i) = −Ek, n ∈M i,k 
+
+h
+
+min rhi,k,n Ai,k,n ,
+
+¯rhi,k,n Ai,k,n 
+
+i
+
+,
+
+(8) where ¯rhi,k,n = clip( rhi,k,n , 1 − ϵ, 1 + ϵ).This surrogate keeps the rewards and advantages tied to prompt-only rollouts, while using the expert trace context to evaluate the policy update. Thus, expert traces can guide policy optimization while rollouts remain prompt-only. 4I should  use  Google  Map                   
+
+> Ishould use Google Map
+> ✗
+> break semantic unit
+> Token-level Anneal
+> Semantic Anneal (Ours) ✓
+> s1 s2 s3 s4
+> task
+> restate tool
+> scan tool
+> select arg
+> ground
+> L4s1 s2 s3 s4
+> L2s1 s2 s3 s4
+> Training
+> Process
+
+Figure 3: Reasoning-prefix annealing from semantic segments. 
+
+4.3 Component-aware SFT 
+
+Trace-conditioned RL uses expert traces to guide the policy update, but reward-based feedback can remain coarse early in training. We therefore add an auxiliary component-aware SFT loss that pro-vides direct process supervision from expert traces. Rather than imitating the full trajectory, we super-vise only model-controllable components: reason-ing tokens and tool-call tokens . Tool observations are kept as context but are not supervised, since they are produced by the environment. Reason-ing tokens guide intermediate decisions, but full reasoning imitation may over-constrain the policy or reveal future tool-use. Tool-call tokens teach valid invocation, but exact teacher actions may rep-resent only one of several valid choices. Thus, we anneal supervision over training by shrinking the active reasoning prefix and lowering the tool-call loss scale, providing early guidance while reducing over-imitation. Formally, let h∗ 
+
+> i,n
+
+denote the n-th token in the expert trace for prompt xi. Ri(s) specifies the active reasoning-prefix positions at step s, while 
+
+Ai contains complete expert tool-call spans. We define the component-aware supervision mask by 
+
+mi,n (s) = 
+
+
+
+1, n ∈ R i(s),λa(s), n ∈ A i,
+
+0, otherwise .
+
+(9) Here, the mask selects the active reasoning-prefix tokens through Ri(s) and assigns weight λa(s) to complete tool-call spans in Ai. Applying this mask gives the component-aware SFT loss 
+
+LSFT (i; s) = − 1
+
+Zi(s)
+
+X
+
+> n
+
+mi,n (s) ·
+
+log πθ
+
+ h∗ 
+
+> i,n
+
+| xi, h ∗
+
+> i,<n
+
+ ,
+
+(10) where Zi(s) = P 
+
+> n
+
+mi,n (s) normalizes the super-vised tokens. When Zi(s) = 0 , we skip the SFT term for prompt xi.
+
+Annealed Reasoning Supervision. For reason-ing, we supervise prefixes rather than full traces to provide intermediate guidance without forcing the entire expert reasoning process. Instead of anneal-ing by raw token count, we construct prefix levels over semantic reasoning segments, as illustrated in Figure 3. Token-level annealing may cut through a coherent reasoning unit and expose incomplete or misleading process signals. In contrast, segment-level annealing preserves semantic units while grad-ually reducing supervision from longer to shorter prefixes, following L4 → L3 → · · · → L0. More details are provided in Appendix C. 
+
+Annealed Tool-call Supervision. For tool-calls, we supervise complete spans to preserve valid tool selection and argument specification. Unlike rea-soning tokens, tool-calls should not be shortened by prefix annealing, since partial tool-calls can break the structured action. However, an expert tool-call may still be only one of several valid actions, so we gradually reduce its imitation scale: 
+
+λa(s) = λstart  
+
+> a
+
+− ∆λa min 
+
+ sS , 1
+
+
+
+, (11) where ∆λa = λstart  
+
+> a
+
+− λend  
+
+> a
+
+, S is the annealing horizon, and λstart  
+
+> a
+
+> λ end  
+
+> a
+
+.A larger early weight encourages valid tool-calls, while a smaller later weight relaxes imitation and lets rewards guide exploration. 
+
+4.4 Overall Objective with Prompt-only Anchoring 
+
+The preceding subsections define the trace-based update optimization. For prompt i, PACT com-bines the trace-conditioned RL surrogate with component-aware SFT: 
+
+Ltrace  
+
+> i
+
+= Lh
+
+> RL
+
+(i) + βSFT LSFT (i; s), (12) where βsft controls the scale of the SFT. This update uses expert traces only during opti-mization, but its likelihood term must be evaluated under a privileged trace context. To reduce over-reliance on this training-only context, PACT also includes a prompt-only anchoring. Specifically, we sample a prompt-level gate 
+
+z(e) 
+
+> i
+
+∼ Bernoulli( q), (13) 5for each prompt xi, where q is the anchoring prob-ability. The final per-prompt objective is 
+
+Li = (1 − z(e) 
+
+> i
+
+)Ltrace  
+
+> i
+
++ z(e) 
+
+> i
+
+Lx
+
+> RL
+
+(i). (14) When z(e) 
+
+> i
+
+= 0 , prompt xi adopts the trace co-training loss in Eq. 12. When z(e) 
+
+> i
+
+= 1 , it leverages only the standard prompt-only RL loss Lx
+
+> RL
+
+(i),without any expert-trace guidance. This keeps the main learning signal trace-guided, while preserving a direct optimization path under the prompt-only condition used at inference time. 
+
+5 A Latent-Trace View of PACT 
+
+We next present a compact latent-trace view of privileged trace co-training. 
+
+Latent-trace perspective. Let h denote a latent process trace that supports a prompt-only rollout. Conceptually, we can view the likelihood of a prompt-only rollout as marginalizing over possi-ble latent traces: 
+
+πθ(τ | x) = X
+
+> h
+
+pθ(h | x)πθ(τ | x, h ). (15) For the training-time expert trace h∗, retaining the corresponding term gives a lower-bound view 
+
+πθ(τ | x) ≥ pθ(h∗ | x)πθ(τ | x, h ∗). (16) Taking logarithms yields 
+
+log πθ(τ | x) ≥ log pθ(h∗ | x)
+
+| {z }
+
+> trace likelihood
+
++ log πθ(τ | x, h ∗)
+
+| {z }
+
+> privileged rollout likelihood
+
+. (17) This decomposition gives two roles to expert traces. The trace-likelihood term encourages the model to learn useful structure from the ex-pert trace, while the trace-conditioned rollout-likelihood term evaluates sampled prompt-only roll-outs under the expert trace as privileged context. 
+
+Trace-likelihood term. The trace-likelihood term corresponds to learning selected model-controllable parts of the expert trace. We write it schematically as 
+
+log pθ(h∗ | x) = X
+
+> n∈M (h∗)
+
+log πθ(h∗ 
+
+> n
+
+| x, h ∗
+
+> <n
+
+)+ Cenv (h∗, x ),
+
+(18) where M(h∗) denotes model-generated trace po-sitions and Cenv collects environment-dependent trace terms, such as observations returned by ex-ternal tools. Component-aware SFT in Eq. 10 is a weighted negative-likelihood surrogate for this term, supervising selected reasoning prefixes and complete tool-call spans rather than the full trace. 
+
+Privileged rollout-likelihood term. The priv-ileged rollout-likelihood term scores a prompt-only rollout under the expert-trace context. Let 
+
+ch = [ x; h∗]. Then, 
+
+log πθ(τ | x, h ∗) = X 
+
+> n∈M (τ)
+
+log πθ(τn | ch, τ <n ),
+
+(19) where M(τ ) denotes policy-generated token po-sitions in the rollout. Trace-conditioned RL in Eq. 8 uses these privileged token probabilities in-side clipped policy ratios and weights them by prompt-only rollout advantages. It therefore op-timizes a reward-weighted surrogate of this term while preserving prompt-only rollout generation. Overall, Eq. 17 connects the two trace-based objectives in Eq. 12. Component-aware SFT learns selected trace structure, while trace-conditioned RL uses the expert trace as privileged context for reward-weighted policy optimization. Together, they explain how expert traces guide optimization without being used during rollout generation. 
+
+6 Experiments 
+
+6.1 Experiment Settings Models and datasets. We conduct experiments on Qwen3-1.7B and Qwen3-4B (Yang et al., 2025). The training dataset is constructed from FTRL (Ye et al., 2025b), including ∼2.2k training samples. During training, we use a batch size of 256. The maximum interaction turns is set to 10, and the SFT scale βSF T is set to 0.1. More details on hyperpa-rameters and datasets are in the Appendix A. 
+
+Baselines and metrics. We compare our method against several representative baselines, including the vanilla model, SFT, GRPO (Shao et al., 2024), FTRL (Ye et al., 2025b), ToolRL (Qian et al., 2026), CHORD (Zhang et al., 2026), MatchTIR (Qu et al., 2026), and SFT then MatchTIR. All methods use the same dataset and training settings. We evaluate all methods on three tool-use benchmarks: FTRL (Ye et al., 2025b), BFCL (Patil et al., 2025), and ToolHop (Ye et al., 2025a). We report solve rate, 6Methods FTRL BFCL ToolHop Avg Solve-R Solve-P Solve-F1 Multi-Turn Search Memory Avg AC 
+
+Qwen3-1.7B 
+
+Vanilla 21.66 20.78 19.72 13.00 1.00 8.60 7.53 25.63 19.06 SFT 22.36 17.89 17.66 13.38 2.50 8.60 8.16 23.32 17.88 GRPO 21.57 17.37 18.13 11.88 3.50 9.25 8.21 25.13 18.08 FTRL 22.78 22.06 21.06 12.62 6.00 11.18 9.93 26.43 20.45 ToolRL 22.79 17.93 17.99 13.30 2.50 8.39 8.06 25.83 18.52 CHORD 22.68 19.14 18.50 12.62 3.50 6.45 7.52 27.14 19.00 MatchTIR 24.12 21.50 21.43 14.00 4.50 9.03 9.18 32.26 21.70 SFT →MatchTIR 23.39 19.64 19.72 13.63 5.50 11.18 10.10 31.06 20.78 
+
+Ours 28.33 26.94 22.93 14.88 7.00 13.63 11.84 34.47 24.90 
+
+Qwen3-4B 
+
+Vanilla 32.14 31.66 28.60 23.50 12.00 16.34 17.28 31.86 28.31 SFT 28.19 29.32 24.67 22.62 4.00 12.90 13.17 30.25 25.12 GRPO 33.12 31.80 30.84 22.00 9.00 15.48 15.49 34.47 29.14 FTRL 31.98 33.24 31.34 22.38 9.00 16.77 16.05 43.02 31.13 ToolRL 32.59 28.98 28.28 23.00 11.00 17.42 17.14 34.27 28.25 CHORD 32.69 29.84 29.88 22.00 12.50 15.48 16.66 37.69 29.35 MatchTIR 36.10 30.60 31.60 24.38 17.50 14.62 18.83 47.54 32.93 SFT →MatchTIR 37.17 30.40 32.03 23.62 17.85 13.76 18.41 47.34 33.07 
+
+Ours 42.41 34.69 36.60 27.50 18.00 18.28 21.26 49.55 36.90 
+
+Table 1: Main results on FTRL, BFCL, and ToolHop. AC denotes Answer Correctness. 
+
+solve precision, and solve F1 for FTRL, accuracy for BFCL, and Answer Correctness for ToolHop. 
+
+6.2 Main Results 
+
+Table 1 reports the main results on FTRL, BFCL, and ToolHop. Across both Qwen3-1.7B and Qwen3-4B, PACT achieves the best overall av-erage performance. For Qwen3-1.7B, PACT im-proves the average score from 21.70 to 24.90 over the strongest baseline MatchTIR. It also obtains the best results on FTRL, improving Solve-R from 24.12 to 28.33, and Solve-P from 22.06 to 26.94. On BFCL, PACT achieves the best Multi-Turn, Search, Memory, and average scores, and improves ToolHop AC from 32.26 to 34.47. For Qwen3-4B, PACT improves the best baseline average score from 33.07 to 36.90. It achieves the highest FTRL performance, improving Solve-R from 37.17 to 42.41 and Solve-F1 from 32.03 to 36.60. It also has the best scores on all BFCL metrics and im-proves ToolHop AC from 47.54 to 49.55. These results support our main design choice. Compared with SFT and SFT then MatchTIR, PACT does not use expert traces as full imitation targets. Compared with RL-based baselines such as CHORD, FTRL, and MatchTIR, PACT uses expert traces as privileged optimization signals to provide richer process guidance. The consistent gains show that keeping rollouts prompt-only while using traces only during optimization is effective for multi-turn tool-use learning.                   
+
+> Objective Solve-R Solve-P Solve-F1
+> Vanilla 32.14 31.66 28.60
+> Lx
+> RL 36.10 30.60 31.60
+> Lh
+> RL 35.29 31.42 31.85
+> Lx
+> RL +βSFT LSFT 36.36 28.46 30.18
+> Lh
+> RL +βSFT LSFT 40.45 32.94 33.21
+
+Table 2: Ablation on training loss objectives using Qwen3-4B on FTRL with q = 0 .
+
+6.3 Ablation on Training Objectives 
+
+Table 2 studies the role of each training objective. Trace-conditioned RL alone improves Solve-P over prompt-only RL, showing that expert traces provide useful process context for evaluating prompt-only rollouts. In contrast, directly adding SFT to prompt-only RL reduces Solve-P to 28.46 and Solve-F1 to 30.18, suggesting that naive SFT/RL mix-ing can over-constrain the policy without solving credit assignment. Combining trace-conditioned RL with component-aware SFT gives the best per-formance, reaching 40.45 Solve-R and 33.21 Solve-F1. This supports our latent-trace view that trace-7conditioned RL and component-aware SFT provide complementary trace-based signals for multi-turn tool-use optimization.                  
+
+> RE TC TR Solve-R Solve-P Solve-F1
+> ✗35.31 27.46 26.12
+> ✗39.19 28.52 31.11
+> ✗31.32 25.27 25.94
+> All 40.45 32.94 33.21
+
+Table 3: Ablation on privileged trace components using Qwen3-4B on FTRL with q = 0 . RE, TC, and TR de-note reasoning, tool-call, and tool response, respectively. Tool responses are only used as context. 
+
+6.4 Ablation on Privileged Trace Components 
+
+We also study which parts of the privileged trace are important and summarize the result in Table 3. Removing tool responses causes the largest drop, reducing Solve-F1 from 33.21 to 25.94. This shows that observations provide important state informa-tion for multi-turn tool-use and help the model track how the environment changes after each tool-call. Removing reasoning reduces Solve-F1 to 26.12, suggesting that expert reasoning prefixes help the model locate useful intermediate states. Removing tool-calls also leads to a drop, as structured actions require direct guidance on tool names and argu-ments. These results show that the privileged trace should keep the full interaction context. 
+
+6.5 Choice of SFT Schedule 
+
+As shown in Table 4, we compare SFT schedules to study how reasoning and tool-call supervision should be annealed. The best result uses segment-level annealing for reasoning and loss-scale anneal-ing for tool-calls, reaching 40.45 Solve-R and 33.21 Solve-F1. Fixed reasoning supervision is worse, in-dicating that reasoning supervision should decrease over training. Token-level annealing also performs worse, suggesting that preserving semantic reason-ing units is important. For tool-calls, scale anneal-ing is more suitable as tool-calls should remain complete while their imitation strength is gradually reduced. These results support our component-aware schedule for reducing over-imitation while keeping useful process guidance. We provide addi-tional schedule comparisons in Appendix D. 
+
+6.6 Effect of Prompt-only Anchoring 
+
+Figure 4 studies the effect of the prompt-only an-choring probability q. The ratio q controls the strength of prompt-only anchoring in trace-based                         
+
+> Reasoning Tool-Call Solve-R Solve-P Solve-F1
+> Fix Scale A 37.90 28.40 30.60 Seg A Fix 39.32 31.25 32.82 Token A Scale A 34.77 28.08 29.86 Seg A Token A 35.80 27.45 28.83
+> Seg A Scale A 40.45 32.94 33.21
+
+Table 4: Comparison of SFT schedule designs using Qwen3-4B on FTRL with q = 0 . “Fix” denotes fixed supervision, “Seg A” segment-level annealing, “Token A” token-count annealing, and “Scale A” tool-call loss scale annealing. None 0.2 0.4 0.6 0.8 All  
+
+> Probability q
+> 30
+> 35
+> 40
+> 45
+> 50
+> Performance (%)
+> ToolHop
+> Solve-R
+> Solve-P
+> Solve-F1
+
+Figure 4: Effect of the prompt-only anchoring probabil-ity q using Qwen3-4B on FTRL and ToolHop. 
+
+co-training. With no prompt-only anchoring, the model receives strong privileged-trace guidance, but may over-rely on training-only trace context, which hurts generalization on ToolHop. Adding a small amount of prompt-only RL improves Tool-Hop performance, suggesting that the anchor helps the policy remain effective under the test-time input condition. However, when q is too large, the model receives less expert process guidance, and FTRL performance drops. Thus, a moderate q provides a better trade-off: trace-based co-training improves credit assignment, while lightweight prompt-only anchoring improves prompt-only generalization. 
+
+7 Conclusion 
+
+We proposed PACT, a privileged trace co-training framework for multi-turn tool-use agents. The key idea is to keep rollouts prompt-only while using expert traces as training-time optimization signals. PACT combines trace-conditioned RL with component-aware SFT, and uses prompt-only anchoring to reduce over-reliance on the privi-leged trace context. Our latent-trace view explains why these objectives are complementary. Experi-ments on multi-turn tool-use benchmarks show that PACT improves over strong SFT- and RL-based baselines, highlighting the value of expert traces for optimization without using them as rollout hints. 8Limitations 
+
+This work has several limitations. First, PACT re-lies on expert tool-use traces during training. These traces are used only as privileged optimization sig-nals and are not needed at inference time, but con-structing and segmenting them still adds an offline data-preparation step. Second, due to computa-tional constraints, our experiments focus on three multi-turn tool-use benchmarks and two model sizes. Extending the evaluation to larger models, longer training runs, and more diverse tool envi-ronments could further test the method’s generality. Finally, PACT uses simple linear or fixed sched-ules for reasoning-prefix annealing, tool-call loss scaling, and prompt-only anchoring. Further im-provement of more advanced, adaptive schedules may increase training efficiency, which we leave for future work. 
+
+References 
+
+Victor Barres, Honghua Dong, Soham Ray, Xujie Si, and Karthik Narasimhan. 2025. τ 2-bench: Evaluat-ing conversational agents in a dual-control environ-ment. arXiv preprint arXiv:2506.07982 .Baian Chen, Chang Shu, Ehsan Shareghi, Nigel Collier, Karthik Narasimhan, and Shunyu Yao. 2023. Fireact: Toward language agent fine-tuning. arXiv preprint arXiv:2310.05915 .Liang Chen, Xueting Han, Li Shen, Jing Bai, and Kam-Fai Wong. 2025a. Beyond two-stage training: Coop-erative sft and rl for llm reasoning. arXiv preprint arXiv:2509.06948 .Zhixun Chen, Ming Li, Yuxuan Huang, Yali Du, Meng Fang, and Tianyi Zhou. 2025b. Atlas: Agent tuning via learning critical steps. In Findings of the Associa-tion for Computational Linguistics: ACL 2025 , pages 25334–25349. Guanting Dong, Yifei Chen, Xiaoxi Li, Jiajie Jin, Hongjin Qian, Yutao Zhu, Hangyu Mao, Guorui Zhou, Zhicheng Dou, and Ji-Rong Wen. 2025. Tool-star: Empowering LLM-brained multi-tool rea-soner via reinforcement learning. arXiv preprint arXiv:2505.16410 .Zhibin Gou, Zhihong Shao, Yeyun Gong, yelong shen, Yujiu Yang, Minlie Huang, Nan Duan, and Weizhu Chen. 2024. ToRA: A tool-integrated reasoning agent for mathematical problem solving. In The Twelfth International Conference on Learning Repre-sentations .Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. 
+
+arXiv preprint arXiv:2503.09516 .H. W. Kuhn. 1956. Variants of the hungarian method for assignment problems. Naval Research Logistics Quarterly , 3(4):253–258. Minghao Li, Yingxiu Zhao, Bowen Yu, Feifan Song, Hangyu Li, Haiyang Yu, Zhoujun Li, Fei Huang, and Yongbin Li. 2023. Api-bank: A comprehensive benchmark for tool-augmented llms. In Proceedings of the 2023 conference on empirical methods in natu-ral language processing , pages 3102–3116. Minpeng Liao, Chengxi Li, Wei Luo, Wu Jing, and Kai Fan. 2024. Mario: Math reasoning with code inter-preter output-a reproducible pipeline. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 905–924. Mingyang Liu, Gabriele Farina, and Asuman Ozdaglar. 2025. UFT: Unifying supervised and reinforcement fine-tuning. arXiv preprint arXiv:2505.16984 .Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K Qiu, and Yuqing Yang. 2025. Agent lightning: Train any ai agents with reinforcement learning. arXiv preprint arXiv:2508.03680 .Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, and 1 others. 2021. Webgpt: Browser-assisted question-answering with human feedback. arXiv preprint arXiv:2112.09332 .Shishir G Patil, Huanzhi Mao, Fanjia Yan, Charlie Cheng-Jie Ji, Vishnu Suresh, Ion Stoica, and Joseph E Gonzalez. 2025. The berkeley function calling leader-board (bfcl): From tool use to agentic evaluation of large language models. In Forty-second International Conference on Machine Learning .Shishir G Patil, Tianjun Zhang, Xin Wang, and Joseph E Gonzalez. 2024. Gorilla: Large language model connected with massive apis. Advances in Neural Information Processing Systems , 37:126544–126565. Akshara Prabhakar, Zuxin Liu, Ming Zhu, Jianguo Zhang, Tulika Manoj Awalgaonkar, Shiyu Wang, Zhiwei Liu, Haolin Chen, Thai Hoang, Juan Car-los Niebles, and 1 others. 2026. Apigen-mt: Agentic pipeline for multi-turn data generation via simulated agent-human interplay. Advances in Neural Informa-tion Processing Systems , 38. Cheng Qian, Emre Can Acikgoz, Qi He, Hongru Wang, Xiusi Chen, Dilek Hakkani-Tur, Gokhan Tur, and Heng Ji. 2026. Toolrl: Reward is all tool learning needs. Advances in Neural Information Processing Systems , 38:105523–105553. Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Lauren Hong, Runchu Tian, 
+
+9Ruobing Xie, Jie Zhou, Mark Gerstein, dahai li, Zhiyuan Liu, and Maosong Sun. 2024. ToolLLM: Facilitating large language models to master 16000+ real-world APIs. In The Twelfth International Con-ference on Learning Representations .Changle Qu, Sunhao Dai, Hengyi Cai, Jun Xu, Shuaiqiang Wang, and Dawei Yin. 2026. Matchtir: Fine-grained supervision for tool-integrated rea-soning via bipartite matching. arXiv preprint arXiv:2601.10712 .Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-moyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. Advances in neural information process-ing systems , 36:68539–68551. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, and 1 others. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2024. Hybridflow: A flexible and efficient rlhf framework. arXiv preprint arXiv: 2409.19256 .Huatong Song, Jinhao Jiang, Yingqian Min, Jie Chen, Zhipeng Chen, Wayne Xin Zhao, Lei Fang, and Ji-Rong Wen. 2025. R1-searcher: Incentivizing the search capability in llms via reinforcement learning. 
+
+arXiv preprint arXiv:2503.05592 .Yifan Song, Weimin Xiong, Xiutian Zhao, Dawei Zhu, Wenhao Wu, Ke Wang, Cheng Li, Wei Peng, and Su-jian Li. 2024. Agentbank: Towards generalized llm agents via fine-tuning on 50000+ interaction trajec-tories. In Findings of the Association for Computa-tional Linguistics: EMNLP 2024 , pages 2124–2141. Zihan Wang, Chi Gui, Xing Jin, Qineng Wang, Licheng Liu, Kangrui Wang, Shiqi Chen, Linjie Li, Zhengyuan Yang, Pingyue Zhang, and 1 others. 2026. Ragen-2: Reasoning collapse in agentic rl. arXiv preprint arXiv:2604.06268 .Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, and 1 others. 2025. Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning. arXiv preprint arXiv:2504.20073 .Quan Wei, Siliang Zeng, Chenliang Li, William Brown, Oana Frunza, Wei Deng, Yuriy Nevmyvaka, Yang Katie Zhao, Alfredo Garcia, and Mingyi Hong. 2025. Reinforcing multi-turn reasoning in LLM agents via turn-level reward design and credit assign-ment. In First Workshop on Multi-Turn Interactions in Large Language Models .Minrui Xu, Zilin Wang, Mengyi DENG, Zhiwei Li, Zhicheng Yang, Xiao Zhu, Yinhong Liu, Boyu Zhu, Baiyu Huang, Chao Chen, Heyuan Deng, Fei Mi, Lifeng Shang, Xingshan Zeng, and Zhijiang Guo. 2026. Envfactory: Scaling tool-use agents via exe-cutable environments synthesis and robust rl. arXiv preprint .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2022. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629 .Junjie Ye, Zhengyin Du, Xuesong Yao, Weijian Lin, Yufei Xu, Zehui Chen, Zaiyuan Wang, Sining Zhu, Zhiheng Xi, Siyu Yuan, and 1 others. 2025a. Tool-hop: A query-driven benchmark for evaluating large language models in multi-hop tool use. In Proceed-ings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-pers) , pages 2995–3021. Junjie Ye, Changhao Jiang, Zhengyin Du, Yufei Xu, Xuesong Yao, Zhiheng Xi, Xiaoran Fan, Qi Zhang, Xuanjing Huang, and Jiecao Chen. 2025b. Feedback-driven tool-use improvements in large language mod-els via automated build environments. arXiv preprint arXiv:2508.08791 .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, and 1 others. 2026. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38:113222–113244. Xiangchi Yuan, Xiang Chen, Tong Yu, Dachuan Shi, Can Jin, Wenke Lee, and Saayan Mitra. 2025. Miti-gating forgetting between supervised and reinforce-ment learning yields stronger reasoners. arXiv preprint arXiv:2510.04454 .Wenhao Zhang, Yuexiang Xie, Yuchang Sun, Yanxi Chen, Guoyin Wang, Yaliang Li, Bolin Ding, and Jingren Zhou. 2026. On-policy RL meets off-policy experts: Harmonizing supervised fine-tuning and re-inforcement learning via dynamic weighting. In The Fourteenth International Conference on Learning Representations .Yuxiang Zheng, Dayuan Fu, Xiangkun Hu, Xiaojie Cai, Lyumanshan Ye, Pengrui Lu, and Pengfei Liu. 2025. Deepresearcher: Scaling deep research via reinforce-ment learning in real-world environments. In Pro-ceedings of the 2025 Conference on Empirical Meth-ods in Natural Language Processing , pages 414–431. 
+
+10 A More Implementation Details 
+
+The detailed hyper-parameters for training are sum-marized in Table 5.                        
+
+> Category Hyper-parameter Data Configuration
+> Train Batch Size 256 Validation Batch Size 256 Max Prompt Length 7000 Max Response Length 23000 Prompt-only Anchoring Ratio q0.4
+> Optimization
+> Learning Rate 1e −6
+> PPO Mini Batch Size 32 KL-Divergence Loss Coefficient 0.001 SFT Loss Scale βsft 0.1 Tool-call Start Scale λstart
+> a0.8 Tool-call End Scale λend
+> a0.2 Max Token Length per GPU 30000
+> Rollout Configuration
+> Rollout Framework vLLM Rollout Temperature 1.0 GPU Memory Utilization 0.7 Number of Rollouts 8
+> Training
+> Total Epochs 3Total Training Steps 24
+
+Table 5: Detailed training configuration. 
+
+Our code is based on VeRL framework (Sheng et al., 2024). For component-aware SFT, we su-pervise selected reasoning prefixes and complete tool-call spans. The reasoning-prefix loss uses a fixed scale of 1.0, while the tool-call loss scale is linearly annealed from 0.8 to 0.2 during training. This schedule provides stronger guidance for tool-call formatting in early updates and gradually re-duces exact imitation as reward-based optimization becomes more important. For trace-conditioned RL, expert traces are used only as privileged con-text for policy-ratio computation, not for rollout generation. The prompt-only anchoring ratio is set to 0.4 for all models. All training and inference are conducted on four NVIDIA H200 141GB GPUs. For policy optimization, we use GRPO. Each prompt is sampled with 8 rollouts, and advantages are normalized within the same rollout group. We follow the original evaluation metrics of each benchmark. For FTRL (Ye et al., 2025b), we report Solve-R (rate), Solve-P (precision), and Solve-F1. Given a test instance with n sub-questions, suppose the model invokes tools p times and successfully solves q sub-questions. Solve-P measures tool-use precision: 
+
+Solve -P = 
+
+( qp , p > 0,
+
+1, p = 0 , (20) and Solve-R measures task completeness: 
+
+Solve -R = qn . (21) Solve-F1 is the harmonic mean of Solve-P and Solve-R: 
+
+Solve -F1 = 2 · Solve -P · Solve -RSolve -P + Solve -R . (22) For BFCL (Patil et al., 2025), we follow its offi-cial accuracy-based evaluation and report scores on the Multi-Turn, Web Search, and Memory subtasks, together with their average. For ToolHop (Ye et al., 2025a), we report Answer Correctness (AC), which measures whether the model output contains the reference answer: 
+
+AC = 
+
+(
+
+1, if contain ,
+
+0, otherwise . (23) In the Table 1, Avg denotes the average score across the reported FTRL, BFCL, and ToolHop metrics. 
+
+B Training Reward and Advantage 
+
+We follow the hard credit assignment strategy in MatchTIR (Qu et al., 2026) to compute rewards and advantages. The same reward and advan-tage are used for both prompt-only RL and trace-conditioned RL. 
+
+Hard credit assignment. For each rollout, we extract predicted tool-calls P = {p1, . . . , p m} and reference tool-calls G = {g1, . . . , g n}. For each pair (pa, g b), we compute a similarity score Sab 
+
+based on tool-name match, argument-key over-lap, and exact argument-value match. Following MatchTIR, we then solve a maximum-weight bi-partite matching problem: 
+
+max 
+
+> X
+> m
+
+X
+
+> a=1
+> n
+
+X
+
+> b=1
+
+Xab Sab 
+
+s.t. Xab ∈ { 0, 1},
+
+X
+
+> b
+
+Xab ≤ 1, X
+
+> a
+
+Xab ≤ 1.
+
+(24) 11 This one-to-one matching is solved with the Hun-garian algorithm (Kuhn, 1956). The reward for a predicted tool-call pa is 
+
+r(pa) = 
+
+(
+
+Sab , ∃b, X ab = 1 ,
+
+−λpen , otherwise . (25) In our experiments, we set λpen = 0 .
+
+Turn-level and outcome rewards. For a tool-use turn t, we average the rewards of all predicted tool-calls in that turn: 
+
+rtool  
+
+> t
+
+= 1
+
+|P t|
+
+X
+
+> p∈P t
+
+r(p), (26) and set it to 0 when no tool-call is produced. For the final-answer turn, we use the F1 score between the predicted answer ˆy and the reference answer y:
+
+rans = F1(ˆ y, y ). (27) The per-turn reward rt is given by the tool-call reward for tool-use turns and the answer reward for the final turn. 
+
+Advantage estimation. For each prompt, we sample K rollouts and normalize rewards within the same rollout group. The trajectory-level reward of rollout k is 
+
+Rk =
+
+> Tk
+
+X
+
+> t=1
+
+rk,t , (28) with trajectory-level advantage 
+
+Agk = Rk − mean k′ (Rk′ )std k′ (Rk′ ) + ϵA
+
+. (29) We also compute a discounted future reward for each turn: 
+
+Rℓk,t =
+
+> Tk
+
+X
+
+> u=t
+
+γu−trk,u , (30) and normalize it across rollouts to obtain the turn-level advantage: 
+
+Aℓk,t = Rℓk,t − mean k′ (Rℓk′,t )std k′ (Rℓk′,t ) + ϵA
+
+. (31) For any model-generated token n in turn t, the final advantage is 
+
+Ak,n = Agk + Aℓk,t . (32) Tool-response tokens are generated by the environ-ment and are excluded from the policy loss. 
+
+C Training Dataset Construction 
+
+We construct the training dataset from executable multi-turn tool-use tasks. Each raw example contains a user question, a list of available tool schemas, the corresponding executable tool imple-mentations, and a reference answer. Since PACT requires process-level guidance rather than only final-answer labels, we first generate expert tool-use trajectories with a stronger teacher model, and then convert these trajectories into segmented priv-ileged traces for masked process supervision. 
+
+Expert trajectory generation. For each raw question, we prompt a teacher model to solve the task under the same tool-call interface used during training and inference. The teacher is in-structed to obtain all information through tool-calls and to output the final answer only inside the <answer></answer> tag. After each generated tool-call, we execute the corresponding local tool implementation and append the tool observation back to the context. This iterative process continues until the teacher emits a final answer or reaches the maximum turn budget. We retain a trajectory only when the final answer, or the last tool observation, verifies against the reference answer. We use the Qwen3-235B teacher generation as the main source of expert traces. We then remove invalid trajectories, including examples with in-valid tool names, malformed parsed turns, tool re-sponses containing role text, or tool responses that incorrectly contain tool-call tags. 
+
+Hybrid segmentation of expert traces. The ex-pert trajectories are not used as full supervised tar-gets. Directly imitating the entire trace would over-constrain the policy and expose the full teacher reasoning, while using the expert trace during roll-out would change the prompt-only test condition. We therefore convert each expert trajectory into a segmented privileged trace. For each assistant turn, we extract the reasoning inside the <think> block, normalize role noise and whitespace, split the rea-soning into paragraphs, and associate the turn with its structured tool-call and tool observation. We apply a hybrid segmentation pipeline. Structurally simple turns are segmented with deterministic rules, while harder turns are sent to an LLM annotator. If both routes fail, we use a conservative fallback segmenter. Each segmented turn is annotated with semantic chunks such as task_restate , tool_scan ,12 tool_selection , required_arg_grounding ,
+
+failure_reflection , and decision_summary .The segmenter also detects explicit tool-call leakage, including literal JSON previews or phrases that introduce the exact action. Such spans are marked as explicit_call_preview and are excluded from safe prefix hints. 
+
+Prefix-reasoning construction. For each seg-mented turn, we build five cumulative prefix levels, denoted L0 to L4 . L0 reveals no reasoning, while 
+
+L4 reveals the strongest safe prefix before explicit tool-call leakage. During training, the active pre-fix level is annealed from stronger to weaker hints, following the order 
+
+L4 → L3 → L2 → L1 → L0 .
+
+Thus, early updates receive more expert reasoning context, while later updates are progressively closer to the prompt-only setting. Tool responses are kept as context, but they are never supervised as model-generated targets. 
+
+Teacher prompt template. The prompt tem-plate used for expert trajectory generation is shown below. The available tool schemas are ren-dered inside the <tools></tools> block, and the teacher must serialize each function call inside 
+
+<tool_call></tool_call> (Qu et al., 2026). 
+
+Prompt Template for Expert Trajectory Generation 
+
+System Prompt: 
+
+# Tools You may call one or more functions to assist with the user query. You are provided with function signatures within 
+
+<tools></tools> XML tags: 
+
+<tools> 
+
+{Tool List} 
+
+</tools> 
+
+For each function call, return a json object with function name and arguments within 
+
+<tool_call></tool_call> XML tags: 
+
+<tool_call> 
+
+{"name" : <function-name> , "arguments" :
+
+<args-json-object> }
+
+</tool_call> 
+
+User Prompt: 
+
+Please call given tools to answer the question. Please note that all your information must be obtained by calling tools and not by answering the question directly. If the call fails, you need to try to correct it and continue until you arrive at an answer. Only output the final answer inside the 
+
+<answer></answer> tag, without any explanations or extra information. Question: {question} 
+
+Output: 
+
+LLM segmentation prompt. For difficult rea-soning turns, we use an LLM annotator 1 to pro-duce semantic segments for prefix-hint training. The annotator is not asked to answer the question; it only segments an existing teacher turn. 
+
+Prompt Template for Trace Segmentation 
+
+You are a data annotation engine for segmenting tool-use reasoning turns into semantic chunks for autoregressive prefix-hint training. Your job is NOT to answer the user question. Your job is to analyze one assistant turn and split its reasoning into contiguous semantic chunks that can be used as left-to-right prefix hints. 
+
+Important training setting: 
+
+- The downstream model is autoregressive. - Only a LEFT PREFIX of the reasoning can be exposed as a hint. - Therefore, segmentation must support prefix-level reveal. - Chunks must preserve the original order. - Chunks must be contiguous and non-overlapping. 
+
+Main goal: 
+
+Given the current turn’s reasoning text, identify semantic stages such as task understanding, tool scanning or comparison, tool selection, required argument grounding, optional argument analysis, reflection after tool failure, fallback planning, final decision summary before action, and explicit tool-call preview. 
+
+Critical rule about leakage: 
+
+If the reasoning contains an explicit preview of the exact tool call, JSON, function name with all arguments, or a phrase that clearly introduces the literal action, mark that span as explicit_call_preview .This span should normally NOT be included in recommended prefix hint levels. Return VALID JSON only. Do not include markdown. Do not paraphrase the original reasoning text. Do not invent missing paragraphs. Use paragraph ids to define chunks. If an intra-paragraph split is necessary, use 
+
+split_paragraph_id and an exact 
+
+cut_before_text anchor. Produce prefix levels L0 ,
+
+L1 , L2 , L3 , and L4 , where L0 reveals no hint and L4 is the strongest safe prefix before leakage. 
+
+Allowed chunk types: 
+
+task_restate , tool_scan , tool_selection ,
+
+required_arg_grounding ,
+
+optional_arg_analysis ,
+
+irrelevant_tool_rejection ,
+
+failure_reflection , fallback_plan ,
+
+decision_summary , explicit_call_preview ,
+
+final_answer_grounding , other .
+
+Allowed turn patterns: 
+
+initial_attempt , compare_then_call ,
+
+retry_after_failed_call ,
+
+post_observation_followup , final_answer_turn ,
+
+other .
+
+Return JSON following this schema: 
+
+{ "turn_pattern": "...", "cleaning_actions": [{"type": "...", "detail": "..."}], "chunks": [ { "chunk_id": "C1", 
+
+> 1
+
+We use ChatGPT-5.4 here. 
+
+13 "chunk_type": "...", "paragraph_ids": [0, 1], "split_paragraph_id": null, "cut_before_text": null, "summary": "...", "keep_for_prefix": true, "hint_strength": "weak|medium|strong" } ], "dangerous_spans": [ { "type": "explicit_call_preview", "paragraph_id": 4, "cut_before_text": "So, the tool call would be:" } ], "recommended_prefix_levels": [ {"level": "L0", "visible_chunks": []}, {"level": "L1", "visible_chunks": ["C1"]}, {"level": "L2", "visible_chunks": ["C1", "C2"]}, {"level": "L3", "visible_chunks": ["C1", "C2", "C3"]}, {"level": "L4", "visible_chunks": ["C1", "C2", "C3", "C4"]} ], "quality_flags": ["clean_structure"] } 
+
+D More Choices of SFT Schedule 
+
+Table 6 provides additional comparisons of SFT schedule designs. Using either segment-level rea-soning supervision or tool-call scale annealing alone gives lower overall performance than the full component-aware schedule. This shows that rea-soning prefixes and tool-call spans provide comple-mentary process signals. We also compare with Full Token A, which con-catenates reasoning and tool-call tokens and an-neals supervision by token count. Although this strategy performs better than using reasoning super-vision alone, it is still worse than our component-aware design. This suggests that treating the whole trace as a whole token sequence is suboptimal: rea-soning benefits from semantic segment-level an-nealing, while tool-calls should remain complete and be annealed by loss scale. Overall, these re-sults further support using different schedules for different trace components.                    
+
+> Reasoning Tool-Call Solve-R Solve-P Solve-F1
+> Seg A None 35.01 25.51 27.69 None Scale A 37.54 32.95 34.16 Full Token A 38.76 29.65 31.91
+> Seg A Scale A 40.45 32.94 33.21
+
+Table 6: Additional comparison of SFT schedule de-signs using Qwen3-4B on FTRL. “Seg A” denotes an-nealing over semantic reasoning segments, “Scale A” denotes annealing the tool-call loss scale, and “Full Token A” denotes token-count annealing over concate-nated reasoning and tool-call tokens. 
+
+E Training Algorithm 
+
+Algorithm 1 summarizes the training procedure of PACT. At each step, the policy first samples roll-outs only from the original prompt, without using expert traces. The sampled rollouts are then scored with the training reward, and token-level advan-tages are computed using hard credit assignment. For each prompt, PACT samples a prompt-level gate to decide whether to apply the trace-based up-date or the prompt-only anchoring update. If the prompt is routed to trace co-training, expert traces are used only during optimization: they provide privileged context for the trace-conditioned RL loss and supervised targets for component-aware SFT. If the prompt is routed to prompt-only anchoring, the update uses standard prompt-only RL with no trace-conditioned likelihood or SFT loss. This pro-cedure keeps rollout generation aligned with infer-ence while allowing expert traces to guide training. 
+
+Algorithm 1 PACT Training  
+
+> 1:
+
+for training step s = 1 , . . . , T train do  
+
+> 2:
+
+Sample a batch of prompts {xi} with ex-pert traces {h∗ 
+
+> i
+
+}. 
+
+> 3:
+
+Generate K prompt-only rollouts τi,k ∼
+
+πold (· | xi) for each prompt xi. 
+
+> 4:
+
+Compute rewards and token-level advan-tages Ai,k,n . 
+
+> 5:
+
+for each prompt xi do  
+
+> 6:
+
+Sample a prompt-level gate zi ∼
+
+Bernoulli( q). 
+
+> 7:
+
+if zi = 1 then  
+
+> 8:
+
+Compute prompt-only RL loss 
+
+Lx
+
+> RL
+
+(i). 
+
+> 9:
+
+Set Li = Lx
+
+> RL
+
+(i). 
+
+> 10:
+
+else  
+
+> 11:
+
+Construct privileged trace context 
+
+chi = [ xi; h∗ 
+
+> i
+
+]. 
+
+> 12:
+
+Compute trace-conditioned RL loss 
+
+Lh
+
+> RL
+
+(i) using chi . 
+
+> 13:
+
+Construct component-aware SFT mask mi,n (s). 
+
+> 14:
+
+Compute component-aware SFT loss LSFT (i; s). 
+
+> 15:
+
+Set Li = Lh
+
+> RL
+
+(i) + βsft LSFT (i; s). 
+
+> 16:
+
+end if  
+
+> 17:
+
+end for  
+
+> 18:
+
+Update policy parameters with 
+
+∇θ 1
+
+> |B|
+
+P 
+
+> i
+
+Li. 
+
+> 19:
+
+Set πold ← πθ periodically.  
+
+> 20:
+
+end for 
+
+F Case Study 
+
+We provide a case study to compare the multi-turn tool-use behavior of the vanilla model, MatchTIR, 14 and PACT. For readability, we truncate the reason-ing text but keep the full tool-calls, tool responses, and final answers. Incorrect or less accurate parts are highlighted in red. 
+
+Model Solve-P Solve-R Solve-F1 
+
+Vanilla Qwen3-4B 0.29 0.33 0.31 MatchTIR 1.00 0.67 0.80 PACT 1.00 1.00 1.00 
+
+Table 7: Case study comparison on one same prompt. 
+
+Case Study Prompt 
+
+Question. 
+
+What is the quotient of the area of the reserve located near the tribe whose ceremonial dance has been declared an intangible cultural heritage in hectares, and the birth year of the scientist who discovered oxygen? 
+
+Reference Answer (not provide). 
+
+The correct reserve is Serengeti National Park, whose area is 1,500,000 hectares. The scientist who discovered oxygen is Joseph Priestley, whose birth year is 1733. Therefore, the quotient is: 
+
+1,500 ,000 1733 ≈ 865 .55 .
+
+Answer: 865 .55 
+
+Vanilla Qwen3-4B 
+
+Turn 1: Identify the tribe Assistant Reasoning. 
+
+Okay , let 's tackle this question step by step . The user is asking for the quotient of two values : the area of a reserve near atribe whose ceremonial dance is an intangible cultural heritage , in hectares , divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " cultural_heritage_locator ", " arguments ": {" heritage_type ": " dance ", " include_unesco ": true }} 
+
+Tool Response. 
+
+The Maasai tribe is known for their traditional dance , which is asignificant cultural heritage . 
+
+Turn 2: Search for a nearby reserve Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of a reserve near 
+
+the Maasai tribe 's location divided by the birth year of the oxygen discoverer . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " nearby_reserve_locator ", "arguments ": {" cultural_location ": " Maasai ", " region ": " Tanzania "}} 
+
+Tool Response. 
+
+No known reserves found near the specified location. 
+
+Turn 3: Retry with Kenya Assistant Reasoning. 
+
+Okay , the user is asking for the quotient of the area of areserve near the Maasai tribe 'slocation and the birth year of the oxygen discoverer . But when I tried to find reserves near the Maasai in Tanzania , there were none . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " nearby_reserve_locator ", "arguments ": {" cultural_location ": " Maasai ", " region ": " Kenya ", " reserve_type ": " cultural "}} 
+
+Tool Response. 
+
+No known reserves found near the specified location. 
+
+Turn 4: Retry with Maasai Mara Assistant Reasoning. 
+
+Okay , the user is asking for the quotient of the area of areserve near the Maasai tribe 'slocation and the birth year of the oxygen discoverer . But both attempts to find reserves near the Maasai in Tanzania and Kenya didn 't return any results . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " nearby_reserve_locator ", "arguments ": {" cultural_location ": " Maasai Mara ", " region ": "Kenya ", " reserve_type ": "cultural "}} 
+
+Tool Response. 
+
+No known reserves found near the specified location. 
+
+Turn 5: Look up birth year Assistant Reasoning. 
+
+15 Okay , the user is asking for the quotient of the area of areserve near the Maasai tribe 'slocation and the birth year of the oxygen discoverer . But all attempts to find reserves near the Maasai have failed . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " historical_fact_lookup ", "arguments ": {" person_name ": "Joseph Priestley ", " fact_type ": " birth_year "}} 
+
+Tool Response. 
+
+{" result ": "1733"} 
+
+Turn 6: Use an incorrect reserve Assistant Reasoning. 
+
+Okay , let 's see . The user is asking for the quotient of the area of a reserve near the Maasai tribe '
+
+s location divided by the birth year of the oxygen discoverer . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " area_calculator ", "arguments ": {" location_name ": "Maasai Mara National Reserve", " unit ": " hectares "}} 
+
+Tool Response. 
+
+{" location_name ": "Maasai Mara National Reserve", " area ": 100000, " unit ": " hectares ", "include_water_bodies ": true , "precision_level ": 3, "data_source ": " satellite "} 
+
+Turn 7: Final calculation Assistant Reasoning. 
+
+Okay , let 's see . The user wants the quotient of the area of areserve near the Maasai tribe 'slocation divided by the birth year of the oxygen discoverer . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " advanced_calculator ", "arguments ": {" operation ": "division ", " operand1 ": 100000, "operand2 ": 1733}} 
+
+Tool Response. 
+
+{" result ": "57.70"} 
+
+Assistant Reasoning. 
+
+Okay , let 's wrap this up . The user asked for the quotient of the area of a reserve near the Maasai tribe 's location ( in hectares ) divided by the birth year of the oxygen discoverer . ... 
+
+Assistant Final Answer. 
+
+The quotient of the area of the Maasai Mara National Reserve (100,000 hectares) divided by the birth year of Joseph Priestley (1733) is **57.70**. ** Answer :** 57.70 
+
+Error Summary. 
+
+The vanilla model is derailed by failed reserve-search attempts and then switches to the wrong reserve, Maasai Mara National Reserve. As a result, it uses the wrong area, 100,000 hectares, instead of the correct Serengeti National Park area of 1,500,000 hectares. The birth year and calculator call are correct, but the final quotient is wrong because the reserve and area are incorrect. 
+
+MatchTIR 
+
+Turn 1: Identify the tribe Assistant Reasoning. 
+
+Okay , let 's tackle this question step by step . The user is asking for the quotient of two values : the area of a specific reserve near a tribe with a ceremonial dance declared as intangible cultural heritage , in hectares , divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " cultural_heritage_locator ", " arguments ": {" heritage_type ": " dance ", " include_unesco ": true }} 
+
+Tool Response. 
+
+The Maasai tribe is known for their traditional dance , which is asignificant cultural heritage . 
+
+Turn 2: Locate the reserve Assistant Reasoning. 
+
+16 Okay , so the user wants the quotient of the area of a reserve near the Maasai tribe 's ceremonial dance ( which is intangible cultural heritage ) in hectares , divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " nearby_reserve_locator ", "arguments ": {" cultural_location ": " Maasai tribe ", " radius ": 100 , " region ": " Kenya "}} 
+
+Tool Response. 
+
+Serengeti National Park 
+
+Turn 3: Get reserve area Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of the Serengeti National Park ( near the Maasai tribe ) in hectares divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " area_calculator ", "arguments ": {" location_name ": "Serengeti National Park ", " unit ": " hectares "}} 
+
+Tool Response. 
+
+{" location_name ": " Serengeti National Park ", " area ": 1500000 , " unit ": " hectares ", "include_water_bodies ": true , "precision_level ": 3, "data_source ": " satellite "} 
+
+Turn 4: Get birth year Assistant Reasoning. 
+
+Okay , so the area of Serengeti National Park is 1 ,500 ,000 hectares . Now I need to find the birth year of the scientist who discovered oxygen . From what Iremember , the discovery of oxygen is often attributed to Joseph Priestley , but I should verify this using the historical_fact_lookup tool . ... Missing step: the model does not call element_discovery_info to verify Joseph Priestley is the oxygen discoverer. 
+
+Assistant Tool-Call. 
+
+{" name ": " historical_fact_lookup ", "arguments ": {" person_name ": "Joseph Priestley ", " fact_type ": " birth_year "}} 
+
+Tool Response. 
+
+{" result ": "1733"} 
+
+Turn 5: Final answer Assistant Reasoning. 
+
+Okay , so the area of Serengeti National Park is 1 ,500 ,000 hectares , and the birth year of Joseph Priestley is 1733. The user wants the quotient of these two values . Wait , the quotient is area divided by birth year . So that 's1 ,500 ,000 / 1733. Let me calculate that . ... Missing step: the model does not call advanced_calculator for the final division and instead computes an approximate value manually. 
+
+Assistant Final Answer. 
+
+The quotient is calculated by dividing the area of Serengeti National Park (1 ,500 ,000 hectares ) by the birth year of Joseph Priestley (1733) . $$ \ frac {1 ,500 ,000}{1733} \ approx 865.5 $$ ** Final Answer :** 865.5 
+
+Error Summary. 
+
+Although MatchTIR follows the main correct path, it misses two expected tool-use steps: verifying the oxygen discoverer with element_discovery_info and computing the final quotient with advanced_calculator. Therefore, its answer is only approximate and its tool-use trajectory is incomplete. 
+
+PACT Output 
+
+Turn 1: Identify the tribe Assistant Reasoning. 
+
+Okay , let 's break down the user 'squestion step by step . The user is asking for the quotient of two values : the area of areserve near a tribe with aceremonial dance declared intangible cultural heritage , and the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+17 {" name ": " cultural_heritage_locator ", " arguments ": {" heritage_type ": " dance ", " include_unesco ": true }} 
+
+Tool Response. 
+
+The Maasai tribe is known for their traditional dance , which is asignificant cultural heritage . 
+
+Turn 2: Locate the reserve Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of a reserve near the Maasai tribe 's ceremonial dance ( which is intangible cultural heritage ) in hectares , divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " nearby_reserve_locator ", "arguments ": {" cultural_location ": " Maasai tribe ", " radius ": 100}} 
+
+Tool Response. 
+
+Serengeti National Park 
+
+Turn 3: Get reserve area Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of the Serengeti National Park ( near the Maasai tribe ) in hectares divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " area_calculator ", "arguments ": {" location_name ": "Serengeti National Park ", " unit ": " hectares "}} 
+
+Tool Response. 
+
+{" location_name ": " Serengeti National Park ", " area ": 1500000 , " unit ": " hectares ", "include_water_bodies ": true , "precision_level ": 3, "data_source ": " satellite "} 
+
+Turn 4: Identify oxygen discoverer Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of Serengeti National Park in hectares divided by the birth year of the scientist who discovered oxygen . First , I already have the area of Serengeti National Park as 1 ,500 ,000 hectares . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " element_discovery_info ", "arguments ": {" element_name ": "oxygen ", " include_year ": true }} 
+
+Tool Response. 
+
+{" year ": 1774 , " discoverer ": " Joseph Priestley ", " element_name ": "Oxygen "} 
+
+Turn 5: Get birth year Assistant Reasoning. 
+
+Okay , so the user wants the quotient of the area of Serengeti National Park in hectares divided by the birth year of the scientist who discovered oxygen . First , I already have the area of Serengeti National Park as 1 ,500 ,000 hectares . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " historical_fact_lookup ", "arguments ": {" person_name ": "Joseph Priestley ", " fact_type ": " birth_year "}} 
+
+Tool Response. 
+
+{" result ": "1733"} 
+
+Turn 6: Final calculation Assistant Reasoning. 
+
+Okay , let 's see . The user wants the quotient of the area of Serengeti National Park in hectares divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Tool-Call. 
+
+{" name ": " advanced_calculator ", "arguments ": {" operation ": "division ", " operand1 ": 1500000 , " operand2 ": 1733}} 
+
+Tool Response. 
+
+{" result ": "865.55"} 
+
+Turn 7: Final answer Assistant Reasoning. 
+
+Okay , let me go through the steps again to make sure I didn 't miss anything . The user asked for the quotient of the area of Serengeti National Park in hectares divided by the birth year of the scientist who discovered oxygen . ... 
+
+Assistant Final Answer. 
+
+18 The quotient of the area of Serengeti National Park (1 ,500 ,000 hectares ) divided by the birth year of Joseph Priestley (1733) is **865.55**. $$ \ frac {1 ,\!500 ,\!000}{1733} \ approx 865.55 $$ ** Answer :** $\ boxed {865.55}$ 
+
+19

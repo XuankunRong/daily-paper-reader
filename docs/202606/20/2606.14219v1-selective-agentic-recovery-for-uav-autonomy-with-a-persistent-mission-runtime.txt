@@ -1,0 +1,316 @@
+Title: Selective Agentic Recovery for UAV Autonomy with a Persistent Mission Runtime
+
+URL Source: https://arxiv.org/pdf/2606.14219v1
+
+Published Time: Mon, 15 Jun 2026 00:43:10 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Selective Agentic Recovery for UAV Autonomy with a Persistent Mission Runtime 
+
+Taewoo Park Kyeonghyun Yoo Seunghyun Yoo Hwangnam Kim 
+
+Department of Electrical and Electronic Engineering Korea University 
+
+{taewoopark,seven1705,seunghyunyoo,hnkim }@korea.ac.kr 
+
+Corresponding author: Hwangnam Kim 
+
+Abstract: Agentic AI can support unmanned aerial vehicle (UAV) autonomy by providing high-level recovery reasoning when local waypoint- or setpoint-based execution encounters blocked passages, repeated no-progress behavior, or mission-level ambiguity. On physical UAVs, however, remote reasoning is most useful when it is invoked selectively, since each call introduces latency, resource cost, backend uncertainty, and a need to validate the returned decision. This pa-per presents Persistent Mission Runtime (PMR), a UAV recovery framework that keeps the mission loop and safety-critical execution local while using an exter-nal agentic reasoner only as an on-demand recovery module. The reasoner se-lects from predefined recovery skills, and each returned decision is parsed, ver-ified, safety-filtered, and mapped to local executor actions before it can affect flight. PMR introduces learned Cognitive Value of Invocation (learned-CVI), a compact admission gate that estimates when remote agentic reasoning is likely to improve near-term mission progress enough to justify its operational cost. Across a fixed 400-run Gazebo/PX4 benchmark with eight scenarios, learned-CVI raises hard/ambiguous-regime success from 5.0% under local-only autonomy to 95.0%, outperforms one-shot and periodic reasoning baselines by 20.0 and 32.5 percent-age points, and reduces remote-agent calls by 16.7% and logged tokens by 29.2% relative to a manually tuned rule-based invocation baseline. 
+
+Keywords: robot learning, UAV autonomy, agentic AI 
+
+# 1 Introduction 
+
+In emerging agentic-AI-assisted unmanned aerial vehicle (UAV) autonomy systems, remote agentic reasoners offer a promising way to extend local autonomy with context-aware recovery decisions. While this paradigm is increasingly explored as a high-level reasoning layer for robot autonomy [1, 2, 3, 4, 5], UAVs present a particularly demanding setting; aerial missions inherently combine long horizons, partial perception, limited onboard resources, and recovery states that are difficult to fully enumerate in advance. Fortunately, modern UAV flight stacks already provide robust lay-ered multicopter control and offboard interfaces [6], making waypoint- or setpoint-centric auton-omy practical. These capabilities offer a strong substrate for higher-level recovery when a UAV encounters dead ends, no-progress loops, or mission-level ambiguity. The central challenge lies in selectively admitting remote reasoning while keeping execution locally verified. Selective admission is critical because each remote invocation may add latency, token cost, remote-backend uncertainty, and validation burden. A UAV runtime should therefore invoke remote reason-ing only when the expected recovery value justifies these costs. Once admitted, reasoner outputs must follow a bounded execution path before impacting physical flight. Routing foundation-model reasoner outputs as raw setpoints, velocities, or platform-specific commands severely complicates verification and safety filtering. To address this, the resulting runtime problem is to couple cost-
+
+> arXiv:2606.14219v1 [cs.RO] 12 Jun 2026
+
+aware admission with locally verified execution, positioning remote reasoning as a sparse recovery resource inside a selective mission layer. Prior robot-language and UAV systems have connected language-model reasoning to embodied ac-tion through application programming interfaces (APIs), skills, policy programs, embodied replan-ning, vision-language-action models, and reason-act-observe loops [4, 7, 8, 9, 10, 11, 12, 13, 14]. These systems make the connection between language-model reasoning and robot action increas-ingly practical. However, selective invocation remains a challenging runtime design problem. Cur-rent frameworks often invoke reasoning at static intervals, assume an always-active reasoner, or rely on expert-specified trigger logic. For physical UAVs, a useful admission policy should trigger re-mote recovery only when the expected utility of the decision outweighs the combined penalties of latency, token expenditure, backend uncertainty, and downstream validation. We present Persistent Mission Runtime (PMR), a runtime framework that turns agentic AI into an on-demand mission agent for UAV recovery. PMR consumes runtime observations to update mission memory and compact runtime state, then decides whether to continue local execution or construct a compact recovery prompt for the agentic reasoner. Prompt construction and remote-agent invocation become runtime-managed selective admission decisions. The local flight stack remains responsible for continuous execution, while PMR governs sparse mission-level recovery admission. In our implementation, OpenClaw provides the offboard agentic-AI workspace: recovery queries are exposed as typed tools, and other mission-level tools such as waypoint geocoding, weather/wind checks, global positioning system (GPS) localization, navigation, and sensing/perception interfaces can share the same locally verified PMR boundary. PMR addresses these challenges by providing a verifiable execution path for admitted agent deci-sions. The remote reasoner operates exclusively over a set of predefined recovery skills; its outputs influence the UAV only after passing through sequential stages of parsing, local verification, safety shielding, fallback checks, and executor mapping. This bounded interface constrains open-ended agent reasoning into structured recovery actions, satisfying the rigorous safety and verifiability ex-pectations inherent to UAV deployments. The core decision-making problem in PMR is determining whether a remote reasoning invocation genuinely justifies its operational costs. To address this, we introduce the learned Cognitive Value of Invocation (learned-CVI), a cost-aware and uncertainty-sensitive admission criterion computed over compact runtime features. Learned-CVI evaluates whether remote agentic reasoning is likely to improve mission progress sufficiently to outweigh the combined overhead of latency, token ex-penditures, budget depletion, backend uncertainty, and downstream validation burdens. This paper makes three contributions. • We formulate selective remote reasoning for agentic-AI-assisted UAV autonomy and intro-duce PMR, a persistent mission runtime that decides between continued local autonomy and costly remote recovery reasoning. • We introduce learned-CVI, a lightweight admission score trained from short-horizon recovery-utility labels, and integrate it with fixed runtime guards to suppress nominal over-query while preserving hard-regime recovery. • We evaluate PMR using a fixed-protocol simulation benchmark, comparing it against di-verse baselines including local-only, one-shot, periodic, rule-based, and learned invocation policies. To demonstrate practical viability, we complement this simulation study with a real-world demonstration on a Crazyflie nano-quadcopter. The rest of the paper is organized as follows. Section 2 reviews related work. Section 3 presents PMR and learned-CVI. Section 4 reports simulation, ablation, and real-platform results. Section 5 discusses scope and future extensions, and Section 6 concludes. 22 Related Work 
+
+PMR builds on three lines of work: agentic robot-language systems, bounded layered autonomy, and selective reasoning under costly inference. Its focus is the runtime admission challenge for physical UAVs: admitting a remote agentic reasoner while maintaining bounded output authority. 
+
+Agentic Robot-Language Systems. Agentic AI systems combine reasoning, memory, tool use, perception, and environment interaction [1, 2, 3, 5]. Robot-language/UAV systems connect these models to missions, waypoints, tools, grounded skills, policy programs, multimodal actions, and reason-act-observe loops [4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]. PMR treats the reasoner as an on-demand recovery module admitted from mission state, expected recovery value, and invocation cost. 
+
+Layered Autonomy with Local Verification. Modern UAV stacks separate high-level mission ex-ecution from low-level flight control. PMR follows this layered design by adding a sparse recovery-admission layer above the stabilizer, planner, and flight controller. Runtime safety filters also sepa-rate proposed actions from execution authority [17, 18, 19]. PMR adopts this separation for agentic recovery: remote outputs are bounded recovery decisions routed through local parsing, verification, shielding, fallback handling, and execution. 
+
+Selective Reasoning. Tool-use and agent-loop methods show how models can call APIs while interleaving reasoning with observations and actions [14, 20]. PMR brings this tool-use view into a persistent UAV mission runtime: the control loop continues locally, while learned-CVI admits bounded recovery queries only when runtime evidence justifies invocation. Together, these lines of work motivate a runtime paradigm for agentic UAV autonomy where remote reasoning is a selective recovery resource admitted through cost-sensitive decisions under local ver-ification constraints. 
+
+# 3 Method 
+
+PMR treats agentic AI as an active recovery decision maker, not a passive predictor. For physi-cal UAV use, this requires three runtime roles: admission, limited authority, and local execution. A PPO-based local execution substrate keeps the mission moving by default; learned-CVI decides when a degraded mission state justifies a remote recovery query; the recovery-skill contract limits what the agent may return; and local verification maps accepted decisions to the vehicle. Remote reasoning is most useful in blocked or ambiguous states, where latency, budget use, and validation burden also matter most. This separation turns agentic UAV recovery from direct control into run-time resource allocation: PMR decides when remote reasoning is valuable and admits only a locally checkable recovery decision. This section formalizes the mission state, admission rule, recovery-skill interface, and pre-deployment gate training procedure. 
+
+3.1 Persistent Mission Runtime 
+
+Figure 1 shows the PMR loop. PMR updates mission memory from platform observations and uses local execution by default. When the state indicates progress loss, ambiguity, or local recovery difficulty, PMR constructs a compact prompt for the remote/offboard recovery reasoner. In our implementation, OpenClaw provides this offboard agentic-AI workspace and tool-calling boundary, while PMR keeps the mission loop, verification, and execution local. Recovery selection is the tool used in this paper, but the same boundary can also host typed mission tools such as geocoding a natural language destination into a waypoint, checking weather context, reading GPS or tracking state, and summarizing sensing/perception cues. We write the PMR runtime state and update rule as 
+
+xt = ( mt, v t, b t, η t), xt+1 = FPMR (xt, o t, r t), (1) 3Figure 1: Layered PMR runtime. OpenClaw realizes the external agentic-AI workspace, while PMR owns admission, recovery-skill verification, and local execution. where mt is mission memory, vt is verifier state, bt is the remaining query budget, ηt collects executor/logging state, ot is the platform observation, and rt is the local or verified recovery decision applied at the update. This persistent state makes each remote call an online mission decision: observations update evidence for local continuation or recovery admission. 
+
+3.2 Selective Reasoning Admission 
+
+PMR treats remote reasoning as an online admission problem above a competent local stack. Run-time observations update compact mission state, and admitted recovery intent becomes locally veri-fied executor action. Let O denote the platform observation space, S the compact PMR runtime-state space, Aloc the local executor action space, and Drec the predefined recovery-skill space. PMR receives ot ∈ O ,constructs st = ϕ(xt, o t) ∈ S , and applies an admission policy πadm : S → { 0, 1}. This binary decision selects local continuation or verified recovery: 
+
+πadm : st 7 → qt ∈ { 0, 1}, ut =
+
+πloc (st), qt = 0 ,
+
+E(ρt), qt = 1 , (2) where πloc is the fixed local policy, ρt is a verified recovery decision, and E maps that decision to the local executor. Our implementation uses a Proximal Policy Optimization (PPO)-trained flying-phase policy [21] with a 10-dimensional normalized observation and Discrete(32) tool-repeat macro actions. PPO gives a repeatable local policy; PMR can use other local stacks. All evaluation policies share this lo-cal policy, verifier, shield, and executor; only the admission rule changes. This keeps the comparison focused on which runtime states justify a remote recovery query. 
+
+3.3 Recovery-Skill Execution Boundary 
+
+Raw agent outputs create a verification problem because their command space can be open-ended. PMR constrains the reasoner to a closed recovery-skill vocabulary, turning agent output into a typed, locally checkable decision instead of a direct flight command. The PMR contract limits returned JSON to recovery-skill decisions. 4Let Drec denote the predefined recovery-skill set and let yt be the returned JSON object. PMR admits an agent output only through 
+
+ρt = Ssafe (Vloc (Pjson (yt))) ∈ D rec ∪ {⊥} , (3) where parsing, local verification, and shielding produce either a predefined recovery skill or a local fallback ⊥.The schema encodes recovery skills and a flight-stack command boundary; Appendix A.1 reports the checked schema. PMR fills the prompt with compact mission state, perception summaries, budget/query state, and recovery options. Returned JSON is parsed, verified, shielded, and mapped to the executor; parser, safety, timeout, and infrastructure events use local fallback behavior. The remote agent contributes recovery choice, while PMR keeps local control over timing, verification, and platform execution. 
+
+3.4 CVI Admission Score 
+
+Telemetry thresholds alone provide an incomplete signal for when a reasoning call is valuable: a blocked heading matters most after local repair has stopped making progress. Instead of predicting task success directly, learned-CVI estimates whether remote reasoning should improve short-horizon recovery utility relative to continuing locally. The useful signal is not obstacle proximity in isola-tion, but proximity conditioned on stalled local progress, remaining query budget, recent recovery attempts, and verifier/executor state. Learned-CVI implements the utility comparison in Section 3.5 as an online admission gate trained before deployment and held fixed during deployment. The gate computes 
+
+zt = w⊤norm( ϕ(st)) + b, ct = CVI( st) = σ(zt), (4) where ϕ(st) is a fixed 18-dimensional (18D) runtime feature vector from telemetry, executor feedback, verifier state, local-planner state, budget/query state, and compact perception sum-maries. The groups have clear runtime meaning: progress asks whether local execution is working; risk/ambiguity asks whether local repair is reliable; budget/query asks whether a call is affordable; and verifier/executor state records recent recovery outcomes. PMR learns from these semantic sum-maries instead of raw sensor arrays, making the gate less tied to a specific sensing payload and easier to reuse across simulator range cues and small-UAV bottom range/optical-flow cues. Appendix A.2 gives the full feature contract. PMR combines this learned score with fixed runtime guards before issuing a reasoner request. Let 
+
+gt ∈ { 0, 1} denote fixed runtime guards, including available query budget, cooldown, and terminal-radius suppression, and let ht ∈ { 0, 1} denote the pre-specified hard-stuck guard. The deployed query decision is 
+
+qt = I[gt = 1 ∧ (ct ≥ τlite ∨ ht = 1)] . (5) In the final evaluation, learned-CVI uses τlite = 0 .997 , fixed budget/cooldown/terminal guards, and a pre-specified hard-stuck guard triggered only by no-progress and blocked-motion. The threshold reflects the calibrated score scale of this conservative linear gate. 
+
+3.5 Pre-Deployment Gate Training 
+
+The learned-CVI gate is trained before deployment from PMR logs and held fixed during deploy-ment. For each logged state, PMR uses a K = 5 short-horizon label: it compares outcomes over the next five runtime steps, and invocation is useful when it yields more progress than local continuation after token, latency, safety-shield, and planner-difficulty costs. Formally, the short-horizon recovery utility is 
+
+U inv  
+
+> t
+
+= ∆ pinv  
+
+> t
+
+− λtok Ctok  
+
+> t
+
+− λlat Clat 
+
+> t
+
+− λsafe I[shield t] − λfail I[fail t],ℓt = IU inv  
+
+> t
+
+− U loc  
+
+> t
+
+> 0 .
+
+(6) Here U loc  
+
+> t
+
+is local-continuation utility, ∆pinv  
+
+> t
+
+is short-horizon progress after invocation, and ℓt is the recovery-utility label. The CVI gate estimates the probability that invocation utility exceeds local 5Table 1: Fixed-protocol 400-run simulation evaluation.                                                                      
+
+> Regime Method Runs Clean Success@1m Rate Calls Tokens Backend fail Nominal local-only 40 35 0.875 0.000 0.0 0one-shot LLM 40 39 0.975 1.000 571.6 1periodic LLM 40 34 0.850 3.000 1675.8 6rule-based LLM 40 37 0.925 1.200 687.5 3
+> learned-CVI (ours) 40 40 1.000 0.150 60.3 0
+> Hard/ambiguous local-only 40 20.050 0.000 0.0 0one-shot LLM 40 30 0.750 1.000 443.4 2periodic LLM 40 25 0.625 3.000 1194.8 9rule-based LLM 40 39 0.975 1.200 683.0 1learned-CVI (ours) 40 38 0.950 1.000 483.4 1
+
+continuation. The short-horizon label is intentional: the gate estimates near-term recovery value, not long-horizon mission success, which would mix invocation quality with local-policy quality. The gate is re-evaluated throughout the mission loop. The training split contains 651 labeled states after filtering; 404 ambiguous rows are kept outside binary supervision. A separate 533-row validation split selects the threshold before the fixed-protocol 400-run simulation evaluation. Because the deployed query rule combines a learned score with fixed guards, the results report guard-only, learned-CVI score-only, and matched-budget rule-based ablations. Additional appendix analyses characterize the design without changing the deployed gate or evaluation protocol. Thus learned-CVI supplies the admission score, while the runtime contract keeps recovery execution structured, locally checkable, and comparable. 
+
+# 4 Experimental Results 
+
+4.1 Evaluation Protocol 
+
+We evaluate PMR with a fixed-protocol simulation benchmark that isolates the mission-level query rule while holding the runtime contract fixed. Here, large language model (LLM) denotes the shared remote reasoner. The simulation uses a software-in-the-loop flight-stack backend, MAVSDK exe-cution, compact telemetry/range summaries, and an OpenClaw HTTP JSON gateway for limited-authority agent calls. We evaluate eight scenarios with ten seeds each, grouped before reporting into nominal and hard/ambiguous regimes. The policies are local-only, one-shot LLM, periodic LLM, rule-based LLM, and learned-CVI. All methods share the runtime, reasoner contract, verifier, safety shield, timeout, and logging schema; only the admission policy changes. Clean Success@1m requires final distance at most 1m with no collision, z violation, or backend failure. Appendices A.3– A.7 provide reproducibility, protocol, scenario, local-policy, and rule-trigger details. 
+
+4.2 Benchmark Performance 
+
+Table 1 reports the 400-run simulation evaluation. In the hard/ambiguous regime, local-only reaches 2/40 Clean Success@1m, one-shot LLM 30/40, periodic LLM 25/40, rule-based LLM 39/40, and learned-CVI 38/40. The rule-based baseline represents expert recovery-trigger knowledge. Learned-CVI nearly matches it with a learned value signal, showing that much of the trigger logic can be recovered from compact runtime evidence. Table 2 gives the per-scenario learned-CVI breakdown. The two remaining hard/ambiguous cases occur in Hard Re-entry B and Dead-end Bypass, matching the under-query and backend-timeout diagnostics in Section 4.4. 
+
+4.3 Invocation Efficiency 
+
+Figure 2 visualizes both regimes. In nominal settings, learned-CVI reaches 40/40 Clean Suc-cess@1m with 0.150 calls, using 87.5% fewer calls and 91.2% fewer tokens than rule-based. In 6Table 2: Per-scenario learned-CVI results.                                                 
+
+> Scenario Regime Runs Clean Success@1m Final dist. (m) Calls Tokens Empty Nominal 10 10 0.585 0.0 0.0 Static Obstacles 10 10 0.609 0.0 0.0 Mild Random Obstacles 10 10 0.607 0.6 241.1 Recoverable Dead End 10 10 0.539 0.0 0.0 Multi-Obstacle Hard/ambiguous 10 10 0.629 1.0 484.9 Hard Re-entry A 10 10 0.601 1.0 601.8 Hard Re-entry B 10 91.832 0.9 243.0 Dead-end Bypass 10 90.731 1.1 604.1
+
+Figure 2: Success/call trade-off by regime: nominal (left) and hard/ambiguous (right). Table 3: Hard/ambiguous-regime sparse-invocation ablations.                      
+
+> Ablation policy Runs Clean Success@1m Rate Calls hard-stuck guard only 40 16 0.400 0.400 learned-CVI score only, no guard 40 25 0.625 0.975 matched-budget rule-based LLM 40 37 0.925 ≈1.0
+> learned-CVI 40 38 0.950 1.000
+
+Table 4: CVI model-class diagnostic.                      
+
+> Split Model ROC-AUC PR-AUC Validation learned-CVI 0.9996 0.9996 Validation small MLP [32,16] 1.0000 1.0000 Validation boosted decision stumps 1.0000 1.0000 Held-out diagnostic learned-CVI 0.9635 0.9986 Held-out diagnostic small MLP [32,16] 0.6968 0.9861 Held-out diagnostic boosted decision stumps 0.2976 0.9610
+
+hard/ambiguous settings, it uses 16.7% fewer calls and 29.2% fewer tokens while staying within one Clean Success@1m run. PMR suppresses calls when local execution is enough and concen-trates queries when recovery is needed. Appendix A.8 reports latency/backend diagnostics. 
+
+4.4 CVI Ablation Diagnostics 
+
+Table 3 isolates the learned score from runtime guards. Guard-only and learned-CVI score-only variants remain below the full gate, while their combination gives the strongest learned sparse-query variant; Appendix A.9 gives counting notes. The deployed behavior comes from the learned score interacting with the runtime guard structure. Table 4 compares learned-CVI with a multilayer perceptron (MLP) and gradient-boosted stumps us-ing the same 18D features. Receiver operating characteristic area under the curve (ROC-AUC) and precision-recall area under the curve (PR-AUC) are threshold-free ranking metrics. The comparison tests whether onboard-feasible lightweight models can capture the admission signal. learned-CVI gives the best deployment trade-off: stronger held-out ranking, transparent weights, forward-only evaluation, and stable integration with fixed guards. Gradient-sensitivity triggers are possible alter-7Table 5: learned-CVI threshold exposure; rates are score-crossing episodes, not Clean Success@1m.                     
+
+> Threshold Nominal query eps. Hard query eps. Hard query exposure Mean trigger steps/eps. 0.990 0/30 23/30 0.767 6.500 0.995 0/30 23/30 0.767 5.233 0.997 0/30 18/30 0.600 0.600 0.998 0/30 0/30 0.000 0.000
+
+Table 6: Crazyflie blocked-navigation real-platform result.               
+
+> Method Clean Success@1m Final dist. (m) Calls Tokens Safety events local-only 0/10 1.1577 0.0 0.0 0learned-CVI 10/10 0.1922 1.0 378.1 0
+
+natives, but add online sensitivity computation and can amplify feature noise. Appendices A.10 and A.11 report data-size and utility-weight diagnostics. Table 5 reports query-exposure rates, not Clean Success@1m. At τlite = 0 .997 , nominal expo-sure is 0/30 and hard/ambiguous exposure is 18/30, showing regime-selective invocation; the 0.998 row marks the conservative operating edge. The two remaining learned-CVI hard/ambiguous non-successes are one near-threshold under-query and one remote-backend timeout after valid query admission. Thus, they do not indicate an unsafe recovery decision. 
+
+4.5 Real-Platform Demonstration 
+
+We demonstrate PMR on a Crazyflie nano-quadcopter in blocked navigation with the same OpenClaw-backed reasoner gateway. Table 6 reports ten trials per policy; Appendix A.12 describes the setup. The local-only policy obtains 0/10 Clean Success@1m at 1.1577m mean final distance. PMR with learned-CVI-guided admission reaches 10/10 Clean Success@1m with one recovery-skill query per trial, 0.1922m final distance, 378.1 tokens, and zero safety events. Crazyflie’s bottom range and optical-flow cues map to semantic summaries rather than raw arrays, supporting PMR as an agent-for-UAV runtime across sensing payloads. 
+
+# 5 Limitations 
+
+PMR is validated for single-UAV navigation recovery using semantic summaries: progress, blocked motion, risk, query state, and verifier feedback. This tests remote recovery admission while execu-tion stays local. Future work should validate the same admission, authority, and execution separation under outdoor perception, wind, heterogeneous airframes/sensors, richer skills, and multi-UAV oper-ation. The two non-success cases motivate adaptive thresholds, fallback escalation, communication-aware scheduling, and backend redundancy. Crazyflie shows transfer through semantic summaries; larger UAVs and multi-UAV studies are next. 
+
+# 6 Conclusion 
+
+PMR treats remote reasoning as a limited-authority recovery module for agentic-AI-assisted UAV autonomy. Its learned-CVI gate triggers costly calls, and accepted outputs stay locally verified. In 400-run simulation, PMR raises hard/ambiguous Clean Success@1m from 5.0% to 95.0%, out-performs one-shot/periodic reasoning, nearly matches rule-based with fewer calls/tokens, and shows Crazyflie feasibility. With OpenClaw mission tools, PMR becomes a practical agent-for-UAV frame-work for safe, efficient, extensible autonomy. 8References 
+
+[1] R. Sapkota, K. I. Roumeliotis, and M. Karkee. UAVs meet agentic AI: A multidomain survey of autonomous aerial intelligence and agentic UAVs, 2025. URL https://arxiv.org/abs/ 2506.08045 .[2] L. Wang, C. Ma, X. Feng, Z. Zhang, et al. A survey on large language model based autonomous agents. Frontiers of Computer Science , 18(6):186345, 2024. doi:10.1007/ s11704-024-40231-1. URL https://doi.org/10.1007/s11704-024-40231-1 .[3] D. Driess, F. Xia, M. S. M. Sajjadi, C. Lynch, A. Chowdhery, et al. PaLM-E: An embod-ied multimodal language model. In Proceedings of the 40th International Conference on Ma-chine Learning , volume 202 of Proceedings of Machine Learning Research , pages 8469–8488. PMLR, 2023. URL https://proceedings.mlr.press/v202/driess23a.html .[4] B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, et al. Rt-2: Vision-language-action mod-els transfer web knowledge to robotic control. In J. Tan, M. Toussaint, and K. Darvish, editors, Proceedings of The 7th Conference on Robot Learning , volume 229 of Proceed-ings of Machine Learning Research , pages 2165–2183. PMLR, 06–09 Nov 2023. URL 
+
+https://proceedings.mlr.press/v229/zitkovich23a.html .[5] A. Koubaa and K. Gabr. Agentic UAVs: LLM-driven autonomy with integrated tool-calling and cognitive reasoning. In The International Conference on Smart Systems and Emerg-ing Technologies , 2025. doi:10.48550/arXiv.2509.13352. URL https://arxiv.org/abs/ 2509.13352 . SmartTech 2025; arXiv:2509.13352. [6] PX4 Development Team. PX4 offboard mode. https://docs.px4.io/main/en/flight_ modes/offboard , 2026. Accessed 2026-05-20. [7] S. Vemprala, R. Bonatti, A. Bucker, and A. Kapoor. ChatGPT for robotics: Design princi-ples and model abilities. IEEE Access , 12:55682–55696, 2024. doi:10.1109/ACCESS.2024. 3387941. URL https://doi.org/10.1109/ACCESS.2024.3387941 .[8] A. Jiao, T. P. Patel, S. Khurana, A.-M. Korol, L. Brunke, V. K. Adajania, U. Culha, S. Zhou, and A. P. Schoellig. Swarm-GPT: Combining large language models with safe motion planning for robot choreography design. In Workshop on Robot Learning: Pretraining, Fine-Tuning, and Generalization with Large Scale Models at NeurIPS , 2023. URL https://neurips.cc/ virtual/2023/77281 . Poster. [9] G. Aikins, M. P. Dao, K. J. Moukpe, T. C. Eskridge, and K.-D. Nguyen. LEVIOSA: Natu-ral language-based uncrewed aerial vehicle trajectory generation. Electronics , 13(22):4508, 2024. doi:10.3390/electronics13224508. URL https://www.mdpi.com/2079-9292/13/ 22/4508 .[10] B. Ichter, A. Brohan, Y. Chebotar, C. Finn, K. Hausman, A. Herzog, D. Ho, J. Ibarz, A. Ir-pan, E. Jang, et al. Do as i can, not as i say: Grounding language in robotic affordances. In 
+
+Proceedings of The 6th Conference on Robot Learning , volume 205 of Proceedings of Ma-chine Learning Research , pages 287–318. PMLR, 2023. URL https://proceedings.mlr. press/v205/ichter23a.html .[11] W. Huang, F. Xia, T. Xiao, H. Chan, J. Liang, P. Florence, A. Zeng, J. Tompson, I. Mor-datch, Y. Chebotar, et al. Inner monologue: Embodied reasoning through planning with language models. In Proceedings of The 6th Conference on Robot Learning , volume 205 of Proceedings of Machine Learning Research , pages 1769–1782. PMLR, 2023. URL 
+
+https://proceedings.mlr.press/v205/huang23c.html .[12] D. Shah, B. Osi´ nski, B. Ichter, and S. Levine. LM-nav: Robotic navigation with large pre-trained models of language, vision, and action. In Proceedings of The 6th Conference on Robot Learning , volume 205 of Proceedings of Machine Learning Research , pages 492–504. PMLR, 2023. URL https://proceedings.mlr.press/v205/shah23b.html .9[13] J. Liang, W. Huang, F. Xia, P. Xu, K. Hausman, B. Ichter, P. Florence, and A. Zeng. Code as policies: Language model programs for embodied control. In IEEE International Conference on Robotics and Automation , 2023. doi:10.1109/ICRA48891.2023.10160591. URL https: //arxiv.org/abs/2209.07753 .[14] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Represen-tations , 2023. URL https://openreview.net/forum?id=WE_vluYUL-X .[15] S. Lee, H. Joo, K. Kim, and H. Kim. Rolling-horizon genetic algorithm for adaptive path planning in hazardous environments. Computers and Electrical Engineering , 129:110820, 2026. doi:10.1016/j.compeleceng.2025.110820. URL https://doi.org/10.1016/j. compeleceng.2025.110820 .[16] W. Jung, C. Park, S. Lee, and H. Kim. Enhancing UAV swarm tactics with edge AI: Adap-tive decision making in changing environments. Drones , 8(10):582, 2024. doi:10.3390/ drones8100582. URL https://www.mdpi.com/2504-446X/8/10/582 .[17] A. D. Ames, X. Xu, J. W. Grizzle, and P. Tabuada. Control barrier function based quadratic programs for safety critical systems. IEEE Transactions on Automatic Control , 62(8):3861– 3876, 2017. doi:10.1109/TAC.2016.2638961. URL https://doi.org/10.1109/TAC. 2016.2638961 .[18] K. P. Wabersich and M. N. Zeilinger. A predictive safety filter for learning-based con-trol of constrained nonlinear dynamical systems. Automatica , 129:109597, 2021. doi:10. 1016/j.automatica.2021.109597. URL https://doi.org/10.1016/j.automatica.2021. 109597 .[19] D. P. Nguyen, K.-C. Hsu, W. Yu, J. Tan, and J. F. Fisac. Gameplay filters: Robust zero-shot safety through adversarial imagination. In Proceedings of The 8th Conference on Robot Learning , volume 270 of Proceedings of Machine Learning Research , pages 387–407. PMLR, 2025. URL https://proceedings.mlr.press/v270/nguyen25a.html .[20] T. Schick, J. Dwivedi-Yu, R. Dessi, R. Raileanu, M. Lomeli, E. Hambro, L. Zettle-moyer, N. Cancedda, and T. Scialom. Toolformer: Language models can teach them-selves to use tools. In Advances in Neural Information Processing Systems , vol-ume 36, 2023. URL https://proceedings.neurips.cc/paper_files/paper/2023/ hash/d842425e4bf79ba039352da0f658a906-Abstract-Conference.html .[21] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347, 2017. URL https://arxiv.org/abs/1707. 06347 .10 A Appendix 
+
+A.1 OpenClaw Agentic-AI Contract 
+
+All LLM-assisted policies use the same compact reasoner contract, parser, allowed recovery op-tions, timeout handling, token logging, and fallback behavior. PMR implements the agentic-AI side with OpenClaw: the UAV runtime exposes a recovery workspace tool that receives compact mission state, budget status, verifier state, and the allowed recovery-skill set. In the evaluated de-ployment, the OpenClaw–PMR boundary is realized through an HTTP JSON gateway backed by the configured remote reasoner. The OpenClaw tool acts as an offboard recovery-mode selector. It may choose one recovery skill and return typed JSON, while PMR performs parsing, verification, safety shielding, fallback handling, and executor mapping before the decision affects the UAV. The appendix reports sanitized interface fields; infrastructure-specific credentials, endpoint addresses, host identifiers, user names, and local paths are kept outside the paper artifact. The same OpenClaw workspace abstraction can host additional mission-level UAV tools. For exam-ple, a natural-language destination tool can use geocoding and map APIs to convert a place name into GPS waypoint coordinates, while a weather tool can query rain or wind near the current UAV position. PMR treats these outputs like recovery decisions: typed mission-level proposals that must pass through local verification and executor mapping before they affect the UAV. Table 7 summa-rizes the recovery tool boundary and the tool-family extension points used to interpret OpenClaw as an agent-for-UAV workspace.         
+
+> Table 7: OpenClaw-facing PMR recovery tool interface. Item Sanitized implementation detail Tool role OpenClaw exposes PMR as a recovery-query tool for offboard agentic rea-soning. The tool is called only after learned-CVI admits a query. Tool input Compact mission state, progress/no-progress evidence, budget/cooldown status, verifier/executor state, compact sensing summaries, and the allowed recovery-skill list. Agent affordance The agent may select one predefined recovery skill and provide a short reason, risk estimate, and confidence value. Tool output Typed JSON returned to PMR. The output is parsed as recovery intent rather than a direct flight command. Local acceptance PMR accepts the tool output only after parser, verifier, safety-shield, fall-back, and executor checks. Extensible workspace The same OpenClaw boundary can register weather, GPS, localization, tracking, navigation, sensing, perception, and verified executor-facing con-trol tools as typed mission-level interfaces.
+
+11 Table 8: OpenClaw workspace tool families supported by the PMR boundary. 
+
+Tool family Example OpenClaw tools Weather context weather monitor tool 
+
+GPS/localization gps state tool , gps localization tool 
+
+Tracking/navigation position tracking tool , navigation tool 
+
+Sensing lidar sensing tool , marker sensing tool crazyflie flowdeck tool 
+
+Perception ingest sensor ingest tool , perception tool 
+
+Executor-facing control flight control tool 
+
+Table 9: Sanitized high-level reasoner contract for recovery-skill decisions. 
+
+Field Contract content Required JSON fields decision , reason , suggested option , risk , confidence 
+
+Allowed decisions predefined recovery-skill labels for local continuation, goal resume, goal alignment, local repair, safe hold/verify, terminal homing, fallback-safe, and abort-if-unsafe behavior. Command boundary Accepted outputs are structured recovery-skill choices. Direct flight-stack commands, system commands, credentials, endpoint addresses, and user paths remain outside the reasoner contract. Failure handling parser rejection, safety-shield rejection, verifier rejection, timeout fallback, continued local execution, or safe hold. Logged metadata parsed decision, logged token cost, latency, infrastructure error, post-call progress. 
+
+Table 10: learned-CVI uses a fixed normalized runtime feature vector. 
+
+Feature block Runtime features Kinematics normalized position x, y, z and speed. Progress normalized goal distance, waypoint progress, progress rate, and no-progress time. Risk/planner obstacle risk, target confidence, local-planner failure, and uncertainty score. Query/budget time since last query, remaining budget, and reasoning debt. Runtime state battery, previous command success, and normalized safety-intervention count. 
+
+Table 11: learned-CVI learning and evaluation separation. Training and validation logs are used for the gate and threshold selection; the fixed-protocol 400-run simulation aggregate is used only for final method comparison. 
+
+Role Source Use and content Train compact-runtime train log fit weights and normalization from 651 labels: 283 positive and 368 negative; 404 ambiguous rows are skipped. Validation val compact-runtime log select deployment threshold from 533 rows across 16 episodes. Evaluation 8 scenarios × 5 policies × 10 seeds final method comparison over 400 simulation runs. 
+
+A.2 Learned-CVI Feature, Split, and Diagnostic Details 
+
+Table 10 reports the fixed learned-CVI runtime feature vector. The 18-dimensional (18D) vector is derived from platform-adapter telemetry, executor feedback, verifier state, budget/query state, and compact perception summaries; it is an internal normalized feature contract. CVI inputs use se-mantic runtime summaries and do not include scenario IDs, map templates, or raw range/perception arrays. Table 11 reports the train/validation/final separation used for the deployed learned-CVI gate. 12 Table 12: Evidence for learned-CVI as a data-driven admission gate.      
+
+> Evidence axis What is fixed or learned Supervision 651 filtered runtime states: 283 positive and 368 negative invocation labels; 404 ambiguous rows are reserved outside binary supervision. Train/validation separa-tion Model weights and normalization are fit on the training split; the deployment threshold is selected on a separate validation split with 533 rows from 16 episodes. Final-evaluation separa-tion The 400-run simulation aggregate is reserved for final comparison after the model, threshold, features, prompt contract, shield, verifier, scenarios, seeds, timeout, and logging schema are fixed. Input contract The score uses compact runtime features while excluding scenario identi-fiers, map templates, raw range/perception arrays, prompt text, and OpenClaw prompt geometry. Learned score behavior Pre-deployment sensitivity analyses identify confidence, distance/progress, no-progress, and budget/state signals as influential; Table 20 compares the deployed linear gate with nonlinear alternatives using the same labels. Closed-loop separation The main results report guard-only, score-only, and matched-budget rule-based LLM ablations to show how the learned score works with fixed runtime guards.
+
+Table 13: learned-CVI feature-group sensitivity diagnostic over logged states.                           
+
+> Feature group Features Sum |∆CVI |Avg. |∆CVI |Max flip rate Progress/no-progress 40.227 0.057 0.009 Perception confidence/risk 40.164 0.041 0.009 Position/kinematics 40.116 0.029 0.016 Runtime/safety state 30.053 0.018 0.024 Query/budget 30.045 0.015 0.009
+
+Table 13 summarizes the corresponding feature-level sensitivity diagnostic. The strongest aggregate perturbation effects come from progress/no-progress and perception-confidence/risk features, sup-porting the interpretation that learned-CVI responds to reusable runtime evidence instead of scenario labels. 
+
+A.3 Reproducibility Notes 
+
+The main runtime comparisons use the evaluation runner with the fixed local policy and safety verifier held fixed. The reported aggregate contains all requested scenario/method/seed cells for the five evaluated policies, including one-shot LLM planning. Reasoner calls are enabled only after preflight validation. Tokens are reported as the logged PMR token-cost field used consistently across methods. Sanitized contracts and aggregate token account-ing are reported below; infrastructure credentials and raw endpoint payloads remain outside the paper artifact. 
+
+A.4 Fixed Protocol Parameters 
+
+Table 14 summarizes the fixed protocol choices used to interpret the final 400-run evaluation. These settings define the evaluated PMR benchmark and keep method comparisons controlled. 
+
+A.5 Scenario Labels and Log Identifiers 
+
+The main text uses descriptive scenario labels. Table 15 reports the corresponding internal log identifiers used in the logged evidence artifacts. 
+
+A.6 Lower PPO Policy Details 
+
+The lower PPO policy serves as the fixed local execution policy shared by all invocation policies. It is trained before the agentic-recovery experiments in a Gymnasium-based local-control surrogate 13 Table 14: Fixed protocol parameters for the simulation comparison. 
+
+Parameter Fixed setting Mission timeout 360s shared mission budget. Clean Success@1m final distance ≤1m with no collision, z violation, or backend failure. Seeds and scenarios seeds 0–9 over eight simulation scenarios. Regime grouping 4 Nominal and 4 Hard/ambiguous scenarios, defined before aggregate reporting. Baselines local-only, one-shot LLM, periodic LLM, rule-based LLM, and learned-CVI policies. learned-CVI threshold τlite = 0 .997 , selected on validation logs before final evaluation. Utility labels K = 5 logged steps with token .10, latency .05, safety .15, and planner .05 weights. Resource accounting issued reasoner requests for Calls; PMR token-accounting field for To-kens. 
+
+Table 15: Publication scenario labels and internal log identifiers. 
+
+Publication label Regime Internal log ID Empty Nominal W0 empty 
+
+Static Obstacles Nominal W1 static 
+
+Mild Random Obstacles Nominal W2 random default 
+
+Recoverable Dead End Nominal W4 deadend 
+
+Multi-Obstacle Hard/ambiguous W3 multi 
+
+Hard Re-entry A Hard/ambiguous WH46 test hard reentry 
+
+Hard Re-entry B Hard/ambiguous WH49 test hard reentry 
+
+Dead-end Bypass Hard/ambiguous WM17 left deadend right bypass 
+
+Table 16: Fixed lower PPO policy configuration. This policy supplies the local mission policy shared by all PMR invocation policies. 
+
+Item Value PPO implementation Stable-Baselines3 PPO, MlpPolicy 
+
+Network two hidden layers, [64, 64], with SB3 default activation Observation 10 normalized local-flight features: front/left/right clearance, goal distance, goal bearing, path-blocked flag, no-progress state, repair-failure state, abso-lute altitude, and vertical error to goal altitude Action space 8 flying-phase tools × 4 repeats = Discrete(32) ; action decoded as tool index and repeat count Repeat semantics repeat r ∈ { 1, 2, 3, 4} means repeated sub-step/tool calls, not seconds Flying-phase tools eight macro tools covering goal following, diagonal altitude adjustment, local repair, scan/inspection, vertical motion, and safe hold Runtime-owned actions takeoff, landing, RTL, terminal homing, final approach, completion, emer-gency handling, platform setpoints, and flight-stack primitives Runtime ownership PMR owns takeoff, completion, emergency handling, safety shield, verifier, and platform-adapter execution; the reasoner selects only recovery skills Training worlds W0 empty , W1 static , W2 random default , W3 multi 
+
+Key hyperparameters learning rate 3 × 10 −4, nsteps = 512 , batch size 64, nepochs = 10 ,
+
+γ = 0 .99 , λGAE = 0 .95 , clip range 0.2, entropy coefficient 0.01, 4 vector environments, seed 42, 300k SB3 timesteps, max episode length 160 Deployment saved checkpoint loaded for deterministic inference and used unchanged during local-only, one-shot, periodic, rule-based, or learned-CVI evaluation 
+
+environment. Table 16 summarizes the implementation settings. The reward used for this lower policy encourages local progress and terminal completion and penalizes collision, altitude violation, repeated hold/inspection behavior, local-repair abuse, and low-progress macros. Every selected macro skill passes through the same PMR safety shield, verifier, and executor path used by agent-returned recovery actions. 14 Table 17: Lower PPO policy sanity evaluation. The main PMR comparison keeps this local policy fixed across all invocation policies.                
+
+> Scenario Runs Rate Mean return
+> W0 empty 30 1.000 62.47
+> W1 static 30 1.000 61.76
+> W2 random default 30 0.967 60.34
+> W3 multi 30 1.000 63.18
+
+Table 18: Rule-based LLM trigger structure. The rule baseline is disclosed as the strongest expert-specified comparison. Periodic LLM uses a fixed periodic due timer and invokes the same reasoner when the shared runtime guards allow it.         
+
+> Runtime condition Rule response Verifier reports completion complete the mission. MAVSDK unavailable in last result hold safely and avoid unavailable commands. Collision, safety abort, or battery below 20% trigger runtime-owned emergency response. Unsafe proximity or front distance below 0.35m hold safely near obstacles. Within terminal radius with clear path and front distance at least 1.2m continue local execution and suppress near-goal calls. Ambiguity-loop mode with budget available issue a synchronous LLM recovery call. Front distance below repair trigger and repair failures below 3 try local repair first. No progress above 10s or repair failures at least 5, with budget issue a synchronous LLM call for persistent local fail-ure. No progress above 5s or repair failures at least 3, with budget issue an asynchronous LLM call as an early recovery request. No progress above 15s but call unavailable hold safely with local fallback. Otherwise continue local execution.
+
+Table 17 reports a local-policy sanity check over 30 episodes per training world. This check verifies that the fixed local policy is competent enough to serve as the default PMR execution path. The main method comparison and learned-CVI threshold selection use the separate fixed protocol described above. 
+
+A.7 Rule-Based LLM Baseline Details 
+
+Rule-based LLM is evaluated at each PMR runtime policy update instead of by the fixed periodic due timer used by periodic LLM. The nominal periodic LLM due interval is 5s, but actual calls are lower because requests are subject to the shared budget, pending-recovery, terminal-suppression, cooldown, parser, safety-shield, verifier, and executor path. Rule-based LLM proposes LLM re-entry from expert-specified runtime events and then uses the same verifier/executor path as learned-CVI. Table 18 reports the disclosed rule structure used for the strong expert baseline. The repair trigger depends on the clearance profile: 1.2m for safe, 0.9m for balanced, and 0.8m for aggressive settings. In the reported comparison, the important fairness point is that rule-based LLM and learned-CVI share the reasoner, prompt contract, safety shield, verifier, executor, budget guards, and cooldown machinery; the compared component is the trigger that proposes re-entry. 15 Table 19: Latency/backend diagnostic for episodes with at least one remote-agent call in the final 400-run logs.                          
+
+> Method Query eps. Calls Mean lat. (s) Median lat. (s) Backend fail one-shot LLM 80 80 4.56 3.95 3periodic LLM 80 240 5.05 4.25 15 rule-based LLM 80 96 4.89 4.41 4learned-CVI 45 46 4.69 4.27 1
+
+Table 20: Threshold-free learned-CVI model-class diagnostic using the same 18D features and short-horizon labels.                      
+
+> Split Model ROC-AUC PR-AUC Validation learned-CVI 0.9996 0.9996 Validation small MLP [32,16] 1.0000 1.0000 Validation boosted decision stumps 1.0000 1.0000 Held-out diagnostic learned-CVI 0.9635 0.9986 Held-out diagnostic small MLP [32,16] 0.6968 0.9861 Held-out diagnostic boosted decision stumps 0.2976 0.9610
+
+A.8 Latency and Backend Diagnostic 
+
+Table 19 reports the logged episode-level latency scale for policies that issue remote-agent calls. The main resource claim is therefore not that learned-CVI makes individual remote calls faster; rather, it reaches the reported success/resource trade-off by admitting fewer calls under the same remote-backend and verifier path. 
+
+A.9 Sparse Invocation Ablation Notes 
+
+Table 3 in Section 4 reports the closed-loop sparse-invocation ablation counts. The diagnostic sep-arates the learned score, the hard-stuck guard, and a matched-budget rule-based comparison under the same runtime contract. The primary task metric remains the Clean Success@1m comparison in Table 1; backend timeouts are counted by the same Clean Success@1m criterion. 
+
+A.10 CVI Data Size and Model-Class Diagnostic 
+
+The learned-CVI model is intentionally compact. It uses the fixed 18D runtime vector in Table 10, excluding scenario identifiers, map templates, raw range or perception arrays, prompt geometry, token text, and raw prompts. The short-horizon label set contains 651 labeled training samples after filtering, motivating a sigmoid-linear gate with transparent runtime behavior. We also ran a model-class diagnostic because onboard UAV deployment favors admission gates no heavier than small MLP-scale models. The diagnostic compares learned-CVI with a small MLP and a gradient-boosted-stump ensemble using the same 18D features and labels. Table 20 reports threshold-free ranking metrics: ROC-AUC and PR-AUC. The nonlinear models fit validation labels strongly, while learned-CVI keeps stronger held-out ROC-AUC under the same feature contract. We therefore use the linear learned-CVI gate because it combines favorable ranking behavior with transparent weights and low runtime overhead. 16 A.11 Data-Size and Utility-Weight Diagnostics                      
+
+> Table 21: Log-spaced learned-CVI data-size diagnostic. Training rollouts Labeled rows Cosine sim. 8111 0.8037 16 282 0.9888 32 651 1.0000 48 651 1.0000
+> Table 22: Utility-weight sensitivity diagnostic. Regime Grid Label agreement Utility-positive queries Nominal 729 0.9985 [0.9956, 1.0000] 1.000 / 1.000 / 1.000 Hard/ambiguous 729 0.9682 [0.9371, 1.0000] 1.000 / 1.000 / 1.000
+
+We inspected a log-spaced data-size diagnostic over training rollout counts. The learned-CVI weight direction stabilizes rapidly as the training pool grows, reaching 0.989 cosine similarity to the full-pool gate by 16 rollouts and matching the full-pool direction by 32–48 rollouts. This serves as a data-efficiency diagnostic for the compact gate. We run a sensitivity diagnostic over 729 short-horizon recovery-utility configurations varying the horizon, utility threshold, and token, latency, safety-rejection, and planner-failure weights. The di-agnostic recomputes labels and checks the states where learned-CVI invoked the reasoner in existing logs. Across the grid, label agreement with the baseline utility remains high, and all executed query states remain utility-positive under every tested configuration. This supports robustness of the re-ported triggered states to reasonable utility-weight changes. The aggregate diagnostic is reported in Table 22. Table 2 in Section 4 reports the per-scenario decomposition of learned-CVI behavior, and Table 5 reports the learned-CVI threshold diagnostic. These auxiliary diagnostics characterize the recorded learned-CVI score behavior around the deployed operating point. Failure-pattern diagnostics are consistent with the main comparison: learned-CVI has zero nom-inal non-successes and two hard/ambiguous non-successes, corresponding to one threshold-edge under-query and one backend timeout after admission. Local-only hard/ambiguous non-successes concentrate in dead-end and branch-trap settings, while rule-based LLM’s single hard/ambiguous non-success is associated with backend exposure under the same Clean Success@1m criterion. 
+
+A.12 Real-Platform Demonstration 
+
+For the real-platform demonstration, PMR/OpenClaw runs on a laptop while a Crazyflie nano-quadcopter executes the mission through the constrained offboard recovery interface. The demon-stration uses a blocked Dead-end Bypass-style layout: local execution first enters a blocked branch, learned-CVI admits a recovery query when blocked or no-progress evidence accumulates, and the accepted recovery skill is routed back through the PMR executor boundary before changing the Crazyflie command stream. The main text reports ten repeated trials for local-only and learned-CVI. The accompanying waypoint exports and visualization files document the physical path geometry and blocked-navigation setup. This artifact provides real-platform evidence for the PMR invocation and execution boundary, while the aggregate performance claims are based on the 400-run simula-tion benchmark. 17

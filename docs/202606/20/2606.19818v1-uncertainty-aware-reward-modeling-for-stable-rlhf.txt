@@ -1,0 +1,559 @@
+Title: Uncertainty-Aware Reward Modeling for Stable RLHF
+
+URL Source: https://arxiv.org/pdf/2606.19818v1
+
+Published Time: Fri, 19 Jun 2026 00:29:14 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Licheng Pan 1 2 Haocheng Yang 3 Haoxuan Li 4 Yichen Sun 1 Yunsheng Lu 1 Shijian Wang 2
+
+Lei Shen 2 Yuan Lu 2 Zhixuan Chu 1 Hao Wang 1 2 
+
+## Abstract 
+
+Reinforcement learning from human feedback (RLHF) aligns large language models by training reward models on preference data and optimizing policies to maximize predicted rewards. How-ever, this pipeline faces two fundamental chal-lenges: ❶ reward models cannot signal when their predictions are unreliable , since they usu-ally act as deterministic point estimators; and ❷
+
+modern group-based policy optimization can amplify unreliable reward signals , as exempli-fied by GRPO’s uniform treatment of rewards during advantage computation. As policies ex-plore increasingly diverse responses, these two limitations create a critical vulnerability: unreli-able reward estimates may be granted dispropor-tionate influence, triggering severe reward hack-ing. We propose Uncertainty-Aware Reward Modeling (UARM) , which equips reward mod-els with calibrated uncertainty via quantile-based conformal prediction and reweights GRPO ad-vantages through heteroscedastic variance decom-position. Experiments across HelpSteer, Ultra-Feedback, and PKU-SafeRLHF demonstrate that UARM significantly improves reward model cal-ibration, reduces reward hacking, and enhances downstream alignment quality compared to stan-dard GRPO and uncertainty-agnostic baselines. 
+
+## 1. Introduction 
+
+Reinforcement learning from human feedback (Christiano et al., 2017; Ouyang et al., 2022) has emerged as the dom-inant paradigm for aligning large language models with human values and preferences. In this framework, a reward model is first trained on pairwise preference data—typically modeled via the Bradley-Terry comparison model (Bradley & Terry, 1952)—to proxy human judgment, and the policy is then optimized to maximize the predicted reward (Dong    
+
+> 1Zhejiang University 2Xiaohongshu Inc 3National University of Singapore 4Peking University.
+> Preprint. June 19, 2026.
+
+et al., 2024). Recent state-of-the-art systems, from GPT-4 (Achiam et al., 2023) to DeepSeek-R1 (Guo et al., 2025) and Gemini (Comanici et al., 2025), rely heavily on this pipeline to produce helpful, harmless, and honest responses. Yet a fundamental question remains unresolved: when re-ward models are uncertain about their predictions, should policies trust them unconditionally? 
+
+This question reveals two central challenges that become especially consequential in modern group-based policy op-timization methods such as Group Relative Policy Opti-mization (GRPO) (Guo et al., 2025; Zheng et al., 2025). ❶
+
+Reward models cannot signal when their predictions are unreliable. Current reward models are determinis-tic point estimators: they output a single scalar score for each prompt-response pair, with no indication of whether that score reflects a confident judgment or an unreliable guess (Lambert et al., 2025). As policies evolve during training, they inevitably generate responses that lie out-side the reward model’s training distribution—responses the model evaluates with high uncertainty. Without any signal of this uncertainty, the policy treats all reward estimates as equally trustworthy, even when some are fundamentally unreliable. This blind trust creates a vulnerability: the pol-icy may aggressively optimize toward responses the reward model scores highly but uncertainly, leading to misalign-ment and reward hacking (Amodei et al., 2016; Gao et al., 2023; Skalse et al., 2022). 
+
+❷ Group-based advantage standardization can amplify the least trustworthy samples. In GRPO, advantages are standardized uniformly within each rollout group. By treat-ing all reward signals as equally reliable, this standardiza-tion procedure can amplify exactly the samples the reward model is least certain about: a confusing response that re-ceives a spuriously extreme reward skews the group mean and variance, and after standardization is assigned a dispro-portionately large advantage. Meanwhile, genuinely high-quality responses are pushed below the distorted mean and under-rewarded. This uniform treatment thus triggers severe reward hacking, steering policies toward unreliable signals and away from truly aligned behavior (Fu et al., 2025; Miao et al., 2024; Liu et al., 2024). Prior work has explored uncertainty quantification for neu-1
+
+> arXiv:2606.19818v1 [cs.LG] 18 Jun 2026 Uncertainty-Aware Reward Modeling for Stable RLHF
+
+ral networks, but their application to stable RLHF remains limited. Ensemble-based methods (Lakshminarayanan et al., 2017; Gal & Ghahramani, 2016) provide uncertainty esti-mates by training multiple models or performing stochas-tic forward passes, but incur prohibitive computational overhead for large language models deployed in online RLHF (Coste et al., 2023; Eisenstein et al., 2023). Confor-mal prediction (Lei et al., 2018b; Romano et al., 2019; Lei et al., 2018a; Shafer & Vovk, 2008) offers distribution-free coverage guarantees for uncertainty intervals, but classical variants focus on marginal coverage and are not readily adapted to the conditional, sample-specific reliability sig-nals needed for reweighting advantages in reinforcement learning (Tibshirani et al., 2019; Gibbs & Candes, 2021). Heteroscedastic modeling techniques (Immer et al., 2023; Amini et al., 2020) can capture varying uncertainty across inputs, yet have not been integrated into RLHF’s advantage computation. Consequently, no prior work systematically addresses the gap between calibrated uncertainty quantifica-tion in reward models and its direct integration into policy optimization to prevent reward hacking. We propose Uncertainty-Aware Reward Modeling (UARM) , a unified framework that equips reward mod-els with calibrated uncertainty and leverages it to stabilize GRPO. Our approach operates in two phases. In the offline phase , we train the reward model as a quantile regression estimator (Steinwart & Christmann, 2011) that outputs mul-tiple conditional quantiles of the reward distribution, from which we derive both a point estimate (the median) and a prediction interval whose width captures per-sample uncer-tainty. We calibrate these intervals on a held-out set via a conformal prediction procedure (Romano et al., 2019), achieving conditional coverage guarantees (Theorem 3.2) that ensure the interval width faithfully reflects the model’s confidence. In the online phase , we reinterpret the interval width as observation noise under a heteroscedastic model and decompose the observed reward variance into signal and noise components. This variance decomposition yields a sample-specific reliability weight for each rollout, which we use to construct a heteroscedastic advantage that provably down-weights high-uncertainty samples without requiring costly ensemble evaluations. The entire pipeline integrates seamlessly into GRPO with negligible computational over-head. Our contributions are summarized as follows: • We develop a quantile-based conformal reward model that provides calibrated per-sample uncertainty estimates with theoretical coverage guarantees. • We introduce a heteroscedastic advantage reweighting scheme that uses uncertainty to suppress unreliable sam-ples in GRPO’s standardization. • We conduct comprehensive experiments across three pref-erence datasets, demonstrating that UARM improves re-ward model calibration, reduces reward hacking, and en-hances downstream alignment quality against strong base-lines. 
+
+## 2. Preliminaries 
+
+2.1. Reinforcement Learning from Human Feedback 
+
+The standard RLHF pipeline typically consists of two se-quential stages (Ouyang et al., 2022): reward modeling and policy optimization. First, a reward model (RM) 
+
+rθ : X → R parameterized by θ is trained on an offline dataset comprising human preferences. With point-wise or pair-wise optimization (Wang et al., 2026), it learns to map a prompt-response pair x = ( p, o ) ∈ X (where p is the prompt and o is the generated response) to a scalar reward 
+
+r ∈ R. Subsequently, the policy model πϕ (i.e., the LLM) is optimized via reinforcement learning to maximize the expected rewards assigned by the learned RM. Recently, value-function-free algorithms, particularly Group Relative Policy Optimization (GRPO) (Guo et al., 2025), have emerged as the mainstream paradigm for policy op-timization due to their efficiency. For a given prompt q,GRPO samples a group of Nrol responses {oi}Nrol  
+
+> i=1
+
+from the old policy πϕold . The RM evaluates these prompt-response pairs {xi}Nrol  
+
+> i=1
+
+to obtain raw terminal rewards 
+
+ri = rθ (xi). To stabilize training without the computational burden of maintaining a critic model, GRPO computes the advantage Ai = ( ri − μ)/σ by standardizing the rewards within the sampled group, where μ = 1Nrol 
+
+PNrol  
+
+> i=1
+
+ri and 
+
+σ2 = 1Nrol 
+
+PNrol  
+
+> i=1
+
+(ri − μ)2 are the intra-group mean and variance, respectively. Building upon the advantage Ai, the policy model πϕ is optimized as follows: 
+
+LGRPO (ϕ) = E
+
+"
+
+1Nrol Nrol X
+
+> i=1
+
+ LCLIP  
+
+> i
+
+(ϕ) − βLKL  
+
+> i
+
+(ϕ)#
+
+,
+
+(1) 
+
+LCLIP  
+
+> i
+
+(ϕ) = min  ρi(ϕ)Ai, clip  ρi(ϕ), 1 − ϵ, 1 + ϵAi
+
+ ,
+
+(2) 
+
+LKL  
+
+> i
+
+(ϕ) = γi(ϕ) − log γi(ϕ) − 1, (3) where β controls the KL penalty strength, ϵ is the clip-ping parameter, ρi(ϕ) = πϕ(oi|q)  
+
+> πϕold (oi|q)
+
+is the probability ra-tio between the current policy and the old policy, and 
+
+γi(ϕ) = πref (oi|q) 
+
+> πϕ(oi|q)
+
+is the probability ratio of the reference policy to the current policy. The advantage Ai acts as a multiplicative weight, directly scaling the policy update. While GRPO effectively stabilizes optimization under ideal conditions, its intra-group standardization treats every sam-ple in a group uniformly , implicitly assuming that all reward 2Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+signals ri are equally reliable. This homogeneous treatment is problematic because the RM is not equally confident about every rollout: as the policy πϕ continuously evolves (Miao et al., 2024), it produces increasingly diverse responses, many of which the RM finds confusing and scores unreli-ably. Crucially, the standardization in GRPO is oblivious to this unreliability. When the RM assigns a confusing roll-out a spuriously extreme reward, this single outlier inflates the group statistics μ and σ and, after standardization, is granted a disproportionately large advantage. The policy is thus pushed to imitate exactly those samples the RM is least certain about, while genuinely high-quality responses are squeezed toward (or below) the mean and under-rewarded. This amplification of unreliable signals, induced by the uniform advantage weighting, lies at the heart of reward hacking (Fu et al., 2025) and unstable training. 
+
+2.2. Uncertainty Quantification 
+
+Uncertainty quantification (UQ) aims to equip a determin-istic predictor with a measure of how reliable its outputs are (Azizi et al., 2026). Instead of returning a single scalar 
+
+rθ (x), a UQ method augments the RM with a prediction interval I(x) = [ rlo (x), r hi (x)] that is expected to contain the unobserved ground-truth reward R with high probability. Formally, given a target miscoverage rate α ∈ (0 , 1) , the desired marginal coverage property requires 
+
+PR ∈ I (X) ≥ 1 − α. (4) However, it only constrains the coverage on average over 
+
+X, which may mask variation across single input. A more desirable guarantee is conditional coverage, 
+
+PR ∈ I (X) | X = x ≥ 1 − α, ∀x, (5) which a sound procedure approximates in practice and at-tains asymptotically under appropriate conditions. Condi-tional coverage is essential in our setting: only by reflecting the conditional reward distribution PR|X can the interval width faithfully capture the reliability of each individual prompt-response pair, rather than an average over the roll-out group. Among intervals meeting these coverage targets, narrower ones are preferred, as they yield a sharper and more discriminative uncertainty measure. The half-width of the interval, ∆( x) = 12 (rhi (x) − rlo (x)) ,thus serves as a natural, instance-wise measure of predictive uncertainty: a wide interval signals that the RM is con-fused and evaluates the sample unreliably, whereas a narrow one reflects a confident and trustworthy prediction. This is precisely the reliability signal that GRPO’s uniform stan-dardization lacks, as it allows us to distinguish rollouts the RM scores confidently from those it merely guesses at, pre-venting unreliable samples from dominating the advantage. To enforce (4) without distributional assumptions on the data, we reserve a held-out calibration set Dcal , drawn from the same train distribution as Dtr , for interval calibration. 
+
+## 3. Methodology 
+
+3.1. Motivation 
+
+The reliability of reward signals is the cornerstone of stable RLHF. In the standard pipeline, a reward model is trained on a static preference dataset to proxy human values, and the policy is then optimized to maximize its scores. However, GRPO aggregates rewards within each rollout group through intra-group standardization, which weights every sample uniformly and presumes that all reward estimates are equally trustworthy. In practice this assumption breaks down: as the policy explores, it generates responses the RM is confused about and scores unreliably. Because standardization is blind to this unreliability, a confusing sample that happens to receive an extreme score is granted an outsized advantage, steering the policy toward unreliable signals and triggering severe reward hacking (Amodei et al., 2016; Fu et al., 2025; Miao et al., 2024) that misguides the optimization process. Eliminating this homogeneous treatment of rewards in GRPO introduces two fundamental challenges. ❶ Reward models cannot signal when their predictions are unre-liable. They output a single scalar score for any given prompt-response pair, providing no indication of whether a particular rollout is evaluated reliably or merely guessed at. Consequently, there is no way to tell trustworthy reward estimates apart from confusing, unreliable ones. ❷ GRPO standardization amplifies exactly the samples that are least trustworthy. By standardizing rewards within a gen-erated group, GRPO treats all signals as equally reliable. A confusing rollout that receives a spuriously extreme re-ward thus skews the group’s mean and variance and, after standardization, is assigned a disproportionately large ad-vantage, while well-evaluated, high-quality responses are pushed below the mean and under-rewarded. 
+
+Case study. To provide concrete evidence for the above challenges, we present a representative case study in Fig-ure 1. Consider a policy generating a group of four re-sponses to a prompt asking for a “brief and practical tip”. The first response accurately follows the instruction, pro-viding concise and useful advice. In contrast, the fourth response is an atypical, hard-to-judge sample that violates the “brief” constraint by exploiting verbosity, bold format-ting, and repetitive buzzwords. For Challenge ❶, the de-terministic RM cannot express that it is confused by this unusual response and instead emits a single, spuriously high score ( 20 .0) that overshadows the genuinely helpful response ( 8.0), with no accompanying signal of its low re-liability. For Challenge ❷, during GRPO standardization this single outlier inflates the group mean to 9.0; the high-3Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+quality response is consequently pushed below the mean and penalized with a negative advantage ( −0.15 ), while the unreliable response receives a massive positive advantage (+1 .66 ). The uniform standardization thus amplifies pre-cisely the sample the RM is least certain about, injecting misleading updates that penalize aligned behavior while reinforcing reward hacking. Some might note prior works on uncertainty quantifica-tion; however, their practical utility for stable RLHF re-mains underexplored. For instance, ensemble-based uncer-tainty methods incur prohibitive computational overhead for LLMs (Coste et al., 2023; Eisenstein et al., 2023). While distribution-free interval estimators offer rigorous coverage guarantees, classical variants are difficult to deploy effi-ciently within the online RLHF loop. Therefore, developing an effective uncertainty quantification framework for reward modeling and adapting it to reweight GRPO advantages re-mains an open and critical challenge. 
+
+3.2. Reward Model Uncertainty Estimation 
+
+To resolve Challenge ❶, instead of treating the RM as a deterministic point estimator, we model the reward through uncertainty quantification: the RM directly estimates the conditional reward distribution via a set of quantiles, from which both a point reward and an adaptive prediction inter-val are derived for every prompt-response pair. 
+
+Quantile Estimation. Rather than producing a single de-terministic score, the RM is parameterized to output K+1 
+
+equiprobable conditional quantiles of the distribution PR|X ,
+
+ˆq0(x) ≤ ˆq1(x) ≤ · · · ≤ ˆqK(x), (6) where ˆqk(x) estimates the conditional quantile at level τk =
+
+k/ K. All quantile outputs are trained jointly on Dtr by minimizing the pinball loss (Steinwart & Christmann, 2011) 
+
+Lpinball (θ) = 1
+
+|D tr |
+
+> |D tr |
+
+X
+
+> i=1 K
+
+X
+
+> k=0
+
+ρτk
+
+ ri − ˆqk(xi),ρτ (u) = τ · max(0 , u ) + (1 − τ ) · max(0 , −u),
+
+(7) where the check function ρτ (·) penalizes under- and over-estimation asymmetrically according to the target level τ ,so that its minimizer recovers the conditional τ -quantile. We take the median quantile as the point reward consumed by GRPO, i.e., rθ (x) ≜ ˆqK/2(x)1, so that the scalar score and its surrounding uncertainty are jointly produced by a single quantile-based model. The consecutive quantiles partition the reward axis into K interquantile intervals 
+
+Ik(x) =  ˆqk−1(x), ˆqk(x), k = 1 , . . . , K, (8)     
+
+> 1We let Kbe even so that K/2indexes the median; otherwise the quantile nearest to the median is used.
+
+each carrying approximately probability mass 1/K. Narrow intervals indicate confident regions, while wide intervals sig-nal uncertain regions, which naturally captures the skewness and heteroscedasticity of reward distributions. 
+
+Conformity Score. For any integer m, let Jm(x) denote the shortest union of m consecutive interquantile intervals 
+
+Jm(x) =  ˆqkm (x), ˆqkm+m(x),km = arg min 
+
+> 0≤k≤K−m
+
+ ˆqk+m(x) − ˆqk(x), (9) where km is the lower-endpoint index of the narrowest m-interval block. For each calibration sample (xi, r i) ∈ D cal ,we define the conformity score as the minimum number of interquantile intervals needed to cover the observed reward, 
+
+s(xi, r i) = min m ∈ { 1, . . . , K} : ri ∈ J m(xi) . (10) Intuitively, samples that fall into long intervals receive larger scores, while those in short intervals receive smaller ones. 
+
+Calibration and Prediction. Following the standard thresholding principle, we set ˆm to the n-th smallest 
+
+s(xi, r i), where n = (1 − α)(1 + |D cal |). So that at least a (1 − α) fraction of calibration responses are covered. For a new rollout sample xnew , the prediction interval is 
+
+I(xnew ) = J ˆm(xnew ) =  ˆqk ˆm (xnew ), ˆqk ˆm+ ˆ m(xnew ).
+
+(11) Crucially, the width of this interval expands automatically for responses whose rewards fall in sparsely supported, low-density regions. These are precisely the samples the RM evaluates unreliably, and the resulting width provides the uncertainty signal needed to reweight the GRPO advantage. 
+
+Theoretical Guarantees. Our construction attains condi-tional coverage, which is what makes the interval width a faithful per-sample reliability signal for the reweighting in Section 3.3. We use the following standard assumptions in the coverage analysis: the calibration samples and test point are exchangeable; for conditional coverage, calibration/test samples are i.i.d., the learned quantiles consistently approx-imate the true conditional reward distribution, and the con-ditional reward distribution is unimodal so that the merged intervals are nested and become wider as m increases. 
+
+Theorem 3.1 (Marginal Coverage) . If the calibration set 
+
+Dcal and a rollout point (X, R ) are exchangeable, then the prediction interval I = J ˆm satisfies 
+
+P[R ∈ J ˆm(X)] ≥ 1 − α. (12) 
+
+Proof. Let n = |D cal | and denote the calibration confor-mity scores by si = s(Xi, R i). By exchangeability, the augmented collection {s1, . . . , s n, s (X, R )} is exchange-able, so the rank of the test score among these n + 1 scores 4Uncertainty-Aware Reward Modeling for Stable RLHF How can I improve my sleep quality? Give me a brief and practical tip .                                                                                                                   
+
+> Maintain a consistent sleep
+> schedule . Go to bed and wake up
+> at the same time every day.
+> Try to relax before bed . Avoid
+> coffee in the evening and keep
+> your bedroom dark .
+> Sleep is very important.
+> You can try buying a more
+> expensive mattress .
+> Comprehensive Sleep Strategy : It is crucial to delve into
+> multifaceted chronobiological optimization. As a helpful AI, I
+> provide this detailed and highly helpful analysis ...
+> Accurate, concise, and practical.
+> Reward: 𝒓 𝟏 =𝟖 .𝟎
+> Factual but generic advice.
+> Reward: 𝒓 𝟐 =𝟓 .𝟓 Useless and unhelpful.
+> Reward: 𝒓 𝟑 =𝟐 .𝟓 Filled with verbosity , bold formatting, and repetitive buzzwords .
+> Reward: 𝒓 𝟒 =𝟐𝟎 .𝟎
+> (a) Rollout Generation with Policy Model (b) Reward Evaluation via Deterministic Reward Model
+> (c) Group Standardization Group Mean: 𝝁 =𝒓 𝟏 +𝒓 𝟐 +𝒓 𝟑 +𝒓 𝟒 /𝟒 =𝟗 .𝟎 ,Group Std: 𝝈 =[𝒓 𝟏 −𝝁 𝟐 +𝒓 𝟐 −𝝁 𝟐 +𝒓 𝟑 −𝝁 𝟐 +𝒓 𝟒 −𝝁 𝟐 ]/𝟒 =𝟔 .𝟔𝟒 (d) Erroneous Advantage Estimation
+> Advantage:
+> 𝑨 𝟏 =𝒓 𝟏 −𝝁 /𝝈 =−𝟎 .𝟏𝟓
+> Advantage:
+> 𝑨 𝟐 =𝒓 𝟐 −𝝁 /𝝈 =−𝟎 .𝟓𝟑
+> Advantage:
+> 𝑨 𝟑 =𝒓 𝟑 −𝝁 /𝝈 =−𝟎 .𝟗𝟖
+> Advantage:
+> 𝑨 𝟒 =𝒓 𝟒 −𝝁 /𝝈 =+𝟏 .𝟔𝟔
+
+Figure 1. Case study of how GRPO’s uniform standardization amplifies unreliable rewards. The deterministic RM emits a spuriously high score for an atypical, hard-to-judge response; standardization inflates its advantage while unfairly penalizing the aligned response. How can I improve my                
+
+> sleep quality? Give me a
+> brief and practical tip.
+> Maintain a consistent
+> sleep schedule . Go to
+> bed and wake up at the
+> same time every day.
+> Reward Model 𝑟 !
+> Backbon e
+> Deterministic
+> Scoring Head
+> Quantile Threshold
+> Prediction Head
+> Accurate, concise,
+> and practical.
+> Reward: 𝒓 =𝟖 .𝟎
+> Accurate, concise,
+> and practical.
+> Uncertainty: [𝟕 .𝟕 ,𝟖 .𝟐 ]
+
+Figure 2. Framework of our proposed UARM. The offline phase equips the reward model with calibrated uncertainty estimation, and the online phase reweights the GRPO advantage by the esti-mated interval width to suppress unreliable samples. 
+
+is uniform up to tie-breaking. Our calibration rule chooses 
+
+ˆm as the ⌈(1 − α)( n + 1) ⌉-th smallest calibration score. Since the intervals Jm(x) are nested in m, the coverage event is equivalent to the score event, 
+
+R ∈ J ˆm(X) ⇐⇒ s(X, R ) ≤ ˆm. (13) Therefore, the test point is covered whenever its rank is no larger than ⌈(1 − α)( n + 1) ⌉. Consequently, 
+
+P[R ∈ J ˆm(X)] = P[s(X, R ) ≤ ˆm]
+
+≥ ⌈(1 − α)( n + 1) ⌉
+
+n + 1 ≥ 1 − α, (14) which proves the finite-sample marginal coverage guarantee. 
+
+Theorem 3.2 (Conditional Coverage) . Assume that cali-bration and test samples are i.i.d.; the learned quantiles consistently estimate the conditional reward distribution, i.e., for some ρn → 0, F (ˆ qk(X) | X) is within o(1) of 
+
+k/ K uniformly over quantile levels with high probabil-ity; and the conditional reward distribution is unimodal so that the merged intervals Jm are nested. Then, as 
+
+|D cal | → ∞ , there exist γ, ζ → 0 such that the prediction interval I = J ˆm achieves asymptotic conditional coverage, 
+
+P P[R ∈ J ˆm(X) | X] ≥ 1 − α − γ  ≥ 1 − ζ. (15) 
+
+Proof. Let n = |D cal |. The proof has three steps. First, de-fine the empirical conditional CDF induced by the learned quantiles as ˆF (ˆ qk(X) | X) = k/ K. By quantile consis-tency, ˆF uniformly approximates the true conditional CDF 
+
+F over the quantile grid with high probability. More con-cretely, there exists a bad set An such that 
+
+sup 
+
+k
+
+| ˆF (ˆ qk(X) | X) − F (ˆ qk(X) | X)| ≤ O(ρ1/3
+
+n ) (16) for all X / ∈ An, while P[X ∈ An] ≤ O(ρ1/3
+
+n ). Hence, on the good set Acn, any merged interval spanning m adjacent interquantile bins captures conditional mass close to m/ K:
+
+P[R ∈ J m(X) | X]=F (ˆ qkm+m(X) | X) − F (ˆ qkm (X) | X)
+
+≥ m
+
+K − O(ρ1/3
+
+n ).
+
+(17) Second, this pointwise mass control transfers to the cali-bration scores. Because s(Xi, R i) ≤ m iff Ri ∈ J m(Xi),Hoeffding concentration implies that the empirical frac-tion of calibration samples with scores at most m concen-trates around its expectation, up to O(plog n/n ). Taking 
+
+m⋆ = ⌈(1 − α)K ⌉, enough calibration scores fall below 
+
+m⋆ + O(ρ1/3
+
+n + plog n/n ) with probability tending to one. Since ˆm is the empirical (1 − α) quantile of the calibration scores, we obtain 
+
+ˆm = m⋆ + O ρ1/3
+
+n +
+
+r log nn
+
+!
+
+(18) with high probability. A symmetric lower-tail argument, together with unimodality/nestedness of the intervals, pre-vents ˆm from being asymptotically smaller than the oracle count. Finally, substituting this concentration of ˆm into the con-ditional mass bound for J ˆm(X) gives, outside a set whose probability vanishes, 
+
+P[R ∈ J ˆm(X) | X] ≥ 1 − α − O ρ1/3
+
+n +
+
+r log nn
+
+!
+
+.
+
+(19) 5Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Thus the theorem holds by setting γ = O(ρ1/3 
+
+> n
+
++plog n/n )
+
+and ζ = O(ρ1/3 
+
+> n
+
+) + o(1) , both of which vanish as n →∞.
+
+3.3. Uncertainty-Aware Advantage Reweighting 
+
+To resolve Challenge ❷, we replace GRPO’s uniform intra-group standardization with a heteroscedastic advantage reweighting that systematically down-weights unreliable samples by treating the conformal interval width as observa-tion noise and decomposing the observed reward variance into signal and noise components. 
+
+Observation Noise Model. We interpret the prediction interval width φ(xi) ≜ |I (xi)| = ˆ qk ˆm+ ˆ m(xi) − ˆqk ˆm (xi)
+
+as capturing per-sample measurement uncertainty in the reward estimate. Under a local Gaussianity assumption, we convert this width into an observation noise variance, 
+
+σ2noise ,i =
+
+ φ(xi)
+
+z1− α
+
+> 2
+
+2
+
+, ¯σ2noise = 1Nrol Nrol X
+
+> j=1
+
+σ2noise ,j ,
+
+(20) where z1− α 
+
+> 2
+
+is the standard normal quantile corresponding to the coverage level. Samples with wide intervals yield large σ2noise ,i , indicating heteroscedastic observation uncer-tainty that varies across the rollout group. 
+
+Signal-Noise Decomposition. The naive group variance 
+
+σ2 = 1Nrol 
+
+P 
+
+> j
+
+(rj − μ)2 conflates true signal variation with measurement error. Under an additive noise model 
+
+ri = rtrue ,i + εi where εi has variance σ2noise ,i , the ob-served variance decomposes as σ2 ≈ Var[ rtrue ] + E[σ2noise ].We recover the signal variance by subtracting the average observation noise, 
+
+σ2signal = max  0, σ 2 − ¯σ2noise 
+
+ + ζ, (21) where ζ > 0 ensures numerical stability. This decompo-sition isolates the variance attributable to genuine reward differences from that due to unreliable measurement. 
+
+Heteroscedastic Advantage. We define the uncertainty-aware advantage as 
+
+˜Ai = σ2signal 
+
+σ2signal + σ2noise ,i 
+
+· ri − μσsignal 
+
+, (22) where μ = 1Nrol 
+
+P 
+
+> j
+
+rj is the unweighted group mean. The prefactor σ2signal /(σ2signal + σ2noise ,i ) acts as a sample-specific reliability weight: for high-uncertainty samples with large σ2noise ,i , this ratio approaches zero, effectively suppressing their influence; for confident samples with small σ2noise ,i , the weight approaches one, preserving the full advantage magnitude. This heteroscedastic formulation provably down-weights the samples the RM evaluates least reliably, without requiring costly ensemble forward passes. 
+
+Connection to GRPO. When observation noise is uni-form across the group ( σ2noise ,i ≡ σ2noise ), the reliability weight becomes constant and Eq. (22) reduces to standard GRPO standardization. The computational overhead is neg-ligible, as all quantities follow directly from the conformal intervals computed in Section 3.2. Returning to the case study in Figure 1, the atypical response with spuriously high reward now exhibits a wide interval and large σ2noise ,4,receiving a reliability weight near zero; its advantage is suppressed to near-zero magnitude, preventing it from dom-inating the policy update and steering training away from reward hacking. 
+
+3.4. The Workflow of UARM 
+
+We present the workflow of UARM in Algorithm 1, which couples an offline uncertainty-calibration with an online uncertainty-aware optimization, detailed as follows. First, in the offline phase, we train and calibrate the reward model. We parameterize the RM as a multi-output quantile estimator and train it on Dtr by minimizing the pinball loss in Eq. (7) , reading off the point reward as the median quantile rθ = ˆ qK/2 (step 1). For each calibration sample, we compute its conformity score as the minimum number of interquantile intervals needed to cover the observed reward (step 2), and select the threshold ˆm as the n-th smallest score with n = ⌈(1 − α)(1 + |D cal |)⌉ (step 3). This phase equips the RM with a calibrated interval J ˆm satisfying the coverage guarantees, and is performed only once. Second, in the online phase, we optimize the policy with uncertainty-aware GRPO. At each iteration, we sample a rollout group from the old policy and score it with the reward head rθ (step 4), then form the prediction intervals and compute their widths φ(xi) as well as the corresponding observation noise variances σ2noise ,i via Eq. (20) (step 5). We decompose the observed group variance into signal and noise components via Eq. (21) (step 6), and construct the heteroscedastic advantages ˜Ai via Eq. (22) (step 7); finally, the policy is updated by the GRPO objective in Eq. (1) with 
+
+˜Ai (step 8). This phase reuses the calibrated reward model at negligible overhead, since the intervals follow directly from quantile evaluations without any binning or density-ratio estimation. 
+
+## 4. Experiments 
+
+In this section, we empirically validate the efficacy of UARM on three preference datasets. Specifically, we eval-uate whether UARM can produce reliable uncertainty es-timates and improve uncertainty-ranked reward prediction quality compared with competitive uncertainty quantifica-tion baselines. 6Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Algorithm 1 The workflow of UARM. 
+
+Input : offline preference set Dtr , calibration set Dcal ,miscoverage rate α, learning rate η
+
+Parameter : quantile model {ˆqk }K 
+
+> k=0
+
+(point reward rθ = ˆ qK/2), policy πϕ
+
+Offline UQ Calibration 
+
+1: train {ˆqk }K 
+
+> k=0
+
+on Dtr by minimizing the pinball loss in Eq. (7) 2: s(xi, r i) ← min {m : ri ∈ J m(xi)}, ∀(xi, r i) ∈ D cal 
+
+3: ˆm ← the n-th smallest s(xi, r i), n = ⌈(1 − α)(1 + |D cal |)⌉
+
+Online Uncertainty-Aware GRPO 
+
+4: for each GRPO iteration do 
+
+5: {oi}Nrol  
+
+> i=1
+
+∼ πϕold (· | p); ri ← rθ (xi), ∀i
+
+6: φ(xi) ← |J ˆm(xi)|; σ2noise ,i ← (φ(xi)/z 1−α/ 2)2, ∀i
+
+7: μ, σ 2 ← unweighted group mean and variance; σ2signal ←
+
+Eq. (21) 8: ˜Ai ← σ2signal 
+
+> σ2signal +σ2noise ,i
+
+· ri−μσsignal , ∀i
+
+9: ϕ ← ϕ − η · ∇L GRPO (ϕ) with advantages ˜Ai
+
+10: end for 
+
+4.1. Experimental Setup Datasets. We conduct empirical evaluations on Help-Steer (Wang et al., 2024), UltraFeedback (Cui et al., 2023), and PKU-SafeRLHF (Ji et al., 2025), using Helpfulness, Overall Score, and Severity Level as preference proxies, re-spectively. For each dataset, we hold out 20% of the training split as the calibration set, while keeping the original test set exclusively for evaluation. Detailed dataset statistics and configurations are provided in the Appendix. 
+
+Baselines. We benchmark UARM against a comprehen-sive suite of uncertainty quantification methods, including: (1) Model-based Uncertainty Estimation methods, such as MC-Dropout (Gal & Ghahramani, 2016), Deep Ensem-bles (Lakshminarayanan et al., 2017), DER (Amini et al., 2020), Packed Ensemble (Laurent et al., 2023), VBLL (Har-rison et al., 2024), and TorchNaut (Kelen et al., 2025); and (2) Distribution-free Interval Estimation methods: SCP (Lei et al., 2018b), CQR (Romano et al., 2019), WCP (Tibshirani et al., 2019), ACI (Gibbs & Candes, 2021), PRCP (Yan et al., 2024), SCCP (van der Laan & Alaa, 2024), Clear (Azizi et al., 2026), and CPCP (Chen & Li, 2026). 
+
+Evaluation Metrics. We employ three uncertainty-ranked regression metrics, namely R2@50, MSE@50, and MAE@50, to evaluate point prediction quality on samples with lower estimated uncertainty. Specifically, each method first estimates uncertainty on the test set and ranks test sam-ples in ascending order of uncertainty; the top 50% least uncertain samples are then selected for evaluation. For the naive baseline without uncertainty estimates, we randomly select the corresponding percentage of test samples and re-peat this process five times for reporting. Let S50 denote this selected subset, with ground-truth rewards yi, point pre-dictions ˆyi, and mean target value ¯y50 = |S 50 |−1 P 
+
+> i∈S 50
+
+yi.The metrics are defined as R2@50 = 1 −
+
+P 
+
+> i∈S 50
+
+(yi − ˆyi)2
+
+P 
+
+> i∈S 50
+
+(yi − ¯y50 )2 ,
+
+MSE@50 = 1
+
+|S 50 |
+
+X
+
+> i∈S 50
+
+(yi − ˆyi)2,
+
+MAE@50 = 1
+
+|S 50 |
+
+X
+
+> i∈S 50
+
+|yi − ˆyi|.
+
+(23) 
+
+Implementation Details. We implement the quantile reward model using an LLM backbone followed by a lightweight multi-layer perceptron head. To ensure a fair comparison, we initialize the backbone from FsfairX-LLaMA3-RM-v0.1 2, and fix the MLP head to hidden di-mensions of 256 , 64 , 1. We optimize the models using Adam (Kingma & Ba, 2015) for up to 600 epochs, employ-ing early stopping with a patience of 30 epochs to ensure convergence. Key hyperparameters are tuned on a validation set, with update rate η ∈ [1 × 10 −5, 1 × 10 −3] and batch size B ∈ [64 , 2048] . Further details are provided in the Appendix. 
+
+4.2. Results & Analysis 
+
+Table 1 presents the comparative results of uncertainty quan-tification on three preference datasets. We have the follow-ing observations: ❶ Naive confidence selection is insuf-ficient. Without uncertainty estimates, the Naive baseline can only evaluate randomly selected samples and thus con-sistently lags behind uncertainty-aware methods. This con-firms that reliable confidence estimation is crucial for identi-fying samples on which the reward model can make accurate point predictions. ❷ Existing uncertainty quantification methods improve reward reliability to varying degrees. 
+
+Model-based approaches such as MC-Dropout, Deep En-sembles, and MCNF, as well as distribution-free interval estimation methods such as CQR and Clear, generally out-perform the Naive baseline by selecting lower-uncertainty samples. Nevertheless, their performance remains incon-sistent across datasets and metrics, suggesting that either model-intrinsic uncertainty or generic conformal intervals alone may be insufficient for reward modeling. ❸ UARM consistently achieves the best uncertainty-ranked pre-diction performance. Across all three datasets, UARM obtains the highest R 2@50 and the lowest MSE@50 and MAE@50. Compared with the strongest baselines, UARM improves R 2@50 from 0.527 to 0.543 on HelpSteer, from 
+
+0.770 to 0.794 on UltraFeedback, and from 0.955 to 0.985 
+
+on PKU-SafeRLHF. The gains are especially pronounced on PKU-SafeRLHF, where UARM reduces MSE@50 from 
+
+> 2
+
+https://huggingface.co/sfairXC/ FsfairX-LLaMA3-RM-v0.1 
+
+7Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Table 1. Comparative analysis of UARM versus baseline models with fixed miscoverage rate α = 0 .1.                                                                                                                                  
+
+> Dataset HelpSteer UltraFeedback PKU-SafeRLHF Method R2@50 MSE@50 MAE@50 R 2@50 MSE@50 MAE@50 R 2@50 MSE@50 MAE@50
+> Model-based Uncertainty Estimation Methods
+> Naive 0.357 0.611 0.595 0.563 1.481 0.832 0.850 0.173 0.206 MC-Dropout (Gal & Ghahramani, 2016) 0.369 0.437 0.506 0.607 0.949 0.717 0.863 0.073 0.135 Deep Ensemble (Lakshminarayanan et al., 2017) 0.395 0.433 0.509 0.632 0.473 0.507 0.881 0.110 0.167 DER (Amini et al., 2020) 0.420 0.557 0.581 0.663 0.403 0.470 0.881 0.098 0.091 Packed Ensemble (Laurent et al., 2023) 0.462 0.476 0.537 0.710 0.491 0.514 0.905 0.103 0.147 TorchNaut (Kelen et al., 2025) 0.527 0.499 0.519 0.746 0.463 0.499 0.933 0.050 0.052 MCNF (Sosa Marco et al., 2026) 0.527 0.428 0.507 0.769 0.503 0.513 0.955 0.042 0.059
+> Distribution-free Interval Estimation Methods
+> SCP (Lei et al., 2018b) 0.378 0.544 0.569 0.609 1.345 0.815 0.866 0.159 0.200 CQR (Romano et al., 2019) 0.409 0.432 0.458 0.623 0.406 0.510 0.881 0.147 0.305 WCP (Tibshirani et al., 2019) 0.438 0.545 0.570 0.646 1.150 0.793 0.883 0.141 0.192 ACI (Gibbs & Candes, 2021) 0.476 0.469 0.544 0.678 0.523 0.534 0.905 0.113 0.256 SCCP (van der Laan & Alaa, 2024) 0.512 0.491 0.553 0.750 0.547 0.530 0.925 0.064 0.090 Clear (Azizi et al., 2026) 0.521 0.396 0.478 0.770 0.432 0.513 0.940 0.060 0.096
+> UARM (Ours) 0.543 0.387 0.423 0.794 0.383 0.461 0.985 0.013 0.016
+> Note : “@50” reports the metric on the 50% most confident samples (lowest uncertainty).
+
+0.042 to 0.013 and MAE@50 from 0.052 to 0.016 , demon-strating that its calibrated uncertainty estimates more effec-tively identify reliable reward predictions. 
+
+## 5. Conclusion 
+
+In this paper, we present UARM, an uncertainty-aware re-ward modeling framework for more reliable RLHF. UARM addresses two key challenges in reward-based policy opti-mization: reward models often cannot indicate when their predictions are unreliable, and uniform advantage com-putation can amplify such unreliable reward signals. To this end, UARM equips reward models with calibrated per-sample uncertainty estimates through quantile-based confor-mal prediction and incorporates these estimates into a het-eroscedastic advantage reweighting scheme. Experiments on three preference datasets show that UARM consistently improves uncertainty-ranked reward prediction performance over both model-based uncertainty estimation methods and distribution-free interval estimation baselines, demonstrat-ing its effectiveness in identifying more reliable reward predictions. 
+
+Limitations & Future Work. This work focuses primar-ily on the main offline reward modeling experiments, while broader evaluations of downstream online RLHF perfor-mance, sensitivity to hyperparameters, and generalization across larger backbones remain important directions for future work. In addition, UARM relies on a held-out cal-ibration set drawn from the training distribution, and its empirical reliability may be affected by severe distribution shift during policy optimization. Future work will extend UARM to adaptive online calibration, study its integration with broader policy optimization algorithms beyond GRPO, and provide more comprehensive theoretical analysis of its impact on RLHF convergence and reward hacking mitiga-tion. 
+
+## References 
+
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. Amini, A., Schwarting, W., Soleimany, A., and Rus, D. Deep evidential regression. Proc. Adv. Neural Inf. Pro-cess. Syst. , 33:14927–14937, 2020. Amodei, D., Olah, C., Steinhardt, J., Christiano, P., Schul-man, J., and Man ´e, D. Concrete problems in ai safety. 
+
+arXiv preprint arXiv:1606.06565 , 2016. Azizi, I., Bodik, J., Heiss, J., and Yu, B. CLEAR: Calibrated learning for epistemic and aleatoric risk. In Proc. Int. Conf. Learn. Represent. , 2026. Bradley, R. A. and Terry, M. E. Rank analysis of incom-plete block designs: I. the method of paired comparisons. 
+
+Biometrika , 39(3/4):324–345, 1952. Chen, Q. and Li, B. Colorful pinball: Density-weighted quantile regression for conditional guarantee of confor-mal prediction, 2026. Christiano, P. F., Leike, J., Brown, T., Martic, M., Legg, S., and Amodei, D. Deep reinforcement learning from human preferences. Advances in neural information pro-cessing systems , 30, 2017. 8Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Comanici, G., Bieber, E., Schaekermann, M., Pasupat, I., Sachdeva, N., Dhillon, I., Blistein, M., Ram, O., Zhang, D., Rosen, E., et al. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. Coste, T., Anwar, U., Kirk, R., and Krueger, D. Reward model ensembles help mitigate overoptimization. arXiv preprint arXiv:2310.02743 , 2023. Cui, G., Yuan, L., Ding, N., Yao, G., He, B., Zhu, W., Ni, Y., Xie, G., Xie, R., Lin, Y., et al. Ultrafeedback: Boosting language models with scaled ai feedback. arXiv preprint arXiv:2310.01377 , 2023. Dong, H., Xiong, W., Pang, B., Wang, H., Zhao, H., Zhou, Y., Jiang, N., Sahoo, D., Xiong, C., and Zhang, T. Rlhf workflow: From reward modeling to online rlhf. arXiv preprint arXiv:2405.07863 , 2024. Eisenstein, J., Nagpal, C., Agarwal, A., Beirami, A., D’Amour, A., Dvijotham, D., Fisch, A., Heller, K., Pfohl, S., Ramachandran, D., et al. Helping or herding? reward model ensembles mitigate but do not eliminate reward hacking. arXiv preprint arXiv:2312.09244 , 2023. Fu, J., Zhao, X., Yao, C., Wang, H., Han, Q., and Xiao, Y. Reward shaping to mitigate reward hacking in rlhf. arXiv preprint arXiv:2502.18770 , 2025. Gal, Y. and Ghahramani, Z. Dropout as a bayesian approxi-mation: Representing model uncertainty in deep learning. In Proc. Int. Conf. Mach. Learn. , pp. 1050–1059. PMLR, 2016. Gao, L., Schulman, J., and Hilton, J. Scaling laws for reward model overoptimization. In International Conference on Machine Learning , pp. 10835–10866. PMLR, 2023. Gibbs, I. and Candes, E. Adaptive conformal inference under distribution shift. Proc. Adv. Neural Inf. Process. Syst. , 34:1660–1672, 2021. Guo, D., Yang, D., Zhang, H., Song, J., Wang, P., Zhu, Q., Xu, R., Zhang, R., Ma, S., Bi, X., et al. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081):633–638, 2025. Harrison, J., Willes, J., and Snoek, J. Variational bayesian last layers. In Proc. Int. Conf. Learn. Represent. , 2024. Immer, A., Palumbo, E., Marx, A., and Vogt, J. Effec-tive bayesian heteroscedastic regression with deep neural networks. Proc. Adv. Neural Inf. Process. Syst. , 36:53996– 54019, 2023. Ji, J., Hong, D., Zhang, B., Chen, B., Dai, J., Zheng, B., Qiu, T. A., Zhou, J., Wang, K., Li, B., et al. Pku-saferlhf: Towards multi-level safety alignment for llms with human preference. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 31983–32016, 2025. Kelen, D. M., Jung, ´A., Kersch, P., and Benczur, A. A. Distribution-free data uncertainty for neural network re-gression. In Proc. Int. Conf. Learn. Represent. , 2025. Kingma, D. P. and Ba, J. Adam: A method for stochastic optimization. In Proc. Int. Conf. Learn. Represent. , pp. 1–9, 2015. Lakshminarayanan, B., Pritzel, A., and Blundell, C. Simple and scalable predictive uncertainty estimation using deep ensembles. Proc. Adv. Neural Inf. Process. Syst. , 30, 2017. Lambert, N., Pyatkin, V., Morrison, J., Miranda, L. J. V., Lin, B. Y., Chandu, K., Dziri, N., Kumar, S., Zick, T., Choi, Y., et al. Rewardbench: Evaluating reward models for language modeling. In Findings of the Association for Computational Linguistics: NAACL 2025 , pp. 1755– 1797, 2025. Laurent, O., Lafage, A., Tartaglione, E., Daniel, G., marc Martinez, J., Bursuc, A., and Franchi, G. Packed en-sembles for efficient uncertainty estimation. In Proc. Int. Conf. Learn. Represent. , 2023. Lei, J., G’Sell, M., Rinaldo, A., Tibshirani, R. J., and Wasserman, L. Distribution-free predictive inference for regression. Journal of the American Statistical Associa-tion , 113(523):1094–1111, 2018a. Lei, J., G’Sell, M., Rinaldo, A., Tibshirani, R. J., and Wasserman, L. Distribution-free predictive inference for regression. Journal of the American Statistical Associa-tion , 113(523):1094–1111, 2018b. Liu, T., Xiong, W., Ren, J., Chen, L., Wu, J., Joshi, R., Gao, Y., Shen, J., Qin, Z., Yu, T., et al. Rrm: Robust reward model training mitigates reward hacking. arXiv preprint arXiv:2409.13156 , 2024. Miao, Y., Zhang, S., Ding, L., Bao, R., Zhang, L., and Tao, D. Inform: Mitigating reward hacking in rlhf via information-theoretic reward modeling. Advances in Neu-ral Information Processing Systems , 37:134387–134429, 2024. Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35:27730–27744, 2022. 9Uncertainty-Aware Reward Modeling for Stable RLHF 
+
+Romano, Y., Patterson, E., and Candes, E. Conformalized quantile regression. Proc. Adv. Neural Inf. Process. Syst. ,32, 2019. Shafer, G. and Vovk, V. A tutorial on conformal prediction. 
+
+Journal of machine learning research , 9(3), 2008. Skalse, J., Howe, N., Krasheninnikov, D., and Krueger, D. Defining and characterizing reward gaming. Advances in Neural Information Processing Systems , 35:9460–9471, 2022. Sosa Marco, A., Kirwan, J. D., Toumpa, A., and Gerasimou, S. Uncertainty quantification for deep regression using contextualised normalizing flows. Proc. Adv. Neural Inf. Process. Syst. , 38:50711–50736, 2026. Steinwart, I. and Christmann, A. Estimating conditional quantiles with the help of the pinball loss. Bernoulli , 17, 02 2011. doi: 10.3150/10-BEJ267. Tibshirani, R. J., Foygel Barber, R., Candes, E., and Ramdas, A. Conformal prediction under covariate shift. Proc. Adv. Neural Inf. Process. Syst. , 32, 2019. van der Laan, L. and Alaa, A. M. Self-calibrating conformal prediction. Proc. Adv. Neural Inf. Process. Syst. , 37: 107138–107170, 2024. Wang, H., Pan, L., Chen, Z., Zheng, C., Chu, Z., Li, X., Lu, Y., Liu, X., Li, H., and Lin, Z. Causalrm: Causal-theoretic reward modeling for rlhf from observational user feedbacks. arXiv preprint arXiv:2603.18736 , 2026. Wang, Z., Dong, Y., Zeng, J., Adams, V., Sreedhar, M. N., Egert, D., Delalleau, O., Scowcroft, J., Kant, N., Swope, A., et al. Helpsteer: Multi-attribute helpfulness dataset for steerlm. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Com-putational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pp. 3371–3384, 2024. Yan, G., Romano, Y., and Weng, T.-W. Provably robust conformal prediction with improved efficiency. In Proc. Int. Conf. Learn. Represent. , 2024. Zheng, C., Liu, S., Li, M., Chen, X.-H., Yu, B., Gao, C., Dang, K., Liu, Y., Men, R., Yang, A., et al. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. 10

@@ -1,0 +1,3295 @@
+Title: Environment-Grounded Automated Prompt Optimization for LLM Game Agents
+
+URL Source: https://arxiv.org/pdf/2606.17838v1
+
+Published Time: Wed, 17 Jun 2026 00:57:03 GMT
+
+Number of Pages: 43
+
+Markdown Content:
+# Environment-Grounded Automated Prompt Optimization for LLM Game Agents 
+
+Rean Clive Fernandes 
+
+Lamarr institute for ML and AI TU Dortmund University 
+
+Lukas Fehring 
+
+Leibniz University Hannover 
+
+Theresa Eimer 
+
+Leibniz University Hannover 
+
+Marius Lindauer 
+
+L3S Research Center Leibniz University Hannover 
+
+Matthias Feurer 
+
+Lamarr Institute for ML and AI TU Dortmund University 
+
+## Abstract 
+
+LLM agents in interactive environments are highly sensitive to their prompts, yet prompt engineering remains a manual, task-specific process. We introduce an automated prompt optimization framework for LLM agents that decomposes the observation-to-action pipeline into a goal-conditioned descriptor agent and an action selection agent , and iteratively refines each module’s prompt through an LLM-driven evolutionary loop guided by environment returns. We propose a 
+
+behavior analyzer to attribute episode outcomes to specific prompt components, and a mutator to propose targeted revisions to the prompt, before validating them through environment rollouts. We evaluate on all five BabyAI tasks in the BALROG benchmark, comparing our pipeline against BALROG’s RobustCoTAgent under both plain and guided prompt initializations. Optimization improves performance consistently across tasks and conditions, without requiring updates to the model weights. On PutNext, a multi-step coordination task where the RobustCoTAgent achieves 0% success, our framework reaches up to 72 .5% success rate using the same underlying LLM with optimized prompts. These results suggest that a multi-agent framework, combined with automatic prompt optimization, enhances LLMs without the need for fine-tuning or extensive human supervision. 
+
+## 1 Introduction 
+
+LLMs have demonstrated remarkable capability as general-purpose reasoning engines, with recent work pushing towards LLMs as the backbone of embodied AI agents in decision-making scenar-ios [Plaat et al., 2025, Gao et al., 2026]. Interactive games are an interesting testbed for the required capabilities [Paglieri et al., 2025, Karten et al., 2026], including long-term planning, decision-making under partial information, and adaptation to environmental changes. While current LLMs can solve simple game-playing tasks, they fall short of human performance, consistently struggle to interpret spatial information [Paglieri et al., 2025], and can be beaten by domain-specific machine learning solutions such as reinforcement learning [RL; Karten et al., 2026]. Hand-crafted, task-specific agent architectures [Zhang et al., 2025b, Trivedy, 2026] have been shown to improve performance, but they must be manually adapted for each new domain. Instead, recent work has obtained improved performance from hand-crafted, domain-specific prompts [Lou et al., 2026]. In this work, we move beyond monolithic agents, where one agent must handle multiple tasks such as state parsing, strategy adaptation and action selection at each step. We distribute this load across multiple agents; a well-established technique to improve LLM capabilities [He et al., 2024]. Concretely, we split the monolithic agent into a descriptor agent Ades and an action selector Asel ,
+
+> Preprint.
+> arXiv:2606.17838v1 [cs.CL] 16 Jun 2026 Environment
+> "go to the red ball" "go to the red ball"
+
+State  Observation       
+
+> Behavior Analyzer
+> Identified failure modes
+> • [AGENT] Actions do not consider
+> collision with objects.
+> • [DESCRIPTOR] Does not
+> mention the target.
+> Instruction Prompt
+> "Analyze the provided prompts
+> and episodes. what is the error,
+> and what module is
+> responsible?"
+> ACTOR
+> Descriptor Agent
+> Instruction Prompt
+> "Given the goal, condition the
+> environment observation into
+> information directly relevant to
+> the goal"
+> Goal condition observation
+> "Your target, the purple door, is 2
+> steps to your left"
+> Action Selection Agent
+> Instruction Prompt
+> "Pick the next action that
+> progresses you towards
+> completing the goal"
+> action
+> right left
+> pickup drop
+> forward
+> EVOLUTIONARY PROMPT OPTIMISATION
+> Trajectories & outcomes
+> ep 12 ●—●—●—●—●—●—●— ●
+> ep 13 ●—●—●—●—●— ●
+> ep 14 ●—●—●—●—●—●—●— ●
+> ●state ●success ●failure
+> Mutator
+> Adapted Prompt
+> • " Avoid walking into a wall that
+> blocks your movement repeatedly. "
+> Instruction Prompt
+> "Adapt the prompt based on the
+> failure modes"
+> Observation
+> Action
+> Mutated Prompt
+> Current Prompt
+
+Figure 1: Our approach contains two components: the standard reinforcement learning loop (top), and the evolutionary prompt refinement (bottom, simplified, not showing prompt evaluation). Ob-servations, actions, and rewards are passed in textual representation. The actor can be any agentic language model-based system. In this paper, we use a chained descriptor and acting agent. reminiscent of actor-critic separation in RL [Grondman et al., 2012]. The descriptor agent Ades 
+
+focuses only on extracting task-relevant information from the current state, without the added burden of planning ahead. This description then serves as the basis for the next action. This setup requires the agents’ prompts to be jointly functional, compounding the prompt engineering challenge. Our goal is to obtain these prompts automatically and without human effort. We optimize both sub-agents from task feedback using a simple LLM-powered evolutionary algorithm [Meyerson et al., 2024], yielding a task-specific prompting structure that improves performance by separating state interpretation and planning. This general agent architecture, combined with prompt optimization, offers a novel and automated way to adapt LLM agents to new tasks without costly gradient updates or task-specific redesign. We evaluate on all five BabyAI tasks in BALROG [Paglieri et al., 2025], which provide high-level natural-language task descriptions as well as stepwise observations and rewards. In summary, our contributions are: (i) an automated prompt-optimization framework for LLM agents, allowing to both optimize monolithic agents as well as agents with multiple sub-agents; (ii) a joint prompt optimization procedure based on episode returns and behavior analysis of the agents’ outputs and the state transitions; and (iii) improved performance through both decomposition and optimization on the BabyAI tasks in the BALROG benchmark, a multi-turn grid world benchmark. Code for our pipeline is provided at https://github.com/ReanFernandes/rapoa .
+
+## 2 Related Work 
+
+LLMs as Agents. Given the success of LLMs in language-based tasks like question answering and summarization, a natural next step is to use them for complex, multi-step decision-making tasks. To test these capabilities, recent benchmarks cover scientific discovery [Lu et al., 2024, Xu et al., 2026], machine learning and coding [Pan et al., 2024, Nathani et al., 2025], and game playing [Klissarov et al., 2025, Paglieri et al., 2025, Karten et al., 2026]. To help solve such tasks, self-criticism methods have been developed that use feedback, e.g., from the environment or the agent itself [Yao et al., 2023, Shinn et al., 2023, Kim et al., 2023]. Our work continues to build upon this strain of research by focusing on the action selection mechanism. Prior work also applies weight updates in text-based 2RL environments [Carta et al., 2023, Wen et al., 2024, Zhai et al., 2024], but LLM fine-tuning is costly. Not requiring access to weights, prompt optimization can instead be applied to both open and closed-weight models. 
+
+Agentic Architectures. Recent work has shown that imposing a pre-defined structure, e.g., sepa-rating memory and skill components, for solving decision-making tasks can significantly improve performance [Plaat et al., 2025]. He et al. [2024] define a planner-actor-reporter framework where the planner maintains a long-term plan with subgoals for the actor to achieve. The reporter summarizes progress for the planner. Wang et al. [2023] use a similar structure optimized for LLM-based planning. Zhang et al. [2025b] confirm that such a principled high-level decomposition of LLM agents is a key factor for success in game playing. Zhou et al. [2025] even optimize for an ideal composition of different agents within a multi-agent system. Our approach is largely orthogonal to these architectures because we focus on integrating prompt optimization. In principle, our method can be combined with many agentic designs. 
+
+Automatic Prompt Optimization. Optimizing prompts instead of weights is an alternative way to adapt LLMs to new tasks. APE [Zhou et al., 2022] establishes that prompts can be optimized automatically given a performance metric. APO/ProTeGi [Pryzant et al., 2023] introduces textual gradients where the LLM analyzes failure cases and edits the prompt in a corrective direction. OPRO [Yang et al., 2023] frames the LLM as a black-box optimizer that receives a history of (prompt, score) pairs and infers what to try next. GEPA [Agrawal et al., 2026] demonstrates that reflective prompt evolution over system-level trajectories can match or outperform weight updates via LLM fine-tuning. While the problem setup discusses a multi-agent setup, the experiments do not contain such a setup. All of these approaches evaluate on fixed datasets, tightly coupling optimized prompts to dataset quality and coverage. Technically, it is also possible to optimize for quantities that are judged by another LLM, such as style [Baumann and Kramer, 2024], but this might lead to bias due to the LLM-as-judge model [Dorner et al., 2025]. Our approach replaces static datasets with environment reward as the optimization signal, which is non-stationary and harder to overfit in the same way. RePrompt [Chen et al., 2024b] is similar to our setting, using LLM-generated immediate rewards instead of relying on a final solution checker. However, it is intended for a non-interactive setting and can therefore not take environment feedback into account. 
+
+Prompt Optimization for LLM Agents. Recent work has been concerned with improving LLMs as agents, e.g., by facilitating failure attribution. Liang et al. [2024] and Yang et al. [2026] both use agent decomposition to pinpoint responsibility for failed trajectories. AgentTracer [Zhang et al., 2025a] formalizes failure attribution for multi-agent systems, defining the decisive error as the earliest action in a trajectory whose correction is sufficient to change the outcome. Both of these works inform our behavior analyzer module. Several approaches focus on extracting rules or guidance from gathered experience to improve in future interactions [Zhao et al., 2024, Chen et al., 2024a, Gokhale et al., 2025]. We believe this can be a good solution in safety-critical settings, but is also more limiting than a well-optimized prompt. Another related, but orthogonal idea are optimized meta-prompts that can provide environment descriptions, strategic advice, and solution ideas [Xiong et al., 2025, Lou et al., 2026]. We complement this idea on the level of a single decision. 
+
+## 3 Problem Setting 
+
+We aim to use LLMs as decision-makers for diverse, potentially long-horizon tasks. We formalize this setting as a partially observable Markov decision process (POMDP) [Kaelbling et al., 1998] 
+
+(S, A, O, T, Z, R, γ ), following standard RL formulations. Here, S, A, and O denote the state, action, and observation spaces; T : S × A → S , Z : S × A → O , and R : S × A → R are the transition, observation, and reward functions, respectively; and γ ∈ [0 , 1] is the discount factor. In this work, we exclusively consider LLM-based agents. The agent π : O → A can be instantiated either as a monolithic agent governed by a single prompt, or as a multi-agent system. Formally, we define a multi-agent system as a directed acyclic Graph {A, E A} with A = ( A1, ..., A n) as nodes instantiated by subagents, and EA ∈ { 0, 1}n as the matrix describing inter-agent communication. 
+
+EAi,j = 1 iff Ai sends a message to Aj , EAi,j = 0 otherwise. Each subagent Ai is instructed by its own prompt pi, and we denote the list of all prompts P = ( p1, . . . , p |A|).At each step t, the agentic system π receives an observation ot ∈ O and selects an action at ∼ πP (· | 
+
+ht) according to a policy πp conditioned on the interaction history ht = ( o0, a 0, . . . , o t) and the 3Algorithm 1: RAPOA with Severity-Ordered Subagent Adaptation 
+
+Input: Initial agent πP (composed of subagents A with prompts P ), budget N , threshold δ,number of optimization and selection rollouts kopt and ksel , number of trajectories to analyze l 
+
+> 1
+
+Sselect ← GENERATE SEEDS (ksel ) // held-out, fixed for the entire run  
+
+> 2
+
+T A 
+
+> select
+
+← ROLLOUT (π, S select ) // Collect episodes from rollout  
+
+> 3
+
+A′ ← ∅  
+
+> 4
+
+while budget N not exhausted do  
+
+> 5
+
+Ssample ← Sopt ← GENERATE SEEDS (kopt ) // fresh seeds per outer iteration  
+
+> 6
+
+T A 
+
+> sample
+
+← ROLLOUT (π, S sample ) // Collect episodes from rollout  
+
+> 7
+
+while |Ssample |̸ = 0 & A̸ = A′ do  
+
+> 8
+
+Scand , Tcand ← SAMPLE (Ssample , Tsample , l ) // sample both coupled  
+
+> 9
+
+Ssample ← Ssample \ Scand  
+
+> 10
+
+T A′ 
+
+> sample
+
+← T A′ 
+
+> sample
+
+\ T A′ 
+
+> cand
+> 11
+
+L ← BEHAVIOR ANALYZER (A, Tcand ) // prioritized (issue, agent)-list  
+
+> 12
+
+foreach (issue , A i) ∈ L in order of severity do  
+
+> 13
+
+A′ 
+
+> i
+
+← ADAPT SUBAGENT (Ai, issue , Tcand ) 
+
+> 14
+
+A′ ← A with subagent Ai replaced by A′ 
+
+> i
+> 15
+
+if EVALUATE (Sopt , A ′) > EVALUATE (Sopt , A ) + δ then  
+
+> 16
+
+if EVALUATE (Sselect , A ′) > EVALUATE (Sselect , A ) + δ then  
+
+> 17
+
+A ← A′ 
+
+> 18
+
+break  
+
+> 19
+
+return πP
+
+prompts P .1 The selected action drives a state transition via T , emits a new observation via Z, and yields a reward via R, generating a trajectory τ = ( o0, a 0, r 0, o 1, a 1, r 1, . . . ). The objective is to maximize the expected discounted return, J(πP ) = EπP [P∞ 
+
+> t=0
+
+γtR(st, a t)] .
+
+Our goal in this paper is to find a collection of prompts P ∗ that maximizes this expected return for a given agent architecture: 
+
+P ∗ ∈ arg max 
+
+> P
+
+J(πP ). (1) In this Interaction Prompt Optimization (IPO) setting, we do not consider approaches that optimize model weights with gradients for a parametric policy [Sutton and Barto, 2018, Wen et al., 2024, Zhai et al., 2024]. Instead, we optimize prompts P for a fixed architecture A, E A to maximize expected return. The optimization problem thus shifts from parameter space to prompt space. 
+
+## 4 Reward-driven Automatic Prompt Optimization for Agentic Systems 
+
+Our proposed methodology Reward-driven Automatic Prompt Optimisation for Agentic systems 
+
+(RAPOA) consists of an LLM-based agent and an automatic prompt-evolution loop, as shown in Figure 1. We alternate between two phases: In phase one, the agent and text-based environment form a standard reinforcement learning loop. In phase two, the optimizer assesses the aggregated episodes, identifies failure cases and inefficiencies, and constructs revised prompts. With this methodology, we enable the automatic construction of task-specific, optimized prompts. All prompts used for initialization and during optimization are provided in Appendix C. 
+
+The RAPOA Algorithm The pseudocode of our prompt optimization loop is provided in Algo-rithm 1. The outer loop continues until the budget is depleted (Line 4). In every iteration, we draw 
+
+kopt new seeds that we use to collect new episodes T . The inner loop takes a subset of size l to analyze (Lines 8-10), and generates a list of critique points L via the BEHAVIOR ANALYZER (BA) (Line 11). RAPOA then iterates through the proposed changes, adapts the subagents, and evaluates   
+
+> 1We explicitly denote Pas part of the policy as it is the target of optimization, although it is already part of the subagents.
+
+4the multi-agent system’s resulting performance. Each proposal must pass a two-stage acceptance test: first on the in-loop optimization seeds Sopt (Line 15), then on the held-out selection seeds Sselect 
+
+(Line 16). Only proposals clearing both stages are accepted (Line 17-18), at which point the inner loop exits and a new batch of episodes is collected. 
+
+Prompt Optimization Provided with rollouts and the current prompts, all subagents Ai ∈ A are updated using the Behavior Analyzer (BA) and a Mutator. The BA critically analyzes the rollouts and proposes an ordered list ranked based on severity, each item in it consisting of three things: the subagent that it considers to be the cause of certain behavior, the reason for this characterization and the suggestion on what to change in the sub agents prompt to target this behavior. Crucially, the meta-prompt for the BA requires the LLM to reflect on the trajectories with respect to what went wrong in failed trajectories, so that bad behavior can be corrected, what went well in successful trajectories, so that such behavior can be reinforced, and to abstain if no suggestions can be inferred from the current set of trajectories. The length of this list is decided by the BA and RAPOA then iterates over these suggestions, utilizing the LLM-based Mutator to adapt the prompt of a subagent, until a modification is accepted. Once accepted, we jump back to the outer loop. 
+
+Evaluating the Adapted Agent Our acceptance criteria is the mean improvement of the mutated prompt (candidate) over the current prompt by a threshold δ. To reduce cost of added evaluation on the environment, we use two-stage evaluation (Lines 15–16): In both stages, the candidate must exceed the current performance by a threshold δ. We study two evaluation strategies that differ in selection pressure. High selection pressure (HSP) demands that the mean performance on all seeds in Sopt increases (as shown in the algorithm), reducing the probability that an accepted mutation benefits only the specific trajectories that motivated it. Low selection pressure (LSP) restricts this requirement to the mean of trajectories (i.e., seeds Scand ⊆ Sopt ) that were used to create feedback, accepting a noisier estimate in exchange for a more permissive gate, with the selection step (Line 16) providing the safeguard against poorly generalizing mutations. 
+
+Agentic Architecture Through our paper, we focus on an agent that decomposes into a descriptor agent Ades : O → G and an action-selection agent Aact : G → A conditioned on prompts pdes 
+
+and pact respectively. Provided an observation o ∈ O , Ades constructs an enriched representation g,which is then passed to Aact , resulting in an action a ∈ A . We hereby refer to this decomposed actor as a Split Perception Action agent , or SPA agent, for brevity. 
+
+## 5 Experiments 
+
+5.1 Experimental Setup Environment. We evaluate on the BabyAI suite [Chevalier-Boisvert et al., 2018] using the five task families provided by the BALROG benchmark [Paglieri et al., 2025]: G OTO, P ICK UP, O PEN ,PUT NEXT , and P ICK UPSEQ GOTO. Each task is a partially observable grid-world episode in which the agent receives a natural-language mission string and a local, egocentric observation (see Figure 1 for an illustration). Tasks range from single-step navigation (G OTO) to multi-step object coordination (P UT NEXT , P ICK UPSEQ GOTO), providing heterogeneous difficulty. We use a reward R = 1 for successful episodes, R = 0 for failures, and apply a step discount of 0.9, as is implemented in BALROG. For BabyAI, the environment creates different missions for each task family at random, controlled through the environment seed. We provide a short exemplar of this in the Appendix A.1. 
+
+Evaluation Protocol. We report results using held-out seeds: Concretely, we use 20 different environment seeds and 6 inference seeds (characterising the stochastic decoding of the LLM), resulting in 120 episodes. We report success rate as the primary metric and mean steps as an efficiency metric. We also evaluate runs with zero accepted mutations and additionally report average performance across tasks, matching BALROG practice. 
+
+Inference-time Setup. The agent receives the mission string and the rule-based scene description produced by BALROG’s BabyAITextCleanLangWrapper and outputs an action. For the SPA agent, first the descriptor Ades analyzes the input observation from the BALROG environment. Then, the action selector Aact receives the mission, the descriptor agent’s summary g, its current carrying state, 5plain        
+
+> 1-step
+> plain
+> 16-step
+> guided
+> 1-step
+> guided
+> 16-step
+> plain guided BALROG
+> plain
+> 16-step
+> SPA
+> plain
+> SPA
+> guided
+> BALROG
+> plain
+> 16-step
+> SPA
+> plain
+> SPA
+> guided
+> GoTo
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> 81%
+> ±3%
+> 80%
+> ±5%
+> 96%
+> ±3%
+> 94%
+> ±4%
+> 95%
+> ±3%
+> 100%
+> ±0%
+> 91%
+> ±5%
+> 95%
+> ±6%
+> 100%
+> ±0%
+> 82%
+> ±2%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 3%
+> ±4%
+> 17%
+> ±6%
+> 82%
+> ±7%
+> 81%
+> ±4%
+> 94%
+> ±4%
+> 96%
+> ±5%
+> 62%
+> ±6%
+> 89%
+> ±3%
+> 93%
+> ±6%
+> 74%
+> ±11%
+> 90%
+> ±4%
+> 88%
+> ±6%
+> 4%
+> ±3%
+> 21%
+> ±5%
+> 48%
+> ±6%
+> 57%
+> ±6%
+> 49%
+> ±13%
+> 54%
+> ±3%
+> 40%
+> ±6%
+> 48%
+> ±12%
+> 62%
+> ±6%
+> 30%
+> ±6%
+> 47%
+> ±7%
+> 60%
+> ±15%
+> 4%
+> ±5%
+> 29%
+> ±5%
+> 62%
+> ±7%
+> 61%
+> ±6%
+> 51%
+> ±5%
+> 69%
+> ±5%
+> 48%
+> ±10%
+> 58%
+> ±7%
+> 78%
+> ±5%
+> 51%
+> ±5%
+> 62%
+> ±13%
+> 76%
+> ±4%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 10%
+> ±8%
+> 8%
+> ±5%
+> 3%
+> ±2%
+> 13%
+> ±6%
+> 11%
+> ±7%
+> 1%
+> ±2%
+> 12%
+> ±5%
+> 72%
+> ±4%
+> BALROG
+> baseline
+> SPA
+> baseline HSP, =0.05 LSP, =0.05
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Success rate
+
+Figure 2: Comparison of Final hold-out evaluation scores between BALROG RobustCoTAgent and Our agent , for both non-optimized and optimized prompts. Bottom underline shows best overall performer per task, top dashed line shows the best performer for non optimized baselines. ◦ denotes performance of prompts which were not mutated during the optimization. and its previous plan; outputting a single action a and an updated plan. Both modules operate in single-turn mode: the plan field is the agent’s only persistent state across steps, keeping context length constant regardless of episode length. We evaluate two prompt initializations: Guided , which encodes explicit task knowledge including termination semantics and navigation heuristics; and Plain , a sparse initialization with no task-specific guidance (provided by BALROG). Both initializations contain the list of possible actions, and the task the agent has to perform. We compare against BALROG’s 
+
+RobustCoTAgent [Paglieri et al., 2025] under both initializations as a monolithic baseline. All runs use GPT-OSS20B [OpenAI, 2025] at temperature 0.6.
+
+Optimization-time Setup. The Behavior Analyzer and Mutator each receive an environment layer 
+
+describing the physics of the environment, a shared specification of the action space, observation format, and physical movement constraints. This is deliberately withheld from the action selector 
+
+Aact and descriptor Ades at all times, in line with the BALROG implementation. Domain knowledge reaches the runtime agent only through optimized prompts. The BA and Mutator also receive binary mutation history (accepted/rejected) to avoid repeated edits and to condition new proposals without confounding from score magnitudes (and threshold parameter magnitudes). Optimization runs use environment seed 42 with inference seed 1 2 ; we set kopt and ksel both to 20, with fixed selection seeds for all N = 20 optimization cycles. In order to compare the performance of our SPA agent’s optimized prompts against the BALROG’s RobustCoTAgent , we optimize the latter with its provided default configuration (plain prompt with 16 step rolling history window). 
+
+5.2 Full Comparison Between Baseline and Optimized Conditions 
+
+Figure 2 shows success rates across five tasks for four agent categories. The first two groups report non-optimized BALROG (1) and SPA (2); the latter two are their optimized counterparts. The figure shows which tasks are difficult before optimization and where optimization helps most. P UT NEXT is notably hard, with floor-level baseline performance across agents. G OTO is much easier and yields the highest average ceilings. Additionally, we provide in-depth results in Appendix B.1. 
+
+Optimization Comparison: How does Optimization Impact Performance? 
+
+Prompt optimization consistently improves over the respective non-optimized baseline across all agent variants. For SPA with guided initialization, the best prompt optimization variant increases the mean success rate from 65 .5% of 79 .2% across all five tasks. For the plain prompt initialization, 
+
+> 2
+
+The inference seed, seeds the sampling process of the LLM server; however, at temperature 0.6, GPU floating-point non-determinism and server-side batching prevent fully deterministic outputs, i.e., seeding only reduces response variance. 
+
+60 5 10 15 20                                          
+
+> Cycle
+> 0.000
+> 0.125
+> 0.250
+> 0.375
+> 0.500
+> 0.625
+> 0.750
+> 0.875
+> 1.000
+> Selection score (reward)  GoTo
+> 0510 15 20
+> Cycle
+> PickUp
+> 0510 15 20
+> Cycle
+> Open
+> 0510 15 20
+> Cycle
+> PickUp GoTo
+> 0510 15 20
+> Cycle
+> PutNext
+> 0510 15 20
+> Cycle
+> 0.000
+> 0.125
+> 0.250
+> 0.375
+> 0.500
+> 0.625
+> 0.750
+> 0.875
+> 1.000
+> Selection score (reward)
+> 0510 15 20
+> Cycle
+> 0510 15 20
+> Cycle
+> 0510 15 20
+> Cycle
+> 0510 15 20
+> Cycle
+> Gated ( =0.05)
+> Always-accept ( =-)
+> SPA/plain
+> SPA/guided
+> BALROG/plain/16-step
+> Final incumbent / T* (eval prompt)
+> =-, final (eval prompt)
+
+Figure 3: Progression of the selection phase scores for every mutation cycle, for δ = 0 .05 and 
+
+δ = −∞ . Markers indicate which cycle’s prompt was used for the held out evaluation. Horizontal dashed lines in the upper row indicate that no proposed mutation cleared the evaluation threshold. the best optimized condition reaches 62 .2% versus the 59 .8% baseline. BALROG also benefits from optimization, improving from 29 .3% (plain/16-step baseline) to 49 .0% , a gain of nearly 20 pp. The improvement is not uniform across tasks. For tasks where the non-optimized baseline is already near ceiling, such as G OTO and P ICK UP for SPA guided, the optimizer accepts few or no mutations, and performance is unchanged. The largest gains occur on harder tasks: O PEN improves from 54 .2% to 
+
+62 .5% for SPA guided, and P UT NEXT , the hardest task, with all non-optimized baselines near floor improves from 8.3% to as high as 72 .5% depending on the optimization configuration. We analyze the optimized prompts for P UT NEXT and a selection of optimized prompts in D 
+
+Baseline Comparison: Non Prompt-Optimized BALROG and SPA Agents 
+
+We now compare BALROG and SPA along two dimensions to shed light on the performance gap: history window length and prompt variant. First, the monolithic BALROG agent, in its default settings, has access to the past 16 actions and observations. In contrast, our agent contains the descriptor Ades and action selector Asel sub-agents, but cannot see the run history. To establish a lower bound on SPA’s performance, we use the plain case in which it only knows the past action leading to the current preprocessed observation. Second, given that BALROG ships with a plain BabyAI prompt, we adopt the same for SPA, and also craft the guided version in order to quantify the effect of the prompt quality on performance, before optimization. Within the baseline, we first note that the prompt performance for BALROG varies more ( 29 .3 ± 4.2% 
+
+for plain vs. 58 .5 ± 4.1% for guided) than for SPA ( 59 .8 ± 6.7% plain vs. 65 .5 ± 3.8% guided). The BALROG agent is therefore more susceptible to the prompt variant than to the size of its history window. For the guided variant, extending the history from 1 to 16 steps adds less than 1pp ( 57 .7% 
+
+vs. 58 .5% ), whereas for the plain variant it adds approximately 11 pp ( 18 .5% vs. 29 .3%), and even then the prompt variant remains the dominant effect ( ≈ 29 pp). SPA is less sensitive to the prompt variants, which differ not only in verbosity but also in the task-specific win conditions the guided prompt encodes, showing the robustness of SPA’s decomposition to the prompt variants we designed. Notably, SPA plain ( 59 .8 ± 6.7%) already matches BALROG guided/16-step ( 58 .5 ± 4.1% ) despite having no task-specific guidance and access only to its previous plan. 7GoTo              
+
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> HSP
+> Success rate
+> Plain Prompt
+> GoTo
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> Guided Prompt
+> GoTo
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> LSP
+> Success rate
+> GoTo
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> non-opt =-, final =-, T* =0.00 =0.02 =0.05 =0.10 zero mutations
+
+Figure 4: Final hold-out evaluation scores across all 5 tasks for varying thresholds and selection pressures for SPA. Interaction between the threshold and the size of the optimization set directly impacts the performance on the hold-out evaluation score. 
+
+5.3 Ablation Study and Sensitivity Analysis Does an Acceptance Criterion Affect Performance? Since the optimizer has access to the history of proposed prompt mutations together with their acceptance outcomes and also acts on a critical reflection of recent trajectories; the input to it should, in principle, provide sufficient information for providing beneficial mutation proposals. Thus, one might ask if it is necessary to only accept a newly proposed prompt if it improves over the current best, or if one could simply accept every mutation regardless of its evaluation performance. Figure 3 illustrates acceptance based on the validation step (top) vs accepting all proposals regardless of their performance (bottom). When requiring a performance improvement, accepted mutations are relatively sparse, but lead to monotonic performance increase. When all proposed mutations are accepted, the optimizer is still capable of discovering well-performing prompts. However, it does not consistently preserve performance or improve upon these mutations over subsequent cycles. Since all past mutations are observed as accepted, the optimizer lacks a contrasting signal between beneficial and detrimental changes, which likely causes the prompt to drift away from its best-performing state. To quantify the peak performance achieved by the unconstrained optimizer, we select post-hoc, the prompt T ∗ from the cycle with the highest performance on Tselect (the selection seed set) and compare it against the final prompt at the end of the same optimization run on the holdout set. The resulting gap between T ∗ and the end-of-run prompt measures the direct cost of operating without an optimization signal. We report this performance gap in Figure 4. This degradation is particularly pronounced for P UT NEXT because the task is sufficiently difficult, making rewards extremely sparse across episodes; success counts for SPA on average at ≈ 5 and for BALROG at ≈ 1 out of the 20 Tselect seeds. As a result, the best optimized prompt is highly sensitive to the accumulation of unfiltered mutations. 
+
+Sensitivity Analysis of the Threshold Parameter ’ δ’ In Figure 4 we consider the interaction effect between the selection pressure and the threshold δ on the performance, as their compound effect controls the "strictness" of accepting mutations. We can observe that the different thresholds behave relatively similar, and that there is no clear winner except for P UT NEXT , and that the prompt initialization has a bigger impact. Comparing low and high selection pressure, we find that low selection pressure can lead to slightly better results, but again do not find any clear winner. The performance on P UT NEXT is remarkably different, indicating that 80% 10% 20% 30% 40% 50% 60% 70% 80% 90% 100%     
+
+> Mean success rate (avg over 5 tasks)
+> 40k
+> 60k
+> 80k
+> 100k
+> 120k
+> Mean tokens per episode
+> (avg over all episodes, success and failure)
+> Opt stage / method
+> Progenitor (non-opt)
+> =-, final
+> =-, T*
+> HSP, =0.05
+> LSP, =0.05
+> Pareto frontier
+> Pareto dominant
+> System
+> BALROG plain
+> BALROG guided (standalone)
+> SPA plain
+> SPA guided
+> B-plain 16 step
+> SPA plain
+> SPA guided
+> B-plain 1 step
+> B-guided 1 step
+> B-guided 16 step
+
+Figure 5: Final hold-out evaluation scores for all optimized and non-optimized conditions, showing success rate against total tokens consumed per task, averaged across all tasks. The best performers jump in success rate comes directly from improvement on the hardest task, as shown in Figure 4. a too high δ can stifle the optimization process, while a low selection pressure appears to increase chances of finding an improvement. We follow that while the starting quality of the prompt directly affects optimization outcome, optimization still gives improvement over the baselines. We show in Appendix B.3 the full scores for these all the conditions shown along with the frequency of ’no mutation’ runs spread across the tasks in Table 7. 
+
+5.4 Success Rate Through the Lens of Token Usage 
+
+To assess the direct effect of prompts on model performance, token counts provide useful context. They correlate with several factors in the environment, especially the number of actor steps per episode. Decomposing the actor into descriptor and action selector also introduces two inference calls per state transition, which further increases tokens. With this motivation, the average tokens generated per episode provide a good proxy for estimating the efficiency of both our decomposition and optimized prompts relative to baseline prompts. From Figure 5 we see that SPA for both its baseline prompt and the optimized prompts consistently yields higher success rates, with the jump for the SPA (LSP/guided prompt/ δ = 0 .05 ) variant coming from its improvement on P UT NEXT accounting for 94% of this total gain on the performance. A similar concentration holds for BALROG (LSP, plain, δ = 0 .05 ), where 63% of its +18 .3pp mean gain comes from P ICK UP alone ( 16 .7% → 74 .2% ), with P UT NEXT remaining at floor. For SPA (LSP, plain, δ = 0 .05 ), the total gain is modest at +2 .3pp, with small regressions on P ICK UP
+
+and O PEN partially offsetting gains elsewhere. The optimized plain prompt does not fall below its baseline, suggesting the optimiser finds marginal improvements rather than inducing degradation when working from a weaker starting point. All other ablation conditions are plotted in Appendix 8 
+
+## 6 Conclusion and Future Work 
+
+We introduce RAPOA, an actor composition and optimization framework that uses prompt opti-mization to improve language-based agents on decision-making tasks. Our experiments show that action-step decomposition and behavior-driven prompt optimization yield significant gains over monolithic prompts without requiring weight updates. Our SPA agent with optimized prompts also reduces the need for analyzing the history of previous states and improves from both weak and strong initial prompts. Because the framework is simple and flexible, it can be combined with other agentic architectures, including long-term planning modules. While our results show the potential of automated prompt optimization for multi-step decision-making agents, several limitations remain. First, our experiments are restricted to a single domain 9and one LLM; future work should test generalization across environments, task distributions, and larger meta-LLMs. Second, we instantiate only one optimization architecture. The framework could be extended with alternative evaluation harnesses, memory mechanisms, and mutation operators. Finally, we maintain a single incumbent prompt throughout optimization. Population-based variants with crossover, diversity preservation, and selection may improve exploration and reduce premature convergence. More broadly, understanding how to optimize from simple prompts toward richer, guided meta-prompts remains an open question. Lastly, we find that procedurally generated game environments are useful testbeds for prompt opti-mization. Since they can produce near-infinite initial states, they may reduce test-set contamination risk and open a promising direction for developing and evaluating prompt optimization methods. 
+
+## Acknowledgments and Disclosure of Funding 
+
+This work was supported by the Federal Ministry of Research, Technology and Space (BMFTR), Germany under the AI service center KISSKI (grant no. 16IS22093C) and the state of North Rhine-Westphalia as part of the Lamarr Institute for Machine Learning and Artificial Intelligence. TE acknowledges funding by the German Research Foundation (DFG) under LI 2801/10-1. LF and ML acknowledge funding by the European Union (ERC, “ixAutoML”, grant no.101041029). Views and opinions expressed are however those of the authors only and do not necessarily reflect those of the European Union or the European Research Council Executive Agency. Neither the European Union nor the granting authority can be held responsible for them. 
+
+10 References 
+
+Lakshya A Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alex Dimakis, Ion Stoica, Dan Klein, Matei Zaharia, and Omar Khattab. GEPA: Reflective prompt evolution can outperform reinforcement learning. In International Conference on Learning Representations , 2026. Jill Baumann and Oliver Kramer. Evolutionary multi-objective optimization of large language model prompts for balancing sentiments. In Stephen Smith, João Correia, and Christian Cintrano, editors, Applications of Evolutionary Computation , pages 212–224, Cham, 2024. Springer Nature Switzerland. Thomas Carta, Clément Romac, Thomas Wolf, Sylvain Lamprier, Olivier Sigaud, and Pierre-Yves Oudeyer. Grounding large language models in interactive environments with online reinforcement learning. In Interna-tional conference on machine learning , pages 3676–3713. PMLR, 2023. Minghao Chen, Yihang Li, Yanting Yang, Shiyu Yu, Binbin Lin, and Xiaofei He. Automanual: Constructing instruction manuals by LLM agents via interactive environmental learning. Advances in Neural Information Processing Systems 37 , 2024a. URL https://api.semanticscholar.org/CorpusID:276117233 .Weizhe Chen, Sven Koenig, and Bistra Dilkina. Reprompt: Planning by automatic prompt engineering for large language models agents. arXiv preprint arXiv:2406.11132 , 2024b. Maxime Chevalier-Boisvert, Dzmitry Bahdanau, Salem Lahlou, Lucas Willems, Chitwan Saharia, Thien Huu Nguyen, and Yoshua Bengio. Babyai: A platform to study the sample efficiency of grounded language learning. In International Conference on Learning Representations , 2018. URL https://api.semanticscholar. org/CorpusID:59536625 .Florian Eddie Dorner, Vivian Nastl, and Moritz Hardt. Limits to scalable evaluation at the frontier: Llm as judge won’t beat twice the data. In International Conference on Learning Representations , volume 2025, pages 26467–26491, 2025. Huan-ang Gao, Jiayi Geng, Wenyue Hua, Mengkang Hu, Xinzhe Juan, Hongzhang Liu, Shilong Liu, Jiahao Qiu, Xuan Qi, Qihan Ren, Yiran Wu, Hongru Wang, Han Xiao, Yuhang Zhou, Shaokun Zhang, Jiayi Zhang, Jinyu Xiang, Yixiong Fang, Qiwen Zhao, Dongrui Liu, Cheng Qian, Zhenhailong Wang, Minda Hu, Huazheng Wang, Qingyun Wu, Heng Ji, and Mengdi Wang. A Survey of Self-Evolving Agents: What, When, How, and Where to Evolve on the Path to Artificial Super Intelligence. Transactions on Machine Learning Research ,2026. URL https://mlanthology.org/tmlr/2026/gao2026tmlr-survey/ .Anand Gokhale, Vaibhav Srivastava, and Francesco Bullo. Logicguard: Improving embodied LLM agents through temporal logic based critics, 2025. URL https://api.semanticscholar.org/CorpusID: 280148429 .Ivo Grondman, Lucian Busoniu, Gabriel Lopes, and Robert Babuska. A survey of actor-critic reinforcement learning: standard and natural policy gradients. IEEE Transactions on Systems, Man, and Cybernetics, Part C: Applications and Reviews , 42(6):1291–1307, 2012. doi: 10.1109/TSMCC.2012.2218595. URL 
+
+https://hal.science/hal-00756747 .Jianliang He, Siyu Chen, Fengzhuo Zhang, and Zhuoran Yang. From words to actions: Unveiling the theoretical underpinnings of LLM-driven autonomous systems. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 , Proceedings of Machine Learning Research, pages 17807–17841. PMLR / OpenReview.net, 2024. URL https://proceedings.mlr.press/v235/he24a. html .Leslie Pack Kaelbling, Michael L. Littman, and Anthony R. Cassandra. Planning and acting in partially observable stochastic domains. Artif. Intell. , 101(1-2):99–134, 1998. doi: 10.1016/S0004-3702(98)00023-X. URL https://doi.org/10.1016/S0004-3702(98)00023-X .Seth Karten, Jake Grigsby, Tersoo Upaa Jr, Junik Bae, Seonghun Hong, Hyunyoung Jeong, Jaeyoon Jung, Kun Kerdthaisong, Gyungbo Kim, Hyeokgi Kim, Yujin Kim, Eunju Kwon, Dongyu Liu, Patrick Mariglia, Sangyeon Park, Benedikt Schink, Xianwei Shi, Anthony Sistilli, Joseph Twin, Arian Urdu, Matin Urdu, Qiao Wang, Ling Wu, Wenli Zhang, Kunsheng Zhou, Stephanie Milani, Kiran Vodrahalli, Amy Zhang, Fei Fang, Yuke Zhu, and Chi Jin. The pokeagent challenge: Competitive and long-context learning at scale, 2026. URL 
+
+https://arxiv.org/abs/2603.15563 .Geunwoo Kim, Pierre Baldi, and Stephen Marcus McAleer. Language models can solve computer tasks. ArXiv ,abs/2303.17491, 2023. URL https://api.semanticscholar.org/CorpusID:257834038 .
+
+11 Martin Klissarov, R. Devon Hjelm, Alexander T. Toshev, and Bogdan Mazoure. On the modeling capabilities of large language models for sequential decision making. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net, 2025. URL 
+
+https://openreview.net/forum?id=vodsIF3o7N .Xuechen Liang, Meiling Tao, Yinghui Xia, Tianyu Shi, Jun Wang, and JingSong Yang. Self-evolving agents with reflective and memory-augmented abilities. ArXiv , abs/2409.00872, 2024. URL https: //api.semanticscholar.org/CorpusID:272367206 .Zhanzhi Lou, Hui Chen, Yibo Li, Qian Wang, and Bryan Hooi. Learning to learn-at-test-time: Language agents with learnable adaptation policies. arXiv preprint arXiv:2604.00830 , 2026. Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha. The ai scien-tist: Towards fully automated open-ended scientific discovery. ArXiv , abs/2408.06292, 2024. URL 
+
+https://api.semanticscholar.org/CorpusID:271854887 .Elliot Meyerson, Mark J. Nelson, Herbie Bradley, Adam Gaier, Arash Moradi, Amy K. Hoover, and Joel Lehman. Language model crossover: Variation through few-shot prompting. ACM Trans. Evol. Learn. Optim. , 4(4), November 2024. ISSN 2688-299X. doi: 10.1145/3694791. URL https://doi.org/10.1145/3694791 .Deepak Nathani, Lovish Madaan, Nicholas Roberts, Nikolay Bashlykov, Ajay Menon, Vincent Moens, Amar Budhiraja, Despoina Magka, Vladislav Vorotilov, Gaurav Chaurasia, Dieuwke Hupkes, Ricardo Silveira Cabral, Tatiana Shavrina, Jakob N. Foerster, Yoram Bachrach, William Yang Wang, and Roberta Raileanu. Mlgym: A new framework and benchmark for advancing AI research agents. CoRR , abs/2502.14499, 2025. doi: 10.48550/ARXIV.2502.14499. URL https://doi.org/10.48550/arXiv.2502.14499 .OpenAI. gpt-oss-120b & gpt-oss-20b model card. arXiv:2508.10925 [cs.CL] , 2025. D Paglieri, B Cupiał, S Coward, U Piterbarg, M Wolczyk, A Khan, E Pignatelli, Ł Kuci´ nski, L Pinto, R Fergus, et al. Balrog: Benchmarking agentic LLM and vlm reasoning on games. In 13th International Conference on Learning Representations Iclr 2025 , pages 36061–36097. ICLR, 2025. Jiayi Pan, Xingyao Wang, Graham Neubig, Navdeep Jaitly, Heng Ji, Alane Suhr, and Yizhe Zhang. Training software engineering agents and verifiers with swe-gym. ArXiv , abs/2412.21139, 2024. URL https: //api.semanticscholar.org/CorpusID:275133330 .Aske Plaat, Max J. van Duijn, Niki van Stein, Mike Preuss, Peter van der Putten, and Kees Joost Batenburg. Agentic large language models, a survey. J. Artif. Intell. Res. , 84, 2025. doi: 10.1613/JAIR.1.18675. URL 
+
+https://doi.org/10.1613/jair.1.18675 .Reid Pryzant, Dan Iter, Jerry Li, Yin Lee, Chenguang Zhu, and Michael Zeng. Automatic prompt optimization with “gradient descent” and beam search. In Proceedings of the 2023 conference on empirical methods in natural language processing , pages 7957–7968, 2023. Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652, 2023. Richard S. Sutton and Andrew G. Barto. Reinforcement learning - an introduction, 2nd Edition . MIT Press, 2018. URL http://www.incompleteideas.net/book/the-book-2nd.html .V. Trivedy. Improving deep agents with harness engineering. https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering, 2026. Accessed: 04/2026. Zihao Wang, Shaofei Cai, Guanzhou Chen, Anji Liu, Xiaojian Ma, and Yitao Liang. Describe, explain, plan and select: Interactive planning with LLMs enables open-world multi-task agents. Advances in Neural Information Processing Systems 36 , 2023. URL https://api.semanticscholar.org/CorpusID:268042457 .Muning Wen, Ziyu Wan, Weinan Zhang, Jun Wang, and Ying Wen. Reinforcing language agents via policy opti-mization with action decomposition. ArXiv , abs/2405.15821, 2024. URL https://api.semanticscholar. org/CorpusID:270063865 .Weimin Xiong, Yifan Song, Qingxiu Dong, Bingchan Zhao, Feifan Song, Xun Wang, and Sujian Li. Mpo: Boosting LLM agents with meta plan optimization. In Conference on Empirical Methods in Natural Language Processing , 2025. URL https://api.semanticscholar.org/CorpusID:276765428 .
+
+12 Ran Xu, Yuchen Zhuang, Yishan Zhong, Yue Yu, Zifeng Wang, Xiangru Tang, Hang Wu, May Dongmei Wang, Peifeng Ruan, Donghan Yang, Tao Wang, Guanghua Xiao, Xin Liu, Carl Yang, Yang Xie, and Wenqi Shi. Medagentgym: A scalable agentic training environment for code-centric reasoning in biomedical data science. In The Fourteenth International Conference on Learning Representations , 2026. URL https: //openreview.net/forum?id=jHDZEUgS4r .Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V Le, Denny Zhou, and Xinyun Chen. Large language models as optimizers. In The Twelfth International Conference on Learning Representations , 2023. Shuo Yang, Soyeon Caren Han, Xueqi Ma, Yan Li, Mohammad Reza Ghasemi Madani, and Eduard Hovy. Evotool: Self-evolving tool-use policy optimization in LLM agents via blame-aware mutation and diversity-aware selection. arXiv preprint arXiv:2603.04900 , 2026. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Syner-gizing reasoning and acting in language models. In International Conference on Learning Representations (ICLR) , 2023. Simon Zhai, Hao Bai, Zipeng Lin, Jiayi Pan, Peter Tong, Yifei Zhou, Alane Suhr, Saining Xie, Yann LeCun, Yi Ma, and Sergey Levine. Fine-tuning large vision-language models as decision-making agents via reinforcement learning. In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , 2024. URL http://papers.nips.cc/paper_files/paper/2024/hash/ c848b7d3adc08fcd0bf1df3101ba6728-Abstract-Conference.html .Guibin Zhang, Junhao Wang, Junjie Chen, Wangchunshu Zhou, Kun Wang, and Shuicheng Yan. Agentracer: Who is inducing failure in the llm agentic systems? arXiv preprint arXiv:2509.03312 , 2025a. Yuxuan Zhang, Haoyang Yu, Lanxiang Hu, Haojian Jin, and Hao Zhang. General modular harness for LLM agents in multi-turn gaming environments. In ICML MAS Workshop , 2025b. Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. Expel: LLM agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 19632–19642, 2024. Han Zhou, Xingchen Wan, Xingchen Wan, Ruoxi Sun, Hamid Palangi, Shariq Iqbal, Ivan Vuli’c, Anna Korhonen, and Sercan Ö. Arik. Multi-agent design: Optimizing agents with better prompts and topologies. ArXiv ,abs/2502.02533, 2025. URL https://api.semanticscholar.org/CorpusID:276107353 .Yongchao Zhou, Andrei Ioan Muresanu, Ziwen Han, Keiran Paster, Silviu Pitis, Harris Chan, and Jimmy Ba. Large language models are human-level prompt engineers. In The eleventh international conference on learning representations , 2022. 
+
+13 Overview of the Appendix 
+
+A Experimental Details Continued 15 
+
+A.1 Environment Task Examples . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.2 Computational Cost . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.3 Hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 
+
+B Supplementary Results 19 
+
+B.1 Performance of Baseline Models on the Hold-Out Set . . . . . . . . . . . . . . . . 19 B.2 Direct Comparison Between Hold-Out Performances Based on Strictness of the Acceptance Criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 B.3 Threshold Sensitivity Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 B.4 Full Token Efficiency Plot Across All Optimized Conditions . . . . . . . . . . . . 21 B.5 How Well Do the Optimized Prompts Generalize to Other Tasks? . . . . . . . . . . 22 B.5.1 Which Candidate Rank in a Given Batch Was Accepted for Mutation? . . . 22 B.5.2 Proportion of Failure / Insight / Skip Outputs From the BA, and Which Characterisations Yielded Test Acceptance? . . . . . . . . . . . . . . . . . 25 B.6 What Happens When the BA Is Allowed to Mutate Only One Module? . . . . . . . 25 
+
+C Details of the Prompts for All Agents and Optimizer Modules 27 
+
+C.1 Inference-Time Prompts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 C.1.1 Descriptor Prompts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 C.1.2 Agent Prompts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28 C.2 Optimization-Time Prompts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 
+
+D Selected Examples of Changes to Mutated Prompts 37 
+
+D.1 An Analysis of How Thresholding Impacts the Performance on PutNext: Analysis for SPA . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 37 D.2 Other Qualitatively Analysed Mutations . . . . . . . . . . . . . . . . . . . . . . . 40 14 A Experimental Details Continued 
+
+A.1 Environment Task Details 
+
+The BabyAI MixedTrainLocal environment used in our evaluation samples episodes from a fixed set of task families . Each family is defined by a goal template and a termination criterion. A specific instantiation of a task family, with concrete objects and colors filled into the template, is referred to as a mission . The mission is the natural language string the agent receives at the start of each episode; the task family determines what success means and which objects appear in the room. For example, the goto task family produces missions of the form “go to <article> <color> <object> ”, with success defined as the agent occupying a cell adjacent to the named target. Each call to gym.make samples a task family uniformly at random and then samples a mission within that family. The five task families used throughout this paper are described below, with example missions drawn directly from the trajectory logs of our evaluation runs. 
+
+Task family Termination criterion Example missions 
+
+GOTO Agent is adjacent to the named target object. 
+
+go to a blue key go to the purple ball go to a grey ball 
+
+PICK UP Agent is carrying the named target object. 
+
+pick up a purple box pick up the blue key pick up a grey ball 
+
+OPEN The named door is in the open state. If the door is locked, the agent must first carry a key of matching color and toggle the door while adjacent to it. 
+
+open the green door open the yellow door open the door (single-door layouts) PUT NEXT Object 1 occupies a cell orthogonally adjacent to object 2. Reaching this state requires picking up object 1, navigating to object 2, and dropping object 1 in an adjacent cell. 
+
+put a grey ball next to a grey box put the purple box next to the yellow key put the green key next to the grey box 
+
+PICK UP→GOTO Agent is carrying object 1 and is ad-jacent to object 2. Two surface forms occur: “pick up X, then go to Y” and “go to Y after you pick up X”. Both impose identical termination condi-tions. 
+
+pick up the blue ball, then go to a yellow ball go to a grey box after you pick up a grey ball go to the purple box after you pick up the purple key 
+
+Table 1: The five BabyAI task families evaluated in this paper. The mission is the natural language string presented to the agent at the start of each episode and instantiates the task family with concrete objects ( ball , key , box , door ) and colors ( red , green , blue , purple , yellow , grey ). The optimiser receives task family identity through the run configuration; the agent and descriptor at inference time receive only the mission string. 15 Table 2: Per-episode token cost for cross-task evaluations using the SPA, grouped by evaluation task (1,285 runs total). Token counts in thousands (k). Prompt (complete) refers to the prompt tokens given to (tokens generated by the) Action Selector (Ag.) and Description Generator (Desc.).                               
+
+> Eval task Steps/ep Ag. prompt (k) Ag. compl. (k) Desc. prompt (k) Desc. compl (k) GOTO10.1 7.8 9.4 3.0 4.8 PICKUP 14.4 11.1 10.4 4.3 6.5 OPEN 44.8 35.8 49.9 13.4 22.1 PUT NEXT 59.8 49.1 76.9 18.7 30.7 SEQ 36.3 28.8 43.8 11.1 18.8
+
+A.2 Computational Cost 
+
+Table 4 reports per-cycle token consumption broken down by component and task. Episode inference (agent and descriptor LLM calls) accounts for over 98% of total tokens in every condition; the optimiser overhead (Behavior Analyser and Mutator) is negligible ( <2%). Compute therefore scales almost entirely with the number and length of evaluation episodes, both of which grow with task difficulty. P UT NEXT episodes average at 59.5 steps and consume ∼10M tokens per cycle, versus 14.7 steps and ∼1.6M tokens for G OTO.The dominant cost also determines the natural parallelism strategy. Because each evaluation episode is fully independent, a single H100 running gpt-oss-20b 3 via vLLM 4 can be saturated by launching 
+
+N lightweight CPU workers, each executing an environment and streaming requests to the shared inference server concurrently. No additional GPUs are required for parallelism; throughput scales with N up to the point of GPU saturation. Our experiments used 8 H100s for model serving but did not fully exploit this episode-level parallelism, resulting in observed wall times of 2–16 hours per cycle depending on task, versus a theoretical minimum governed by GPU token throughput alone. We use gpt-oss-20b rather than a smaller reasoning model because it matches the performance of contemporaneous models on the BALROG benchmark 5, providing a well-characterised testbed for validating the optimisation process. One consequence is that completion tokens exceed prompt tokens on harder tasks (P UT NEXT ratio: 1.41), reflecting the cost of extended reasoning traces; this should be considered when estimating compute for reasoning-capable models. Table 3: Per-episode token cost for cross-task evaluations using the single-LLM BALROG baseline pipeline (no descriptor), grouped by evaluation task (450 runs total). Agent prompt tokens are higher than the two-LLM case because the agent receives the full scene description directly rather than a descriptor summary.                           
+
+> Eval task Steps/ep Agent prompt (k) Agent completion (k) Wall (s/ep) GOTO18.7 26.9 7.2 90 PICKUP 30.0 41.7 9.5 117 OPEN 53.0 77.5 24.8 321 PUT NEXT 63.2 97.3 30.2 376 SEQ 47.6 73.3 18.5 248
+> 3https://huggingface.co/openai/gpt-oss-20b
+> 4Version 0.19.1, https://github.com/vllm-project/vllm/releases/tag/v0.19.1
+> 5BALROG Benchmark https://BALROGai.com/
+
+16 Table 4: Per-cycle token cost breakdown by task (means across all optimisation conditions). All token counts in millions (M). Episode inference (agent + descriptor) accounts for >98% of total tokens across every task; optimiser overhead (BA + Mutator) is negligible. 
+
+GOTO PICKUP OPEN PUT NEXT SEQ 
+
+Episode inference 
+
+Agent prompt (M) 0.66 1.10 2.34 3.26 1.64 Agent completion (M) 0.60 0.83 2.47 4.60 1.91 Descriptor prompt (M) 0.14 0.22 0.58 0.82 0.41 Descriptor completion (M) 0.20 0.29 0.81 1.23 0.62 
+
+Optimiser overhead 
+
+BA prompt (M) 0.020 0.026 0.052 0.068 0.043 BA completion (M) 0.003 0.003 0.004 0.004 0.004 Mutator prompt (M) 0.005 0.005 0.006 0.006 0.006 Mutator completion (M) 0.002 0.002 0.002 0.002 0.002 
+
+Summary 
+
+Total tokens (M) 1.63 2.49 6.26 9.99 4.62 Episodes / cycle 49 52 55 61 53 Mean steps / episode 14.7 23.2 48.6 59.5 34.5 Ep. wall time / cycle (h) 2.3 3.2 9.2 16.0 7.1 
+
+17 A.3 Hyperparameters 
+
+Table 5: Hyperparameters of the prompt optimisation framework. All values are fixed across primary experiments unless a sweep is explicitly stated ( δ). 
+
+Hyperparameter Value Description 
+
+Optimisation loop 
+
+Optimisation cycles ( N ) 20 Number of BA–Mutator–gate iterations per run. Optimisation phase episodes ( |V |) 20 Episodes run per candidate during the optimisation phase. Seeds rotate each cycle. Selection phase episodes ( |T |) 20 Episodes run per candidate during the selection phase. Seeds are fixed across all cycles for paired comparison. Acceptance threshold ( δ) {0.00, 0.02, 0.05, 0.10} Required mean reward improvement of challenger over incumbent in the optimisation phase to proceed to selection. δ = 0 .05 is the primary condition. Min discordant pairs 4 Minimum number of episodes where incumbent and challenger differ in outcome. Below this, the accep-tance signal is flagged as insufficient_signal .Max BA resamples 3 Times the BA is re-queried per cycle before logging 
+
+ba_skip .BA trajectory episodes ( |B|) 6 Episodes sampled from the optimisation phase for BA input. 
+
+Episode rollout 
+
+Max steps per episode 64 Hard step limit; episode terminates as failure if not solved within this budget. Parallel workers 20 Concurrent episode workers per evaluation batch. 
+
+Evaluation protocol 
+
+Optimisation env seed 42 (base) Base seed for optimisation phase environment lay-outs. Rotated each cycle by adding the cycle index. Optimisation inference seed 1 Fixed LLM inference seed used throughout optimi-sation. Test phase env seeds 500–519 20 fixed environment layouts, independent of opti-misation seeds. Test phase inference seeds {2,3,4,5,6,7} 6 inference seeds; seed 1 excluded to ensure out-of-distribution evaluation. 
+
+Architecture and prompt 
+
+Prompt variant plain / guided Starting prompt quality. Plain uses BALROG’s min-imal instructions; guided encodes explicit win con-ditions for all 5 task families. Selection pressure HSP / LSP HSP requires improvement to hold over 20 optimisation-phase episodes before proceeding to selection. LSP uses the same 6 episodes as BA input, accepting on a weaker but cheaper signal. Module constraint both / agent / descriptor Restricts BA mutations to one module. both is the default; agent-only and descriptor-only are the abla-tion conditions. BALROG history window 16 steps Rolling message history for the BALROG Robust-CoT baseline. Not applicable to SPA. 
+
+18 B Supplementary results 
+
+B.1 Performance of Baseline Models on the Hold-Out Set 
+
+Table 6: Per-inference-seed success rates across all five tasks and six non-optimized conditions. Each cell: success rate over 20 episodes. Mean and ±Std computed across the six inference seeds. 5pp indicates a single episode.                                                                                                                                                                                                                                                          
+
+> Task Condition S2 S3 S4 S5 S6 S7 Mean ±Std GoTo
+> BALROG / min / 1-step 85% 80% 80% 80% 75% 85% 81% 3% BALROG / min / 16-step 70% 80% 85% 80% 85% 80% 80% 5% BALROG / rich / 1-step 100% 90% 95% 95% 100% 95% 96% 3% BALROG / rich / 16-step 100% 100% 90% 90% 95% 90% 94% 4% Ours / minimal 95% 90% 100% 95% 95% 95% 95% 3% Ours / rich 100% 100% 100% 100% 100% 100% 100% 0%
+> PickUp
+> BALROG / min / 1-step 5% 0% 0% 5% 10% 0% 3% 4% BALROG / min / 16-step 20% 10% 10% 15% 20% 25% 17% 6% BALROG / rich / 1-step 80% 80% 95% 75% 75% 90% 82% 7% BALROG / rich / 16-step 80% 80% 90% 80% 75% 80% 81% 4% Ours / minimal 90% 100% 100% 90% 95% 90% 94% 4% Ours / rich 95% 85% 100% 100% 95% 100% 96% 5%
+> Open
+> BALROG / min / 1-step 10% 5% 0% 0% 5% 5% 4% 3% BALROG / min / 16-step 20% 25% 20% 30% 15% 15% 21% 5% BALROG / rich / 1-step 45% 45% 50% 40% 60% 45% 48% 6% BALROG / rich / 16-step 50% 65% 60% 55% 50% 60% 57% 6% Ours / minimal 30% 65% 50% 50% 35% 65% 49% 13% Ours / rich 60% 55% 55% 55% 50% 50% 54% 3%
+> PickUp →GoTo
+> BALROG / min / 1-step 5% 5% 15% 0% 0% 0% 4% 5% BALROG / min / 16-step 35% 20% 30% 25% 30% 35% 29% 5% BALROG / rich / 1-step 55% 60% 70% 55% 60% 75% 62% 7% BALROG / rich / 16-step 65% 55% 70% 55% 65% 55% 61% 6% Ours / minimal 55% 45% 60% 50% 50% 45% 51% 5% Ours / rich 65% 70% 65% 65% 80% 70% 69% 5%
+> PutNext
+> BALROG / min / 1-step 0% 0% 0% 0% 0% 0% 0% 0% BALROG / min / 16-step 0% 0% 0% 0% 0% 0% 0% 0% BALROG / rich / 1-step 0% 0% 0% 0% 0% 0% 0% 0% BALROG / rich / 16-step 0% 0% 0% 0% 0% 0% 0% 0% Ours / minimal 25% 10% 5% 0% 10% 10% 10% 8% Ours / rich 10% 10% 0% 5% 15% 10% 8% 5%
+
+To highlight the intrinsic spread of the performance that stems from an LLM’s stochastic sampling, we show in B.1 performance of all the baseline configurations of SPA and BALROG across all the inference seeds for each task. The per-seed breakdown reveals three patterns obscured by the headline means. First, variance is strongly task- and prompt-dependent: O PEN under the plain SPA prompt shows by far the widest spread in the table, with some seeds consistently outperforming others by a large margin, indicating that inference stochasticity is the dominant performance driver on medium-difficulty tasks with sparse starting prompts. Second, BALROG achieves exactly 0% on PUT NEXT across every condition and every seed without exception, establishing that the optimized result reported in the main paper is attributable entirely to the optimization loop. Third, the guided SPA prompt on G OTO is the only condition in the table with zero variance across all six seeds; this ceiling behavior is the direct reason the optimizer accepts no mutations there. 
+
+B.2 Direct Comparison Between Hold-Out Performances Based on Strictness of the Acceptance Criteria 
+
+Figures 7 and 6 allows further scrutiny into which the interaction effects between the threshold value and the selection pressure through the individual values performance value per task. 19 For the plain prompt, we can see that on the performance comparison between the selection pressure conditions is almost comparable, and the trend within the thresholds is also not instantly apparent. For the guided case however, we see that while both instances show similar performance on the Easy to Medium level tasks, the stark difference between the performance on P UT NEXT highlights that for a difficult task i.e. one in which the rewards are extremely sparse, the noisier estimation allows more explorative behaviors in a sparse reward landscape. This difficulty of the tasks is also in effect confounded by the fact that the optimizer is a black box; there is no quantifiable way to measure the ’step’ size of a mutation. We allow the Optimizer to make a multitude of choices with the implication that the signal which it makes its decision over needs to be modeled well. With the environment as a source of a constant direction, the use of a gating mechanism and finer control over these interacting hyperparameters would allow better control in steering the optimizer towards consistent and semantically meaningful prompts. =0.00 =0.02 =0.05 =0.10 =0.00 =0.02 =0.05 =0.10 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext  
+
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 95%
+> ±6%
+> 95%
+> ±6%
+> 98%
+> ±2%
+> 99%
+> ±2%
+> 100%
+> ±0%
+> 92%
+> ±6%
+> 98%
+> ±4%
+> 93%
+> ±5%
+> 89%
+> ±3%
+> 88%
+> ±4%
+> 95%
+> ±6%
+> 87%
+> ±4%
+> 90%
+> ±4%
+> 82%
+> ±7%
+> 45%
+> ±6%
+> 57%
+> ±5%
+> 48%
+> ±12%
+> 47%
+> ±9%
+> 43%
+> ±7%
+> 52%
+> ±11%
+> 47%
+> ±7%
+> 49%
+> ±8%
+> 68%
+> ±6%
+> 58%
+> ±9%
+> 58%
+> ±7%
+> 44%
+> ±4%
+> 50%
+> ±6%
+> 62%
+> ±6%
+> 62%
+> ±13%
+> 52%
+> ±4%
+> 15%
+> ±4%
+> 7%
+> ±6%
+> 13%
+> ±6%
+> 6%
+> ±3%
+> 11%
+> ±5%
+> 8%
+> ±4%
+> 12%
+> ±5%
+> 9%
+> ±3%
+> HSP LSP
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Success rate
+
+Figure 6: Threshold heatmap for Plain prompt. We see for the plain prompt case that a higher selection pressure yields the better performance compared to a lower selection pressure. =0.00 =0.02 =0.05 =0.10 =0.00 =0.02 =0.05 =0.10 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext  
+
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 99%
+> ±2%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 91%
+> ±7%
+> 98%
+> ±2%
+> 93%
+> ±6%
+> 88%
+> ±5%
+> 97%
+> ±4%
+> 98%
+> ±2%
+> 88%
+> ±6%
+> 92%
+> ±6%
+> 59%
+> ±3%
+> 62%
+> ±5%
+> 62%
+> ±6%
+> 67%
+> ±8%
+> 62%
+> ±5%
+> 60%
+> ±8%
+> 60%
+> ±15%
+> 59%
+> ±10%
+> 76%
+> ±5%
+> 77%
+> ±2%
+> 78%
+> ±5%
+> 76%
+> ±5%
+> 71%
+> ±7%
+> 77%
+> ±10%
+> 76%
+> ±4%
+> 76%
+> ±7%
+> 42%
+> ±9%
+> 49%
+> ±8%
+> 11%
+> ±7%
+> 8%
+> ±6%
+> 78%
+> ±5%
+> 64%
+> ±10%
+> 72%
+> ±4%
+> 63%
+> ±11%
+> HSP LSP
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Success rate
+
+Figure 7: Threshold heatmap for Guided prompt. The guided prompt shows direct benefit when optimized in a low selection pressure condition. 
+
+B.3 Threshold Sensitivity Analysis 
+
+Table 7 shows the number of accepted mutations per condition for all 20 optimization cycles. Threshold stringency directly controls optimizer activity: at δ = 0 .10 , six of ten conditions reject all mutations under both HSP and LSP, while at δ = 0 .00 almost all conditions accept at least one candidate mutation. This reflects the diverse difficulties of the tasks rather than optimizer failure. The 20 0% 10% 20% 30% 40% 50% 60% 70% 80% 90% 100% 
+
+Mean success rate (avg over 5 tasks)           
+
+> 40k
+> 60k
+> 80k
+> 100k
+> 120k
+> Mean tokens per episode
+> (avg over all episodes, success and failure)
+> Opt stage / method
+> Progenitor (non-opt)
+> =-, final
+> =-, T*
+> HSP, =0.05
+> LSP, =0.05
+> Pareto frontier (all)
+> Pareto frontier (main)
+> Pareto dominant
+> HSP, =0.00
+> HSP, =0.02
+> HSP, =0.10
+> LSP, =0.00
+> LSP, =0.02
+> LSP, =0.10
+> Agent-only ablation
+> Descriptor-only ablation
+> System
+> BALROG plain
+> BALROG guided (standalone)
+> SPA plain
+> SPA guided
+> B-plain 16 step
+> SPA plain
+> SPA guided
+> B-plain 1 step
+> B-guided 1 step
+> B-guided 16 step
+
+Figure 8: Efficiency plot for all optimized conditions. Directly overlaid on Figure 5. near-ceiling task such as G OTO and guided P ICK UP directly produce zero accepted mutations at stricter thresholds, as no candidate can clear a bar that is above 100% acceptance (e.g., 98% success and a threshold of 0.05 require 103% success for a new prompt to be accepted). Table 7: Accepted mutation counts per task, prompt variant, selection pressure, and threshold δ. 0
+
+means that no mutation cleared the threshold, throughout the optimisation process. 
+
+HSP LSP Task Variant δ=0.00 δ=0.02 δ=0.05 δ=0.10 δ=0.00 δ=0.02 δ=0.05 δ=0.10 GoTo plain 4 1 0 0 2 2 1 0
+
+guided 0 1 0 0 1 0 1 0
+
+PickUp plain 6 2 0 1 1 1 1 0
+
+guided 2 1 1 0 1 3 0 1Open plain 1 2 1 1 4 1 2 0
+
+guided 3 3 2 1 1 0 1 0
+
+PickUp →GoTo plain 3 3 2 0 2 2 1 0
+
+guided 1 1 1 0 2 0 2 1PutNext plain 2 1 1 0 1 2 0 1guided 4 5 1 1 3 6 4 2
+
+Count(No mutations) 1/10 0/10 3/10 6/10 0/10 3/10 2/10 6/10 
+
+B.4 Full Token Efficiency Plot Across All Optimized Conditions 
+
+Figure 8 shows all the conditions we optimise over. SPA guided shows the best performance, and shows a wider variance in performance efficiency. SPA plain however, shows clustering in its performance, suggesting that the minimally crafted prompt does not provide enough of a strong starting point for the optimiser to improve. The performance for BALROG sees a steady increase 21 with an overall decrease in the number of tokens and its optimized versions approach closer to the SPA plain variant. 
+
+B.5 How Well do the Optimized Prompts Generalize to Other Tasks? 
+
+In order to test the generalisation of the prompts, to see if a prompt optimized for one task, actually transfers to another task from the same environment, given that they would be sharing similar environmental semantics and require the following of similar base rules, we perform this test over a small subset of our optimized conditions, namely the BALROG, SPA with guided and plain prompt variant, and also compare the best performer T ∗ from the always accept ( δ = −∞ ) case. In an effort to see how the performance of one task transfers to the other, we test out SPA and BALROG, under both selection pressures. Figure 9 shows all of these together for a qualitative comparison. The five BabyAI task families share subskills in a nested structure: G OTO is a component of every other task; P ICK UP is a prerequisite of both P ICK UPSEQ GOTO and P UT NEXT ; O PEN partially overlaps through its key-retrieval phase which depending on the mission, may or may not be required to open the door. This structure predicts that improvements to universal subskills should transfer broadly, while task-specific logic should not. Figure 9 confirms this prediction. Across all conditions, prompts optimized for more compositionally complex source tasks like P ICK UPSEQ GOTO and P UT NEXT produce the strongest off-diagonal performance, since their induced mutations address navigation recovery and multi-step coordination that appear in every task. In the SPA/guided/LSP condition, the P UT NEXT source prompt reaches 
+
+65 .0% on O PEN and 90 .8% on P ICK UP in addition to its 76 .7% on-diagonal result. OPEN is the most structurally isolated task. Source prompts optimized on O PEN do not propagate well to other tasks, and no other source task improves O PEN substantially beyond its non-optimized baseline. The Key-door toggle logic is sufficiently task-specific that the BA encodes it in a form that provides no transfer value. PUT NEXT shows the sharpest asymmetry optimising for it might allow the prompt to adapt to other tasks when used as a source, but cannot receive them. No source task other than P UT NEXT itself raises P UT NEXT performance above 15% , regardless of selection pressure or prompt variant. The sequential subgoal structure requires failure-signal from P UT NEXT episodes specifically; simpler tasks do not generate the trajectory evidence the BA needs to synthesise the relevant mutations. We also investigate qualitatively what exactly the prompt mutation that allows the agent to perform remarkably well in this task, in Appendix D.1 
+
+B.5.1 Which Candidate Rank in a Given Batch Was Accepted for Mutation? 
+
+Given that the BA implicitly ranks candidates by severity of failure, we examine which rank in the candidate list actually resulted in acceptance and thus, implicitly, better performance. This reveals how often the BA correctly identified the most pressing issue. Table 8 reports, for each condition and task where at least one mutation was committed, the rank of the final incumbent candidate, the selection pool scores at the moment of acceptance, and the fresh evaluation SR. Zero-mutation tasks are excluded; their fresh SR matches the non-optimized baseline by construction. Rank-1 candidates account for the majority of final incumbents across all thresholds. Fifteen fallback cases arise (rank 2 or 3), concentrated in harder tasks and permissive thresholds where the primary candidate more frequently fails the gate. The sole rank-3 acceptance occurs at HSP / δ = 0 .02 /guided P ICK UPSEQ GOTO: both ranks 1 and 2 failed the selection gate, rank 3 cleared it with a T-∆
+
+of +15 pp, and fresh evaluation confirms 76 .7% SR which is among the strongest results for that task across all conditions. Fallback candidates produce comparable or better hold-out evaluation performance to rank-1 ac-ceptances in 13 of 15 cases. The two exceptions are both P UT NEXT under HSP ( 6.7% and 10 .8% )which shows that at strict thresholds and near-floor baseline performance, even a cleared selection pool candidate does not reliably generalise. The selection pool delta at acceptance is a conservative and noisy predictor of fresh-eval gain. LSP, 
+
+δ = 0 .00 , guided P UT NEXT shows T-∆ = +5 pp yet achieves 77 .5% fresh SR, while HSP, δ = 0 .00 ,guided P UT NEXT shows T-∆ = +20 pp but only 41 .7% fresh SR. The magnitude of the selection 22 GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+92% 
+
+±5% 
+
+84% 
+
+±3% 
+
+36% 
+
+±6% 
+
+51% 
+
+±3% 
+
+2% 
+
+±2% 
+
+87% 
+
+±6% 
+
+68% 
+
+±6% 
+
+34% 
+
+±8% 
+
+38% 
+
+±6% 
+
+2% 
+
+±2% 
+
+88% 
+
+±2% 
+
+41% 
+
+±14% 
+
+39% 
+
+±10% 
+
+35% 
+
+±8% 
+
+3% 
+
+±2% 
+
+93% 
+
+±7% 
+
+76% 
+
+±5% 
+
+37% 
+
+±10% 
+
+49% 
+
+±6% 
+
+5% 
+
+±4% 
+
+82% 
+
+±4% 
+
+10% 
+
+±7% 
+
+20% 
+
+±8% 
+
+27% 
+
+±7% 
+
+2% 
+
+±2% 
+
+BALROG HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+79% 
+
+±3% 
+
+77% 
+
+±2% 
+
+48% 
+
+±8% 
+
+42% 
+
+±6% 
+
+3% 
+
+±2% 
+
+83% 
+
+±4% 
+
+80% 
+
+±5% 
+
+45% 
+
+±8% 
+
+52% 
+
+±12% 
+
+2% 
+
+±4% 
+
+85% 
+
+±4% 
+
+34% 
+
+±10% 
+
+32% 
+
+±4% 
+
+30% 
+
+±6% 
+
+4% 
+
+±3% 
+
+88% 
+
+±6% 
+
+82% 
+
+±6% 
+
+32% 
+
+±12% 
+
+48% 
+
+±6% 
+
+3% 
+
+±2% 
+
+87% 
+
+±4% 
+
+82% 
+
+±7% 
+
+40% 
+
+±8% 
+
+53% 
+
+±6% 
+
+2% 
+
+±4% 
+
+BALROG =- , T* 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+57% 
+
+±6% 
+
+57% 
+
+±6% 
+
+22% 
+
+±8% 
+
+27% 
+
+±8% 
+
+1% 
+
+±2% 
+
+78% 
+
+±5% 
+
+80% 
+
+±6% 
+
+38% 
+
+±10% 
+
+50% 
+
+±12% 
+
+2% 
+
+±4% 
+
+92% 
+
+±7% 
+
+63% 
+
+±9% 
+
+18% 
+
+±6% 
+
+37% 
+
+±10% 
+
+4% 
+
+±5% 
+
+68% 
+
+±7% 
+
+68% 
+
+±2% 
+
+24% 
+
+±5% 
+
+34% 
+
+±3% 
+
+2% 
+
+±2% 
+
+88% 
+
+±5% 
+
+82% 
+
+±2% 
+
+39% 
+
+±11% 
+
+57% 
+
+±6% 
+
+2% 
+
+±2% 
+
+BALROG =- , final 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+94% 
+
+±4% 
+
+92% 
+
+±6% 
+
+48% 
+
+±8% 
+
+49% 
+
+±5% 
+
+10% 
+
+±10% 
+
+96% 
+
+±3% 
+
+92% 
+
+±5% 
+
+48% 
+
+±5% 
+
+54% 
+
+±7% 
+
+8% 
+
+±4% 
+
+94% 
+
+±3% 
+
+92% 
+
+±6% 
+
+43% 
+
+±6% 
+
+53% 
+
+±6% 
+
+6% 
+
+±5% 
+
+100% 
+
+±0% 
+
+93% 
+
+±5% 
+
+39% 
+
+±9% 
+
+59% 
+
+±6% 
+
+15% 
+
+±8% 
+
+96% 
+
+±3% 
+
+88% 
+
+±6% 
+
+48% 
+
+±10% 
+
+54% 
+
+±10% 
+
+7% 
+
+±5% 
+
+SPA plain HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+89% 
+
+±9% 
+
+50% 
+
+±14% 
+
+55% 
+
+±4% 
+
+11% 
+
+±5% 
+
+100% 
+
+±0% 
+
+92% 
+
+±5% 
+
+48% 
+
+±8% 
+
+65% 
+
+±6% 
+
+14% 
+
+±7% 
+
+100% 
+
+±0% 
+
+92% 
+
+±6% 
+
+44% 
+
+±3% 
+
+56% 
+
+±4% 
+
+11% 
+
+±5% 
+
+99% 
+
+±2% 
+
+87% 
+
+±2% 
+
+49% 
+
+±7% 
+
+60% 
+
+±10% 
+
+15% 
+
+±9% 
+
+95% 
+
+±5% 
+
+89% 
+
+±5% 
+
+48% 
+
+±5% 
+
+52% 
+
+±10% 
+
+12% 
+
+±7% 
+
+SPA plain LSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+97% 
+
+±4% 
+
+47% 
+
+±7% 
+
+80% 
+
+±6% 
+
+8% 
+
+±6% 
+
+100% 
+
+±0% 
+
+97% 
+
+±4% 
+
+49% 
+
+±6% 
+
+72% 
+
+±6% 
+
+10% 
+
+±6% 
+
+92% 
+
+±5% 
+
+90% 
+
+±5% 
+
+48% 
+
+±8% 
+
+51% 
+
+±11% 
+
+8% 
+
+±5% 
+
+86% 
+
+±7% 
+
+84% 
+
+±3% 
+
+42% 
+
+±8% 
+
+50% 
+
+±4% 
+
+4% 
+
+±3% 
+
+100% 
+
+±0% 
+
+95% 
+
+±4% 
+
+52% 
+
+±9% 
+
+66% 
+
+±3% 
+
+29% 
+
+±7% 
+
+SPA plain =- , T* 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+98% 
+
+±2% 
+
+60% 
+
+±14% 
+
+76% 
+
+±11% 
+
+7% 
+
+±4% 
+
+98% 
+
+±3% 
+
+94% 
+
+±3% 
+
+65% 
+
+±3% 
+
+74% 
+
+±8% 
+
+9% 
+
+±7% 
+
+87% 
+
+±7% 
+
+86% 
+
+±4% 
+
+32% 
+
+±9% 
+
+40% 
+
+±5% 
+
+3% 
+
+±4% 
+
+88% 
+
+±5% 
+
+90% 
+
+±6% 
+
+38% 
+
+±8% 
+
+50% 
+
+±6% 
+
+9% 
+
+±7% 
+
+82% 
+
+±4% 
+
+72% 
+
+±13% 
+
+5% 
+
+±3% 
+
+27% 
+
+±2% 
+
+1% 
+
+±2% 
+
+SPA plain =- , final 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+91% 
+
+±3% 
+
+57% 
+
+±4% 
+
+73% 
+
+±2% 
+
+8% 
+
+±3% 
+
+100% 
+
+±0% 
+
+95% 
+
+±4% 
+
+57% 
+
+±7% 
+
+76% 
+
+±3% 
+
+8% 
+
+±8% 
+
+100% 
+
+±0% 
+
+87% 
+
+±3% 
+
+56% 
+
+±8% 
+
+72% 
+
+±5% 
+
+12% 
+
+±7% 
+
+100% 
+
+±0% 
+
+93% 
+
+±5% 
+
+54% 
+
+±10% 
+
+70% 
+
+±5% 
+
+9% 
+
+±2% 
+
+100% 
+
+±0% 
+
+95% 
+
+±3% 
+
+58% 
+
+±7% 
+
+72% 
+
+±6% 
+
+10% 
+
+±5% 
+
+SPA guided HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+99% 
+
+±2% 
+
+92% 
+
+±6% 
+
+62% 
+
+±11% 
+
+72% 
+
+±8% 
+
+10% 
+
+±5% 
+
+100% 
+
+±0% 
+
+94% 
+
+±5% 
+
+57% 
+
+±10% 
+
+75% 
+
+±6% 
+
+7% 
+
+±6% 
+
+99% 
+
+±2% 
+
+92% 
+
+±4% 
+
+61% 
+
+±9% 
+
+75% 
+
+±3% 
+
+12% 
+
+±4% 
+
+100% 
+
+±0% 
+
+92% 
+
+±6% 
+
+58% 
+
+±7% 
+
+72% 
+
+±6% 
+
+7% 
+
+±6% 
+
+99% 
+
+±2% 
+
+91% 
+
+±3% 
+
+65% 
+
+±10% 
+
+72% 
+
+±7% 
+
+77% 
+
+±7% 
+
+SPA guided LSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+99% 
+
+±2% 
+
+91% 
+
+±5% 
+
+61% 
+
+±12% 
+
+76% 
+
+±3% 
+
+10% 
+
+±8% 
+
+99% 
+
+±2% 
+
+98% 
+
+±2% 
+
+66% 
+
+±8% 
+
+75% 
+
+±10% 
+
+10% 
+
+±5% 
+
+100% 
+
+±0% 
+
+94% 
+
+±5% 
+
+60% 
+
+±8% 
+
+79% 
+
+±7% 
+
+8% 
+
+±5% 
+
+100% 
+
+±0% 
+
+92% 
+
+±6% 
+
+66% 
+
+±5% 
+
+71% 
+
+±5% 
+
+13% 
+
+±4% 
+
+99% 
+
+±2% 
+
+89% 
+
+±7% 
+
+59% 
+
+±8% 
+
+69% 
+
+±3% 
+
+66% 
+
+±8% 
+
+SPA guided =- , T* 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+91% 
+
+±7% 
+
+57% 
+
+±4% 
+
+66% 
+
+±5% 
+
+8% 
+
+±6% 
+
+93% 
+
+±6% 
+
+93% 
+
+±4% 
+
+63% 
+
+±6% 
+
+76% 
+
+±6% 
+
+8% 
+
+±7% 
+
+100% 
+
+±0% 
+
+80% 
+
+±6% 
+
+52% 
+
+±6% 
+
+62% 
+
+±6% 
+
+13% 
+
+±2% 
+
+100% 
+
+±0% 
+
+94% 
+
+±3% 
+
+62% 
+
+±6% 
+
+66% 
+
+±5% 
+
+12% 
+
+±6% 
+
+99% 
+
+±2% 
+
+99% 
+
+±2% 
+
+64% 
+
+±6% 
+
+82% 
+
+±2% 
+
+7% 
+
+±4% 
+
+SPA guided =- , final 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+92% 
+
+±5% 
+
+84% 
+
+±3% 
+
+36% 
+
+±6% 
+
+51% 
+
+±3% 
+
+2% 
+
+±2% 
+
+87% 
+
+±6% 
+
+68% 
+
+±6% 
+
+34% 
+
+±8% 
+
+38% 
+
+±6% 
+
+2% 
+
+±2% 
+
+88% 
+
+±2% 
+
+41% 
+
+±14% 
+
+39% 
+
+±10% 
+
+35% 
+
+±8% 
+
+3% 
+
+±2% 
+
+93% 
+
+±7% 
+
+76% 
+
+±5% 
+
+37% 
+
+±10% 
+
+49% 
+
+±6% 
+
+5% 
+
+±4% 
+
+82% 
+
+±4% 
+
+10% 
+
+±7% 
+
+20% 
+
+±8% 
+
+27% 
+
+±7% 
+
+2% 
+
+±2% 
+
+BALROG HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+94% 
+
+±4% 
+
+92% 
+
+±6% 
+
+48% 
+
+±8% 
+
+49% 
+
+±5% 
+
+10% 
+
+±10% 
+
+96% 
+
+±3% 
+
+92% 
+
+±5% 
+
+48% 
+
+±5% 
+
+54% 
+
+±7% 
+
+8% 
+
+±4% 
+
+94% 
+
+±3% 
+
+92% 
+
+±6% 
+
+43% 
+
+±6% 
+
+53% 
+
+±6% 
+
+6% 
+
+±5% 
+
+100% 
+
+±0% 
+
+93% 
+
+±5% 
+
+39% 
+
+±9% 
+
+59% 
+
+±6% 
+
+15% 
+
+±8% 
+
+96% 
+
+±3% 
+
+88% 
+
+±6% 
+
+48% 
+
+±10% 
+
+54% 
+
+±10% 
+
+7% 
+
+±5% 
+
+SPA plain HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+Eval task 
+
+GoTo 
+
+PickUp 
+
+Open 
+
+PickUp GoTo 
+
+PutNext 
+
+> Source task (prompt optimised for)
+
+100% 
+
+±0% 
+
+91% 
+
+±3% 
+
+57% 
+
+±4% 
+
+73% 
+
+±2% 
+
+8% 
+
+±3% 
+
+100% 
+
+±0% 
+
+95% 
+
+±4% 
+
+57% 
+
+±7% 
+
+76% 
+
+±3% 
+
+8% 
+
+±8% 
+
+100% 
+
+±0% 
+
+87% 
+
+±3% 
+
+56% 
+
+±8% 
+
+72% 
+
+±5% 
+
+12% 
+
+±7% 
+
+100% 
+
+±0% 
+
+93% 
+
+±5% 
+
+54% 
+
+±10% 
+
+70% 
+
+±5% 
+
+9% 
+
+±2% 
+
+100% 
+
+±0% 
+
+95% 
+
+±3% 
+
+58% 
+
+±7% 
+
+72% 
+
+±6% 
+
+10% 
+
+±5% 
+
+SPA guided HSP, =0.05 
+
+0% 
+
+25% 
+
+50% 
+
+75% 
+
+100% 
+
+> Success rate
+
+Figure 9: Cross Task Hold-Out performance, for both SPA and BALROG, between always accept criteria 23 pool signal does not reliably predict the magnitude of generalisation; it only establishes a directional threshold for commitment. Table 8: Final incumbent candidate rank, selection pool scores at acceptance, and fresh evaluation SR for all SPA threshold conditions. Only tasks where at least one mutation was accepted are shown (zero-mutation tasks are excluded). Bold rank indicates a fallback candidate (rank >1). T-∆ =challenger minus incumbent on the fixed T seeds. Fresh SR aggregates 120 episodes (6 seeds × 20 episodes). 
+
+SP δ Variant Task Cycle Rank T-inc T-chal T-∆ Fresh SR HSP δ=0.00 plain GoTo 12 1 100% 100% +0 pp 100.0% HSP δ=0.00 plain PickUp 20 1 85% 85% +0 pp 97.5% HSP δ=0.00 plain Open 2 1 45% 50% +5 pp 45.0% HSP δ=0.00 plain PU →GOTO 13 1 75% 80% +5 pp 68.3% HSP δ=0.00 plain PutNext 5 1 15% 25% +10 pp 13.3% HSP δ=0.00 guided PickUp 9 1 90% 90% +0 pp 90.8% HSP δ=0.00 guided Open 10 2 50% 70% +20 pp 59.2% HSP δ=0.00 guided PU →GOTO 1 1 85% 90% +5 pp 75.8% HSP δ=0.00 guided PutNext 14 2 35% 55% +20 pp 41.7% HSP δ=0.02 plain GoTo 3 1 85% 95% +10 pp 100.0% HSP δ=0.02 plain PickUp 7 1 85% 85% +0 pp 93.3% HSP δ=0.02 plain Open 13 2 40% 45% +5 pp 56.7% HSP δ=0.02 plain PU →GOTO 17 1 65% 65% +0 pp 58.3% HSP δ=0.02 plain PutNext 5 2 5% 20% +15 pp 6.7% HSP δ=0.02 guided GoTo 11 2 100% 100% +0 pp 100.0% HSP δ=0.02 guided PickUp 5 1 85% 95% +10 pp 98.3% HSP δ=0.02 guided Open 16 1 65% 75% +10 pp 61.7% HSP δ=0.02 guided PU →GOTO 3 3 80% 95% +15 pp 76.7% HSP δ=0.02 guided PutNext 20 2 40% 55% +15 pp 49.2% HSP δ=0.05 plain Open 7 2 40% 50% +10 pp 47.5% HSP δ=0.05 plain PU →GOTO 20 1 80% 85% +5 pp 58.3% HSP δ=0.05 plain PutNext 10 1 10% 15% +5 pp 13.3% HSP δ=0.05 guided PickUp 5 2 85% 85% +0 pp 93.3% HSP δ=0.05 guided Open 19 1 55% 60% +5 pp 62.5% HSP δ=0.05 guided PU →GOTO 1 1 85% 95% +10 pp 77.5% HSP δ=0.05 guided PutNext 10 2 20% 25% +5 pp 10.8% HSP δ=0.10 plain PickUp 11 1 75% 85% +10 pp 88.3% HSP δ=0.10 plain Open 1 2 30% 50% +20 pp 46.7% HSP δ=0.10 guided Open 15 1 45% 55% +10 pp 66.7% HSP δ=0.10 guided PutNext 1 1 5% 30% +25 pp 8.3% LSP δ=0.00 plain GoTo 16 1 100% 100% +0 pp 98.3% LSP δ=0.00 plain PickUp 7 1 85% 100% +15 pp 95.0% LSP δ=0.00 plain Open 17 1 45% 50% +5 pp 43.3% LSP δ=0.00 plain PU →GOTO 19 1 75% 85% +10 pp 50.0% LSP δ=0.00 plain PutNext 1 1 0% 30% +30 pp 10.8% LSP δ=0.00 guided GoTo 16 2 95% 100% +5 pp 100.0% LSP δ=0.00 guided PickUp 2 1 80% 95% +15 pp 96.7% LSP δ=0.00 guided Open 3 1 50% 65% +15 pp 62.5% LSP δ=0.00 guided PU →GOTO 6 2 80% 85% +5 pp 70.8% LSP δ=0.00 guided PutNext 18 2 75% 80% +5 pp 77.5% 
+
+24 Continuation from above table SP δ Variant Task Cycle Rank T-inc T-chal T-∆ Fresh SR LSP δ=0.02 plain GoTo 6 1 90% 95% +5 pp 99.2% LSP δ=0.02 plain PickUp 4 1 75% 85% +10 pp 86.7% LSP δ=0.02 plain Open 6 1 40% 55% +15 pp 52.5% LSP δ=0.02 plain PU →GOTO 9 1 80% 80% +0 pp 61.7% LSP δ=0.02 plain PutNext 11 1 15% 20% +5 pp 7.5% LSP δ=0.02 guided PickUp 8 2 100% 100% +0 pp 98.3% LSP δ=0.02 guided PutNext 13 1 50% 65% +15 pp 64.2% LSP δ=0.05 plain GoTo 4 1 95% 90% −5pp 100.0% LSP δ=0.05 plain PickUp 12 1 75% 90% +15 pp 90.0% LSP δ=0.05 plain Open 2 1 35% 50% +15 pp 46.7% LSP δ=0.05 plain PU →GOTO 2 1 65% 75% +10 pp 62.5% LSP δ=0.05 guided GoTo 3 1 100% 100% +0 pp 100.0% LSP δ=0.05 guided Open 6 1 45% 60% +15 pp 60.0% LSP δ=0.05 guided PU →GOTO 6 1 85% 90% +5 pp 75.8% LSP δ=0.05 guided PutNext 13 1 60% 70% +10 pp 72.5% LSP δ=0.10 plain PutNext 12 1 10% 25% +15 pp 9.2% LSP δ=0.10 guided PickUp 15 1 85% 95% +10 pp 91.7% LSP δ=0.10 guided PU →GOTO 7 1 75% 85% +10 pp 75.8% LSP δ=0.10 guided PutNext 5 1 40% 70% +30 pp 63.3% 
+
+B.5.2 What Is the Proportion of Failure / Insight / Skip Outputs From the BA, and Which Characterizations Yielded Test Acceptance? 
+
+In theory, starting from a prompt that always results in failure, we expect the BA to consistently output failure characterisations more often in the earlier rounds of optimisation. As optimisation progresses and we start improving the prompt, we would expect to see more ’good’ behaviors encoded into the prompt through mutations. Table 9 shows us how many insights and failures are proposed by the BA, and how many of these actually pass the selection phase. We see that over the entire optimisation process, failures are in early stages a richer source of improvement, and posit that our current environment cycles are not sufficient to allow us to see this progression, but we do see however that there are already in these stages some insights, which mostly fail in the earlier rounds either due to a false positive where the BA thinks an action was good, or due to a truly good change only targetting local behaviors of the agent that might not help it towards the goal. Table 9: BA output type and gate-acceptance rate per condition. F = failure, I = insight, S = skip. Acc% = proportion of that type accepted by the T gate. Aggregated across all 5 tasks and both prompt variants. SP δ F F acc F acc% I I acc I acc% SHSP δ=0.00 179 24 13% 21 2 10% 0HSP δ=0.02 180 20 11% 20 0 0% 0HSP δ=0.05 184 9 5% 16 0 0% 0HSP δ=0.10 186 4 2% 13 0 0% 1LSP δ=0.00 183 16 9% 16 2 12% 1LSP δ=0.02 196 17 9% 4 0 0% 0LSP δ=0.05 189 13 7% 11 0 0% 0LSP δ=0.10 185 5 3% 15 0 0% 0
+
+B.6 What Happens When the BA Is Allowed to Mutate Only One Module? 
+
+Figure 10 shows fresh evaluation performance for the full SPA pipeline (HSP, δ = 0 .05 ), two module ablations, and BALROG optimized (HSP, δ = 0 .05 ) as a structural reference. The ablations constrain 25 the BA to propose mutations for one module only: agent-only mirrors the BALROG setup, where no descriptor exists; descriptor-only isolates whether the descriptor alone can carry performance gains. Both SPA ablations exceed BALROG optimized in mean success rate (agent-only: 58.2% plain, 75.2% guided; descriptor-only: 64.7% plain, 64.8% guided; BALROG: 47.7%). This holds even though all three conditions share the same single-module constraint structure, suggesting SPA’s decomposed architecture gives the BA more addressable failure modes even within a single module. The agent-only guided ablation is the strongest single-module condition at 75.2%, driven by a 49.2% success rate on P UT NEXT which requires guided agent prompt encodes explicitly. The BA refines this existing structure rather than synthesising it from scratch. In the plain variant, agent-only achieves only 7.5% on P UT NEXT , confirming that the guided prompt’s structural anchors are the enabling condition. Descriptor-only performance converges to similar levels across variants (64.7% vs 64.8%), whereas agent-only shows a large variant gap (58.2% vs 75.2%). Descriptor improvements are relatively prompt-agnostic; agent improvements depend critically on what is already in the prompt for the BA to refine. Table 10 supports a mechanistic reading of these results. The BA attributes approximately 81% of failures to the agent module across all unconstrained runs. Under the agent-only constraint it redirects to 93% agent attribution; under descriptor-only it inverts to 92% descriptor attribution, with a 1.8% constraint violation rate across 400 cycles. The BA follows the module constraint with high fidelity, and the performance of each ablation reflects what the BA finds when it actively looks at one module rather than defaulting to agent attribution. plain      
+
+> 1-step
+> plain
+> 16-step
+> guided
+> 1-step
+> guided
+> 16-step
+> plain guided BALROG
+> plain
+> 16-step
+> SPA
+> plain
+> SPA
+> guided
+> SPA
+> plain
+> SPA
+> guided
+> SPA
+> plain
+> SPA
+> guided
+> GoTo
+> PickUp
+> Open
+> PickUp GoTo
+> PutNext
+> 81%
+> ±3%
+> 80%
+> ±5%
+> 96%
+> ±3%
+> 94%
+> ±4%
+> 95%
+> ±3%
+> 100%
+> ±0%
+> 91%
+> ±5%
+> 95%
+> ±6%
+> 100%
+> ±0%
+> 96%
+> ±3%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 100%
+> ±0%
+> 3%
+> ±4%
+> 17%
+> ±6%
+> 82%
+> ±7%
+> 81%
+> ±4%
+> 94%
+> ±4%
+> 96%
+> ±5%
+> 62%
+> ±6%
+> 89%
+> ±3%
+> 93%
+> ±6%
+> 90%
+> ±6%
+> 98%
+> ±2%
+> 89%
+> ±5%
+> 92%
+> ±4%
+> 4%
+> ±3%
+> 21%
+> ±5%
+> 48%
+> ±6%
+> 57%
+> ±6%
+> 49%
+> ±13%
+> 54%
+> ±3%
+> 40%
+> ±6%
+> 48%
+> ±12%
+> 62%
+> ±6%
+> 51%
+> ±5%
+> 56%
+> ±6%
+> 52%
+> ±6%
+> 55%
+> ±8%
+> 4%
+> ±5%
+> 29%
+> ±5%
+> 62%
+> ±7%
+> 61%
+> ±6%
+> 51%
+> ±5%
+> 69%
+> ±5%
+> 48%
+> ±10%
+> 58%
+> ±7%
+> 78%
+> ±5%
+> 47%
+> ±5%
+> 72%
+> ±6%
+> 63%
+> ±5%
+> 73%
+> ±7%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 0%
+> ±0%
+> 10%
+> ±8%
+> 8%
+> ±5%
+> 3%
+> ±2%
+> 13%
+> ±6%
+> 11%
+> ±7%
+> 8%
+> ±6%
+> 49%
+> ±11%
+> 19%
+> ±9%
+> 4%
+> ±4%
+> BALROG
+> baseline
+> SPA
+> baseline HSP, =0.05
+> Ablation
+> Agent-only
+> Ablation
+> Descriptor-only
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Success rate
+
+Figure 10: Comparison of the SR based on constrained and unconstrained Optimizer functioning. The ablation on agent S and descriptor D essentially mimics the optimization of the BALROG agent. 26 Table 10: BA module attribution and constraint violations for unconstrained gated runs and module-ablation constrained runs. Attribution columns show the fraction of optimisation cycles where the BA diagnosed a failure in each module. Violations count cycles where the BA attributed the locked module, requiring a re-sample. All violations occur in descriptor-only runs; agent-only runs produced zero violations. 
+
+Condition Variant Agent Descriptor Skip Cycles Violations Viol. rate HSP plain 83% 17% 0% 100 — —HSP guided 79% 21% 0% 100 — —LSP plain 80% 20% 0% 100 — —LSP guided 83% 17% 0% 100 — —Agent-only plain 95% 5% 0% 100 0 0.0% Agent-only guided 92% 8% 0% 100 0 0.0% Descriptor-only plain 3% 96% 1% 100 1 1.0% Descriptor-only guided 6% 88% 6% 100 6 6.0% 
+
+Total (constrained) 400 7 1.8% 
+
+## C Details of the Prompts for All Agents and Optimizer Modules 
+
+This appendix documents all prompts used in the pipeline, organised by when they are active. The Agent and Descriptor receive only their own instruction files at rollout time — they never see the environment layer, the BA instructions, or the Mutator instructions. Environment physics and pipeline contracts live exclusively in the optimiser’s context, grounding its attributions without leaking privileged information into agent behaviour. 
+
+C.1 Inference-Time Prompts 
+
+Exact system prompts presented to each LLM during episode rollouts. Neither the Acting Agent nor the Descriptor Agent receives the environment layer shown in Section C.2. 
+
+C.1.1 Descriptor Prompts Descriptor — Plain. One-sentence instruction. Provides no task-specific context; the Descriptor must produce a goal-conditioned summary from the raw observation alone. 
+
+Descriptor — plain SPA pipeline 
+
+> You are a perception module for a navigation agent. Given a scene description and a mission, write a concise summary of what is relevant to completing the mission. Do not suggest actions.
+
+Descriptor — Guided. Handcrafted perceptual guidance: explicit output rules, prioritisation criteria, and boundary conditions. Optimiser starting point for the descriptor module under the guided variant. 
+
+Descriptor — guided SPA pipeline 
+
+> You are a perception module for a grid-world navigation agent. You will receive a scene description produced directly by the environment, listing each visible object and its position relative to the agent, plus the current mission. Your job is to write a focused natural language description of the scene that highlights what is relevant to completing the mission. ## Output rules - Lead with anything that directly concerns the mission target: where it is, whether it is reachable, whether anything is between you and it. - Always note if forward movement is blocked (a wall or object 1 step forward). - For doors, always state their current state (open, closed, or locked).
+
+27 - If the agent is carrying something, mention it only if it is relevant to the mission (e.g. carrying the key needed to open a door). - Do not list irrelevant background objects in detail –- summarise or omit them. - Do not suggest actions or reason about what to do next. Describe only what you observe. - Be concise. Include everything relevant but avoid padding. - Output ONLY the description. No preamble, no sign-off. 
+
+C.1.2 Agent Prompts Agent — Plain. BALROG-style minimal agent instructions. Provides the action set and a minimal output format; no task-specific win conditions or planning guidance. 
+
+Agent — plain SPA pipeline 
+
+You are an agent in a grid-world navigation game. The following are the possible actions you can take: turn left: turn to the left, turn right: turn to the right, go forward: take one step forward, pick up: pick up the object in front of you, drop: drop the object you are carrying, toggle: manipulate the object in front of you. Tips: - Read the mission carefully –- the required final action depends on what the mission asks you to do. - It does not make sense to repeat the same action if the observation does not change. Format your answer as: PLAN: <your plan, or "No changes." if unchanged> ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+Agent — Guided. Handcrafted reasoning strategy: explicit win conditions for all five task families, partial observability handling, a structured planning format, and action-set semantics. Optimiser starting point for the agent module under the guided variant. 
+
+Agent — guided SPA pipeline 
+
+You are controlling an agent in a grid world. Each turn you receive: - The mission you must complete. - A natural language description of what you currently see. All positions in the observation (forward, left, right) are relative to your current facing direction –- "1 step forward" always means one step in the direction you are currently moving, regardless of compass orientation. ## Win condition Read the mission carefully –- the required final action depends on the task type: - **"go to" missions**: navigate until the target object is exactly 1 step directly ahead of you. The episode ends automatically –- no further action needed. - **"pick up" missions**: navigate to the target object and use "pick up" when it is exactly 1 step directly ahead of you. - **"open" missions**: navigate to the door and use "toggle" when it is exactly 1 step directly ahead of you. If the door is locked, first find and pick up the matching key, then return to the door and toggle it. - **"put next to" missions**: pick up the first named object, navigate to the second named object, then use "drop" when you are adjacent to it. - **"pick up X then go to Y" missions**: pick up object X first (use "pick up" when directly in front of it), then navigate to object Y until it is 1 step ahead. In all cases, you must be facing the target directly –- being adjacent but facing the wrong direction does not satisfy the win condition. 
+
+28 ## Partial observability Your observation is a small window of the environment directly in front of you –-not the whole map. Objects outside this window are simply not visible yet. If the target is not in the current description, it exists somewhere else on the map and you have not found it yet. Never assume the information is wrong. Explore. If in case you do not receive a description but have a plan from a previous step, then be smart, look at your previous action, extrapolate with the current plan and propose an action along with the next plan. Should both the description and previous plan be unavailable, treat it as an exploratory step and simply select at random. ## Exploration When the target is not visible, consider turning in all directions to scan your surroundings. If your path is blocked by a wall, turn and try a different direction. ## Action set There are exactly 7 valid actions: turn left –- rotate 90 ° to the left (does NOT move you, only changes facing direction) turn right –- rotate 90 ° to the right (does NOT move you, only changes facing direction) go forward –- move one step in the direction you are currently facing pick up –- pick up the object directly in front of you drop –- drop the object you are carrying toggle –- open or unlock the door directly in front of you ## Key rule There is no action to move sideways, backward, or in a compass direction. "turn left" and "turn right" rotate you 90 ° but do not move you. The only action that moves you is "go forward". ## Planning Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. Format your answer as: PLAN: <your plan, or "No changes." if unchanged> ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+Agent — BALROG Plain. Verbatim RobustCoTAgent Prompt From the BALROG, Repro-duced Without Modification Used as the starting prompt for all BALROG optimisation runs. The 
+
+{mission} placeholder is substituted at runtime by the BALROG runner. 
+
+Agent — BALROG plain (verbatim) BALROG baseline, unchanged 
+
+You are an agent playing a simple navigation game. Your goal is to {mission}. The following are the possible actions you can take in the game, followed by a short description of each action: turn left: turn to the left, turn right: turn to the right, go forward: take one step forward, pick up: pick up the object below you, drop: drop the object that you are holding, toggle: manipulate the object in front of you. In a moment I will present you an observation. Tips: - Once the desired object you want to interact or pickup in front of you, you can use the ’toggle’ action to interact with it. 
+
+29 - It doesn’t make sense to repeat the same action over and over if the observation doesn’t change. PLAY! 
+
+Agent — BALROG Guided. Guided variant of the BALROG prompt in BALROG’s free-form chain-of-thought style ( <|ACTION|> extraction, no structured PLAN/ACTION format). Used in BALROG guided baseline experiments. 
+
+Agent — BALROG guided BALROG pipeline 
+
+You are a perception module for a grid-world navigation agent. You will receive a scene description produced directly by the environment, listing each visible object and its position relative to the agent, plus the current mission. Your job is to write a focused natural language description of the scene that highlights what is relevant to completing the mission. ## Observation rules - Lead with anything that directly concerns the mission target: where it is, whether it is reachable, whether anything is between you and it. - Always note if forward movement is blocked (a wall or object 1 step forward). - For doors, always state their current state (open, closed, or locked). - If the agent is carrying something, mention it only if it is relevant to the mission (e.g. carrying the key needed to open a door). - Do not list irrelevant background objects in detail –- summarise or omit them. - Do not suggest actions or reason about what to do next. Describe only what you observe. - Be concise. Include everything relevant but avoid padding. - Output ONLY the description. No preamble, no sign-off. Once you do this you must then control the agent in a grid world to complete the following mission: {mission} Each turn you receive: - The mission you must complete. - The natural language description you produced. All positions in the observation (forward, left, right) are relative to your current facing direction –- "1 step forward" always means one step in the direction you are currently moving, regardless of compass orientation. ## Win condition Read the mission carefully –- the required final action depends on the task type: - **"go to" missions**: navigate until the target object is exactly 1 step directly ahead of you. The episode ends automatically –- no further action needed. - **"pick up" missions**: navigate to the target object and use "pick up" when it is exactly 1 step directly ahead of you. - **"open" missions**: navigate to the door and use "toggle" when it is exactly 1 step directly ahead of you. If the door is locked, first find and pick up the matching key, then return to the door and toggle it. - **"put next to" missions**: pick up the first named object, navigate to the second named object, then use "drop" when you are adjacent to it. - **"pick up X then go to Y" missions**: pick up object X first (use "pick up" when directly in front of it), then navigate to object Y until it is 1 step ahead. In all cases, you must be facing the target directly –- being adjacent but facing the wrong direction does not satisfy the win condition. ## Partial observability Your observation is a small window of the environment directly in front of you –-not the whole map. Objects outside this window are simply not visible yet. If the target is not in the current description, it exists somewhere else on the map and you have not found it yet. Never assume the information is wrong. Explore. 
+
+30 If in case you do not receive a description but have a plan from a previous step, then be smart, look at your previous action, extrapolate with the current plan and propose an action along with the next plan. Should both the description and previous plan be unavailable, treat it as an exploratory step and simply select at random. ## Exploration When the target is not visible, consider turning in all directions to scan your surroundings. If your path is blocked by a wall, turn and try a different direction. ## Action set There are exactly 7 valid actions: turn left –- rotate 90 ° to the left (does NOT move you, only changes facing direction) turn right –- rotate 90 ° to the right (does NOT move you, only changes facing direction) go forward –- move one step in the direction you are currently facing pick up –- pick up the object directly in front of you drop –- drop the object you are carrying toggle –- open or unlock the door directly in front of you ## Key rule There is no action to move sideways, backward, or in a compass direction. "turn left" and "turn right" rotate you 90 ° but do not move you. The only action that moves you is "go forward". 
+
+C.2 Optimization-Time Prompts 
+
+These prompts run only during the optimization loop. 
+
+Environment Layer. Shared read-only context injected into both the BA and Mutator at every optimization cycle. Encodes world structure, observation format, action space, physical constraints, and partial observability rules. This was richly handcrafted in order to make certain that the BA and Mutator would follow the exact instructions that they were given. The resulting prompts were crafted over multiple retries of both components in isolation and then used in our pipeline. 
+
+Environment Layer BA and Mutator only 
+
+## Environment: BabyAI / MiniGrid ### World structure 2D grid world. The agent occupies one cell and faces one of four compass directions (right, down, left, up). Only the cells directly in front of the agent are visible –- the observation is a 7x7 partial window, not the full map. ### Observation format Positions in the observation are relative to the agent’s current facing direction. "1 step forward" always means one step in the direction the agent is currently facing, regardless of compass orientation. Left and right are also relative to facing –- not compass directions. The agent is always at position (row=6, col=3) in the 7x7 view. Row 0 is directly ahead. Cells behind row 6 are not visible. ### Action space There are exactly 7 valid actions: turn left –- rotate 90 ° left (no movement, only changes facing direction) turn right –- rotate 90 ° right (no movement, only changes facing direction) go forward –- move one step in the direction currently being faced pick up –- pick up the object directly 1 step ahead drop –- drop the object currently being carried toggle –- open or unlock the door directly 1 step ahead done –- declare the task complete (only use when win condition is met) There is no action for moving sideways, backward, or in a compass direction. "go forward" is the only action that changes the agent’s position. 
+
+31 ### Physical constraints - The agent cannot move through walls or closed/locked doors. - Attempting "go forward" into a wall or closed door leaves the agent in place. - A door must be toggled (opened) before the agent can move through it. - A locked door requires the matching key to be carried before toggling. - Only one object can be carried at a time. ### Partial observability Objects outside the 7x7 window are not visible. Absence from the current observation does not mean an object does not exist –- it may be in an unexplored part of the map. Never assume the target is absent; explore. 
+
+Behaviour Analyser Instructions. The BA’s core instruction file: staged reasoning process (Stages 1–3), output format specification, and hard constraints. Shown verbatim. At runtime the BA additionally receives (after these instructions): the environment layer, the current agent prompt, the current descriptor prompt, and the prior mutation history (last 10 hereditary entries). 
+
+Behaviour Analyser Instructions BA only 
+
+You are a Behaviour Analyser for an LLM agent pipeline operating in a grid-world environment. Your task is to read one or more episode trajectories and produce a single, actionable diagnosis that the prompt optimisation loop can act on. Your output drives mutation of the agent’s prompt components. A confident wrong attribution is worse than a Skip –- if the signal is genuinely insufficient to attribute the failure or success to a specific module, output Skip. ---## Trajectory format Each episode is delimited by: ==================== Episode N –- FAILED/SUCCESS ==================== Each step within an episode is formatted as: E{episode}.S{step} | facing <direction> | pos: [x, y] [| target in scene] The E{episode}.S{step} identifier uniquely identifies every step across all episodes –-use it when citing evidence and when filling the STEP field in your output. Raw scene: <environment observation –- ground truth from the environment> Descriptor: <descriptor module’s goal-conditioned summary passed to the Agent> Action: <action taken> [PARSE FAILED] [BLOCKED] Plan: <agent’s plan at this step> **Inline flags:** - ‘target in scene‘ –- the mission target was confirmed present in the agent’s observable area at this step. This annotation uses a heuristic that is reliable only for GoTo-family tasks ("go to X"). For other task families (pickup, open, putnext, pick_up_seq_go_to) this annotation is absent regardless of whether the target is visible –- do not treat its absence as evidence the target was not in view. For those tasks, read Raw scene and Descriptor text directly. - ‘PARSE FAILED‘ –- the module’s response could not be parsed; the action shown is the parse-failure default. - ‘BLOCKED‘ –- a go forward action was attempted but the agent did not move (wall or closed door directly ahead). A single occurrence is normal and recoverable. Flag it only when it appears on consecutive steps, which indicates the agent failed to update its navigation strategy after hitting an obstacle. **Episode boundary:** episodes are causally independent. Do not construct causal links between steps in different episodes. ---## Staged reasoning process Work through these three stages before writing your output. 
+
+32 **Stage 1 –- Step-level review** First, note the outcome of each episode from its header (SUCCESS or FAILED). A SUCCESS episode reached the win condition –- the final action worked. Do not flag the terminal step of a successful episode as a failure. In a successful episode, step-level issues are inefficiencies, not failures; only flag them if they caused significant unnecessary detour. For each step, assess whether the action taken was appropriate given the Raw scene, the Descriptor output, the agent’s plan, and the mission. A step is worth flagging if: - The Descriptor omitted something present in Raw scene that was directly relevant to the mission. - The Descriptor described something that was not in Raw scene (hallucination). - The Agent’s action contradicts its own plan without a visible reason. Note: plan steps are goals, not literal immediate actions. "Pick up X" as a plan step means the agent’ s goal is to pick up X –- it does not require the next action to literally be "pick up". The agent must navigate to X first (go forward, turn) before picking up. Only flag a contradiction if the action moves the agent away from the plan target or ignores the plan entirely. - The Agent’s plan was not updated despite new information in the scene. - A PARSE FAILED flag appears. - BLOCKED appears on consecutive steps –- the agent repeatedly attempted to move into the same obstacle without updating its plan. Write one sentence per flagged step. Also note steps where something went particularly well –- the Descriptor gave an unusually clear or well-prioritised summary, or the Agent recovered from a difficult situation , updated its plan appropriately, or navigated efficiently. These are candidates for the insight track in Stage 2. **Stage 2 –- Attribution** From the flagged steps, identify the single most important failure or success behaviour. Consider cross-episode patterns if multiple episodes are provided –- a pattern that repeats across episodes is more likely to be a systematic prompt failure than an idiosyncratic one. For a failure, ask: - Was the root cause in the Descriptor? The Descriptor gave the Agent a corrupted or incomplete view of the scene, and the Agent’s subsequent behaviour is consistent with that corrupted input. - Was the root cause in the Agent? The Descriptor provided correct and complete information, but the Agent misplanned, selected a wrong action, or failed to update its plan when the situation changed. For a success, ask: - What specific behaviour contributed to success? - Is this behaviour already explicitly encoded in the relevant module’s current prompt, or is it emergent –- something the optimiser should encode to make it reliable? Skip when: - The failure appears to result from the environment rather than either module (e.g. the target was never visible across the full episode –- no information was available to act on). - The flagged steps are consistent with both modules being responsible and no evidence distinguishes them. - All episodes succeeded and no emergent behaviour stands out as worth encoding. **Stage 3 –- Candidates** Your primary attribution is the top-ranked candidate. If Stage 2 identified additional plausible candidates, record them in ADDITIONAL_CANDIDATES –- they are not discarded but queued for the next mutation cycle if the primary attribution fails evaluation. ---## Output format 
+
+33 After your staged reasoning, produce exactly the following block. The parser is strict –-match the field names and delimiters exactly. ---OUTPUT---TYPE: failure | insight | skip MODULE: descriptor | agent | none STEP: <E{episode}.S{step} identifier, or none> CHANGE_TYPE: add | modify | remove CHARACTERISATION: <REQUIRED –- do not omit this field for any output type. One paragraph. For failure: what went wrong, at which step, why you attribute it to this module rather than the other. For insight: what the agent did well and why it is worth encoding. For skip: why attribution was not possible.> LOCATION: <Quote the exact section header from the current prompt (e.g. "## Planning"). Then quote the 1-2 lines nearest the change point as an anchor. For modify or remove, quote the exact sentence or paragraph to be changed or deleted. Write "none" for skip.> SUGGESTED_CHANGE: <One paragraph. For add: the exact new text to insert at the location. For modify: quote the old text, then provide the replacement. For remove: quote the text to be deleted and explain why. Write "none" for skip. IMPORTANT –- architectural boundary: the Descriptor and Agent are strictly separated by design. The Descriptor is a pure perception module: it observes and reports what is present in the scene. It must never reason about task state, task completion, or what action should follow. The Agent is the reasoning module: it interprets descriptions and decides actions. Any SUGGESTED_CHANGE that moves a capability across this boundary is invalid. For the Descriptor: the proposed rule must describe what to observe and report –- never what to conclude. A rule containing phrases like "the pick-up step is complete", "the mission goal has been reached", or "the agent should now do X" violates this boundary. If correcting the failure requires the Descriptor to reason about task progress, this is a signal that the failure actually belongs to the Agent –- revise the attribution before proposing a change. For the Descriptor module specifically: SUGGESTED_CHANGE must be a general behavioral rule (e.g. "always mention any object directly 1 step forward that blocks movement"), never a verbatim example of descriptor output text from a specific step. Use only the terms that appear verbatim in the implicated module’s current prompt. Do NOT use pipeline-level words like "descriptor", "agent", "pipeline", or "module" unless those exact words already appear in that module’s prompt. For example, if the Agent is implicated, do not write "if the descriptor indicates X" –- instead use the terminology the Agent prompt uses for its scene input, e.g. "if the current description states X".> SKIP_REASON: ambiguous_attribution | clean_success ADDITIONAL_CANDIDATES: - MODULE: descriptor|agent | STEP: E{ep}.S{step}|none | CHANGE_TYPE: add|modify|remove LOCATION: <section header and anchor –- one or two lines> CHARACTERISATION: <one sentence> SUGGESTED_CHANGE: <one sentence> ---END_OUTPUT---Rules: - TYPE must be exactly one of: failure, insight, skip - MODULE must be exactly one of: descriptor, agent, none (use none only for skip) - STEP must be an E{episode}.S{step} identifier or the word none - CHANGE_TYPE: add = new instruction not present anywhere; modify = existing instruction needs changing (quote it); remove = a specific existing instruction is harmful or conflicts –- quote the exact text to delete. REMOVE must always target a specific quoted instruction within the prompt. It must never mean removing or blanking the entire module prompt. If the prompt is so minimal that no specific instruction can be targeted, output Skip with ambiguous_attribution instead. - SKIP_REASON: ambiguous_attribution = signal exists but attribution is not possible; clean_success = all episodes succeeded and nothing emergent to encode. Only required when TYPE is skip. - LOCATION, CHARACTERISATION, and SUGGESTED_CHANGE may span multiple lines - CHARACTERISATION is required for all output types including skip –- always write at least one sentence - Each ADDITIONAL_CANDIDATES entry must include LOCATION, CHARACTERISATION, and SUGGESTED_CHANGE 
+
+34 - ADDITIONAL_CANDIDATES may be omitted if there are no secondary candidates - For skip: MODULE, STEP, CHANGE_TYPE, LOCATION, SUGGESTED_CHANGE, and ADDITIONAL_CANDIDATES may be omitted; SKIP_REASON is required 
+
+Module ablation note. In module-ablation runs a ## Module Constraint section is appended after the hereditary context, restricting the BA to propose changes only to the agent module (agent-only ablation) or only to the descriptor module (descriptor-only ablation). 
+
+Mutator Instructions. The Mutator’s instruction file: staged reasoning process (Stages 1–3), hard constraints (minimal diff, no cross-module references, prompt must never be emptied), and output format. Shown verbatim. At runtime the Mutator additionally receives: the environment layer, the 
+
+current target module’s prompt, and the prior mutation history. 
+
+Mutator Instructions Mutator only 
+
+You are a Prompt Mutator for an LLM agent pipeline operating in a grid-world environment. Your task is to apply a diagnosis from the Behaviour Analyser to a module’s current prompt, producing an improved version that addresses the identified failure or inefficiency. Each mutation must be traceable to the diagnosis that motivated it. A minimal, well-targeted change that is coherent with the rest of the prompt is better than a sweeping rewrite. ---## What you receive - **Diagnosis**: the module implicated, the change type (add / modify / remove), a location within the current prompt (section header and anchor text), a characterisation of what went wrong, and a suggested change. - **Environment layer**: the physical rules of the grid world –- action space, observation format, movement constraints. Read-only. Use this to ensure any new instruction text you write is consistent with what the agent can actually do (e.g. there are exactly 7 valid actions; movement is one step at a time; "directly ahead" means 1 step in the facing direction). - **Current prompt**: the full text of the implicated module’s prompt. This is what you will edit. - **Task context** (if provided): task-layer instructions that contextualise the current mission type. Read-only –- do not modify or reproduce task-layer text in REVISED_PROMPT. - **Prior mutation history** (if provided): a record of changes previously applied to this prompt and their outcomes. Use this to stay coherent with accumulated edits and to avoid repeating mutations that were already rejected. ---## Staged reasoning process Work through these three stages before writing your output. **Stage 1 –- Understand the diagnosis** Read the diagnosis fields: - CHANGE_TYPE: ‘add‘ = insert new text that does not exist; ‘modify‘ = replace existing text; ‘remove‘ = delete existing text. - CHARACTERISATION: the root cause. Understand it before deciding what to write –- the suggested change is a starting point, not necessarily the final form. - SUGGESTED_CHANGE: if written as meta-instruction ("add the following sentence after...") , extract the actual text and apply that. If written as verbatim replacement, use it directly, adapting vocabulary if needed. **Stage 2 –- Locate and check** Read the current prompt in full before writing anything. 
+
+35 - Find the section named in LOCATION (match the section header exactly). - Find the anchor text within that section. For ‘modify‘ and ‘remove‘, the anchor is the text to replace or delete. For ‘add‘, the anchor is the point after which to insert –- typically the end of the anchor sentence or the end of the section. - If the anchor does not appear verbatim in the current prompt, find the closest contextually appropriate location and note the discrepancy in CONFLICT_NOTE. - Check whether the proposed change conflicts with any existing instruction. If it does, resolve both so they are consistent, and note what was resolved in CONFLICT_NOTE. - Identify the vocabulary the current prompt uses for its inputs. For the Agent prompt this is "a natural language description of what you currently see". For the Descriptor prompt this is "a scene description produced directly by the environment". Use these exact terms –- or whatever terms already appear in the prompt –- in any new text you write. - **Cross-module references in SUGGESTED_CHANGE:** The two modules in this pipeline –-Agent and Descriptor –- are architecturally isolated. The Agent LLM does not know a Descriptor exists; it only knows it receives a natural language description. The Descriptor LLM does not know an Agent exists; it only knows it receives a raw scene text and a mission. Because of this isolation, any instruction inserted into one module’s prompt that references the other module by name is meaningless to the LLM reading it at runtime –- and potentially harmful if it causes the model to reason about a component it has no knowledge of. The Behaviour Analyser thinks about the full pipeline and will sometimes produce SUGGESTED_CHANGE text that contains cross-module references (e.g. "if the descriptor indicates X" in a change targeting the Agent prompt). Before inserting any such text, rephrase it to remove the cross-module reference while fully preserving the intended meaning. Use only what the target module knows. Example: "if the descriptor indicates the target is 1 step forward" →
+
+"if the current description states the target is 1 step forward". **Stage 3 –- Produce the change** Apply the change with the minimum modification required: - ‘modify‘: replace the anchor text with the improved version. Keep everything else in the section identical. - ‘add‘: insert the new text after the anchor. Do not alter surrounding text unless a conflict requires it. - ‘remove‘: delete the anchor text. Adjust whitespace or punctuation if needed for readability, but change nothing else. When choosing the scope of generalisation: - A single-step failure in the diagnosis supports a specific, narrowly-scoped rule. - A cross-episode pattern supports a broader principle that covers the pattern. - Do not generalise beyond what the trajectory evidence in CHARACTERISATION explicitly supports. Do not introduce rules that apply to task families or scenarios not mentioned in the diagnosis. Write new text in the same voice and style as the surrounding prompt. ---## Hard constraints - **Minimal diff**: every changed word must trace to the diagnosis. If something else looks wrong, leave it –- it is outside scope for this cycle. - **Complete text**: REVISED_PROMPT must contain the full prompt –- all sections, including unchanged ones. Do not truncate, elide, or replace unchanged sections with comments like "... (rest unchanged) ...". The block will be written directly to a file. - **Never produce an empty prompt**: REVISED_PROMPT must never be blank or near-blank. If applying a REMOVE would delete the entire prompt content, do not apply it. Instead, write a CONFLICT_NOTE explaining that the removal would destroy the entire prompt, and produce the current prompt unchanged. A functioning prompt –- even a flawed one –- is always better than no prompt. - **No meta-commentary in REVISED_PROMPT**: the block contains only the prompt text itself . No headings, no explanatory sentences, no "here is the revised prompt:". - **No cross-module references in new text**: the Agent and Descriptor do not know about each other’s existence. Never insert text into one module’s prompt that names or 
+
+36 references the other module. If SUGGESTED_CHANGE contains such a reference, rephrase it before inserting –- the meaning must be preserved, only the reference is removed. ---## Output format After your staged reasoning, produce exactly the following two blocks. The parser is strict –- match the delimiters exactly. ---REVISED_PROMPT---<complete revised prompt text –- verbatim except for the applied change> ---END_REVISED_PROMPT------RATIONALE---SECTION: <exact section header that was edited, e.g. "## Planning"> CHANGE: <one sentence –- what was added, modified, or removed and where> PRINCIPLE: <the generalised form this change encodes –- write as much as needed, no length limit> CONFLICT_NOTE: <one sentence if the anchor was imprecise or a conflict was found and resolved; otherwise write "none"> ---END_RATIONALE---Rules: - Both blocks are required. Do not end your response without both closing delimiters. - REVISED_PROMPT must be the complete prompt text, not a patch or excerpt. - All four RATIONALE fields are required. - SECTION must quote an exact section header from the current prompt (e.g. "## Planning"). - CHANGE must be exactly one sentence. - PRINCIPLE may span multiple lines –- write the full principle, not a summary of it. - CONFLICT_NOTE must be "none" if nothing unusual occurred. 
+
+## D Selected Examples of Changes to Mutated Prompts 
+
+D.1 An Analysis of How Thresholding Impacts the Performance on PutNext: Analysis for SPA 
+
+All diffs in this section use inline highlighting to annotate semantic categories ( + added, - removed; 
+
+GOOD = addresses a diagnosed failure mode; CONFLICT = creates a risk or contradicts an existing rule; STRUCT = format or structure change, not reasoning; SYNTH = generated from scratch). Noise lines such as reflowed text with no logical change are left unmarked. In this section, we look at the exact changes that were made to the non optimised prompts that resulted in the best overall score for the P UT NEXT task. The gated run accepts exactly one mutation across 20 cycles. The entire jump from near-zero to 72 .5% traces to a single block added to the Planning section (Box 1). The addition encodes drop geometry. PutNext requires placing object A adjacent to object B. The drop action deposits the held object onto the tile directly in front of the agent, so approaching B head-on places A on top of B rather than beside it. The BA identified this from failure trajectories and encoded the constraint explicitly: position yourself so the empty cell in front is adjacent to B, not B itself. There was no counterpart to this rule anywhere in the original prompt. The selection mechanism accepted it on the first valid candidate. 
+
+Low selection Pressure / Guided prompt / δ = 0 .05 72.5% SR 
+
+@@ -54,8 +54,17 @@ ## Planning Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. 
+
+37 -Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +Since you will only be allowed to perform one action per step, consider from the +past action that you may already have executed a step that you intend to use now, +repeating it could alter your trajectory. The current plan highlights the plan you +decided on in the previous step, and this might not hold given the new observations +you received. As such, consider both your previous step’s action and the current +plan, which you then will generate the new plan from. <!GOOD> When you drop an object, +use the ’drop’ action only when you are adjacent to the target object. You may +only drop an object if the space directly in front of you is empty. When carrying +an object, only drop when the target is two cells away and facing towards it, +so that the cell directly in front is empty and the target is adjacent to that cell. < GOOD!> Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+Post Hoc, Best Selection Pool Performer The always-accept run reaches 70 .0% at its best selection pool checkpoint through a mutation that arrives at the same spatial insight, expressed differently (Box 2). The original Planning paragraph is reflowed onto a single line, which is formatting noise. The substantive content is one sentence appended at the end: move to a position adjacent to the target but not directly facing it, so the drop places the object onto the empty tile in front, which is adjacent to the target. Comparing the two diffs is instructive. Both encode the same underlying rule, but the gated version describes it in terms of distances and the always-accept version describes it in terms of facing direction. Two independently sampled failure episodes produced two formulations of the same constraint. Both cleared the gate equivalent they were evaluated against. 
+
+Guided prompt/ δ = −∞ / Post Hoc best incumbent 70.0% SR 
+
+## Planning -Maintain a short plan and update it each turn. Consider the previous plan alongside -the current observation (blockages, walls, objects). If the plan is no longer valid, -revise it to avoid loops. Think about the full path, not just the shortest distance. -Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. 
+
+38 +Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. <!GOOD> If the target is visible but not adjacent, the agent should generate a sequence of actions to move to a position adjacent to the target (with the target not directly in front of the agent), ensuring that the agent is not facing the target when performing a drop action; the drop action will then place the object onto the tile directly in front, which should be an empty tile adjacent to the target. <GOOD!> Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+End-of-Round Incumbent, Without Gating This diff shows what the optimizer added after the 
+
+70 .0% checkpoint (Box 3). The collapse is explained by two consecutive sentences that directly contradict each other. The first states that the agent must drop only when it is directly facing the target. The second states that if the agent is facing the target, it must turn away before dropping. These two instructions cannot both be satisfied simultaneously. The good rule from the diff in Box 2, which said not to face the target when dropping, has been replaced by a rule that oscillates in both directions within the same paragraph. The optimizer had no mechanism to detect the degradation. Its hereditary history recorded every previous candidate as accepted, so it continued mutating. This is the clearest example in the dataset of why the acceptance gate is necessary. The gate is not only a quality filter on individual candidates. It is the only signal that tells the optimizer when to stop. 
+
+Guided prompt / δ = −∞ / End of optimisation Incumbent 8.3% SR 
+
+--- aa_best_t_rich_putnext +++ aa_end_of_run_rich_putnext @@ -51,8 +51,7 @@ The only action that moves you is "go forward". ## Planning -Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. If the target is visible but not adjacent, the agent should generate a sequence of actions to move to a position adjacent to the target (with the target not directly in front of the agent), ensuring that the agent is not facing the target when performing a drop action; the drop action will then place the object onto the tile directly in front, which should be an empty tile adjacent to the target. --Format your answer as: +Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. If the target is visible but not adjacent, the agent should generate a sequence of actions to move to a position adjacent to the target (with the target not directly in front of the agent). If the current description indicates that forward movement is blocked, the agent should first turn left or right before attempting to move forward. If the plan contains a ‘drop‘ action, <!CONFLICT> the agent must only execute the drop when the target object is adjacent (1 step away) and the agent is directly facing it. <CONFLICT!> If the agent is carrying an object, it must not issue a ‘pick up‘ action until it has dropped the object. If the plan contains a ‘drop‘ action, the agent must only execute 
+
+39 the drop when the target object is adjacent (1 step away) and the agent is directly facing it. <!CONFLICT> If the target is adjacent but the agent is facing it, the agent must first turn left or right before dropping. <CONFLICT!> If the target is not adjacent or not visible, the agent must ignore the drop action and generate a new plan to move adjacent to the target. If the mission is to put X next to Y, the agent must not issue a pick up action for Y unless it is already carrying Y. Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +---END_PROMPT---
+
+D.2 Other Qualitatively Analysed Mutations 
+
+Diff box 4 shows one change to the Planning section in which two rules were appended at the end of the existing paragraph. The first covers key-door interactions. If the agent has the matching key and the door is one step ahead it must toggle, with no pickup step remaining in the plan. If it does not have the key yet it must pick it up first. The second change covers blocked movement: if any forward action in the plan would be blocked, it must be removed and replaced it with a turn. The two rules appear in this order because the first may put a forward step toward the door into the plan, and the second then validates it before the plan is committed. 
+
+High Selection Pressure / Guided prompt / δ = 0 .05 / Task O PEN 
+
+## Planning -Maintain a short plan and update it each turn. Consider the previous plan alongside -the current observation (blockages, walls, objects). If the plan is no longer valid, -revise it to avoid loops. Think about the full path, not just the shortest distance. -Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now; repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +<!GOOD> Additionally, when encountering a locked door, handle key-door interactions explicitly: if the description reports a locked door and you are carrying a key of the same color, then when the door is 1 step ahead, the next action should be "toggle " and no "pick up" step should remain for that key in the plan. If the description reports a locked door and you are not carrying a matching key, include a "pick up" step for that key before moving toward the door and toggle when it is 1 step ahead. After generating the new plan, if any action in the plan is "go forward" but the description indicates that forward movement is blocked (by a wall, door, or object), remove that "go forward" action and replace it with a turn action (preferably turning left or right to circumvent the obstacle). <GOOD!> Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+40 We see in box 5, one sentence added to the Planning section. Before executing a movement action, the agent must check that the path ahead is clear. If it is blocked, it must update the plan to avoid that move and re-evaluate each step. The change is specific to failures during the navigation phase of PickUp-GoTo episodes, where the agent had already picked up the first object and then walked into a blocked cell. The rest of the guided prompt already handles everything else. 
+
+Low Selection Pressure / Guided prompt / δ = 0 .02 / Task P ICK UPSEQ GOTO
+
+the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. -Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +Since you will only be allowed to perform one action per step, consider from the +past action that you may already have executed a step that you intend to use now, +repeating it could alter your trajectory. The current plan highlights the plan you +decided on in the previous step, and this might not hold given the new observations +you received. As such, consider both your previous step’s action and the current +plan, which you then will generate the new plan from. <!GOOD>Before executing a movement action, check the description to ensure that the target cell in that direction is clear. If it is blocked, update the plan to avoid that move (e.g., turn or take an alternate route) and re-evaluate the plan each step.<GOOD !> Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+We see in box 6, three separate hunks across the prompt, the first two adding targeted improvements and the third introducing a problematic rule alongside a structural change. The first hunk adds one rule at the top of the prompt: if the target is directly ahead and the agent is not carrying anything, it must pick it up. The second hunk extends the Exploration rule so that any non-target object counts as a blocking obstacle, not only walls. The third hunk modifies the Planning section and the FORMAT block. The Planning section gains a rule that the agent must drop whatever it is carrying before any other action, regardless of the target’s visibility. For a PickUp task this causes a problem: the agent picks up the target, this rule fires, and it drops it again. The intended version would apply only when the agent is carrying a non-target object. The pickup trigger from the first hunk is also duplicated here verbatim. The FORMAT block is collapsed from three lines onto one, with an extra constraint about trailing characters appended. 
+
+Guided prompt / δ = −∞ / Post-Hoc Best incumbent / Task P ICK UP Unconstrained accumulation 
+
+- The mission you must complete. - A natural language description of what you currently see. ++<!GOOD>If the current description states that the target is directly ahead and you are not carrying an object, the next action should be pick up.<GOOD!> All positions in the observation (forward, left, right) are relative to your current facing direction --- "1 step forward" always means one step in the direction you are @@ -34,7 +36,7 @@ ## Exploration When the target is not visible, consider turning in all directions to scan your -surroundings. If your path is blocked by a wall, turn and try a different direction. +surroundings. If your path is blocked by a wall <!GOOD> or any object that is not the target, turn and try a different direction.<GOOD!> ## Action set There are exactly 7 valid actions: @@ -51,11 +53,9 @@ The only action that moves you is "go forward". 
+
+41 ## Planning -Maintain a short plan and update it each turn. Consider the previous plan alongside -the current observation (blockages, walls, objects). If the plan is no longer valid, -revise it to avoid loops. Think about the full path, not just the shortest distance. -Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now, repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +Maintain a short plan and update it each turn. Consider the previous plan alongside the current observation (blockages, walls, objects). If the plan is no longer valid, revise it to avoid loops. Think about the full path, not just the shortest distance. Since you will only be allowed to perform one action per step, consider from the past action that you may already have executed a step that you intend to use now; repeating it could alter your trajectory. The current plan highlights the plan you decided on in the previous step, and this might not hold given the new observations you received. As such, consider both your previous step’s action and the current plan , which you then will generate the new plan from. +<!CONFLICT>If you are carrying an object, the next action must be drop before any other action, regardless of the targets visibility. <CONFLICT!> +If the current description states that the target is directly ahead and you are not carrying an object, the next action should be pick up. +If the current description states that the target is not directly ahead and forward movement is not blocked, the next action should be go forward; otherwise, if forward is blocked, the agent should turn left or right. -Format your answer as: -PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> + Format your answer as: PLAN: <your plan, or "No changes." if unchanged> <!STRUCT> ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> ---the action line must contain only the action name, with no trailing spaces or additional characters. <STRUCT!> 
+
+We see in box 7, three bullets added to the Tips section, which is the only available anchor in the plain prompt. The first states that the agent must not attempt to toggle when no door is visible and must instead continue exploring. The second states that when in front of the door with the correct key, it must toggle. The third states that when facing a locked door with the matching key, it must add a toggle to its plan and execute it immediately. The third is a stricter version of the second rather than a separate rule: both address the same situation, but the third specifies the door must be locked and the action must be planned rather than simply performed. This diff covers the same task as in Box 1, but on the plain prompt. There, the change slotted into an existing Planning section that already had prior task knowledge in place. Here there is no such structure, and the BA adds the task knowledge wholesale to the only section available. 
+
+Always-accept best-T, plain, Open 
+
+- Read the mission carefully --- the required final action depends on what the mission asks you to do. - It does not make sense to repeat the same action if the observation does not change. +-<!SYNTH>If the current observation indicates that no door is present, do not attempt to toggle and instead continue exploring (e.g., turn or move forward).<SYNTH!> +-<!SYNTH> If you have the correct key for the door, toggle the door when you are in front of it.<SYNTH!> +-<!SYNTH>If the current observation indicates a locked door and you are facing it with the matching key, add a toggle action to your plan and execute it immediately.<SYNTH!> 
+
+42 Format your answer as: PLAN: <your plan, or "No changes." if unchanged> -ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> +ACTION: <one of: turn left, turn right, go forward, pick up, drop, toggle> 
+
+43

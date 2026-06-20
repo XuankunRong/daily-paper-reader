@@ -1,0 +1,328 @@
+Title: Elastic Queries Reinforcement Learning: Self-Aware Policy Execution for VLA Models
+
+URL Source: https://arxiv.org/pdf/2606.14375v1
+
+Published Time: Mon, 15 Jun 2026 00:59:13 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Elastic Queries Reinforcement Learning: Self-Aware Policy Execution for VLA Models 
+
+Ge Wang *,1,2 , Xinyu Tan *,1 , Xiang Li *,1,2 , Man Luo 1, Chengsi Yao 1
+
+Shenhao Yan 1, Jiahao Yang 1, Fan Feng 1, Honghao Cai 1,2 , Xiangyuan Wang 3
+
+Zhixin Mai, Yiming Zhao 1, Yatong Han †,1 , and Zhen Li †,2 
+
+> 1
+
+Ising AI 
+
+> 2
+
+CUHK-Shenzhen 
+
+> 3
+
+PKU 
+
+Abstract. Vision-language-action (VLA) models are powerful action generators for robot manipulation, but they are typically executed with fixed inference and replanning schedules. This rigidity ignores the uneven difficulty of robot control: contact-rich or uncertain states may need more computation and fresher feedback, while easier states can often be handled with fewer inference steps and longer open-loop execution. We propose Elastic Queries Reinforcement Learning (EQRL), a framework that makes each VLA policy query elastic. A lightweight latent-schedule adaptor jointly selects the latent input, denoising budget, and action chunk length, without fine-tuning the underlying VLA model. To make scheduling difficulty-aware, EQRL trains a critic over the joint latent-schedule action and derives a state difficulty signal from critic ensemble disagreement. This signal guides compute toward difficult states, while a learned residual allows task-driven correction. We formulate variable chunk execution as query-level macro-action RL with chunk-dependent discounting and an amortized number-of-function-evaluations (NFE) budget. Across simulation and real-robot manipulation, EQRL reduces amortized inference cost while preserving or improving task success. 
+
+Keywords: Robot Learning, Vision-Language-Action Models, Reinforcement Learning, Adaptive Inference 
+
+# 1 Introduction 
+
+Vision-language-action (VLA) policies provide reusable robot manipulation priors by combining visual perception, language-conditioned task specification, and generative action decoding [1–4]. Recent flow-based VLAs such as π0
+
+generate temporally coherent action chunks from multimodal context [5, 6]. Their execution interface, however, is usually rigid: each query uses a fixed denoising budget, and the robot executes a fixed number of predicted actions before replanning [7, 8]. This fixed interface is poorly matched to manipulation, where easy free-space or approach phases alternate with contact, alignment, recovery, and precise placement. Easy states often need fewer sampling steps and can tolerate longer open-loop execution, while difficult states benefit from more computation and fresher feedback. A fixed sched-ule therefore wastes computation where the policy is confident and under-serves states where the decision is actually hard. A natural way to adapt a pretrained generative action model is to keep the model frozen and learn a lightweight policy in its latent space. This preserves the behavioral prior of the VLA model and avoids expensive full-model fine-tuning. However, latent steering alone still leaves the execution schedule outside the learning problem. The adaptor may choose which latent action trajectory to generate, but the denoising budget and action-chunk length remain manually chosen hyperparameters. As a result, the learned policy cannot decide whether a given state deserves more computation, less computation, shorter commitment, or longer amortization.  
+
+> *Equal contribution.
+> †Corresponding authors. Contact: rstanten@alumni.stanford.edu .
+
+1
+
+> arXiv:2606.14375v1 [cs.RO] 12 Jun 2026
+
+Figure 1: Motivation for elastic querying. EQRL adapts both denoising steps and execution chunk length across a task, moving quickly through easy phases while spending more feedback and compute near difficult contact phases. Latent-space steering can adapt a frozen generative action model without expensive full-model fine-tuning, but it leaves the execution schedule outside the learning problem. The adaptor may choose which latent trajectory to generate, while the denoising budget and action-chunk length remain manual hyperparameters. The policy therefore cannot decide whether a state deserves more computation, shorter commitment, or longer amortization. EQRL makes each VLA query elastic. At every query, a lightweight RL adaptor selects a joint latent-schedule action (w, K,C): w steers the frozen sampler, K controls denoising effort, and C controls how many generated actions are executed before replanning. The relevant cost is therefore amortized NFE, approximately K/C, so the policy can reduce per-step computation in easy states while spending more feedback and compute in difficult ones. Learning this schedule is challenging because compute penalties can dominate before the task is learned, and unconstrained schedules can collapse to constants or noisy value estimates. EQRL trains a critic over the joint latent-schedule action and derives a state-difficulty signal from critic-ensemble disagreement. This signal defines a schedule prior that allocates more denoising and shorter chunks to difficult states, while a learned residual provides task-specific corrections. Because variable chunk lengths change the temporal scale of decisions, EQRL trains at the query level: executing a chunk induces a macro-transition, and Bellman backups use chunk-dependent discounting. An episode-level amortized NFE band controls total inference cost, while local difficulty alignment decides where the available compute should be spent. We evaluate EQRL on LIBERO and ALOHA simulation tasks, as well as offline and online real-robot manipula-tion. Our contributions are threefold: (1) we formulate frozen VLA execution as query-level RL over latent steering, denoising budget, and chunk length; (2) we introduce critic-derived difficulty guidance for state-dependent compute allocation; and (3) we train variable-length chunks with macro-action Bellman backups and an episode-level amortized NFE objective. Across settings, EQRL preserves or improves success while reducing amortized inference cost, with ablations isolating the role of joint difficulty-aware scheduling. 
+
+# 2 Related Work 
+
+VLA models and post-training. Vision-language-action (VLA) models couple visual perception, language-conditioned task specification, and action generation within a unified robot policy [1–3]. Their progress has been driven by large-scale robot datasets, cross-embodiment training, and web-scale vision-language pretraining, which provide reusable behavioral priors across tasks and embodiments [4, 5, 9, 10]. However, most VLA policies are still trained primarily by imitation on offline demonstrations, limiting their ability to improve through interaction under deployment-time distribution shifts [3, 4, 11]. This motivates lightweight post-training methods that adapt pretrained VLA policies with task-level feedback while preserving their learned priors. 2RL for generative robot policies. Reinforcement learning has recently been explored for VLA post-training, in-cluding online RL, residual adaptation, lightweight modules, and interactive post-training [12–17]. In parallel, many VLA and visuomotor policies use diffusion or flow-based action generators to model multimodal, temporally coherent behaviors [5, 8, 18]. This connects VLA adaptation to generative-policy RL, where pretrained action generators are steered toward higher-reward behaviors without full model fine-tuning [17, 19]. Existing methods mainly adapt what behavior is generated, while the inference schedule used to generate and execute that behavior is usually fixed. We build on the idea of latent-space steering, but study elastic execution for frozen flow-matching VLA action models rather than fine-tuning the generator itself. 
+
+Efficient and elastic execution. Efficient execution has been studied from the sampling side, by reducing neural function evaluations or accelerating generative action decoding [6, 20–26]. A complementary line of work amortizes policy queries through action chunking, asynchronous inference, or lightweight correction of stale chunks [7, 27, 28]. These approaches typically treat sampling effort and chunk execution as separate design choices. In contrast, we formulate generative VLA execution as a joint elastic decision problem, where a lightweight RL adaptor selects the latent steering variable, sampling effort, and action-chunk length for each query based on the current state. 
+
+# 3 Method 
+
+## 3.1 Preliminaries 
+
+Markov decision processes. We model robot manipulation as a Markov decision process M = ( S , A , P, p0, r, γ).Here S is the state space, A is the low-level action space, P is the transition kernel, p0 is the initial-state distribution, 
+
+r is the reward function, and γ ∈ [0, 1] is the discount factor. For a policy π, the action-value function is 
+
+Qπ (s, a) = Eπ
+
+" ∞
+
+# ∑
+
+> t=0
+
+γt r(st , at ) | s0 = s, a0 = a
+
+#
+
+.
+
+Flow-based VLA models. Modern VLA policies often use a large vision-language backbone together with a gener-ative action head. Given a task-conditioned observation context x, the action head maps a latent/noise variable through an iterative flow or denoising process to produce an action chunk. We denote the frozen sampling interface abstractly by 
+
+A = ΠK 
+
+> θ
+
+(x; w), A = ( a0, . . . , aH−1) ∈ A H ,
+
+where w ∈ W is a controllable latent/noise input exposed to the sampler and K is the number of sampling steps. This notation abstracts over the internal injection point of w and over the particular visual, proprioceptive, and language conditioning used by the VLA model. In the rest of the method, we write the current query context as o and use Fθ as shorthand for this frozen sampling interface. 
+
+Latent-space steering. Latent-space steering treats the frozen generative policy as an action-space transformation: an outer policy selects a latent variable w, and the frozen sampler converts it into an executable action or action chunk. This allows reinforcement learning to adapt behavior without updating the parameters of the pretrained action model. In our setting, the learned adaptor operates on the latent-schedule interface of the frozen VLA sampler rather than on the VLA weights. 
+
+Problem setting. We study reinforcement learning adaptation of a frozen VLA sampler under repeated policy queries. At each query, the adaptor may choose not only the latent steering variable w, but also the sampling bud-get K and the number of generated actions C to execute before replanning. The resulting decision controls what action chunk is generated, how much computation is spent producing it, and how long the robot commits to it before receiving fresh feedback. 3Figure 2: EQRL architecture. Given the current observation and task prompt, the adaptor predicts latent steering ω,denoising steps K, and execution chunk length C. Critic-derived difficulty guides the schedule toward more compute and shorter commitment in hard states, while the frozen VLA generates the executed action chunk. 
+
+## 3.2 Latent-Schedule Query Actions 
+
+Let j index policy queries, and let t j be the environment time at which query j begins. The adaptor has a shared observation encoder followed by three stochastic heads, and samples 
+
+u j = ( w j, zKj , zCj ) ∼ πφ (· | ot j ),
+
+where w j is the latent steering variable and zKj , zCj ∈ [−1, 1] are continuous schedule variables. The schedule variables do not directly define the executed sampling budget and chunk length. Instead, they define learned residual proposals around the base schedule. We map zKj and zCj to bounded residuals ∆Kj and ∆Cj around the base schedule (K0,C0),with ranges constrained by [Kmin , Kmax ] and [Cmin ,Cmax ]. The next subsection combines these learned residuals with a critic-derived schedule prior to obtain the final schedule. 
+
+## 3.3 Difficulty-Guided Schedule Parameterization 
+
+The critic is an ensemble of state-action value functions 
+
+{Q(i) 
+
+> ψ
+
+(o, ˜u)}Mi=1,
+
+defined over the joint latent-schedule action. Here ˜ u = [ w, ¯K, ¯C] denotes a latent variable together with normalized continuous schedule coordinates, and ¯ K0, ¯C0 denote the normalized base schedule. It evaluates a latent steering variable together with the sampling budget and temporal commitment used to execute the generated chunk. To make scheduling state-aware, we derive a difficulty signal from critic ensemble disagreement at the base schedule. Let 
+
+wπ (o) = mode (πw(· | o)) .
+
+We compute 
+
+qstd (o) = Std Mi=1
+
+h
+
+Q(i)
+
+> ψ
+
+ o, [wπ (o), ¯K0, ¯C0]i
+
+.
+
+The raw disagreement score is normalized before it controls the schedule. During rollout we use running statistics, and during updates we use batch statistics of the same score. Denote the normalized score by d(o). We convert it to a centered rank signal 
+
+rc(o) = 2 rank (d(o)) − 1 ∈ [−1, 1],
+
+where rank (·) denotes a percentile rank in [0, 1]. The signed difficulty is 
+
+s(o) = tanh (τ rc(o)) ∈ [−1, 1].
+
+4Positive values indicate states that should receive more conservative execution, while negative values indicate states that can be handled with lower amortized computation. The signed difficulty defines a schedule prior. Let [x]+ = max (x, 0). The sampling-step prior is 
+
+K p(o) = K0 + [ s(o)] +(Kmax − K0) − [−s(o)] +(K0 − Kmin ),
+
+and the chunk prior is 
+
+Cp(o) = C0 − [s(o)] +(C0 −Cmin ) + [ −s(o)] +(Cmax −C0).
+
+Thus high-difficulty states receive more sampling steps and shorter chunks, while low-difficulty states receive fewer sampling steps and longer chunks. The final continuous schedule is the sum of this prior and the learned residual: ˆKj = K p(ot j ) + λrg j∆Kj, ˆCj = Cp(ot j ) + λrg j∆Cj,
+
+where g j ∈ [0, 1] is a schedule gate and λr controls residual authority. The continuous values are clipped to their valid ranges and rounded for environment interaction, yielding integer execution values Kj and Cj. The frozen sampler is then queried with (ot j , w j, Kj), and the robot executes the first Cj generated actions unless the episode terminates earlier. The critic uses the final continuous schedule targets ˜u j = [ w j, ¯Kj, ¯Cj],
+
+¯Kj = 2 ˆKj − Kmin 
+
+Kmax − Kmin 
+
+− 1, ¯Cj = 2 ˆCj −Cmin 
+
+Cmax −Cmin 
+
+− 1.
+
+Using continuous targets in the critic preserves a smooth training signal, while integer rounding is confined to envi-ronment interaction. 
+
+## 3.4 Query-Level Learning Objective 
+
+Executing a chunk induces a query-level macro transition. Let L j ≤ Cj denote the actual number of executed low-level actions. The replay buffer stores  ot j , ˜u j, R j, ot j +L j , L j, d j
+
+ ,
+
+where d j is the terminal flag. Because one query can cover multiple environment steps, Bellman backups use the chunk-dependent discount γL j .For sparse-success manipulation tasks, we assign task reward at the query level by giving a terminal success bonus to the final query of a successful episode. In addition, an episode-level compute-budget reward is distributed uniformly over all queries in the episode: 
+
+R j = bep + 1[ j = Nep ]1[success ], bep = −λcost 
+
+Pep 
+
+Nep 
+
+.
+
+We use the sign convention that positive Pep is a compute cost and negative Pep is a saving bonus. For a next action ˜ u′ ∼ πφ (· | o′), the Bellman target is 
+
+y = R + γL(1 − d) ¯Qtarg (o′, ˜u′), ¯Qtarg (o, ˜u) = 1
+
+M
+
+> M
+
+# ∑
+
+> i=1
+
+Q(i) 
+
+> ¯ψ
+
+(o, ˜u).
+
+We fit the critic ensemble by minimizing a mean-squared Bellman error. The actor is optimized with the maximum-entropy latent-schedule objective [29] 
+
+Lsac = Eo,u∼πφ
+
+α log πφ (u | o) − ¯Q(o, ˜u) , ¯Q(o, ˜u) = 1
+
+M
+
+> M
+
+# ∑
+
+> i=1
+
+Q(i) 
+
+> ψ
+
+(o, ˜u).
+
+We also regularize local compute allocation to follow the critic-derived difficulty. Let 
+
+aalloc = ¯K01 − ¯C01 ,
+
+5Table 1: Simulation success and efficiency on LIBERO-4Tasks and ALOHA-Cube. EQRL improves the best baseline success/AUC on both benchmarks while reducing relative NFE by 24.3% on LIBERO and 20.0% on ALOHA. Env. Method Final Success ↑ Success AUC ↑ Rel. NFE ↓
+
+LIBERO-4Tasks DSRL 0.95 0.86 0.500 NOISE 0.93 0.68 0.400 SDE 0.83 0.69 0.400 
+
+EQRL 0.96 (+0.01) 0.90 (+0.04) 0.303 (24.3% ↓)
+
+ALOHA-Cube DSRL 0.94 0.81 0.200 NOISE 0.91 0.71 0.200 SDE 0.85 0.73 0.200 
+
+EQRL 1.00 (+0.06) 0.82 (+0.01) 0.160 (20.0% ↓)
+
+where ¯ K01 and ¯ C01 are normalized to [0, 1] over the current schedule range. Large aalloc corresponds to more sampling steps and shorter commitment; small aalloc corresponds to fewer sampling steps and longer commitment. An auxiliary alignment loss encourages aalloc to have the same sign as the difficulty signal s, so that difficult states receive higher compute and shorter chunks while easy states receive lower amortized compute. Global compute pressure is imposed through an episode-level NFE band. For an episode with query budgets 
+
+{Kj,Cj}Nep 
+
+> j=1
+
+, the requested amortized NFE is ¯ρep = ∑Nep  
+
+> j=1
+
+Kj
+
+∑Nep  
+
+> j=1
+
+Cj
+
+.
+
+Episodes above the upper band incur an over-budget cost, with a small tolerance for budget debt. Successful episodes may also receive an under-use cost if computation falls below the lower band, and a small negative cost when they remain inside the target band. These terms define Pep , which is distributed uniformly over query transitions through 
+
+bep in the reward definition above. This separates the two roles of scheduling: the NFE band controls the total amount of computation, while the difficulty-alignment term determines where that computation should be spent. 
+
+# 4 Experiments 
+
+Our experiments address three empirical questions: (1) whether difficulty-aware elastic querying can reduce inference cost while preserving, or even improving, task success in simulation; (2) whether EQRL is suitable for real-robot learning under physical execution constraints; and (3) whether the gains come from actor–critic difficulty awareness and joint scheduling, rather than simply lowering the compute budget or adapting only one schedule dimension. 
+
+## 4.1 Experimental Setup 
+
+Settings. We evaluate on LIBERO and ALOHA simulation tasks, as well as offline and online real-robot manipula-tion [7, 30]. All methods use the same π0 VLA policy [5] as the base action model. Additional implementation details, task descriptions, hyperparameters, and evaluation protocols are provided in Appendix 6.1. 
+
+Baselines. We compare behavior cloning (BC/SFT), DSRL [19], RLinf-Noise and RLinf-SDE, and EQRL. RLinf-Noise and RLinf-SDE are the RLinf implementations [31] of Flow-GRPO [32] and ReinFlow [33], respectively. EQRL jointly selects the latent input, denoising budget, and action chunk length at each query. 
+
+Metrics. We report task success, success AUC, and the number of environment steps required to reach high-success thresholds such as 80% or 90%. For efficiency, we report average denoising steps, average requested chunk length, amortized NFE, NFE reduction, and real-robot wall-clock latency. For schedule diagnostics, we compare selected denoising steps and chunk lengths across critic-derived difficulty levels. 6Figure 4: LIBERO success over 500k training steps on LIBERO-90. EQRL reaches high success quickly on several tasks and improves aggregate success AUC while reducing relative NFE. 
+
+## 4.2 Difficulty-Aware Acceleration in Simulation 
+
+We first test whether difficulty-aware elastic querying im-proves the success–cost trade-off in simulation. Figure 4 and Figure 3 show the learning behavior on LIBERO and ALOHA, while Table 1 summarizes final success, success AUC, and relative NFE. Across both settings, EQRL preserves or improves task success while reducing inference cost. The success AUC improvement on LIBERO suggests that elastic scheduling helps the learning process, rather than merely low-ering the final execution budget. The ALOHA result further indicates that this benefit is not spe-cific to one benchmark family. The ablation study later tests whether this comes from critic-aware allocation, rather than simply reducing the average compute budget. Figure 3: ALOHA Cube success over training. EQRL reaches perfect final success while using lower relative NFE than fixed-schedule baselines. 
+
+## 4.3 Real-world Reinforcement Learning with EQRL 
+
+We next evaluate whether EQRL remains suitable for real-robot learning, where scheduling decisions affect not only NFE but also wall-clock latency and physical execution sta-bility. For offline adaptation, we train each task indepen-dently for 500k gradient steps using 50–100 expert trajec-tories collected on DISCOVER Robotics PTK2 platforms. For online RL, we use a DISCOVER Robotics TOK4 plat-form, initialize from 20 expert trajectories, and stop after approximately 15k real-environment interaction steps. Figure 5 visualizes how EQRL allocates computation dur-ing a real-world pouring trajectory. Table 2(a) shows that EQRL reduces relative NFE and trajectory time while maintaining comparable average task success across offline real-robot tasks, and Table 2(b) shows that the same inter-face remains effective when the adaptor is updated from real interaction. Together, these results indicate that elastic querying can translate computational savings into practical speedups and improve the contact-time trade-off by learn-ing when to commit and when to replan. 
+
+Figure 5: Real-robot elastic execution and learning re-sults. The pouring timeline shows EQRL increasing NFE near crucial alignment/contact phases and low-ering it during steadier motion, while the offline and online comparisons show comparable or higher suc-cess with lower relative NFE than DSRL. 7Figure 6: Ablation study on Put Cheese. From left to right, the panels compare the full method against matched-NFE DSRL, dynamic-steps-only, dynamic-chunks-only, and budget-only variants. 
+
+## 4.4 Ablating Actor–Critic Difficulty Awareness 
+
+We use the Put Cheese task as a diagnostic setting to test the source of EQRL’s gains. Figure 6 compares the full method with matched-NFE DSRL, dynamic-steps-only, dynamic-chunks-only, and budget-only variants. The comparison shows that reducing average NFE is not sufficient by itself. Although matched-NFE DSRL and the budget-only variant operate under a similar compute target, they lag behind in their success-rate trajectories, indicating that the improve-ment is not simply caused by using a smaller fixed budget. Likewise, adapting only denoising steps or only chunk length weakens performance, suggest-ing that compute allocation and replanning frequency need to be coordinated. The ablations indicate that EQRL needs both actor– critic difficulty awareness and joint scheduling. The critic-aware schedule saves computation on easier phases while preserving denoising and feedback in harder phases, avoiding the success degradation seen in the restricted variants. Table 2: Real-robot evaluation. Parentheses report EQRL differences relative to DSRL.                                                                    
+
+> (a) Offline comparison.
+> Task Method Succ. ↑NFE ↓Time ↓
+> Pour DSRL 0.55 0.500 8.94
+> EQRL 0.75 (+.20) 0.332 (33.6% ↓)7.36 (17.7% ↓)
+> Fruit DSRL 0.85 0.500 6.91
+> EQRL 0.85 (+.00) 0.345 (31.0% ↓)5.31 (23.2% ↓)
+> Cucumber DSRL 0.95 0.500 5.98
+> EQRL 0.90 (-.05) 0.334 (33.2% ↓)5.29 (11.5% ↓)
+> Handover DSRL 0.90 0.500 6.76
+> EQRL 0.85 (-.05) 0.341 (31.9% ↓)6.02 (11.0% ↓)
+> Avg. DSRL 0.813 0.500 7.15
+> EQRL 0.838 (+.025) 0.338 (32.4% ↓)6.00 (16.1% ↓)
+> (b) Online comparison.
+> Method Success Rate ↑Rel. NFE ↓
+> DSRL 0.90 0.500
+> EQRL 0.95 (+0.05) 0.341 (31.8% ↓)
+
+# 5 Discussion and Limitations 
+
+Our results suggest that VLA execution is a state-dependent resource-allocation problem. EQRL makes this structure visible through the learned actor and critic: the policy allocates fewer denoising steps and longer chunks to easier states, while using more steps and shorter chunks near difficult interaction phases. This elastic behavior reduces amortized inference time and can improve success by spending extra computation only when the state requires it; the real-robot results further suggest that elastic compute and replanning are useful execution-time interfaces for frozen VLA policies. There are also several limitations. First, offline training cannot directly observe the causal effect of different denoising budgets and chunk lengths, because expert datasets provide fixed trajectories without environment feedback under alternative schedules. Although our offline setting can compare the accuracy of chunks generated with different 
+
+K and C against expert actions, this proxy is less reliable than task reward from real environment interaction. Second, real-robot training is still not sufficiently efficient or general. In practice, the adaptor is fine-tuned per task, and the learned schedule does not yet provide strong task-level generalization across substantially different manipulation skills. 8References 
+
+[1] Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen Chebotar, Joseph Dabis, Chelsea Finn, Keerthana Gopalakrishnan, Karol Hausman, Alex Herzog, Jasmine Hsu, et al. Rt-1: Robotics transformer for real-world control at scale. arXiv preprint arXiv:2212.06817 , 2022. [2] Danny Driess, Fei Xia, Mehdi SM Sajjadi, Corey Lynch, Aakanksha Chowdhery, Brian Ichter, Ayzaan Wahid, Jonathan Tompson, Quan Vuong, Tianhe Yu, et al. Palm-e: An embodied multimodal language model. arXiv preprint arXiv:2303.03378 , 2023. [3] Brianna Zitkovich, Tianhe Yu, Sichun Xu, Peng Xu, Ted Xiao, Fei Xia, Jialin Wu, Paul Wohlhart, Stefan Welker, Ayzaan Wahid, et al. Rt-2: Vision-language-action models transfer web knowledge to robotic control. In Con-ference on Robot Learning , pages 2165–2183. PMLR, 2023. [4] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla: An open-source vision-language-action model. arXiv preprint arXiv:2406.09246 , 2024. [5] Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, et al. π0: A Vision-Language-Action Flow Model for General Robot Control. arXiv preprint arXiv:2410.24164 , 2024. [6] Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for generative modeling. arXiv preprint arXiv:2210.02747 , 2022. [7] Tony Z Zhao, Vikash Kumar, Sergey Levine, and Chelsea Finn. Learning fine-grained bimanual manipulation with low-cost hardware. arXiv preprint arXiv:2304.13705 , 2023. [8] Cheng Chi, Zhenjia Xu, Siyuan Feng, Eric Cousineau, Yilun Du, Benjamin Burchfiel, Russ Tedrake, and Shuran Song. Diffusion policy: Visuomotor policy learning via action diffusion. The International Journal of Robotics Research , 44(10-11):1684–1704, 2025. [9] Abby O’Neill, Abdul Rehman, Abhiram Maddukuri, Abhishek Gupta, Abhishek Padalkar, Abraham Lee, Acorn Pooley, Agrim Gupta, Ajay Mandlekar, Ajinkya Jain, et al. Open x-embodiment: Robotic learning datasets and rt-x models: Open x-embodiment collaboration 0. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 6892–6903. IEEE, 2024. [10] Octo Model Team, Dibya Ghosh, Homer Walke, Karl Pertsch, Kevin Black, Oier Mees, Sudeep Dasari, Joey Hejna, Tobias Kreiman, Charles Xu, et al. Octo: An open-source generalist robot policy. arXiv preprint arXiv:2405.12213 , 2024. [11] Sherry Yang, Ofir Nachum, Yilun Du, Jason Wei, Pieter Abbeel, and Dale Schuurmans. Foundation models for decision making: Problems, methods, and opportunities. arXiv preprint arXiv:2303.04129 , 2023. [12] Guanxing Lu, Wenkai Guo, Chubin Zhang, Yuheng Zhou, Haonan Jiang, Zifeng Gao, Yansong Tang, and Ziwei Wang. Vla-rl: Towards masterful and general robotic manipulation with scalable reinforcement learning. arXiv preprint arXiv:2505.18719 , 2025. [13] Haozhan Li, Yuxin Zuo, Jiale Yu, Yuhao Zhang, Zhaohui Yang, Kaiyan Zhang, Xuekai Zhu, Yuchen Zhang, Tianxing Chen, Ganqu Cui, et al. Simplevla-rl: Scaling vla training via reinforcement learning. arXiv preprint arXiv:2509.09674 , 2025. [14] Yanjiang Guo, Jianke Zhang, Xiaoyu Chen, Xiang Ji, Yen-Jen Wang, Yucheng Hu, and Jianyu Chen. Improving vision-language-action model with online reinforcement learning. In 2025 IEEE International Conference on Robotics and Automation (ICRA) , pages 15665–15672. IEEE, 2025. [15] Jijia Liu, Feng Gao, Bingwen Wei, Xinlei Chen, Qingmin Liao, Yi Wu, Chao Yu, and Yu Wang. What can rl bring to vla generalization? an empirical study. Advances in Neural Information Processing Systems , 38: 97121–97151, 2026. 9[16] Shuhan Tan, Kairan Dou, Yue Zhao, and Philipp Krähenbühl. Interactive post-training for vision-language-action models. arXiv preprint arXiv:2505.17016 , 2025. [17] Wenli Xiao, Haotian Lin, Andy Peng, Haoru Xue, Tairan He, Yuqi Xie, Fengyuan Hu, Jimmy Wu, Zhengyi Luo, Linxi Fan, et al. Self-improving vision-language-action models with data generation via residual rl. arXiv preprint arXiv:2511.00091 , 2025. [18] Michael Janner, Yilun Du, Joshua B Tenenbaum, and Sergey Levine. Planning with diffusion for flexible behavior synthesis. arXiv preprint arXiv:2205.09991 , 2022. [19] Andrew Wagenmaker, Mitsuhiko Nakamoto, Yunchu Zhang, Seohong Park, Waleed Yagoub, Anusha Nagabandi, Abhishek Gupta, and Sergey Levine. Steering your diffusion policy with latent space reinforcement learning. 
+
+arXiv preprint arXiv:2506.15799 , 2025. [20] Aaditya Prasad, Kevin Lin, Jimmy Wu, Linqi Zhou, and Jeannette Bohg. Consistency policy: Accelerated visuomotor policies via consistency distillation. arXiv preprint arXiv:2405.07503 , 2024. [21] Shu-Ang Yu, Feng Gao, Yi Wu, Chao Yu, and Yu Wang. D3p: Dynamic denoising diffusion policy via reinforce-ment learning. arXiv preprint arXiv:2508.06804 , 2025. [22] Mateo Clemente, Leo Brunswic, Yang Yang, Xuan Zhao, Yasser Khalil, Haoyu Lei, Amir Rasouli, and Yinchuan Li. Two-steps diffusion policy for robotic manipulation via genetic denoising. Advances in Neural Information Processing Systems , 38:139962–139984, 2026. [23] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv preprint arXiv:2010.02502 , 2020. [24] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. Dpm-solver: A fast ode solver for diffusion probabilistic model sampling in around 10 steps. Advances in neural information processing systems ,35:5775–5787, 2022. [25] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In Proceedings of the 40th International Conference on Machine Learning , pages 32211–32252, 2023. [26] Xingchao Liu, Chengyue Gong, and Qiang Liu. Flow straight and fast: Learning to generate and transfer data with rectified flow. arXiv preprint arXiv:2209.03003 , 2022. [27] Kohei Sendai, Maxime Alvarez, Tatsuya Matsushima, Yutaka Matsuo, and Yusuke Iwasawa. Leave no observa-tion behind: Real-time correction for vla action chunks. arXiv preprint arXiv:2509.23224 , 2025. [28] Jiaming Tang, Yufei Sun, Yilong Zhao, Shang Yang, Yujun Lin, Zhuoyang Zhang, James Hou, Yao Lu, Zhi-jian Liu, and Song Han. Vlash: Real-time vlas via future-state-aware asynchronous inference. arXiv preprint arXiv:2512.01031 , 2025. [29] Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In International conference on machine learning ,pages 1861–1870. Pmlr, 2018. [30] Bo Liu, Yifeng Zhu, Chongkai Gao, Yihao Feng, Qiang Liu, Yuke Zhu, and Peter Stone. Libero: Benchmarking knowledge transfer for lifelong robot learning. Advances in Neural Information Processing Systems , 36:44776– 44791, 2023. [31] Chao Yu, Yuanqing Wang, Zhen Guo, Hao Lin, Si Xu, Hongzhi Zang, Quanlu Zhang, Yongji Wu, Chunyang Zhu, Junhao Hu, et al. Rlinf: Flexible and efficient large-scale reinforcement learning via macro-to-micro flow transformation. arXiv preprint arXiv:2509.15965 , 2025. [32] Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang, and Wanli Ouyang. Flow-grpo: Training flow matching models via online rl. Advances in neural information processing systems , 38:40783–40818, 2026. [33] Tonghe Zhang, Chao Yu, Sichang Su, and Yu Wang. Reinflow: Fine-tuning flow matching policy with online reinforcement learning. Advances in Neural Information Processing Systems , 38:106282–106319, 2026. 10 6 APPENDIX 
+
+## 6.1 Experimental Details 
+
+All methods share the same frozen π0 base policy [5] and a Pixel-SAC agent that acts in the noise latent space. Our method (E-QRL) additionally learns an elastic schedule, i.e., the injected noise w together with the number of denoising steps and the action-chunk length, under a compute (NFE) budget and a qstd -based difficulty signal. The DSRL baseline [19] uses the same SAC backbone but keeps the denoising steps and action chunk fixed and removes all elastic modules (range, NFE budget, and difficulty). We report the hyperparameters for the real-robot experiments (Table 3), the LIBERO simulation tasks (Table 4), and the ALOHA simulation task (Table 5). Hyperparameters whose meaning is shared across environments use the same row name in all tables. “Training steps” denotes gradient steps for the offline setting and environment-interaction steps for the online settings (both capped by max_steps ). “Grad steps / collection” is the number of SAC updates performed after each data collection round ( train_steps_per_collection for the online real-robot setting, multi_grad_step for simulation; the of-fline setting has no collection round). For the DSRL baseline, “–” marks hyperparameters that are specific to E-QRL and have no counterpart in the baseline. Table 3: Hyperparameters for the real-robot E-QRL experiments                                                 
+
+> Hyperparameter Offline Online Task grasp_fruit Pouring Water Base policy π0, frozen π0, frozen Train mode Offline Online Training steps 5×10 55×10 5
+> Batch / discount γ256 / 0.999 256 / 0.999 LR (actor / critic / temp) 10 −4/ 3 ×10 −4/ 3 ×10 −410 −4/ 3 ×10 −4/ 3 ×10 −4
+> Critic ensemble num_qs 10 10 Action magnitude 2.0 2.0 Target entropy 0.0 0.0 Base (denoising steps, chunk) (10, 20) (10, 20) Denoising-step range [5, 15] [5, 15] Action-chunk range [10, 30] [10, 30] NFE band [lower, upper →anneal] [0.28, 0.50 →0.45] [0.28, 0.50 →0.45] NFE under / saving weight 0.35 / 0.08 0.35 / 0.08 Difficulty source / weight q_std / 0.045 q_std / 0.045 Difficulty prior scale (signal) 0.65 ( rank_tanh )0.65 ( rank_tanh )Grad steps / collection – (offline, no rollout) 1000
+
+11 Table 4: Hyperparameters for the LIBERO-90 simulation tasks. Columns t55–t59 are E-QRL (ours); the last column is the DSRL baseline. Tasks: t55 = alphabet soup → tray , t10 = black bowl → cabinet , t57 = cream cheese → tray , t59 = tomato sauce → tray . †Values for t10 are reconstructed from the run name (its config dict was not saved). The DSRL baseline shares the same configuration across LIBERO tasks (fixed steps/chunk = 10 /20); “–” marks E-QRL-specific entries. 
+
+Hyperparameter t55 t10 t57 t59 DSRL baseline Base policy π0 (libero), frozen π0 (libero), frozen π0 (libero), frozen π0 (libero), frozen π0 (libero), frozen Train mode Online Online Online Online Online Training steps 5 × 10 5 5 × 10 5 5 × 10 5 5 × 10 5 5 × 10 5
+
+Batch / discount γ 256 / 0.999 256 / 0.999 256 / 0.999 256 / 0.999 256 / 0.999 LR (actor / critic / temp) 10 −4/3 ×10 −4/3 ×10 −4 10 −4/3 ×10 −4/3 ×10 −4 10 −4/3 ×10 −4/3 ×10 −4 10 −4/3 ×10 −4/3 ×10 −4 10 −4/3 ×10 −4/3 ×10 −4
+
+Critic ensemble num_qs 10 10 10 10 10 Action magnitude 1.0 1.0 1.0 1.0 1.0 Target entropy auto ( −17) auto ( −17) auto ( −17) auto ( −17) auto Base (denoising steps, chunk) (10, 20) (10, 20) (10, 20) (10, 20) (10, 20), fixed Denoising-step range [4, 14] [3, 15] [3, 15] [3, 15] –Action-chunk range [16, 42] [16, 44] [10, 40] [16, 44] –NFE band [lower, upper →anneal] [0.34, 0.50 →0.40] [0.28, 0.50 →0.39] † [0.28, 0.50] [0.28, 0.50] –NFE under / saving weight 0.55 / 0.018 0.35 / 0.09 † 0.35 / 0.06 0.35 / 0.12 –Difficulty source / weight q_std / 0.024 q_std / 0.06 q_std / 0.06 q_std / 0.06 –Difficulty prior scale (signal) 0.82 ( rank_tanh ) 0.80 ( raw )† 0.75 ( rank_tanh ) 0.85 ( raw ) –Grad steps / collection 20 20 20 20 20 
+
+Table 5: Hyperparameters for the ALOHA transfer_cube simulation task. The first column is E-QRL (ours); the second is the DSRL baseline. ∗ALOHA uses difficulty_prior_signal_scale = 1.15 (all other tasks use 1 .0); “–” marks E-QRL-specific entries. 
+
+Hyperparameter transfer_cube (E-QRL) DSRL baseline Base policy π0 (ALOHA), frozen π0 (ALOHA), frozen Train mode Online Online Training steps 3 × 10 6 3 × 10 6
+
+Batch / discount γ 256 / 0.999 256 / 0.999 LR (actor / critic / temp) 10 −4 / 3 ×10 −4 / 3 ×10 −4 10 −4 / 3 ×10 −4 / 3 ×10 −4
+
+Critic ensemble num_qs 10 10 Action magnitude 2.0 2.0 Target entropy 0.0 0.0 Base (denoising steps, chunk) (10, 50) (10, 50), fixed Denoising-step range [3, 13] –Action-chunk range [35, 50] –NFE band [lower, upper →anneal] [0.08, 0.20 →0.17] –NFE under / saving weight 0.25 / 0.09 –Difficulty source / weight q_std / 0.045 –Difficulty prior scale (signal) 0.75 ( raw )∗ –Grad steps / collection 20 20 
+
+12

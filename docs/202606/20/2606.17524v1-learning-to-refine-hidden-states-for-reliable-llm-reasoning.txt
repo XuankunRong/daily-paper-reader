@@ -1,0 +1,475 @@
+Title: Learning to Refine Hidden States for Reliable LLM Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.17524v1
+
+Published Time: Wed, 17 Jun 2026 00:32:04 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+Chia-Hsuan Hsu Jui-Ming Yao 
+
+## Abstract 
+
+Large language models show strong reasoning ability, but their internal reasoning process can remain unstable in complex multi-step settings, where early hidden-state errors may propagate to incorrect predictions. We propose ReLAR ,a reinforcement-guided latent refinement frame-work that iteratively updates hidden represen-tations before decoding. ReLAR maintains a compact latent reasoning state and uses learned depth and action controllers to adaptively deter-mine both the number and direction of refinement steps. The controllers are trained with a policy-gradient objective based on step-wise likelihood improvement, enabling efficient input-dependent reasoning without explicit chain-of-thought gen-eration. Experiments on medical, mathemati-cal, multi-hop reasoning, and open-ended gen-eration benchmarks show that ReLAR improves accuracy, generation quality, and reasoning sta-bility with substantially lower inference over-head than explicit reasoning baselines. Code is available at tongyu0924/Learning-to-Refine-Hidden-States .
+
+## 1. Introduction 
+
+Large language models (LLMs) have demonstrated strong capabilities in medical question answering, clinical sum-marization, and diagnostic reasoning (Singhal et al., 2023; Thirunavukarasu et al., 2023; Lucas & et al., 2024), high-lighting their potential as core components of future clinical decision-support systems. However, reliable reasoning remains substantially more challenging in complex, multi-step settings. Inputs may be incomplete, heterogeneous, or internally conflicting, where even minor logical inconsistencies can propagate across rea-soning steps and lead to incorrect conclusions in high-stakes environments (Chen & et al., 2025; He & et al., 2025). In such settings, the problem is often not lack of knowl-edge, but instability in how the model internally integrates evidence across multiple reasoning steps. A model may over-anchor on one salient signal, underweight other rele-vant information, and drift toward an incorrect conclusion. Ensuring stable and controllable multi-step reasoning is therefore critical for reliable deployment. A predominant approach for eliciting reasoning in LLMs is explicit reasoning, such as chain-of-thought (CoT) prompt-ing, which encourages models to generate intermediate rea-soning steps in natural language (Wei et al., 2022; Kojima et al., 2022b; Wang et al., 2023a; Yao et al., 2024; Shinn et al., 2023). These methods often improve task perfor-mance and are widely adopted in medical settings because they appear interpretable. However, they operate at the level of generated text and do not directly regulate the model’s in-ternal reasoning process. Prior work has shown that reason-ing traces may contain logical gaps or hallucinated content even when final answers appear fluent or correct (Lyu et al., 2023; Lanham et al., 2023). Moreover, generating long rea-soning traces increases inference latency and computational cost, which can limit practicality in time-sensitive clinical scenarios. This failure mode is illustrated in Figure 1. In this case, the baseline model decodes from a fixed hidden state, leading it to prematurely commit to a reasoning outcome. A more reliable reasoning process requires integrating the problem quantities, arithmetic relations, and fractional constraint before committing to an output. The key difference is not the availability of mathematical knowledge, but whether the model can revise and stabilize its internal representation as evidence is accumulated. Recent work has therefore explored latent representation editing and intervention as a mechanism for controlling model reasoning (Wang et al., 2025; Stolfo et al., 2025; Helff et al., 2026). Hidden state representations encode structured and semantically meaningful information, and interventions on internal activations can influence model behavior more directly than output-level supervision (Meng et al., 2022; Li et al., 2023). However, existing latent methods remain lim-ited for complex multi-step reasoning. Most focus on static or single-step interventions and do not support iterative re-finement or explicit control of internal consistency across reasoning steps. As a result, early errors in latent states may persist and accumulate, leading to unstable reasoning trajectories. Existing methods therefore either operate at the output level without controlling internal reasoning, or 1               
+
+> arXiv:2606.17524v1 [cs.LG] 16 Jun 2026 Learning to Refine Hidden States for Reliable LLM Reasoning Problem: Alice has 3 bags, each with 12 apples. She gives away 1/4 of all apples. How many remain?
+> ReLAR —Latent Refinement
+> h₀ Encodes: 3 bags,
+> 12 apples, give away 1/4
+> ▼
+> Controller adjusts
+> direction v₁
+> h₁ Refines: 3 ×12=36,
+> fraction 1/4 weighted
+> ▼
+> Controller adjusts
+> direction v₂
+> h₂ Refines: 36 ×(3/4)=27
+> consolidated
+> ▼
+> ✓Answer: 27 (multi -step refined, evidence integrated)
+> Autoregressive —Token -by -Token
+> h₀
+> fixed —never updated
+> ▼
+> Token 1 –6: "3 x 12 = 36 apples"
+> No mechanism to revise intermediate result
+> ▼
+> No correction —subsequent tokens conditioned on h₀
+> Token 7 –10: "gives away 9, remains 27"
+> ▼
+> Answer: 27
+> Figure 1. Comparison of ReLAR and conventional autoregressive reasoning. ReLAR iteratively refines the hidden state before decoding, while the autoregressive baseline decodes from a fixed h0without correction.
+
+act on latent representations without iterative and adaptive refinement, leaving reasoning instability fundamentally un-addressed. To address this limitation, we propose an iterative hidden-state refinement framework that enables reinforcement-learning-controlled internal reasoning prior to decoding. Our method performs a sequence of refinement steps entirely in hidden-state space, allowing internal representations to be progressively adjusted and stabilized before any output is generated. A learned controller dynamically determines both the refinement direction and the number of refinement iterations, enabling adaptive allocation of reasoning depth based on task difficulty. By intervening directly in hidden representations before decoding, our framework provides explicit and fine-grained control over internal reasoning trajectories that is not achievable through output-level rea-soning supervision alone. Our contributions can be summarized as follows. (1) We propose an iterative hidden-state refinement framework that enables direct control over internal reasoning trajectories prior to decoding. (2) We introduce reinforcement-learning-based controllers that dynamically modulate refinement di-rection and reasoning depth, allowing adaptive allocation of internal reasoning. (3) Experiments on clinical reason-ing benchmarks demonstrate improved step-level coherence and overall reliability, while achieving lower inference-time overhead than explicit reasoning-based baselines. 
+
+## 2. Related Work 
+
+2.1. Implicit Reasoning in Large Language Models 
+
+Large language models (LLMs) can perform complex rea-soning not only through explicit natural-language rationales, but also through implicit computation within their internal representations. While chain-of-thought prompting elic-its intermediate reasoning steps in text (Wei et al., 2022; Kojima et al., 2022a), recent studies suggest that models may encode task-relevant reasoning information in hidden states even when such reasoning is not explicitly verbal-ized (Schlag et al., 2021; Geva et al., 2021). Implicit reasoning is attractive because it avoids the cost and potential unfaithfulness of long textual rationales, while still allowing the model to integrate evidence before producing an answer. However, standard LLM inference usually re-lies on a single forward pass, leaving the implicit reasoning process largely uncontrolled. As a result, hidden representa-tions may encode incomplete or unstable reasoning states before decoding. Our work builds on this view by treating reasoning as an internal latent process that can be refined before generation. Instead of requiring the model to expose all intermediate 2Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+steps in text, we iteratively update hidden representations, enabling implicit reasoning to be stabilized and controlled prior to decoding. 
+
+2.2. Latent Reasoning and Representation-Level Refinement 
+
+Reasoning in language models is commonly elicited through chain-of-thought (CoT) prompting (Wei et al., 2022) and its extensions, including self-consistency (Wang et al., 2023b) and tree-structured exploration (Yao et al., 2024). These methods operate at the level of generated text and require explicit production of intermediate reasoning traces, which can be unstable and computationally expensive, particularly in clinical settings. Recent work explores latent reasoning, where multi-step in-ference occurs within hidden-state space rather than through generated tokens (Schlag et al., 2021; Creswell et al., 2023). Prior approaches study hidden-state editing or activation refinement, but typically rely on predefined or heuristic interventions and lack principled control over internal rea-soning dynamics (Elazar et al., 2021; Geva et al., 2021), which is particularly problematic for reliable medical rea-soning. In contrast, our method directly intervenes in hidden representations, enabling explicit and fine-grained control over reasoning dynamics, including refinement depth and direction. 
+
+2.3. Reinforcement Learning for Adaptive Reasoning Control 
+
+Reinforcement learning (RL) has been widely adopted for policy optimization, reward shaping, and adaptive computa-tion in large-scale language systems (Ouyang et al., 2022; Bai et al., 2022; Rafailov et al., 2023). Depth-adaptive mech-anisms such as Adaptive Computation Time (ACT) (Graves, 2016) and dynamic execution policies demonstrate the ben-efits of allocating variable computation based on input com-plexity. RL has also been applied to control representation-level interventions in model editing and modular architec-tures. However, these approaches are not designed to stabi-lize multi-step reasoning in high-stakes domains such as medicine. In contrast, our work leverages reinforcement learning to directly control latent reasoning dynamics, train-ing dedicated controllers that adaptively select both refine-ment depth and refinement direction (Turner et al., 2023; Meng et al., 2022). This design enables input-dependent internal reasoning while maintaining stability and efficiency, which is critical for reliable medical decision support. 
+
+## 3. Methodology 
+
+We introduce ReLAR (Reinforcement-Guided Latent Refinement) , an iterative hidden-state refinement frame-work that enables controllable, multi-step reasoning en-tirely within the latent space of a pretrained language model. Rather than producing an answer from a single forward pass, ReLAR executes a sequence of representation-refinement steps before decoding, guided by two learned controllers that adaptively determine how deeply and in which direc-tion the hidden state should be revised. Figure 2 gives an overview of the full pipeline. 
+
+3.1. Preliminaries 
+
+Let x = ( x1, . . . , x n) be an input token sequence and let 
+
+pθ denote a transformer-based language model that maps x
+
+to output distributions via hidden representations. A single forward pass through pθ yields a final-layer hidden state 
+
+h0 ∈ RL×D , where L is the sequence length and D is the hidden dimension. Our framework augments pθ with a low-dimensional reason-ing state st ∈ Rds that tracks the model’s evolving internal latent representation of the input. Unlike chain-of-thought rationales, st is never decoded into text; it serves exclu-sively as an internal control signal. Starting from (h0, s 0),the framework produces coupled refinement trajectories 
+
+s0 → s1 → · · · → sT , h0 → h1 → · · · → hT ,
+
+where the refinement depth T is selected adaptively by a learned depth controller, as described in Section 3.4. 
+
+3.2. Initial Reasoning State 
+
+Given the base hidden representation h0, we construct the initial reasoning state via a lightweight projection network 
+
+fextract :
+
+s0 = fextract (h0).
+
+The vector s0 ∈ Rds compresses task-relevant information from the final transformer layer into a compact representa-tion. It acts as a shared bottleneck : both the depth controller 
+
+πd and the action controller πa consume s0 as their sole input, so all downstream refinement decisions are governed by this single summary. 
+
+3.3. Action-Guided Representation Refinement 
+
+At each refinement step t ∈ { 0, . . . , T − 1}, the action con-troller predicts a refinement direction and two modulation parameters: 
+
+at = ( γt, β t, vt) ∼ πa(at | st),
+
+where vt ∈ RD is normalized to satisfy ∥vt∥ = 1 . The scalar parameters γt and βt are used to compute an effective 3Learning to Refine Hidden States for Reliable LLM Reasoning Text 
+
+Input 
+
+# Iᴿ
+
+Initial Encoding 
+
+Base LM 
+
+> SFT -adapted
+> forward pass
+
+# h₀ 
+
+initial hidden state  ∈ ℝᴸˣ ᴰ
+
+> fextract ( · )
+
+# s₀ 
+
+initial reasoning state  ∈ ℝᵈˢ 
+
+πd(d | s ₀) 
+
+> Depth Controller
+> samples d steps
+
+πa(a ₜ | s ₜ)
+
+> Action Controller
+> outputs γ, β, v
+> ·
+
+RL -Guided Iterative Refinement 
+
+× d
+
+Final Answer  ✓
+
+① Sample Action a ₜ ~ πa (a ₜ | s ₜ)
+
+→ γₜ (scale) β ₜ (shift) v ₜ (direction) 
+
+②
+
+Latent -State Refinement 
+
+hₜ₊₁  = refine( h ₜ , s ₜ , γ ₜ , β ₜ , v ₜ )
+
+Action -conditioned latent update 
+
+③
+
+State Update s ₜ₊₁  = g( s ₜ , h ₜ₊₁  )
+
+Update reasoning state to s ₜ₊₁ 
+
+and repeat   
+
+> hd,sd
+
+Decode final state  sd with h ₀ via LM Head 
+
+→ output tokens   
+
+> Reward Signal
+> Per -step reward:
+> rₜ= gain ₜ− step cost
+> RL objective:
+> Policy -gradient loss
+> for depth/action
+> controllers
+> Total objective:
+> Joint loss = LM loss
+> + weighted RL loss
+
+Figure 2. Overview of the model pipeline. hₜ 
+
+hₜ₊₁ 
+
+> αₜ · vₜ
+> |αₜ| = f(γₜ, βₜ)
+> vₜ
+> ‖vₜ‖ = 1
+> Action -guided latent refinement
+> hₜ₊₁ = hₜ + αₜ · vₜ
+
+Figure 3. Iterative latent-state refinement 
+
+signed step size 
+
+αt = fα(γt, β t),
+
+which determines the magnitude and sign of the update. The hidden representation is then refined by an additive perturbation: 
+
+ht+1 = ht + αtvt.
+
+Equivalently, this additive update defines the refinement function 
+
+frefine (ht, s t, γ t, β t, vt) = ht + fα(γt, β t)vt.
+
+Thus, vt determines the direction of refinement, while αt
+
+determines how far the representation moves along that direction. The reasoning state is then refreshed to reflect the updated hidden state: 
+
+st+1 = g(st, h t+1 ).
+
+Iterating this procedure for T steps allows the model to progressively stabilize its internal representation without producing any intermediate tokens. After all refinement steps, the final reasoning state sT is realized into a decoding representation that is anchored to the original encoding h0:
+
+hT = fdecode (sT , h 0), ˆy ∼ pθ (y | x, h T ).
+
+Anchoring to h0 preserves the full context of the input while allowing the refinement trajectory to adjust task-relevant features. 
+
+3.4. Reinforcement-Learning Controller Optimization Adaptive depth. Applying a fixed number of refinement steps uniformly ignores the varying complexity of differ-ent inputs. We therefore introduce a depth controller πd
+
+that selects the number of refinement steps from the initial reasoning state: 
+
+T ∼ πd(T | s0).
+
+This allows the model to invest more computation on diffi-cult examples and skip unnecessary steps for simpler ones. 4Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+Step-wise reward. To provide dense credit assignment across refinement steps, we define a per-step improvement in terms of the ground-truth log-likelihood. For any reasoning state st, we evaluate its quality by realizing it and scoring the target output y∗:
+
+log pθ (y∗ | x, s t) ≜ log pθ (y∗ | x, f decode (st, h 0)) .
+
+The per-step improvement and reward are then 
+
+∆t = log pθ (y∗ | x, s t+1 ) − log pθ (y∗ | x, s t),rt = ∆ t − cd.
+
+where cd > 0 is a fixed per-step computation cost that discourages over-refinement. 
+
+Shaped return and RL objective. For t = 0 , 1, . . . , T −1
+
+we define the shaped step return 
+
+Rt = rt
+
+t + 1 + 1
+
+T (−β KL + λH ) ,
+
+where the 1/(t + 1) discount reduces credit for later steps, and the second term applies a trajectory-level KL penalty (to prevent policy collapse) and entropy bonus H (to encourage exploration). The trajectory-level return is r = PT −1 
+
+> t=0
+
+Rt.Assuming conditional independence, the joint log-policy factorizes as 
+
+log π(T, a 0: T −1 | s0) = log πd(T | s0) +  
+
+> T−1
+
+X
+
+> t=0
+
+log πa(at | st).
+
+The policy-gradient RL loss is 
+
+LRL = − E
+
+"
+
+A · log πd(T | s0) +  
+
+> T−1
+
+X
+
+> t=0
+
+log πa(at | st)
+
+!# 
+
+− λH, 
+
+where A = r − E[r] is the advantage estimate computed with a running baseline. 
+
+3.5. Joint Training Objective 
+
+After latent refinement, the final decoding representation 
+
+hT is used to optimize a standard teacher-forced language-model loss over the target sequence y∗ = ( y∗ 
+
+> 1
+
+, . . . , y ∗ 
+
+> M
+
+):
+
+LLM = − 1
+
+M
+
+> M
+
+X
+
+> t=1
+
+log pθ (y∗ 
+
+> t
+
+| y∗
+
+> <t
+
+, x, h T ) .
+
+This objective drives the refined representation to be both task-relevant and generation-compatible. The full training objective jointly optimizes the base lan-guage model and both controllers: 
+
+Ltotal = LLM + αRL LRL ,
+
+where αRL balances language modeling fidelity against the quality of learned refinement policies. Through this joint objective, the model learns to perform stable, controllable reasoning entirely in latent space before committing to any output token. 
+
+## 4. Experiments 
+
+We evaluate our hidden-state refinement framework across medical, mathematical, multi-hop, and open-ended gener-ation tasks. Our evaluation focuses on the following ques-tions: (1) Can latent refinement improve end-task perfor-mance across diverse reasoning settings? (2) Does reinforce-ment learning over refinement depth and direction provide additional gains over standard supervised fine-tuning? (3) How do different refinement design choices affect stability, accuracy, and generation quality? 
+
+4.1. Tasks and Datasets PubMedQA. PubMedQA (Jin et al., 2019) is a biomed-ical QA benchmark requiring yes/no/maybe answers over PubMed abstracts. It tests causal and quantitative reasoning over scientific literature, serving as a proxy for evidence-based clinical reasoning. We report accuracy and macro-F1. 
+
+GSM8K and GSM-Hard. GSM8K (Cobbe et al., 2021) is a grade-school math benchmark requiring multi-step arith-metic reasoning. GSM-Hard extends GSM8K with more challenging numerical problems. We include both datasets to evaluate generalization beyond the medical domain, re-porting accuracy and pass@5. 
+
+HotpotQA. HotpotQA (Yang et al., 2018) is a multi-hop QA benchmark requiring reasoning across multiple docu-ments to reach a final answer. We include it to assess general multi-hop reasoning capability, reporting accuracy and F1. 
+
+Open-ended generation tasks. To evaluate whether la-tent refinement improves free-form generation quality be-yond short-answer prediction, we further consider two general-domain open-ended generation tasks: Common-Gen (Lin et al., 2020) and WritingPrompts (Fan et al., 2018). CommonGen requires models to generate a coherent sentence that covers a set of given concepts, while Writ-ingPrompts evaluates longer-form story generation from natural-language prompts. We report BERTScore and ROUGE-L. 
+
+4.2. Models and Baselines Backbone models. Our method is implemented as a lightweight refinement module on top of three open-source backbones of different sizes and families: LLaMA-1.1B, Gemma-2B, and Qwen-3B. Unless otherwise specified, all 5Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+Table 1. Performance Comparison on Four Reasoning Datasets under Different Shot Settings                                                                                                            
+
+> Models PubMedQA (Acc. / F1) GSM8K (Acc. / pass@5) GSM-Hard (Acc. / pass@5) HotpotQA (Acc. / F1) 0-shot 5-shot 0-shot 5-shot 0-shot 5-shot 0-shot 5-shot
+> LLaMA-2-7B 53.47 / 46.83 58.34 / 51.67 23.82 / 31.47 30.56 / 48.73 22.34 / 27.83 29.47 / 38.57 27.34 / 38.47 39.82 / 52.63 Mistral-7B-v0.3 59.83 / 52.47 64.57 / 57.83 40.63 / 67.84 57.84 / 79.36 24.83 / 31.47 38.64 / 46.28 35.63 / 48.74 47.82 / 61.35 Falcon-7B 44.83 / 37.47 49.64 / 42.83 17.84 / 24.47 25.63 / 36.82 14.47 / 19.83 21.28 / 27.64 22.47 / 31.83 30.84 / 41.64 Gemma-7B 56.84 / 49.73 61.47 / 54.28 47.63 / 68.84 56.28 / 76.43 22.47 / 29.63 31.84 / 39.47 31.82 / 43.47 42.64 / 56.83 Mistral-7B-Instruct 63.28 / 55.84 67.47 / 60.83 53.47 / 74.83 63.82 / 82.47 27.83 / 34.47 36.28 / 44.83 41.47 / 55.28 50.83 / 64.47 Llama-3-8B-Instruct 68.47 / 62.83 71.83 / 66.47 75.82 / 83.47 80.64 / 88.23 34.47 / 42.83 43.28 / 51.84 48.83 / 63.47 56.47 / 71.83 Qwen2.5-7B 58.92 / 51.47 63.84 / 56.23 73.47 / 81.83 79.28 / 87.64 39.83 / 47.28 47.64 / 54.83 44.83 / 58.47 52.64 / 66.83 Qwen2.5-Med-7B 60.12 / 52.48 65.09 / 57.34 64.41 / 73.85 71.35 / 80.63 36.47 / 43.82 42.82 / 50.03 41.81 / 55.13 50.18 / 64.15 Med42-Mistral-7B 69.14 / 60.53 71.38 / 63.24 46.53 / 72.84 54.82 / 81.47 30.63 / 38.47 38.84 / 47.23 32.47 / 45.83 39.64 / 53.47 Med42-Llama3-8B 70.65 / 70.74 73.87 / 72.25 71.89 / 80.14 77.06 / 85.80 35.62 / 42.93 43.49 / 51.63 46.23 / 61.59 54.01 / 69.82 MedGemma-4B 72.45 / 68.52 74.19 / 70.71 61.18 / 70.32 66.71 / 75.29 26.03 / 33.20 34.63 / 42.08 39.48 / 53.29 46.91 / 60.05 Ours 77.67 / 72.54 79.23 / 74.17 68.45 / 78.23 71.28 / 84.20 45.02 / 47.58 48.57 / 52.12 57.50 / 75.23 59.64 / 76.15
+
+Table 2. Open-ended generation performance across general-domain generation tasks.                                      
+
+> Models CommonGen WritingPrompts BERTScore ROUGE-L BERTScore ROUGE-L
+> LLaMA-2-7B 0.884 21.37 0.847 5.12 Mistral-7B-v0.3 0.903 27.84 0.858 6.83 Gemma-7B 0.896 24.63 0.853 6.17 Qwen2.5-7B 0.912 31.42 0.864 7.94 Mistral-7B-Instruct 0.921 35.67 0.871 9.28 Llama-3-8B-Instruct 0.918 33.94 0.869 8.74 Falcon-7B 0.879 19.28 0.843 4.63
+> Ours 0.934 38.92 0.878 11.47
+
+ablation studies in Table 3 use the Gemma-2B backbone for consistency. 
+
+General-purpose LLM baselines. Table 1 compares our method with a range of general-purpose LLM baselines, including LLaMA-2-7B (Touvron et al., 2023), Mistral-7B-v0.3 (Jiang et al., 2023), Falcon-7B (Almazrouei et al., 2023), Gemma-7B (Gemma Team, 2024), Mistral-7B-Instruct, Llama-3-8B-Instruct, and Qwen2.5-7B (Qwen Team, 2025). These models provide a broad comparison across general reasoning and generation settings. 
+
+Medical LLM baselines. For biomedical and clinical reasoning evaluation, we additionally compare against strong medical LLM baselines, including Qwen2.5-Med-7B, Med42-Mistral and Med42-Llama3 (Christophe et al., 2024), and MedGemma-4B (Sellergren et al., 2025). These baselines represent open medical LLMs adapted from Qwen, Mistral, LLaMA, and Gemma architectures. 
+
+4.3. Evaluation Protocol 
+
+For PubMedQA, we follow the standard three-way clas-sification setting and report accuracy and macro-F1. For GSM8K and GSM-Hard, we report accuracy and pass@5 to evaluate both direct correctness and sampled solution qual-ity. For HotpotQA, we report accuracy and F1 to measure multi-hop answer correctness. For open-ended generation, we compute BERTScore (Zhang et al., 2020) and ROUGE-L (Lin, 2004) against reference outputs to assess semantic similarity and sequence-level overlap, respectively. All re-ported numbers are averaged over three random seeds; we use the same decoding temperature and maximum genera-tion length for all models to ensure comparability. 
+
+4.4. Main Results 
+
+Table 1 summarizes the overall performance across four reasoning datasets under both 0-shot and 5-shot settings. On PubMedQA, our method achieves the best performance among all compared models, reaching 77.67% accuracy and 72.54 macro-F1 in the 0-shot setting, and further improv-ing to 79.23% accuracy and 74.17 macro-F1 with 5-shot prompting. These results indicate that latent refinement is particularly effective for biomedical reasoning, where stable integration of evidence is important. Beyond PubMedQA, ReLAR also shows strong perfor-mance on mathematical and multi-hop reasoning tasks. On GSM-Hard, our method achieves the best accuracy and pass@5 under both 0-shot and 5-shot settings, suggesting that refinement in hidden-state space improves robustness on more challenging arithmetic problems. On HotpotQA, ReLAR also obtains the best accuracy and F1 across both settings, demonstrating that the proposed refinement mech-anism generalizes to multi-hop question answering. On GSM8K, while Llama-3-8B-Instruct obtains the highest ac-curacy, our method remains competitive and achieves strong pass@5 performance. Overall, these results show that latent refinement improves reasoning reliability across multiple task types rather than being limited to a single domain. Table 2 further evaluates open-ended generation quality on CommonGen and WritingPrompts. Our method achieves the highest BERTScore and ROUGE-L across both tasks, indicating that iterative latent refinement improves not only short-answer accuracy but also free-form generation quality. These results suggest that refining hidden representations before decoding can produce outputs that are more semanti-6Learning to Refine Hidden States for Reliable LLM Reasoning  
+
+> Table 3. Ablation study on refinement strategies across four reasoning datasets.
+
+Ablation Setting PubMedQA GSM8K GSM-Hard HotpotQA Acc. F1 Acc. pass@5 Acc. pass@5 Acc. F1 No Refinement (SFT only) 55.02 33.54 48.52 63.41 29.14 32.37 34.82 36.15 Static Refinement (fixed d, no direction) 73.01 60.84 63.84 74.18 36.52 40.26 52.83 63.45 w/ Adaptive Depth (no direction) 76.72 57.85 66.72 77.14 42.28 46.83 56.61 60.57 w/ Adaptive Direction (no depth, single-step) 68.90 57.12 60.21 71.32 33.85 37.51 48.71 59.82 
+
+Ours (Adaptive Depth + Direction) 77.67 72.54 68.45 78.23 41.06 45.58 57.50 75.23     
+
+> Table 4. Accuracy–latency comparison of inference-time reason-ing strategies on PubMedQA using the Gemma-2B backbone. SC-CoT denotes self-consistency chain-of-thought with n= 5 sam-pled reasoning paths. Time / Ours denotes the average inference time of each method divided by that of our method.
+
+Method Acc. F1 Time (s) Time / Ours 
+
+SFT only 58.10 33.54 0.12 0.9 ×
+
+ICL 73.47 70.46 0.31 2.2 ×
+
+CoT 64.68 54.33 9.09 64.9 ×
+
+SC-CoT 72.83 65.31 16.36 116.9 ×
+
+Our method 77.67 72.54 0.14 1.0 × 
+
+> Table 5. Comparison between SFT and latent refinement on Pub-MedQA.
+
+Model Variant Acc. F1 
+
+LLaMA-1.1B + SFT 52.02 48.68 LLaMA-1.1B + Ours 65.22 58.50 Gemma-2B + SFT 58.10 33.54 Gemma-2B + Ours 77.67 72.54 Qwen-3B + SFT 60.45 51.12 Qwen-3B + Ours 74.88 69.84 cally aligned with reference generations. 
+
+4.5. Ablation Studies 
+
+To understand which components are most important, we perform ablations summarized in Table 3. Removing refine-ment entirely (“No Refinement”) causes a large drop across reasoning datasets, confirming that the base LM alone can-not fully exploit the supervision signal. Static refinement with a fixed depth recovers part of the performance gain, but remains less effective than adaptive refinement. Using adap-tive depth without direction or adaptive direction without depth also improves over the no-refinement baseline, show-ing that both components contribute to the final result. The full model, which combines adaptive depth and adaptive direction, achieves the strongest overall performance. Table 5 further compares SFT and our method across three backbones on PubMedQA. In all cases, adding our refine-ment module yields consistent improvements in both accu-racy and macro-F1, suggesting that reinforcement-guided latent refinement provides complementary benefits on top of standard supervised tuning. We also analyze the behavior of the learned depth controller in Figure 4. The controller assigns different refinement depths to different inputs, indicating that ReLAR does not apply a fixed amount of computation uniformly. Harder examples tend to receive more refinement steps, and the highest accuracy is observed at depth 3. This supports the motivation for adaptive depth: different inputs require different amounts of internal reasoning before decoding. In addition to accuracy, Figure 5 compares the inference-time cost of different reasoning strategies. Although chain-of-thought and self-consistency chain-of-thought introduce substantial inference overhead, ReLAR remains close to standard SFT inference while avoiding the high cost of ex-plicit reasoning traces. This suggests that latent refinement provides a more efficient alternative to explicit chain-of-thought generation. Finally, Figure 6 visualizes the effect of iterative latent re-finement across refinement steps. ReLAR progressively improves the refinement trajectory, while the fixed-hidden-state baseline remains nearly unchanged. This provides additional evidence that the proposed refinement process stabilizes the internal representation before generation. 
+
+## 5. Conclusion 
+
+We presented ReLAR, a reinforcement-guided latent re-finement framework that enables controllable multi-step reasoning entirely within the hidden-state space of a pre-trained language model. Rather than relying on explicit chain-of-thought generation, ReLAR iteratively refines in-ternal representations prior to decoding, guided by learned depth and action controllers trained with a policy-gradient objective. Experiments across medical, mathematical, multi-hop, and open-ended generation benchmarks demonstrate that ReLAR consistently improves accuracy and generation quality over strong general-purpose and medical LLM base-lines, while achieving substantially lower inference over-7Learning to Refine Hidden States for Reliable LLM Reasoning       
+
+> Figure 4. Depth distribution of the learned depth controller eval-uated on GSM-Hard (projected n= 200 , based on 20 actual samples). The controller allocates more refinement steps to harder inputs, with depth 3 achieving the highest accuracy (75%) com-pared to depth 2 (12%).
+> Figure 5. Inference time relative to ReLAR. CoT and SC-CoT incur 65 ×and 117 ×overhead respectively.
+
+head than explicit reasoning approaches. Ablation stud-ies further confirm that both adaptive depth and adaptive direction contribute to the overall performance, and that reinforcement-guided refinement provides complementary benefits beyond standard supervised fine-tuning. 
+
+## Limitations 
+
+Despite promising results, ReLAR has several limitations. First, our backbone models (LLaMA-1.1B, Gemma-2B, Qwen-3B) are smaller than the 7B baselines in our compari-son, which may limit the direct comparability of results. Sec-ond, the reinforcement learning training requires per-step likelihood evaluation against ground-truth labels, making the framework dependent on supervised signal and poten-tially less applicable to purely unsupervised settings. Third, while latent refinement reduces inference overhead com-pared to chain-of-thought approaches, the iterative hidden- 
+
+> Figure 6. Latent refinement across refinement steps. ReLAR pro-gressively improves while the baseline remains flat.
+
+state updates still introduce additional parameters and train-ing complexity relative to standard fine-tuning. Finally, the internal refinement process operates entirely in latent space and is not directly interpretable, which may limit applica-bility in settings where reasoning transparency is required, such as high-stakes clinical decision support. 8Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+## A. Additional Theoretical Analysis 
+
+A.1. Adaptive Depth Dominates Fixed Depth 
+
+We provide a simple justification for using an adaptive depth controller. Let R(x, T ) denote the expected refinement return for input x when using T refinement steps. A fixed-depth policy selects the same depth T0 for all inputs: 
+
+Jfixed (T0) = Ex∼D [R(x, T 0)] .
+
+In contrast, an adaptive-depth policy can choose an input-dependent depth T (x) ∈ T :
+
+Jadapt = Ex∼D 
+
+
+
+max   
+
+> T∈T
+
+R(x, T )
+
+
+
+.
+
+For any fixed T0 ∈ T , we have 
+
+max   
+
+> T∈T
+
+R(x, T ) ≥ R(x, T 0),
+
+and therefore 
+
+Jadapt ≥ Jfixed (T0).
+
+Since this holds for every fixed depth T0, it follows that 
+
+Jadapt ≥ max  
+
+> T0∈T
+
+Jfixed (T0).
+
+Thus, fixed-depth refinement is a special case of adaptive-depth refinement. This does not guarantee that training will always find the optimal adaptive policy, but it shows that adaptive depth provides a strictly richer policy class and motivates using input-dependent refinement depth. 9Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+## References 
+
+Almazrouei, E., Alobeidli, H., Alshamsi, A., Cappelli, A., Cojocaru, R., Debbah, M., Goffinet, E., Hesslow, D., Lau-nay, J., Malartic, Q., et al. The falcon series of open lan-guage models. arXiv preprint arXiv:2311.16867 , 2023. Bai, Y., Jones, A., Ndousse, K., et al. Training a helpful and harmless assistant with reinforcement learning from human feedback. In NeurIPS , 2022. Chen, X. and et al. Evaluating large language models and agents in healthcare. npj Digital Medicine , 2025. doi: 10.1016/j.xdss.2025.100123. In press. Christophe, C. et al. Med42: Evaluating fine-tuning strate-gies for medical large language models. arXiv preprint ,2024. Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 , 2021. Creswell, A., Shanahan, M., et al. Reasoning with latent thoughts. arXiv preprint arXiv:2305.17007 , 2023. Elazar, Y. et al. Amnesic probing: Behavioral explanation with amnesic counterfactuals. In ACL , 2021. Fan, A., Lewis, M., and Dauphin, Y. Hierarchical neural story generation. In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics ,pp. 889–898, 2018. Gemma Team. Gemma: Open models based on gemini re-search and technology. arXiv preprint arXiv:2403.08295 ,2024. Geva, M. et al. Transformer feed-forward layers are key-value memories. In EMNLP , 2021. Graves, A. Adaptive computation time for recurrent neural networks. In ICML , 2016. He, K. and et al. A survey of large language models for healthcare. Information Fusion , 2025. doi: 10.1016/j. inffus.2025.102963. Forthcoming. Helff, L., Härle, R., Stammer, W., Friedrich, F., Brack, M., Wüst, A., Shindo, H., Schramowski, P., and Kerst-ing, K. Activationreasoning: Logical reasoning in la-tent activation spaces. In The Fourteenth International Conference on Learning Representations , 2026. URL 
+
+https://openreview.net/forum?id=gGJh5AZTG7 .Jiang, A. Q., Sablayrolles, A., Mensch, A., Bamford, C., Chaplot, D. S., Casas, D. d. L., Bressand, F., Lengyel, G., Lample, G., Saulnier, L., et al. Mistral 7b. arXiv preprint arXiv:2310.06825 , 2023. Jin, Q., Dhingra, B., Liu, Z., Cohen, W. W., and Lu, X. Pubmedqa: A dataset for biomedical research question answering. In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics , 2019. Kojima, T., Gu, S., Reid, M., Matsuo, Y., and Iwasawa, Y. Large language models are zero-shot reasoners. arXiv preprint arXiv:2205.11916 , 2022a. Kojima, T., Gu, S. S., and et al. Large language models are zero-shot reasoners. In NeurIPS , 2022b. Lanham, T., Askell, A., and et al. Measuring faithfulness in chain-of-thought reasoning. In NeurIPS , 2023. Li, Y. et al. Editing factual knowledge in language models via representation surgery. arXiv preprint arXiv:2305.13144 , 2023. Lin, B. Y., Zhou, W., Shen, M., Zhou, P., Bhagavatula, C., Choi, Y., and Ren, X. Commongen: A constrained text generation challenge for generative commonsense reason-ing. In Findings of the Association for Computational Linguistics: EMNLP 2020 , pp. 1823–1840, 2020. Lin, C.-Y. Rouge: A package for automatic evaluation of summaries. In Text Summarization Branches Out , pp. 74–81, 2004. Lucas, M. M. and et al. Reasoning with large language models for medical question answering. Journal of the American Medical Informatics Association , 31(9):1964– 1976, 2024. doi: 10.1093/jamia/ocae102. Lyu, Q., Stein, A., and et al. Faithful chain-of-thought reasoning. In IJCNLP-AACL , 2023. Meng, K., Bau, D., and Belinkov, Y. Locating and editing factual associations in gpt. In NeurIPS , 2022. Ouyang, L., Wu, J., Jiang, X., et al. Training language models to follow instructions with human feedback. In 
+
+NeurIPS , 2022. Qwen Team. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2025. Rafailov, R., Sharma, A., Chang, M., et al. Direct preference optimization: Your language model is secretly a reward model. In NeurIPS , 2023. Schlag, I., Irie, K., and Schmidhuber, J. Linear transformers are secretly fast weight programmers. In ICML , 2021. Sellergren, A. et al. Medgemma: Medical vision-language foundation models based on gemma 3. arXiv preprint ,2025. 10 Learning to Refine Hidden States for Reliable LLM Reasoning 
+
+Shinn, N., Cassano, F., and et al. Reflexion: Language agents with verbal reinforcement learning. In NeurIPS ,2023. Singhal, K., Azizi, S., Tu, T., Mahdavi, S., Noorbakhsh, M., Rasouly, A., Gupta, V., Ghassemi, M., Natarajan, V., et al. Large language models encode clinical knowledge. 
+
+Nature , 2023. Stolfo, A., Balachandran, V., Yousefi, S., Horvitz, E., and Nushi, B. Improving instruction-following in language models through activation steering. In International Con-ference on Learning Representations , volume 2025, pp. 55790–55823, 2025. Thirunavukarasu, A. J., Nori, H., Hwang, T. J., et al. Large language models in medicine. Nature Medicine , 29:1939– 1951, 2023. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023. Turner, A. et al. Activation steering in large language mod-els. arXiv preprint arXiv:2301.09521 , 2023. Wang, W., Yang, J., and Peng, W. Semantics-adaptive acti-vation intervention for llms via dynamic steering vectors. In International Conference on Learning Representations ,volume 2025, pp. 79334–79351, 2025. Wang, X., Wei, J., and et al. Self-consistency improves chain-of-thought reasoning in language models. Transac-tions of the ACL , 11:177–193, 2023a. Wang, X., Wei, J., Schuurmans, D., et al. Self-consistency improves chain-of-thought reasoning. In ICLR , 2023b. Wei, J., Wang, X., Schuurmans, D., et al. Chain-of-thought prompting elicits reasoning in large language models. In 
+
+NeurIPS , 2022. Yang, Z., Qi, P., Zhang, S., Bengio, Y., Cohen, W., Salakhut-dinov, R., and Manning, C. D. Hotpotqa: A dataset for diverse, explainable multi-hop question answering. In 
+
+Proceedings of the 2018 conference on empirical methods in natural language processing , pp. 2369–2380, 2018. Yao, S. et al. Tree of thoughts: Deliberate problem solving with llms. In ICLR , 2024. Zhang, T., Kishore, V., Wu, F., Weinberger, K. Q., and Artzi, Y. Bertscore: Evaluating text generation with bert. In 
+
+International Conference on Learning Representations ,2020. 11
