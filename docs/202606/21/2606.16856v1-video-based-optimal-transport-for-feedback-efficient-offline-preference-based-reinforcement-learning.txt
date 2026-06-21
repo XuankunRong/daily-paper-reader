@@ -1,0 +1,1656 @@
+Title: Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.16856v1
+
+Published Time: Tue, 16 Jun 2026 02:45:00 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Tung M. Luu 1 Hwanhee Kim 1 Younghwan Lee 1 Chang D. Yoo 1
+
+## Abstract 
+
+Conveying complex objectives to reinforcement learning (RL) agents often requires meticulous reward engineering. Preference-based RL (PbRL) offers a promising alternative by learning reward functions from human feedback, but its scalability is hindered by high labeling costs. Inspired by advances in Video Foundation Models (ViFMs), we present Video-based Optimal Transport Prefer-ence (VOTP), a semi-supervised framework that learns effective reward functions from only a handful of labels. By leveraging optimal transport to align visual trajectories within the rich represen-tation space of ViFMs, VOTP effectively gener-ates high-fidelity pseudo-labels for large amounts of unlabeled data, substantially reducing human supervision. Extensive experiments across lo-comotion and manipulation benchmarks demon-strate the superiority of VOTP, which outperforms state-of-the-art offline PbRL methods under lim-ited feedback budgets. We also showcase the ro-bustness of VOTP in the presence of visual distrac-tors and validate its utility on real robotic tasks, where it learns meaningful rewards with minimal human input. The code is available at: https: //github.com/tunglm2203/votp .
+
+## 1. Introduction 
+
+Reinforcement learning (RL) has been successful in solv-ing various decision-making tasks when a suitable reward function is available (Mnih et al., 2015; Silver et al., 2017; Haarnoja et al., 2018; Chen et al., 2022b). Yet in many real-world scenarios, reward design remains challenging. Con-structing dense and informative rewards often requires exten-sive instrumentation, such as motion capture systems (Gupta et al., 2016), proprioceptive sensors (Zhu et al., 2019), or 
+
+> 1
+
+Korea Advanced Institute of Science and Technology (KAIST). Correspondence to: Chang D. Yoo <cd yoo@kaist.ac.kr >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+tactile sensors (Koenig et al., 2022). Even with such re-sources, reward misspecification can still occur, in which RL agents discover and exploit unintended shortcuts in the reward function (Skalse et al., 2022). In these cases, the reward signal may be maximized, but the resulting behav-iors are often undesired or even harmful (Clark & Amodei, 2016; Popov et al., 2017). Instead of hand-engineering reward functions, many works learn them directly from human data, such as expert demon-strations (Abbeel & Ng, 2004), natural language (Fu et al., 2019), and human feedback (Yuan et al., 2024). Recently, preference-based RL (PbRL) has gained considerable inter-est, as comparative feedback is easy for humans to provide yet informative enough to guide agents (Kaufmann et al., 2024; Casper et al., 2023). By querying human preferences over pairs of video clips, robot agents trained with PbRL have demonstrated the ability to perform novel behaviors (Christiano et al., 2017) and avoid reward exploitation (Lee et al., 2021a). With these promising results, PbRL has gained popularity in both online (Lee et al., 2021b; Cheng et al., 2024) and offline (Shin et al., 2023; Choi et al., 2024) settings. The PbRL framework often consists of two stages: reward learning from preferences, followed by policy opti-mization with the learned reward. While PbRL methods can align agents with human intent, effective reward functions require adequate coverage of both state and action spaces to achieve strong downstream perfor-mance (Ibarz et al., 2018; Hejna & Sadigh, 2023). Conse-quently, reward learning in PbRL is costly, often requiring thousands of human queries (Christiano et al., 2017; Shin et al., 2023; Yuan et al., 2024). To mitigate this challenge, prior work has explored several approaches, including semi-supervised learning (Park et al., 2022; Marta et al., 2024), meta-learning (Hejna III & Sadigh, 2023), active learning (Wang et al., 2022a), and preference ranking (Hwang et al., 2023; Choi et al., 2024). Yet a fundamental aspect remains underexplored—human preferences are shaped by the visual perception of agent behaviors, and leveraging these percep-tual distinctions offers a promising direction for improving feedback efficiency. Our key insight is that the expressive and structured representation space of Video Foundation Models (ViFMs)–pretrained on large-scale video corpora– 1
+
+> arXiv:2606.16856v1 [cs.RO] 15 Jun 2026 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning
+
+can be harnessed to infer preferences for new behaviors by comparing them with known preferred examples. To that end, we introduce Video-based Optimal Transport Preference labeling (VOTP), an algorithm that uses optimal transport over the ViFM representation space to automat-ically assign preference labels to unlabeled segment pairs given only a small number of labeled preference queries (e.g. , 10 feedbacks). Notably, unlabeled segment pairs can be obtained at no additional cost in PbRL settings, e.g. , from offline datasets. These pseudo-labeled segment pairs, to-gether with the labeled ones, are then used to learn a reward function. Specifically, VOTP uses optimal transport to com-pute alignments between labeled and unlabeled pairs in the ViFM latent space. The pseudo-label for an unlabeled pair is then inferred by aggregating preferences from labeled pairs, weighted by their relative alignments computed from the optimal transport plan. Extensive experiments across simulated domains, including D4RL locomotion (Fu et al., 2020) and MetaWorld manipulation (Yu et al., 2020), as well as real-world tabletop manipulation tasks demonstrate that VOTP learns effective policies from limited preference labels, substantially improving feedback efficiency in PbRL. We further present extensive analyses and ablation studies to provide insights into VOTP’s performance gains. 
+
+## 2. Related Work 
+
+Preference-based RL (PbRL). PbRL enables agents to align with human intent through pairwise comparisons of be-haviors, removing the need for manual reward engineering (Christiano et al., 2017). However, its scalability is con-strained by the large amount of costly and labor-intensive human feedback it requires. To improve feedback effi-ciency, prior work has explored several directions, such as informative query selection (Bıyık et al., 2020; Wang et al., 2022a; Mu et al., 2025), pre-training of RL agents (Ibarz et al., 2018; Lee et al., 2021a), exploration guided by reward uncertainty (Liang et al., 2022), and preference rank-ings (Hwang et al., 2023; Choi et al., 2024). Other methods leverage pre-collected (sub-optimal) data to pre-train reward functions (Hejna III & Sadigh, 2023; Muslimani & Taylor, 2025). In contrast, we utilize unlabeled segment pairs from offline datasets for reward learning. Unlike (Park et al., 2022), which depends on learned reward models to perform pseudo-labeling, we employ optimal transport within the semantically meaningful latent space of Video Foundation Models (ViFMs) to infer pseudo-labels. This enables VOTP to learn effective reward functions from only a handful of preference feedbacks. 
+
+Vision Foundation Models in Reward Learning. With the rapid progress of foundation models, recent studies have explored their potential in constructing reward functions. One line of work leverages pretrained vision-language mod-els (VLMs) to directly reward RL agents by measuring alignments between trajectories and task descriptions (Cui et al., 2022; Rocamonde et al., 2024; Sontakke et al., 2024; Lee et al., 2025). However, these reward signals are often noisy and inconsistent (Wang et al., 2024). Another line of research utilizes the reasoning ability of VLMs to provide feedback (Wang et al., 2024; Luu et al., 2025a; Venkatara-man et al., 2025; Luu et al., 2025b). Yet such approaches rely on carefully crafted prompt templates to be effective. In this work, we instead leverage ViFMs to generate pseudo-preference labels, aiming to enhance the feedback efficiency of PbRL. 
+
+Optimal Transport in Reinforcement Learning. Opti-mal Transport (OT) (Cuturi, 2013; Peyr ´e & Cuturi, 2019) has been widely studied in domain adaptation (Courty et al., 2016), graph matching (Titouan et al., 2019; Ratnayaka et al., 2025), and semi-supervised learning (Tai et al., 2021; Tan et al., 2024). In the context of RL, prior works have applied OT to imitation learning (Fickinger et al., 2022; Luo et al., 2023; Fu et al., 2024; Huey et al., 2025) by minimizing the Wasserstein distance between the learner’s trajectories and expert demonstrations. PEARL (Liu et al., 2024) ex-tended this idea to transfer preferences across domains, but its applicability is restricted to tasks with identical state and action spaces, and cross-domain transfer often introduces high uncertainty for the target task. In contrast, VOTP per-forms pseudo-labeling directly within the same domain and scales naturally to high-dimensional visual inputs, enabling more stable and reliable reward learning in scenarios where PEARL is not applicable. 
+
+## 3. Preliminaries 
+
+Reinforcement Learning. In reinforcement learning (RL), an agent interacts with an environment modeled as a Markov decision process (MDP). An MDP is defined by the tuple ⟨S , A, T , r, γ ⟩. At each time step t, the agent re-ceives a state st ∈ S and selects an action at ∈ A based on its policy π. The environment responds by emitting a reward rt and transitioning to the next state st+1 accord-ing to the transition probability T (s′|s, a). In our setting, we also consider the observation ot ∈ O , which is an image rendered from the underlying state st. The return, 
+
+Gt = P∞ 
+
+> k=0
+
+γkr(st+k, at+k), is defined as the discounted cumulative sum of rewards, with discount factor γ ∈ [0 , 1) .The objective of RL algorithms is to learn a policy that maximizes the expected return. 
+
+Preference-based RL. In offline preference learning, we assume that the true reward function is unknown and in-stead learn a reward function brψ from human preferences (Christiano et al., 2017; Ibarz et al., 2018). A trajec-2Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+tory segment of length H is represented as a sequence of states and actions {(s1, a1), . . . , (sH , aH )}. Given a pair of segments (σ0, σ 1), a teacher provides a preference label 
+
+˜y ∈ { 0, 1, 0.5}, where ˜y = 0 indicates σ0 ≻ σ1, ˜y = 1 
+
+indicates σ1 ≻ σ0, and ˜y = 0 .5 indicates equal preference. Here, σi ≻ σj denotes that segment i is preferred over seg-ment j. Each feedback is stored in a preference dataset D
+
+as a triple (σ0, σ 1, ˜y). The preference predictor is modeled using the reward function brψ following the Bradley-Terry model (Bradley & Terry, 1952):                         
+
+> P(σ0≻σ1;ψ) = exp P
+> tbrψ(s0
+> t,a0
+> t)exp P
+> tbrψ(s0
+> t,a0
+> t) + exp P
+> tbrψ(s1
+> t,a1
+> t).
+
+Given the preference dataset, the estimated reward function 
+
+brψ is updated by minimizing the cross-entropy loss between predicted preferences and annotated labels:               
+
+> L(ψ) = ED[(1 −˜y) log P(σ0≻σ1;ψ)+ ˜ ylog P(σ1≻σ0;ψ)] .
+> (1)
+
+In practice, a preference query is typically presented to teachers as a pair of short video clips rendered from tra-jectory segments. While intuitive, learning an effective reward model often demands hundreds to thousands of an-notated comparisons (Kim et al., 2023; Hejna & Sadigh, 2023; Hejna et al., 2024; Choi et al., 2024), which creates an unsustainable annotation burden. To mitigate this chal-lenge, we adopt the semi-supervised preference learning paradigm (Park et al., 2022), which leverages both labeled and unlabeled segment pairs for reward learning. 
+
+Discrete Optimal Transport. Optimal Transport (OT) (Cuturi, 2013; Peyr ´e & Cuturi, 2019) is an optimization problem that finds a coupling between two probability mea-sures with minimal cost. Let ∆n = {p ∈ Rn
+
+> +
+
+| Pni=1 pi =1} denote the probability simplex of dimension n. Con-sider two probability measures μx = Pni=1 piδxi and 
+
+μy = Pmj=1 qj δyj , supported on {xi}ni=1 and {yj }mj=1 , re-spectively. Here, the weight vector p = ( p1, . . . , p n) and 
+
+q = ( q1, . . . , q m) belong to ∆n and ∆m, respectively, and 
+
+δx denotes the Dirac measure at x. The discrete OT problem between μx and μy can then be expressed via the Wasser-stein distance as:      
+
+> W22(μx, μ y) = min
+> μ∈M
+> nX
+> i=1
+> mX
+> j=1
+> c(xi, y j)μij ,(2)
+
+where M = {μ ∈ Rn×m 
+
+> +
+
+: μ1m = μx, μ ⊤1n = μy } is the set of feasible transport plans, 1n denotes the all-ones vector of dimension n, and c(x, y ) is the cost function. The matrix μ specifies a transport plan, where μij indicates the mass moved from xi to yj . In this work, we leverage OT to compute correspondences between unlabeled and labeled segment pairs, thereby enabling the inference of pseudo-preference labels. 
+
+## 4. Method 
+
+Our goal is to improve feedback efficiency in offline pref-erence learning by leveraging unlabeled data. To this end, we introduce Video-based Optimal Transport Preference (VOTP), a semi-supervised framework that infers pseudo-preference labels using optimal transport (OT). The frame-work consists of two key components: (i) trajectory repre-sentation with Video Foundation Models, and (ii) pseudo-preference label generation through the optimal transport plan. An overview is provided in Figure 1. 
+
+4.1. Trajectory Representation 
+
+Representing trajectory segments in a form that enables reliable comparison is central to preference learning (Tian et al., 2024; Mu et al., 2025). We model each segment as a short video clip, σ = {o1, . . . , oH }, and embed it into a latent space using a trajectory encoder fϕ:    
+
+> z=fϕ(o1: H).(3)
+
+An effective encoder must capture both spatial details within frames and temporal dynamics across the segment, as these jointly determine the behavioral differences reflected in hu-man preferences. To meet these requirements, we adopt off-the-shelf video foundation models (ViFMs) (Madan et al., 2024), which are pretrained on massive collections of human activity videos covering diverse actors, viewpoints, lighting conditions, and backgrounds. This large-scale, heteroge-neous pre-training produces actor-agnostic, semantically rich embeddings that are robust to nuisance variation and generalize to unseen robotic environments. 
+
+4.2. Pseudo-Preference Label Generation 
+
+VOTP first identifies correspondences between labeled and unlabeled segment representations, and then assigns pref-erences via an OT plan. We denote the labeled dataset as Dl = {(σ0, σ 1, ˜y)(i)}Nl 
+
+> i=1
+
+and the unlabeled dataset as 
+
+Du = {(¯ σ0, ¯σ1)(i)}Nu
+
+> i=1
+
+. Our objective is to infer pseudo labels for Du and use both datasets to learn the reward function brψ .We define the labeled set as L = {σi}Ni=1 , where N = 2 Nl
+
+denotes the total number of segments in Dl. Preference re-lations among segments are encoded in a preference matrix 
+
+R ∈ {− 1, 0, 1}N ×N :              
+
+> Rij =
+> 
+> −1if σi≻σj,
+> 1if σj≻σi,
+> 0for i=j, ties, or no preference is available .
+
+By construction, R is skew-symmetric, i.e. , R⊤ = −R. In parallel, we define the unlabeled set U = {¯σi′ }Mi′=1 , con-sisting of M segments sampled from Du, for which pseudo-preference labels are inferred. Let μL = PNi=1 piδσi and 
+
+μU = PMi′=1 qi′ δ¯σi′ denote the empirical measures on these 3Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning Video Foundation Model  Latent      
+
+> Space
+> Inferred
+> Preference
+> : # of pairs (𝑁 𝑙 ≪𝑁 𝑢 )
+> : Trajectory representation
+> : Ground -truth preference
+> : Pseudo preference
+
+⋯
+
+⋯
+
+⋯
+
+⋯  
+
+> Labeled Segments
+> Unlabeled Segments
+> ×𝑁 𝑙
+> ×𝑁 𝑢
+> 𝑁
+
+VOTP 
+
+(a) Pipeline of Video-based Optimal Transport Preference (VOTP) Preference Matrix 
+
+𝑅    
+
+> 0
+> 0
+> -1
+> 0
+> 0
+> 0
+> 0
+> -1
+> 1
+> 0
+> 0
+> 0
+> 0
+> 1
+> 0
+> 0
+> 𝜎 1
+> 𝜎 2
+> 𝜎 3
+> 𝜎 4
+> 𝜎 1𝜎 2𝜎 3𝜎 4
+> 0.18
+> 0.25
+> 0.03
+> 0.04
+> 0.07
+> 0
+> 0.22
+> 0.21
+
+Transport Plan 
+
+𝜇 ∗ 
+
+> 𝜎 1
+> 𝜎 2
+> 𝜎 3
+> 𝜎 4
+> ത𝜎 1ത𝜎 2
+
+Preference Score : 𝑆  ത𝜎 1, ത𝜎 2 = 0.18  (b) Computation performed by VOTP 
+
+Figure 1. Overview of our framework. (a) VOTP embeds visual segments into a latent space using an off-the-shelf video foundation model and uses the optimal transport plan to propagate preferences with relative alignment strengths. Green dots indicate preferred segments over orange ones. (b) Example computation in VOTP with four labeled segments ( σi) and two unlabeled segments ( ¯σi′ ). Preference relations among labeled segments are represented by the preference matrix R. Each entry of the optimal transport plan μ∗ specifies the probability that a labeled segment matches an unlabeled segment, and the unnormalized preference score is computed using Eq. (5). 
+
+sets. For simplicity, we adopt the uniform weights, i.e. ,
+
+pi = 1 
+
+> N
+
+and qi′ = 1 
+
+> M
+
+. The OT plan for aligning labeled and unlabeled segments is then obtained as: 
+
+μ∗ = arg min 
+
+> μ∈M
+> N
+
+X
+
+> i=1
+> M
+
+X
+
+> i′=1
+
+c(σi, ¯σi′ )μii ′ , (4) 
+
+where M = {μ ∈ RN ×M 
+
+> +
+
+: μ1M = 1 
+
+> N
+
+1N , μ ⊤1N = 
+
+> 1
+> M
+
+1M }. The cost function is defined as c(σi, ¯σi′ ) =
+
+d(fϕ(σi), f ϕ(¯ σi′ )) , the distance between encoded visual segments in the latent video space, where d can be chosen as either the Euclidean distance or the cosine distance. The OT plan μ∗ obtained in Eq. (4) provides the correspon-dences between segments in sets L and U . Concretely, each entry μii ′ represents the probability that the unlabeled seg-ment ¯σi′ matches the labeled segment σi. Combining these probabilities with the preference matrix R, we can infer preferences between segments in the unlabeled set U . For brevity, we denote the OT plan as μ. We then define the preference score used to determine the preference between the unlabeled pair (¯ σi′ , ¯σj′ ) as follows: 
+
+S(¯ σi′ , ¯σj′ ) = 
+
+> N
+
+X
+
+> i=1
+> N
+
+X
+
+> j=1
+
+Rij (μii ′ μjj ′ − μij ′ μji ′ ) (5) 
+
+Interpretation. Consider a labeled pair (i, j ) with a non-zero preference ( i.e. , Rij ̸ = 0 ). Suppose Rij = 1 (i.e. ,
+
+σj ≻ σi). The term μii ′ μjj ′ measures alignment between 
+
+(σi, σ j ) and (¯ σi′ , ¯σj′ ), while μij ′ μji ′ measures the align-ment with the reversed pair (¯ σj′ , ¯σi′ ). If the difference 
+
+(μii ′ μjj ′ − μij ′ μji ′ ) is positive, then (¯ σi′ , ¯σj′ ) likely shares the preference of (σi, σ j ), implying ¯σj′ ≻ ¯σi′ . Conversely, if the difference is negative, the preference is flipped, i.e. ,
+
+¯σi′ ≻ ¯σj′ . The preference score for (¯ σi′ , ¯σj′ ) is then ob-tained by aggregating alignment comparisons across all labeled pairs. Since R is skew-symmetric, the inferred preference for (¯ σi′ , ¯σj′ ) is consistent under swapping (i, j ).Examples of this computation are illustrated in Figure 1(b) and in the Appendix. Overall, VOTP leverages the transport plan to propagate preferences from labeled to unlabeled pairs through relative alignment strengths. In practice, the entries of the OT plan μ are small because P μij = 1 , which leads to relatively small preference scores. Therefore, we normalize the preference score by 
+
+Smax =
+
+> N
+
+X
+
+> i=1
+> N
+
+X
+
+> j=1
+
+1
+
+N 2 1(Rij ̸ = 0) . (6) 
+
+Here, Smax denotes the absolute maximum attainable score under uniform masses ( i.e. , pi = 1 
+
+> N
+
+), assuming the OT plan maximizes the contribution of all non-zero Rij terms. This guarantees that preference scores lie within [−1, 1] across varying numbers of labeled pairs. Finally, to obtain the preference label for the pair (¯ σi′ , ¯σj′ ), we apply a preference threshold τP to determine the label 1:
+
+˜y =
+
+( 12 (1 + sign( Snorm (¯ σi′ , ¯σj′ ))) if |Snorm | ≥ τP ,
+
+0.5 otherwise . (7) 
+
+where sign( x) = −1 if x < 0, 1 if x > 0, and 0 if x = 0 ;and Snorm = S(¯ σi′ , ¯σj′ )/S max .
+
+4.3. Implementation Details 
+
+Obtaining the optimal coupling matrix μ∗ in Eq. (4) re-quires solving a linear program, which is computationally expensive with standard solvers. In practice, we solve the entropy-regularized OT problem using Sinkhorn’s algorithm (Cuturi, 2013), which provides both efficiency and numeri-cal stability. Our implementation uses the Sinkhorn solver from the POT toolbox (Flamary et al., 2021). After VOTP annotates the unlabeled dataset with pseudo-preferences, we train the reward function brψ using Eq. (1). To mitigate the impact of inaccurate pseudo-labels, we retain only those 
+
+> 1
+
+One could optionally apply an additional threshold to treat pairs with scores near zero as equally preferable. 
+
+4Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+with scores above the threshold τP . During RL training, all state-action pairs in the offline dataset are relabeled using the trained brψ . The overall procedure is summarized in Algorithm 1 in the Appendix. 
+
+## 5. Experiments 
+
+In this section, we conduct experiments across diverse do-mains to answer the following questions: (1) Can VOTP improve feedback efficiency in a low-data regime? (2) What is the individual contribution of each component within VOTP? (3) How do key hyperparameters influence the per-formance of VOTP? (4) How does VOTP generalize to unseen environments with visual distractors? (5) Can VOTP be effectively applied to real robotic tasks? 
+
+5.1. Setups Benchmark. To conduct a comprehensive evaluation of our method, we select several continuous control tasks from two benchmarks, D4RL (Fu et al., 2020) and MetaWorld (Yu et al., 2020), where D4RL provides locomotion tasks and MetaWorld involves manipulation tasks. We use offline PbRL datasets from Kim et al. (2023) for D4RL and Hejna et al. (2024) for MetaWorld. We initialize the labeled set with 10 segment pairs and use synthetic preferences gener-ated by scripted teachers based on the ground-truth reward function 2, following common practice in PbRL evaluation (Lee et al., 2021b; Shin et al., 2023; Choi et al., 2024). For pseudo-labeling, we sample additional pairs uniformly at random from the offline datasets. Specifically, we use a total of 10 k queries for D4RL and 50 k queries for MetaWorld. Since VOTP performs labeling on image-based observations, we additionally render visual observations corresponding to the states in the preference datasets. 
+
+Training and Evaluation. For computing the optimal coupling, we use the Sinkhorn solver from POT (Flamary et al., 2021), a library for optimal transport that provides efficient computation of the Sinkhorn algorithm with ac-celerator support. We use the Euclidean distance as the cost function. As the trajectory encoder, we adopt S3D (Xie et al., 2018; Miech et al., 2020), a ViFM pretrained on HowTo100M (Miech et al., 2019), which consists of large-scale third-person clips of everyday human activities. For reward learning, we use both labeled and pseudo-labeled pairs, retaining pseudo-labels above the threshold τP (Eq. 7). After training the reward model, we replace the original re-wards in the offline dataset with the learned rewards and then train the policy using an offline RL algorithm. VOTP can be applied to any offline RL algorithm, but as in prior 
+
+> 2For hopper-medium-replay-v2, we use human labels from Kim et al. (2023), since scripted labels remain ineffective across baselines even when provided in large quantities.
+
+work, we use IQL (Kostrikov et al., 2022). Across PbRL baselines, both the policy and reward models are trained from states and share the same policy-learning hyperparam-eters. Thus, the only difference lies in the reward learning process. Further implementation details can be found in the Appendix. We evaluate performance using normalized scores on D4RL and success rates on MetaWorld. For all experiments, we report the mean and standard deviation across five runs, with each run evaluated with 25 episodes per evaluation step. Full learning curves and interquartile mean (IQM) (Agarwal et al., 2021) results are provided in the Appendix. 
+
+5.2. Evaluation on Offline PbRL Benchmark Baselines. We compare VOTP with a diverse range of offline PbRL baselines. These include methods without ex-plicit reward modeling : Inverse Preference Learning (IPL) (Hejna & Sadigh, 2023), Contrastive Preference Learning (CPL) (Hejna et al., 2024), and Direct Preference-based Policy Optimization (DPPO) (An et al., 2023); and those 
+
+with explicit reward modeling : a preference-based variant of IQL (P-IQL) (Hejna et al., 2024), Semi-supervised reward learning (SURF) (Park et al., 2022), Listwise Reward Esti-mation (LiRE) (Choi et al., 2024), Adversarial Preference-based Policy Optimization (APPO) (Kang & Oh, 2025), and Flow-to-Better (FTB) (Zhang et al., 2024). Among the lat-ter, P-IQL refers to the method trained on only the labeled dataset. LiRE builds a ranked list of feedback to exploit second-order information, and APPO frames PbRL as a two-player game between a policy and a dynamics model. Finally, both SURF and FTB utilize unlabeled datasets to augment the preference dataset, similar to our approach: SURF relies on trained reward models to generate pseudo-labels, while FTB relies on a diffusion model to generate better-preferred trajectories. Additionally, we add an Oracle baseline, which is P-IQL trained similarly to ours, but using synthetic preferences for the unlabeled dataset. Table 1 summarizes the performance of offline RL using ground-truth (GT) rewards versus preference feedback. We find that methods without explicit reward modeling perform poorly compared to GT reward training, while methods that learn a reward model generally achieve better results. This suggests that explicit reward modeling is more robust under low-data regimes, as also observed in Zhang et al. (2024). Among reward modeling methods, SURF improves upon P-IQL in MetaWorld tasks and walker2d , yet its performance degrades in hop-* . This is likely due to inaccurate pseudo-labels generated by reward models under limited supervi-sion, leading to confirmation bias (Chen et al., 2022a; Tan et al., 2024). While APPO shows gains in MetaWorld, it ap-pears detrimental in D4RL tasks. FTB likewise utilizes few labels and generally outperforms P-IQL in both domains. However, a significant drawback of FTB is its computa-5Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Table 1. Average performance of methods on D4RL locomotion and MetaWorld. For D4RL tasks, “hop” denotes hopper, while “m”, “r”, and “e” denote medium, replay, and expert, respectively. We run five seeds and report the final performance at the end of training like Kostrikov et al. (2022). Bold values indicate results within 5% of the best-performing method (excluding IQL+GT and Oracle). 
+
+Dataset IQL+GT Oracle IPL CPL DPPO P-IQL SURF LiRE APPO FTB VOTP hop-m-r 87.5 ±7.4 91.3 ±3.2 22.1 ±4.9 6.5 ±0.5 59.4 ±12.0 36.5 ±15.4 9.3 ±0.6 52.1 ±26.9 1.3 ±0.6 90.5 ±3.9 91.1 ±4.7 
+
+hop-m-e 104.5 ±4.5 101.9 ±4.5 62.6 ±18.4 54.2 ±7.0 70.1 ±20.2 89.1 ±18.4 65.5 ±17.0 106.3 ±7.2 40.7 ±16.7 111.9 ±0.7 105.7 ±6.0 walker2d-m-r 72.6 ±4.9 66.9 ±10.3 8.6 ±5.4 6.6 ±0.6 35.1 ±6.9 32.4 ±27.1 64.9 ±9.4 71.3 ±16.0 12.8 ±8.1 62.8 ±8.8 66.3 ±5.6 walker2d-m-e 109.9 ±0.5 109.6 ±0.8 92.4 ±10.2 39.9 ±19.9 70.2 ±12.4 103.4 ±7.0 103.2 ±15.1 109.7 ±1.1 31.2 ±6.2 76.5 ±2.2 108.1 ±2.2 
+
+loco avg. 93.6 92.4 46.4 26.8 58.7 65.3 59.5 83.2 21.5 85.4 92.8 
+
+door-open 79.2 ±5.9 90.4 ±3.2 48.8 ±11.7 44.8 ±22.3 14.4 ±12.1 36.8 ±13.2 74.4 ±10.3 84.0 ±4.9 73.6 ±7.8 43.2 ±6.6 84.0 ±8.4 
+
+drawer-open 83.2 ±4.7 80.4 ±7.4 51.2 ±13.5 52.8 ±13.9 59.0 ±12.4 36.0 ±13.6 57.6 ±15.7 70.0 ±6.3 64.8 ±14.8 52.8 ±7.2 71.2 ±11.7 
+
+plate-slide 56.0 ±11.9 62.4 ±4.8 28.0 ±9.1 34.4 ±12.0 37.1 ±17.1 15.2 ±5.9 23.2 ±5.9 38.0 ±7.5 24.0 ±17.2 41.6 ±3.6 57.6 ±5.4 
+
+sweep-into 65.6 ±5.4 59.0 ±14.2 41.6 ±3.2 37.6 ±6.0 48.0 ±14.8 36.0 ±8.0 40.8 ±4.7 64.0 ±10.2 44.0 ±16.2 56.8 ±13.7 57.6 ±7.4 mw avg. 71.0 80.1 42.4 42.4 39.6 31.0 51.0 64.0 51.6 48.6 67.6 0 0.2 0.4 0.6 0.8 1.0                 
+
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> 80
+> Score
+> hopper-medium-replay-v2
+> 00.2 0.4 0.6 0.8 1.0
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> Score
+> walker2d-medium-replay-v2
+> 00.1 0.2 0.3 0.4
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> door-open-v2
+> 00.1 0.2 0.3 0.4
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> drawer-open-v2
+> SIM-individual SIM-mean SIM-weighted VOTP
+
+Figure 2. The effectiveness of using OT to infer pseudo-labels. Results are averaged over five runs with standard deviation (shaded area). hopper walker2d door-open drawer-open     
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Performance
+> R3M CLIP S3D VideoCLIP InternVideo
+
+Figure 3. Ablation with various trajectory encoders in D4RL and MetaWorld. For hopper and walker2d , we use medium-replay datasets. Results are averaged over five runs. 
+
+tional overhead; training requires approximately 2 days per run, whereas VOTP achieves superior performance in less than 2 hours. Finally, while LiRE consistently improves over P-IQL, it remains significantly behind the IQL+GT and Oracle in tasks such as hop-m-r and plate-slide .In contrast, VOTP achieves substantial performance gains over P-IQL across all domains and effectively matches the Oracle performance on D4RL. These results highlight the effectiveness of OT-based pseudo-labeling when com-bined with the rich latent space of ViFMs to generate high-quality pseudo-preferences. In addition, policies trained with preference-based rewards outperform those trained with GT rewards on several tasks, suggesting that reward models learned from preference data can be more effective, as also reported in prior works (Christiano et al., 2017; Kim et al., 2023; An et al., 2023; Choi et al., 2024). Finally, our framework is compatible with orthogonal techniques such as active query selection (Wang et al., 2022a; Mu et al., 2025) and preference ranking (Choi et al., 2024), potentially offering further gains in feedback efficiency. 
+
+5.3. Ablation Studies Effect of Video Foundation Models. We assess the role of the video encoder in VOTP by comparing image foundation models (IFMs) and video foundation models (ViFMs) in encoding visual segments. For IFMs, we adopt R3M (Nair et al., 2022) and CLIP (Radford et al., 2021), which are widely used for feature extraction and reward computation (Adeniji et al., 2023; Zhang et al., 2023; Rocamonde et al., 2024). For ViFMs, we adopt S3D (Xie et al., 2018; Miech et al., 2020), VideoCLIP (Xu et al., 2021), and InternVideo (Wang et al., 2022b). As shown in Figure 3, we observe that ViFMs generally perform better than IFMs, particularly in 
+
+walker2d and door-open . This improvement highlights their advantage in providing richer segment representations by capturing temporal dynamics and subtle motion cues, which are crucial for distinguishing behavioral differences when determining preferences. In our framework, we opt for S3D because it achieves robust performance across tasks while re-quiring far fewer parameters (31M) than VideoCLIP (208M) and InternVideo (478M). We expect that performance could be further improved by leveraging more advanced ViFMs. 
+
+Effect of Optimal Transport. To assess the benefits of our proposed OT formulation in pseudo-label inference, we compare against baselines that infer preferences solely based on similarity. Specifically, we divide the labeled set into preferred and non-preferred groups. The first baseline, 6Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 5 10 15 20 50 100 500                       
+
+> Number of Labels
+> 0
+> 20
+> 40
+> 60
+> 80
+> Score
+> hopper-medium-replay-v2
+> 510 15 20 50 100 500
+> Number of Labels
+> 0
+> 20
+> 40
+> 60
+> 80
+> Score
+> walker2d-medium-replay-v2
+> 510 15 20 50 100 500 1K
+> Number of Labels
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> door-open-v2
+> 510 15 20 100 500 1K
+> Number of Labels
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> drawer-open-v2
+> IQL P-IQL SURF VOTP
+
+Figure 4. Average performance of each method as the number of preference feedbackts varies. 0.05 0.1 0.15 0.2            
+
+> P
+> 0
+> 20
+> 40
+> 60
+> 80
+> Score
+> hopper-medium-replay-v2
+> 0.05 0.1 0.15 0.2
+> P
+> 0
+> 20
+> 40
+> 60
+> Score
+> walker2d-medium-replay-v2
+> 0.1 0.2 0.3 0.4 0.5
+> P
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> door-open-v2
+> 0.1 0.2 0.3 0.4 0.5
+> P
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> drawer-open-v2
+
+Figure 5. Performance of VOTP under different values of the preference threshold τP .0.0 0.2 0.4 0.6 0.8 1.0      
+
+> GT Reward
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Estimated Reward
+> r=0.57
+> P-IQL
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> GT Reward
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Estimated Reward
+> r=0.93
+> VOTP
+
+Figure 6. The Pearson correlation ( r) between learned rewards and GT rewards for P-IQL and VOTP in door-open .
+
+SIM-individual , assigns the label of the most similar labeled pair to an unlabeled pair. The second baseline, SIM-mean ,instead compares with the aggregated representation of each group, obtained by averaging feature vectors. The third baseline, SIM-weighted , assigns labels based on a similarity-weighted average of preferences from the labeled pairs. In contrast, VOTP aggregates all preference labels from labeled pairs, weighting their contributions by the relative alignment strengths computed from the OT plan, thereby producing more reliable pseudo-labels. The results in Figure 2 demon-strate a clear advantage of our method. We also observe that SIM-mean performs worse than SIM-individual , likely because averaging group features discards fine-grained dis-tinctions between pairs, which are crucial for assigning pseudo-preferences. Although SIM-weighted improves over 
+
+SIM-individual on some tasks, its overall performance re-mains noticeably lower and less stable. This underscores the effectiveness of our OT for generating robust pseudo-labels. 
+
+Varying the number of queries. We evaluate how the number of queries affects PbRL performance in two do-mains: D4RL and MetaWorld. Concretely, we measure the average performance of P-IQL, SURF, and VOTP while varying the labeled dataset size, ranging from 5 to 1000 preference labels depending on the domain. We note that most previous work on D4RL uses up to 500 preferences (Kim et al., 2023; An et al., 2023), while MetaWorld typi-cally uses up to 10k (Hejna & Sadigh, 2023; Hejna et al., 2024). Results are shown in Figure 4. In D4RL, with-out pseudo-labels, P-IQL requires roughly 50-100 labels to match task-reward performance, whereas in MetaWorld it requires around 1k. Incorporating pseudo-labels improves performance in both domains. Importantly, we find that, ex-cept for walker-medium-replay , VOTP requires fewer labels than baselines to reach task-reward performance. Notably, in door-open , VOTP with only 10 labels outperforms the policy trained with ground-truth rewards. Overall, these results demonstrate the high feedback efficiency of VOTP, confirming its effectiveness in low-data regimes. 
+
+Impact of the preference threshold. We examine how the preference threshold τP affects the performance of VOTP. Concretely, we vary τP and measure the corresponding per-formance of VOTP. Results are shown in Figure 5. We observe that performance generally improves as the thresh-old increases, but slightly drops with a large value, as seen in hopper-medium-replay . This effect arises because our unlabeled dataset size is fixed due to the rendering cost of visual segments, and only pseudo-labels above τP are retained for training. Thus, increasing τP enhances label quality but reduces their quantity, which can harm perfor-mance. In practice, we tune this parameter to balance the quality-quantity trade-off of pseudo-labels by selecting val-ues within the observed range of preference scores. 
+
+Comparison of estimated rewards with GT rewards. We 7Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Table 2. Performance of VOTP under various types of visual distractions. Mean and standard deviation are computed over 5 random seeds. 
+
+Dataset Same Domain Light (pos.+dir.) Light (amb.+diff.) Texture Video (easy) Video (hard) door-open 84.0 ±8.4 88.8 ±3.0 79.2 ±3.0 76.8 ±12.7 79.2 ±6.9 80.4 ±4.1 drawer-open 71.2 ±11.7 74.4 ±9.2 77.6 ±7.4 72.0 ±4.4 68.0 ±5.7 68.8 ±8.2 Average 77.6 81.6 78.4 74.4 73.6 74.6 t=0 t=13 t=15 t=17 t=20 t=26      
+
+> Success Failure 0510 15 20 25
+> Time step
+> 1.0
+> 0.5
+> 0.0
+> 0.5
+> Learned Reward
+> P-IQL (Succ. Traj.)
+> P-IQL (Fail. Traj.)
+> VOTP (Succ. Traj.)
+> VOTP (Fail. Traj.)
+
+Figure 7. Lift Banana : Examples of successful and failed trajectories at each time step (left) with the corresponding reward outputs over timesteps from VOTP and P-IQL (right). Additional results and detailed experimental setup are provided in the Appendix. 
+
+examine the reward values estimated by the learned reward models of P-IQL and VOTP. Figure 6 presents scatter plots of estimated rewards against GT rewards in door-open . As illustrated, the reward estimates produced by VOTP exhibit a significantly stronger correlation with GT rewards compared to P-IQL. These results demonstrate that leveraging pseudo labels effectively improves coverage of both state and action spaces for reward learning, which in turn leads to a policy that performs much better. Additional results and analyses are provided in the Appendix. 
+
+5.4. Robustness to Nuisance Variation 
+
+One benefit of using ViFMs to encode visual segments is their strong generalization across varied visual conditions. To examine this ability, following Yuan et al. (2023), we modify MetaWorld environments with controlled visual dis-tractions, including changes in lighting, visual appearance, and dynamic video backgrounds. Examples of these scenar-ios are shown in Figure 19 in the Appendix. To evaluate the robustness of VOTP, for each type of distraction we generate unlabeled visual segments under the correspond-ing perturbation while keeping the labeled segments fixed across scenarios. The results in Table 2 indicate that VOTP maintains strong performance across all settings and, in some cases, exhibits slight improvements under changes in lighting position and direction, suggesting robustness to a wide range of nuisance variations. 
+
+5.5. Real Robot Evaluation 
+
+We further evaluate VOTP in a real-world robotic manipu-lation setting using a 7-DoF Rethink Sawyer robotic arm. We compare our method against two baselines: Behavior Cloning (BC) and P-IQL. The experiments are conducted with two vision-based manipulation tasks: Lift Banana and 
+
+Drawer Open . In our setting, the policy input consists of proprioceptive states and image observations captured from a camera. For each task, we collect 50 demonstrations via keyboard teleoperation with a 50% success rate. To collect preferences, we present pairs of video clips to a hu-man teacher. We use 5 and 10 preference labels for Lift Banana and Drawer Open , respectively. The number of unlabeled pairs is 2000 and 3000, respectively. The pol-icy is trained using IQL (Kostrikov et al., 2022), with the reward model optimized according to Eq. (1). P-IQL and VOTP are trained in the same way as in the simulated ex-periments, i.e. , P-IQL is trained with a small number of labeled preferences, while VOTP is additionally trained with pseudo-labels. Table 3 reports the comparison with baselines, showing that by leveraging unlabeled data, VOTP enables the agent to achieve higher performance. To high-light the benefit of unlabeled data, Figure 7 shows reward outputs from VOTP and P-IQL on a successful and a failed trajectory. Both methods yield reasonable rewards for the successful trajectory, but P-IQL mistakenly assigns high rewards to failed behavior (timesteps 11-20). In contrast, VOTP produces well-separated rewards between successful and failed trajectories. 
+
+Table 3. Success rates over 10 episodes on real-world tasks. 
+
+Lift Banana Drawer Open BC 20.0 40.0 P-IQL 50.0 50.0 VOTP 80.0 70.0 
+
+## 6. Discussion 
+
+In this work, we introduce Video-based Optimal Transport Preference (VOTP), a semi-supervised preference learning that employs optimal transport over latent space of ViFMs to automatically infer preferences for unlabeled pairs. This en-8Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+ables VOTP to learn effective reward functions from only a handful of preference labels, substantially reducing the need for human supervision. Extensive experiments across loco-motion, manipulation, and real-world robotic manipulation tasks validate the effectiveness of our approach, highlighting VOTP as a scalable and practical solution for PbRL. 
+
+Limitations. Since VOTP relies on pretrained ViFMs to generate pseudo-labels, any inherent biases in these models may be reflected in the learned reward function and, conse-quently, in the resulting policy. While this does not diminish the effectiveness of our approach, it suggests that careful evaluation of learned policies remains important before de-ployment in safety-critical applications. In addition, the computational cost of our method scales with the number of preference labels, as computing the OT plan becomes more expensive for larger datasets. While this cost remains manageable in our experiments, improving the scalability of the OT computation, for example via approximate or hierarchical transport (Halmos et al., 2025), represents an important direction for future work. 
+
+## Acknowledgements 
+
+This work was supported by Institute for Information & communications Technology Planning & Evaluation (IITP) grant funded by the Korea government(MSIT) (No.RS-2021-II211381, Development of Causal AI through Video Under-standing and Reinforcement Learning, and Its Applications to Real Environments) and the National Research Foun-dation of Korea(NRF) grant funded by the Korea govern-ment(MSIT) (RS-2025-24742969, Intelligent Robotic Sys-tem using Continual Learning and Multimodal Language Model based Multi Attribute Feedback). 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here. 
+
+## References 
+
+Abbeel, P. and Ng, A. Y. Apprenticeship learning via inverse reinforcement learning. In International Conference on Machine learning (ICML) , 2004. Adeniji, A., Xie, A., Sferrazza, C., Seo, Y., James, S., and Abbeel, P. Language reward modulation for pretraining reinforcement learning. arXiv:2308.12270 , 2023. Agarwal, R., Schwarzer, M., Castro, P. S., Courville, A., and Bellemare, M. G. Deep reinforcement learning at the edge of the statistical precipice. In Conference on Neural Information Processing Systems (NeurIPS) , 2021. An, G., Lee, J., Zuo, X., Kosaka, N., Kim, K.-M., and Song, H. O. Direct preference-based policy optimiza-tion without reward modeling. In Conference on Neural Information Processing Systems (NeurIPS) , 2023. Assran, M., Duval, Q., Misra, I., Bojanowski, P., Vincent, P., Rabbat, M., LeCun, Y., and Ballas, N. Self-supervised learning from images with a joint-embedding predictive architecture. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 15619– 15629, 2023. Bıyık, E., Huynh, N., Kochenderfer, M. J., and Sadigh, D. Active preference-based gaussian process regression for reward learning. In Proceedings ofRobotics: Science and Systems (RSS) , 2020. Bjorck, J., Casta ˜neda, F., Cherniadev, N., Da, X., Ding, R., Fan, L., Fang, Y., Fox, D., Hu, F., Huang, S., et al. Gr00t n1: An open foundation model for generalist humanoid robots. arXiv preprint arXiv:2503.14734 , 2025. Black, K., Brown, N., Driess, D., Esmail, A., Equi, M., Finn, C., Fusai, N., Groom, L., Hausman, K., Ichter, B., et al. 
+
+π0: A vision-language-action flow model for general robot control. corr, abs/2410.24164, 2024. doi: 10.48550. 
+
+arXiv preprint ARXIV.2410.24164 , 2024. Bradley, R. A. and Terry, M. E. Rank analysis of incom-plete block designs: I. the method of paired comparisons. 
+
+Biometrika , 1952. Casper, S., Davies, X., Shi, C., Gilbert, T. K., Scheurer, J., Rando, J., Freedman, R., Korbak, T., Lindner, D., Freire, P., et al. Open problems and fundamental limitations of re-inforcement learning from human feedback. Transactions on Machine Learning Research (TMLR) , 2023. Chen, L., Lu, K., Rajeswaran, A., Lee, K., Grover, A., Laskin, M., Abbeel, P., Srinivas, A., and Mordatch, I. De-cision transformer: Reinforcement learning via sequence modeling. In Conference on Neural Information Process-ing Systems (NeurIPS) , 2021. Chen, M., Du, Y., Zhang, Y., Qian, S., and Wang, C. Semi-supervised learning with multi-head co-training. In Pro-ceedings of the AAAI conference on artificial intelligence (AAAI) , 2022a. Chen, Y., Wu, T., Wang, S., Feng, X., Jiang, J., Lu, Z., McAleer, S., Dong, H., Zhu, S.-C., and Yang, Y. Towards human-level bimanual dexterous manipulation with rein-forcement learning. In Conference on Neural Information Processing Systems (NeurIPS) , 2022b. 9Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Cheng, J., Xiong, G., Dai, X., Miao, Q., Lv, Y., and Wang, F.-Y. Rime: Robust preference-based reinforcement learning with noisy preferences. In International Conference on Machine Learning (ICML) , 2024. Chi, C., Xu, Z., Feng, S., Cousineau, E., Du, Y., Burchfiel, B., Tedrake, R., and Song, S. Diffusion policy: Visuomo-tor policy learning via action diffusion. The International Journal of Robotics Research (IJRR) , 2023. Choi, H., Jung, S., Ahn, H., and Moon, T. Listwise re-ward estimation for offline preference-based reinforce-ment learning. In International Conference on Machine Learning (ICML) , 2024. Christiano, P. F., Leike, J., Brown, T., Martic, M., Legg, S., and Amodei, D. Deep reinforcement learning from human preferences. In Conference on Neural Information Processing Systems (NeurIPS) , 2017. Clark, J. and Amodei, D. Faulty reward functions in the wild. https://openai.com/index/ faulty-reward-functions/ , 2016. Courty, N., Flamary, R., Tuia, D., and Rakotomamonjy, A. Optimal transport for domain adaptation. Transactions on Pattern Analysis and Machine Intelligence (TPAMI) ,2016. Cui, Y., Niekum, S., Gupta, A., Kumar, V., and Rajeswaran, A. Can foundation models perform zero-shot task specifi-cation for robot manipulation? In Learning for Dynamics and Control Conference (L4DC) , 2022. Cuturi, M. Lightspeed computation of optimal transporta-tion distances. In Conference on Neural Information Processing Systems (NeurIPS) , 2013. Fickinger, A., Cohen, S., Russell, S., and Amos, B. Cross-domain imitation learning via optimal transport. In Inter-national Conference on Learning Representations (ICLR) ,2022. Flamary, R., Courty, N., Gramfort, A., Alaya, M. Z., Bois-bunon, A., Chambon, S., Chapel, L., Corenflos, A., Fatras, K., Fournier, N., Gautheron, L., Gayraud, N. T., Janati, H., Rakotomamonjy, A., Redko, I., Rolet, A., Schutz, A., Seguy, V., Sutherland, D. J., Tavenard, R., Tong, A., and Vayer, T. Pot: Python optimal transport. Journal of Machine Learning Research (JMLR) , 2021. Fu, J., Korattikara, A., Levine, S., and Guadarrama, S. From language to goals: Inverse reinforcement learning for vision-based instruction following. arXiv:1902.07742 ,2019. Fu, J., Kumar, A., Nachum, O., Tucker, G., and Levine, S. D4rl: Datasets for deep data-driven reinforcement learning. arXiv:2004.07219 , 2020. Fu, Y., Zhang, H., Wu, D., Xu, W., and Boulet, B. Robot policy learning with temporal optimal transport reward. In Conference on Neural Information Processing Systems (NeurIPS) , 2024. Gupta, A., Eppner, C., Levine, S., and Abbeel, P. Learn-ing dexterous manipulation for a soft robotic hand from human demonstrations. In International Conference on Intelligent Robots and Systems (IROS) , 2016. Haarnoja, T., Zhou, A., Abbeel, P., and Levine, S. Soft actor-critic: Off-policy maximum entropy deep reinforce-ment learning with a stochastic actor. In International conference on machine learning , pp. 1861–1870. Pmlr, 2018. Halmos, P., Gold, J., Liu, X., and Raphael, B. J. Hierarchical refinement: Optimal transport to infinity and beyond. 
+
+International Conference on Machine learning (ICML) ,2025. Hejna, J. and Sadigh, D. Inverse preference learning: Preference-based rl without a reward function. In 
+
+Conference on Neural Information Processing Systems (NeurIPS) , 2023. Hejna, J., Rafailov, R., Sikchi, H., Finn, C., Niekum, S., Knox, W. B., and Sadigh, D. Contrastive preference learning: learning from human feedback without rl. In 
+
+International Conference on Learning Representations (ICLR) , 2024. Hejna III, D. J. and Sadigh, D. Few-shot preference learn-ing for human-in-the-loop rl. In Conference on Robot Learning (CoRL) , 2023. Ho, J., Jain, A., and Abbeel, P. Denoising diffusion proba-bilistic models. Conference on Neural Information Pro-cessing Systems , 2020. Huey, W., Wang, H., Wu, A., Artzi, Y., and Choudhury, S. Imitation learning from a single temporally misaligned video. In International Conference on Machine Learning (ICML) , 2025. Hwang, M., Lee, G., Kee, H., Kim, C. W., Lee, K., and Oh, S. Sequential preference ranking for efficient reinforce-ment learning from human feedback. In Conference on Neural Information Processing Systems (NeurIPS) , 2023. Ibarz, B., Leike, J., Pohlen, T., Irving, G., Legg, S., and Amodei, D. Reward learning from human preferences and demonstrations in atari. In Conference on Neural Information Processing Systems (NeurIPS) , 2018. Kang, H. and Oh, M.-h. Adversarial policy optimization for offline preference-based reinforcement learning. In 
+
+International Conference on Learning Representations (ICLR) , 2025. 10 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Kaufmann, T., Weng, P., Bengs, V., and H ¨ullermeier, E. A survey of reinforcement learning from human feedback. 
+
+arXiv:2312.14925 , 2024. Kim, C., Park, J., Shin, J., Lee, H., Abbeel, P., and Lee, K. Preference transformer: Modeling human preferences using transformers for rl. In International Conference on Learning Representations (ICLR) , 2023. Kim, J., Yoon, S., Kim, D., and Yoo, C. D. Structured co-reference graph attention for video-grounded dialogue. In Proceedings of the AAAI Conference on Artificial In-telligence , 2021. Koenig, A., Liu, Z., Janson, L., and Howe, R. The role of tactile sensing in learning and deploying grasp refinement algorithms. In International Conference on Intelligent Robots and Systems (IROS) , 2022. Koo, G., Yoon, S., Hong, J. W., and Yoo, C. D. Flex-iedit: Frequency-aware latent refinement for enhanced non-rigid editing. In European Conference on Computer Vision , pp. 363–379. Springer, 2024. Koo, G., Yoon, S., Lee, Y., Hong, J. W., and Yoo, C. D. Flowdrag: 3d-aware drag-based image editing with mesh-guided deformation vector flow fields. ICML , 2025. Kostrikov, I., Nair, A., and Levine, S. Offline reinforce-ment learning with implicit q-learning. In International Conference on Learning Representations (ICLR) , 2022. Lee, K., Smith, L., and Abbeel, P. Pebble: Feedback-efficient interactive reinforcement learning via relabeling experience and unsupervised pre-training. In Interna-tional Conference on Machine learning (ICML) , 2021a. Lee, K., Smith, L., Dragan, A., and Abbeel, P. B-pref: Benchmarking preference-based reinforcement learning. In Conference on Neural Information Processing Systems (NeurIPS) , 2021b. Lee, Y., Luu, T. M., Lee, D., and Yoo, C. D. Reward generation via large vision-language model in offline re-inforcement learning, 2025. Li, A., Misra, D., Kolobov, A., and Cheng, C.-A. Survival instinct in offline reinforcement learning. In Conference on Neural Information Processing Systems (NeurIPS) ,2023. Liang, X., Shu, K., Lee, K., and Abbeel, P. Reward un-certainty for exploration in preference-based reinforce-ment learning. In International Conference on Learn-ing Representations (ICLR) , 2022. URL https:// openreview.net/forum?id=OWZVD-l-ZrC .Lillicrap, T. P., Hunt, J. J., Pritzel, A., Heess, N., Erez, T., Tassa, Y., Silver, D., and Wierstra, D. Continuous control with deep reinforcement learning. International conference on machine learning (ICML) , 2016. Lipman, Y., Chen, R. T., Ben-Hamu, H., Nickel, M., and Le, M. Flow matching for generative modeling. 
+
+arXiv:2210.02747 , 2022. Liu, R., Du, Y., Bai, F., Lyu, J., and Li, X. Pearl: Zero-shot cross-task preference alignment and robust reward learn-ing for robotic manipulation. In International Conference on Machine Learning (ICML) , 2024. Luo, Y., Jiang, Z., Cohen, S., Grefenstette, E., and Deisen-roth, M. P. Optimal transport for offline imitation learning. In International Conference on Learning Representations (ICLR) , 2023. Luu, T. M. and Yoo, C. D. Hindsight goal ranking on replay buffer for sparse reward environment. IEEE Access , 2021. Luu, T. M., Lee, D., and Yoo, C. D. Predictive coding for decision transformer. In International Conference on Intelligent Robots and Systems , 2024. Luu, T. M., Lee, D., Lee, Y., and Yoo, C. D. Policy learn-ing from large vision-language model feedback without reward modeling. In International Conference on Intelli-gent Robots and Systems (IROS) , 2025a. Luu, T. M., Lee, Y., Lee, D., Kim, S., Kim, M. J., and Yoo, C. D. Enhancing rating-based reinforcement learning to effectively leverage feedback from large vision-language models. In International Conference on Machine Learn-ing (ICML) , 2025b. Madan, N., Møgelmose, A., Modi, R., Rawat, Y. S., and Moeslund, T. B. Foundation models for video understand-ing: A survey. arXiv:2405.03770 , 2024. Marta, D., Holk, S., Pek, C., and Leite, I. Sequel: Semi-supervised preference-based rl with query synthesis via latent interpolation. In International Conference on Robotics and Automation (ICRA) , 2024. Miao, R., Xu, S., Zhao, R., Chan, W. K. V., and Liu, G. Uncertainty-aware preference alignment for diffusion policies. NeurIPS , 2025. Miech, A., Zhukov, D., Alayrac, J.-B., Tapaswi, M., Laptev, I., and Sivic, J. Howto100m: Learning a text-video em-bedding by watching hundred million narrated video clips. In International Conference on Computer Vision (ICCV) ,2019. Miech, A., Alayrac, J.-B., Smaira, L., Laptev, I., Sivic, J., and Zisserman, A. End-to-end learning of visual 11 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+representations from uncurated instructional videos. In 
+
+Conference on Computer Vision and Pattern Recognition (CVPR) , 2020. Mnih, V., Kavukcuoglu, K., Silver, D., Rusu, A. A., Veness, J., Bellemare, M. G., Graves, A., Riedmiller, M., Fidje-land, A. K., Ostrovski, G., et al. Human-level control through deep reinforcement learning. Nature , 2015. Mu, N., Hu, H., Hu, X., Yang, Y., Xu, B., and Jia, Q.-S. Clarify: Contrastive preference reinforcement learning for untangling ambiguous queries. In International Con-ference on Machine Learning (ICML) , 2025. Muslimani, C. and Taylor, M. E. Leveraging sub-optimal data for human-in-the-loop reinforcement learning. In 
+
+International Conference on Learning Representations (ICLR) , 2025. Nair, S., Rajeswaran, A., Kumar, V., Finn, C., and Gupta, A. R3m: A universal visual representation for robot manipulation. In Conference on Robot Learning (CoRL) ,2022. Nguyen, T. and Yoo, C. D. One-step flow q-learning: Ad-dressing the diffusion policy bottleneck in offline rein-forcement learning. In ICLR , 2026. Nguyen, T., Luu, T. M., Vu, T., and Yoo, C. D. Sample-efficient reinforcement learning representation learning with curiosity contrastive forward dynamics model. In 
+
+IROS , 2021. Nguyen, T., Pham, T. X., Zhang, C., Luu, T. M., Vu, T., and Yoo, C. D. Dimcl: dimensional contrastive learning for improving self-supervised learning. IEEE Access , 2023. Nguyen, T., Ton, T., Choe, H., Luu, T. M., and Yoo, C. D. Fast and highly expressive policy learning for offline reinforcement learning via bootstrapped flow q-learning. In ICML , 2026. Oquab, M., Darcet, T., Moutakanni, T., Vo, H., Szafraniec, M., Khalidov, V., Fernandez, P., Haziza, D., Massa, F., El-Nouby, A., et al. Dinov2: Learning robust visual features without supervision. arXiv preprint arXiv:2304.07193 ,2023. Park, J., Seo, Y., Shin, J., Lee, H., Abbeel, P., and Lee, K. Surf: Semi-supervised reward learning with data augmen-tation for feedback-efficient preference-based reinforce-ment learning. In International Conference on Learning Representations (ICLR) , 2022. Park, J., Bui, M.-Q. V., Bello, J. L. G., Moon, J., Oh, J., and Kim, M. Ecosplat: Efficiency-controllable feed-forward 3d gaussian splatting from multi-view images. In CVPR ,2026. Park, S., Li, Q., and Levine, S. Flow q-learning. In In-ternational Conference on Machine Learning (ICML) ,2025. Peyr ´e, G. and Cuturi, M. Computational optimal transport: With applications to data science . Now Foundations and Trends, 2019. Pham, T. X., Ton, T., and Yoo, C. D. Mdsgen: Fast and effi-cient masked diffusion temporal-aware transformers for open-domain sound generation. International Conference on Learning Representations , 2025. Popov, I., Heess, N., Lillicrap, T., Hafner, R., Barth-Maron, G., Vecerik, M., Lampe, T., Tassa, Y., Erez, T., and Ried-miller, M. Data-efficient deep reinforcement learning for dexterous manipulation. arXiv:1704.03073 , 2017. Radford, A., Kim, J. W., Hallacy, C., Ramesh, A., Goh, G., Agarwal, S., Sastry, G., Askell, A., Mishkin, P., Clark, J., et al. Learning transferable visual models from natural language supervision. In International Conference on Machine Learning (ICML) , 2021. Ratnayaka, G., Nichols, J., and Wang, Q. Learning partial graph matching via optimal partial transport. In Interna-tional Conference on Learning Representations (ICLR) ,2025. Rocamonde, J., Montesinos, V., Nava, E., Perez, E., and Lindner, D. Vision-language models are zero-shot re-ward models for reinforcement learning. In International Conference on Learning Representations (ICLR) , 2024. Shin, D., Dragan, A. D., and Brown, D. S. Benchmarks and algorithms for offline preference-based reward learning. 
+
+Transactions on Machine Learning Research (TMLR) ,2023. Silver, D., Schrittwieser, J., Simonyan, K., Antonoglou, I., Huang, A., Guez, A., Hubert, T., Baker, L., Lai, M., Bolton, A., et al. Mastering the game of go without human knowledge. Nature , 2017. Skalse, J., Howe, N., Krasheninnikov, D., and Krueger, D. Defining and characterizing reward gaming. In 
+
+Conference on Neural Information Processing Systems (NeurIPS) , 2022. Sontakke, S., Zhang, J., Arnold, S., Pertsch, K., Bıyık, E., Sadigh, D., Finn, C., and Itti, L. Roboclip: One demon-stration is enough to learn robot policies. In Conference on Neural Information Processing Systems (NeurIPS) ,2024. Tai, K. S., Bailis, P. D., and Valiant, G. Sinkhorn label allocation: Semi-supervised classification via annealed self-training. In International Conference on Machine Learning (ICML) , 2021. 12 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Tan, Z., Zheng, K., and Huang, W. Otmatch: Improving semi-supervised learning with optimal transport. In In-ternational Conference on Machine Learning (ICML) ,2024. Tian, R., Xu, C., Tomizuka, M., Malik, J., and Bajcsy, A. What matters to you? towards visual representation alignment for robot learning. In International Conference on Learning Representations (ICLR) , 2024. Titouan, V., Courty, N., Tavenard, R., and Flamary, R. Op-timal transport for structured data with application on graphs. In International Conference on Machine Learn-ing (ICML) , 2019. Ton, T., Hong, J. W., and Yoo, C. D. Taro: Timestep-adaptive representation alignment with onset-aware con-ditioning for synchronized video-to-audio synthesis. In-ternational Conference on Computer Vision , 2025. Venkataraman, S., Wang, Y., Wang, Z., Ravie, N. S., Erick-son, Z., and Held, D. Real-world offline reinforcement learning from vision language model feedback. In Inter-national Conference on Intelligent Robots and Systems (IROS) , 2025. Vu, T., Kim, K., Luu, T. M., Nguyen, T., and Yoo, C. D. Softgroup for 3d instance segmentation on point clouds. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 2708–2717, 2022. Vu, T., Kim, K., Nguyen, T., Luu, T. M., Kim, J., and Yoo, C. D. Scalable softgroup for 3d instance segmentation on point clouds. IEEE transactions on pattern analysis and machine intelligence , 46(4):1981–1995, 2023. Wang, R., Wang, W., and Min, B.-C. Feedback-efficient active preference learning for socially aware robot navi-gation. In International Conference on Intelligent Robots and Systems (IROS) , 2022a. Wang, Y., Li, K., Li, Y., He, Y., Huang, B., Zhao, Z., Zhang, H., Xu, J., Liu, Y., Wang, Z., et al. Internvideo: General video foundation models via generative and discrimina-tive learning. arXiv:2212.03191 , 2022b. Wang, Y., Sun, Z., Zhang, J., Xian, Z., Biyik, E., Held, D., and Erickson, Z. Rl-vlm-f: Reinforcement learning from vision language foundation model feedback. In 
+
+International Conference on Machine Learning (ICML) ,2024. Xia, W., Yang, Y., Wu, H., Ma, X., Kong, T., and Hu, D. Robotic policy learning via human-assisted action preference optimization. NeurIPS , 2025. Xie, S., Sun, C., Huang, J., Tu, Z., and Murphy, K. Re-thinking spatiotemporal feature learning: Speed-accuracy trade-offs in video classification. In European Conference on Computer Vision (ECCV) , 2018. Xu, H., Ghosh, G., Huang, P.-Y., Okhonko, D., Aghajanyan, A., Metze, F., Zettlemoyer, L., and Feichtenhofer, C. Videoclip: Contrastive pre-training for zero-shot video-text understanding. In Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2021. Yoon, S., Hong, J. W., Yoon, E., Kim, D., Kim, J., Yoon, H. S., and Yoo, C. D. Selective query-guided debiasing for video corpus moment retrieval. In European Confer-ence on Computer Vision , pp. 185–200. Springer, 2022. Yoon, S., Koo, G., Kim, D., and Yoo, C. D. Scanet: Scene complexity aware network for weakly-supervised video moment retrieval. In Proceedings of the IEEE/CVF in-ternational conference on computer vision , pp. 13576– 13586, 2023. Yu, T., Quillen, D., He, Z., Julian, R., Hausman, K., Finn, C., and Levine, S. Meta-world: A benchmark and evalua-tion for multi-task and meta reinforcement learning. In 
+
+Conference on Robot Learning (CoRL) , 2020. Yuan, Y., Hao, J., Ma, Y., Dong, Z., Liang, H., Liu, J., Feng, Z., Zhao, K., and Zheng, Y. Uni-rlhf: Universal platform and benchmark suite for reinforcement learning with di-verse human feedback. In International Conference on Learning Representations (ICLR) , 2024. Yuan, Z., Yang, S., Hua, P., Chang, C., Hu, K., and Xu, H. Rl-vigen: A reinforcement learning benchmark for visual generalization. In Conference on Neural Information Processing Systems (NeurIPS) , 2023. Zhang, J., Zhang, J., Pertsch, K., Liu, Z., Ren, X., Chang, M., Sun, S.-H., and Lim, J. J. Bootstrap your own skills: Learning to solve new tasks with large language model guidance. In Conference on Robot Learning (CoRL) ,2023. Zhang, Z., Sun, Y., Ye, J., Liu, T.-S., Zhang, J., and Yu, Y. Flow to better: Offline preference-based reinforcement learning via preferred trajectory generation. In Interna-tional Conference on Learning Representations (ICLR) ,2024. Zhu, H., Gupta, A., Rajeswaran, A., Levine, S., and Ku-mar, V. Dexterous manipulation with deep reinforcement learning: Efficient, general, and low-cost. In Interna-tional Conference on Robotics and Automation (ICRA) ,2019. 13 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+## Appendix 
+
+Algorithm 1 Pseudo-code for Video-based Optimal Transport Preference (VOTP)                               
+
+> 1: Input : Offline dataset B, labeled dataset Dl, number of unlabeled segments M, threshold τP.2: Initialize : pseudo-labeled dataset Du← ∅ .3: for each iteration do
+> 4: Sample M
+> 2segment pairs from B
+> 5: Compute preference scores for segment pairs using Eq. (5) 6: Assign pseudo-labels using Eq. (7) and append to Du
+> 7: end for
+> 8: Construct preference dataset D ← D l∪ D u
+> 9: Train reward model brψusing Eq. (1) 10: Relabel rewards for state-action pairs in Busing trained brψ
+> 11: Train policy πθusing an offline RL algorithm
+
+## A. Details on Experiments             
+
+> (a) Hopper (b) Walker2d (c) Door open (d) Drawer open (e) Plate slide (f) Sweep into
+> Figure 8. Overview of environments used in our experiments: Gym Locomotion (a–b) and MetaWorld Manipulation (c–f).
+
+A.1. Task Details 
+
+The locomotion tasks from D4RL (Fu et al., 2020) and the manipulation tasks from MetaWorld (Yu et al., 2020) used in our experiments are shown in Figure 8. 
+
+D4RL. In D4RL locomotion tasks, the goal is to control simulated robots to move forward efficiently while minimizing energy costs for safe behavior. We use two tasks: Hopper and Walker2d, as in previous works (Kim et al., 2023; Hejna & Sadigh, 2023). 
+
+MetaWorld. In this domain, the agent produces low-level continuous actions to control a simulated 7-DoF Sawyer robotic arm, enabling interaction with tabletop objects to perform diverse manipulation tasks. Initial arm position is randomized. We evaluate four tasks: (1) Door Open : Open the door of a safe; (2) Drawer Open : Pull open a drawer; (3) Plate Slide :Slide a black plate into the designated goal region; and (4) Sweep Into : Sweep a green puck into the squared hole. 
+
+A.2. Dataset Details 
+
+In offline preference-based RL, two types of data are provided: (i) an offline dataset collected from an unknown policy and (ii) a preference dataset consisting of pairs of trajectory segments sampled from the offline dataset. For D4RL locomotion, we use medium-expert-v2 —which mixes equal portions of expert and partially trained demonstrations—and medium-replay-v2 ,which corresponds to the replay buffer of a partially trained policy. For MetaWorld, we use the pre-collected dataset from Hejna et al. (2024). For the preference dataset, we use pair indices from the publicly available datasets of Kim et al. (2023) and Hejna et al. (2024). For preference labels, we use scripted labels obtained from the ground-truth reward functions, except for hopper-medium-replay-v2 , where we use human labels. Since the preference dataset from Kim et al. (2023) contains at most 500 preferences, we additionally generate pair indices for unlabeled data using the code from Kim et al. (2023). 
+
+A.3. Implementation Details 
+
+The hyperparameters used in our main experiments are shown in Table 4, 5, and 6. 14 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning  
+
+> Table 4. Hyperparameters of IQL.
+
+Hyperparameter D4RL MetaWorld 
+
+Optimizer Adam Adam Learning rate 3e-4 3e-4 Batch size 256 512 Hidden layer dim 256 256 Hidden layers 2 2Activation ReLU ReLU 
+
+β 3.0 10.0 
+
+τ 0.7 0.9 Training steps 1e6 4e5                           
+
+> Table 5. Hyperparameters of the reward model.
+> Hyperparameter D4RL MetaWorld
+> Optimizer Adam Adam Learning rate 3e-4 3e-4 Batch size 832 Hidden layer dim 256 128 Hidden layers 22Activation ReLU LeakyReLU Output activation Identity Tanh Segment length 100 64 Subsample length 64 42 Training steps 2e4 2e4 Score function (Choi et al., 2024) Exponential Linear
+> Table 6. Hyperparameters of VOTP
+
+Hyperparameter D4RL MetaWorld 
+
+Total #labeled pairs 10 10 Total #unlabeled pairs 10k 50k 
+
+M (in Alg. 1) 2 2Distance metric in Eq. 5 Euclidean Euclidean Preference threshold τP {0.15, 0.2 } {0.35, 0.4, 0.45 }
+
+A.4. Real Robot Experiment Setups  
+
+> Figure 9. Setup in real robot.
+
+We evaluate our method on two vision-based manipulation tasks using a 7-DoF Rethink Sawyer robotic arm in a tabletop environment. The tasks probe both reaching and object interaction and are defined as follows: 1. Lift Banana : grasp a banana from a plate and lift it. 2. Drawer Open : pull open a drawer beyond a fixed distance. The robot is controlled with end-effector (EE) delta actions that command Cartesian displacements of the gripper. The EE orientation is constrained to yaw only, and control runs at 10Hz. For each task, the initial poses of a banana or a drawer handle are randomized within the workspace and observed by an Intel RealSense D435i RGB camera, which can be found in Figure 9). We collect 40 episodes for lift banana and 50 episodes for drawer open via keyboard teleoperation. Policies use both low-dimensional states and visual observations. The visual observation is an RGB image at 480 × 480 resolution, resized to 224 × 224. We use ViFM to produce a 512-dimensional visual feature. The low-dimensional state is a 9-dimensional vector comprising the EE Cartesian position (3 dimensions), linear velocity (3 dimensions), yaw orientation (1 dimension), and the gripper status encoded as one-hot (open or closed, 2 dimensions). We concatenate the visual feature and the low-dimensional states to form a 521-dimensional input to the policy. All hyperparameter settings for the real-robot experiments can be found at Table 7. For evaluation, we measure success rate over 10 episodes per task. 
+
+A.5. Offline PbRL Baselines 
+
+For baselines in Table 1, we use the official implementations provided in their publicly released repositories, as listed in Table 8. We obtain their performance by re-running the author-provided implementations under the same conditions as ours (e.g. , same number of labels) and conducting hyperparameter searches within the recommended ranges for a fair comparison. For FTB, we use the default hyperparameters, as training the method takes approximately two days. We report the average performance over 25 rollouts using the final checkpoint and run all experiments with 5 random seeds. 
+
+## B. Learning Curves 
+
+15 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+Table 7. Hyperparameters of real robot experiments. 
+
+Hyperparameter Value 
+
+IQL Optimizer Adam Learning Rate 3e-4 Batch Size 256 
+
+β/τ 3.0/0.7 Training Steps 1e5
+
+Reward Model Batch size 8Activation LeakyReLU Output activation Tanh Segment length 16 Training steps 2000 VOTP Total #labeled pairs 5 (Lift), 10 (Drawer) Total #unlabeled pairs 2000 (Lift), 3000 (Drawer) Preference threshold τP 0.6 
+
+Table 8. Source code links and hyperparameter/variant search settings for all baselines. 
+
+Algorithm URL Hyperparameters Tuning 
+
+IPL https://github.com/jhejna/inverse-preference-learning Default CPL https://github.com/jhejna/cpl with/without BC DPPO https://github.com/snu-mllab/DPPO λ ∈ { 0.1, 0.5}, smooth m ∈ { 5, 10 , 15 }
+
+SURL https://github.com/alinlab/SURF Threshold τ ∈ { 0.99 , 0.999 }
+
+LiRE https://github.com/chwoong/LiRE Budget Q ∈ { 2, 4, 5, 10 }
+
+APPO https://github.com/oh-lab/APPO λ ∈ { 0.01 , 0.3, 0.1}
+
+FTB https://github.com/Zzl35/flow-to-better Default 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Score
+> hopper-medium-replay-v2
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Training Steps (×10 6)
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> hopper-medium-expert-v2
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Training Steps (×10 6)
+> 0
+> 20
+> 40
+> 60
+> 80
+> walker2d-medium-replay-v2
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Training Steps (×10 6)
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> walker2d-medium-expert-v2
+> IQL IPL P-IQL SURF VOTP
+
+Figure 10. Learning curves of IQL, IPL, P-IQL, SURF, and VOTP on D4RL (Table 1). Results are means of 5 runs with standard deviation (shaded area). We smooth the learning curves using a moving average with a window size of 3. 0.0 0.1 0.2 0.3 0.4 
+
+Training Steps (×10 6)
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+
+door-open-v2     
+
+> 0.0 0.1 0.2 0.3 0.4
+
+Training Steps (×10 6)
+
+> 0
+> 20
+> 40
+> 60
+> 80
+
+drawer-open-v2     
+
+> 0.0 0.1 0.2 0.3 0.4
+
+Training Steps (×10 6)
+
+> 0
+> 20
+> 40
+> 60
+
+plate-slide-v2     
+
+> 0.0 0.1 0.2 0.3 0.4
+
+Training Steps (×10 6)
+
+> 0
+> 20
+> 40
+> 60
+
+sweep-into-v2 
+
+IQL IPL P-IQL SURF VOTP 
+
+Figure 11. Learning curves of IQL, IPL, P-IQL, SURF, and VOTP on MetaWorld (Table 1). Results are means of 5 runs with standard deviation (shaded area). We smooth the learning curves using a moving average with a window size of 3. 
+
+16 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 0.25 0.50 0.75 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.25 0.50 0.75 1.00 
+
+IQM 
+
+0.25 0.50 0.75 
+
+Mean 
+
+0.25 0.50 0.75 
+
+Optimality Gap 
+
+0.6 0.8 1.0 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.6 0.8 1.0 
+
+IQM 
+
+0.6 0.8 1.0 
+
+Mean 
+
+0.00 0.15 0.30 0.45 
+
+Optimality Gap 
+
+0.2 0.4 0.6 0.8 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.00 0.25 0.50 0.75 
+
+IQM 
+
+0.2 0.4 0.6 0.8 
+
+Mean 
+
+0.4 0.6 0.8 1.0 
+
+Optimality Gap 
+
+0.88 0.96 1.04 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.88 0.96 1.04 1.12 
+
+IQM 
+
+0.88 0.96 1.04 
+
+Mean 
+
+0.00 0.05 0.10 0.15 
+
+Optimality Gap 
+
+(a) hopper-medium-replay-v2 
+
+(b) hopper-medium-expert-v2 
+
+(c) walker2d-medium-replay-v2 
+
+(d) walker2d-medium-expert-v2 
+
+Figure 12. Aggregate metrics on D4RL locomotion tasks with 95% confidence intervals (CIs) across five runs. Higher mean, median and IQM scores and lower optimality gap are better. The CIs are estimated using the percentile bootstrap with stratified sampling. 0.4 0.6 0.8 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.2 0.4 0.6 0.8 
+
+IQM 
+
+0.4 0.6 0.8 
+
+Mean 
+
+0.2 0.4 0.6 
+
+Optimality Gap 
+
+0.4 0.6 0.8 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.4 0.6 0.8 
+
+IQM 
+
+0.4 0.6 0.8 
+
+Mean 
+
+0.2 0.4 0.6 
+
+Optimality Gap 
+
+0.15 0.30 0.45 0.60 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.2 0.4 0.6 
+
+IQM 
+
+0.15 0.30 0.45 0.60 
+
+Mean 
+
+0.45 0.60 0.75 0.90 
+
+Optimality Gap 
+
+0.30 0.45 0.60 
+
+VOTP 
+
+SURF 
+
+P-IQL 
+
+IPL 
+
+IQL 
+
+Median 
+
+0.30 0.45 0.60 
+
+IQM 
+
+0.30 0.45 0.60 
+
+Mean 
+
+0.45 0.60 
+
+Optimality Gap 
+
+(a) door-open-v2 
+
+(b) drawer-open-v2 
+
+(c) plate-slide-v2 
+
+(d) sweep-into-v2 
+
+Figure 13. Aggregate metrics on MetaWorld manipulation tasks with 95% confidence intervals (CIs) across five runs. Higher mean, median and IQM scores and lower optimality gap are better. The CIs are estimated using the percentile bootstrap with stratified sampling. 
+
+17 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning t=0 t=17 t=19 t=30 t=40 t=43 t=51 t=52 t=53 t=54 t=58       
+
+> Success Failure 010 20 30 40 50 60
+> Time step
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> Learned Reward
+> P-IQL (Succ. Traj.)
+> P-IQL (Fail. Traj.)
+> VOTP (Succ. Traj.)
+> VOTP (Fail. Traj.)
+
+Figure 14. Drawer Open : Examples of successful and failed trajectories at each time step (top) with the corresponding reward outputs over timesteps from VOTP and P-IQL (bottom). Behavior 
+
+> Cloning
+
+Task : Lift Banana       
+
+> P-IQL
+> VOTP
+> 0512 19 26 33 40
+> T
+
+Figure 15. Snapshot of rollouts on Lift Banana task from BC, P-IQL and VOTP. The BC agent fails to descend to the banana and cannot grasp it. The P-IQL agent grasps the banana but does not lift and just release it. VOTP agent successfully reaches the banana, grasps it, and lifts it to a specified height. Behavior 
+
+> Cloning
+
+Task: Drawer Open       
+
+> P-IQL
+> VOTP
+> T
+> 010 20 30 40 50 60
+
+Figure 16. Snapshot of rollouts on Drawer Open task from BC, P-IQL and VOTP. In both BC and P-IQL, the agent barely reaches the handle after wandering and fails to pull the drawer open. VOTP agent, however, reaches the handle directly and pull it open successfully. 
+
+18 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+## C. Additional Results and Analysis 
+
+C.1. Ablation Study on Cost Metric 
+
+To examine the sensitivity of VOTP to the choice of cost function, we evaluate it using Euclidean and cosine distances when computing the optimal transport plan. Table 9 shows that VOTP performs robustly under both choices. 
+
+Table 9. Performance of VOTP with different cost functions. Dataset Euclidean Cosine hopper-medium-replay-v2 91.1 ±4.7 87.0 ±4.2 walker2d-medium-replay-v2 66.3 ±5.6 64.1 ±14.3 door-open 84.0 ±8.4 82.0 ±8.7 drawer-open 71.2 ±11.7 75.8 ±4.2 plate-slide 57.6 ±5.4 57.0 ±12.4 sweep-into 57.6 ±7.4 58.0 ±11.8 Average 71.3 70.7 
+
+C.2. RL Performance between GT Reward and Incorrect Rewards 
+
+For each dataset, we verify that RL performance differs when training with ground-truth (GT) rewards versus incorrect rewards (Choi et al., 2024). We use the three incorrect reward functions introduced in (Li et al., 2023): (1) Zero: all rewards are set to r(s, a ) = 0 ; (2) Random: each transition takes a reward value sampled from a uniform distribution U (0 , 1) ; and (3) Negative: each transition’s reward is replaced with the negation of the true reward, −r(s, a ). Following (Li et al., 2023), we report the performance of behavior cloning (BC), offline RL with GT rewards, and offline RL with incorrect rewards for each dataset in Table 10. 
+
+Table 10. Performance of IQL (Kostrikov et al., 2022) on each dataset under GT and incorrect rewards. Mean and standard deviation are computed over 5 random seeds. Dataset BC GT Zero Random Negative hopper-medium-replay-v2 33.7 ±8.5 87.5 ±7.4 28.0 ±8.3 48.2 ±6.7 0.6 ±0.0 hopper-medium-expert-v2 55.1 ±2.8 104.5 ±4.5 53.6 ±1.4 67.8 ±9.8 16.8 ±5.5 walker2d-medium-replay-v2 19.2 ±7.3 72.6 ±4.9 19.4 ±2.7 47.3 ±13.6 0.1 ±0.3 walker2d-medium-expert-v2 100.4 ±13.4 109.9 ±0.5 100.7 ±7.7 69.7 ±7.1 20.9 ±0.7 door-open 57.5 ±3.0 79.2 ±5.9 59.6 ±2.1 52.0 ±2.8 39.0 ±7.7 drawer-open 61.5 ±3.7 83.2 ±4.7 61.0 ±1.7 59.8 ±3.3 46.8 ±5.5 plate-slide 39.1 ±2.5 56 ±11.9 38.4 ±2.0 34.0 ±10.8 24.0 ±5.7 sweep-into 49.3 ±2.1 65.6 ±5.4 46.6 ±2.6 48.8 ±4.7 27.0 ±9.5 
+
+C.3. Computational Cost for Pseudo-Preference Genration 
+
+We train VOTP on an RTX 4090 GPU with 24 CPU cores (AMD Ryzen Threadripper 7960X). Feature extraction takes approximately 20 minutes for 50k segments. We compare sequential pseudo-labeling (labeling one pair at a time) with a parallel pseudo-labeling strategy (labeling 100 pairs concurrently). As shown in Table 11, the time required to generate pseudo-preference labels scales with the number of labels. We also find that the simple parallel technique effectively mitigates generation time, particularly when the number of labels is large. Policy training is implemented using IPL’s source code 3 and takes roughly 1.5 hours for each run. 
+
+Table 11. Computational cost of VOTP for generating pseudo-preference labels for 10k unlabeled pairs under different dataset sizes. 
+
+N labels 10 25 50 100 200 500 Sequential time (minutes) 0.15 0.2 0.75 3 12 60 Parallel time (minutes) - - - 1 1.7 6.6 
+
+> 3
+
+https://github.com/jhejna/inverse-preference-learning 
+
+19 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+C.4. Preference Learning from Human Teachers 
+
+We further evaluate VOTP using real human preference feedback across six datasets, with results summarized in Table 12. For D4RL locomotion, we use the human preference labels provided by Kim et al. (2023). For MetaWorld, we collect preferences from four non-robotic participants across four datasets. We observe a slight performance drop in walker2d but largely stable performance in the remaining environments. 
+
+Table 12. Performance of VOTP with preference feedbacks from human teachers. Mean and standard deviation are computed over 5 random seeds. Dataset Scripted Teacher Human Teacher hopper-medium-expert-v2 105.7 ±6.0 109.3 ±1.7 walker2d-medium-replay-v2 66.3 ±5.6 59.4 ±8.8 walker2d-medium-expert-v2 108.1 ±2.2 90.8 ±7.0 door-open 84.0 ±8.4 85.6 ±8.6 drawer-open 71.2 ±11.7 70.4 ±6.5 plate-slide 57.6 ±5.4 55.9 ±11.3 sweep-into 57.6 ±5.4 56.8 ±11.3 Average 78.6 75.5 
+
+C.5. Accuracy of Pseudo-preference Labels 
+
+Table 13. Accuracy of generated pseudo-labels: We calculate accuracy by comparing against ground-truth scripted preference labels (excluding equally preferred pairs). Overall, VOTP generates high-quality pseudo-labels with only a handful of labeled preference queries. Domain Task Accuracy (%) D4RL Locomotion hopper-medium-expert-v2 90.3 walker2d-medium-replay-v2 98.8 walker2d-medium-expert-v2 93.6 MetaWorld Manipulation door-open 93.1 drawer-open 97.4 plate-slide 95.2 sweep-into 67.0 
+
+C.6. Additional Comparison of Learned Rewards with Ground-truth Rewards 
+
+We examine the reward values estimated by the learned reward models of P-IQL and VOTP. Figure 17 shows scatter plots of the estimated rewards of segments ( y-axis) against the GT rewards ( x-axis) for each dataset. As shown, the reward estimates produced by VOTP exhibit a significantly stronger correlation with GT rewards compared to those of P-IQL. 
+
+C.7. Visualization for Pseudo-labeling Process 
+
+Qualitative results of the pseudo-labeling process on the drawer-open task in MetaWorld are shown in Figure 18. We present the labeled segments and their corresponding preference matrix, as well as the cost matrix, transport plans, and preference scores for four examples of unlabeled pairs. As shown, VOTP effectively aggregates preferences from labeled pairs to produce accurate pseudo-preferences for unlabeled pairs. 
+
+C.8. Discussion of Uniformity Assumption 
+
+In our framework, the assumption of uniform marginals (Eq. 4) is naturally motivated by the data-loading process. Since trajectory segments are sampled uniformly from the offline dataset without replacement, each segment appears with equal frequency during the pseudo-labeling phase. Consequently, the empirical distribution over the sampled segments is effectively uniform, making Optimal Transport with uniform marginals a principled and appropriate relaxation of the matching problem. 20 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 
+
+## D. Extended Discussion on Broader Context and Future Directions 
+
+While our framework establishes a scalable foundation for preference alignment, our current evaluations focus on standard Gaussian policies. However, recent advances in generative modeling (Ho et al., 2020; Lipman et al., 2022; Pham et al., 2025; Ton et al., 2025) have significantly expanded the capacity to model complex and multimodal action distributions in both reinforcement learning (Lillicrap et al., 2016; Haarnoja et al., 2018; Luu & Yoo, 2021; Nguyen et al., 2021) and imitation learning (Chen et al., 2021; Luu et al., 2024). In particular, continuous-time generative frameworks such as flow matching have emerged as highly expressive policy representations (Park et al., 2025; Nguyen & Yoo, 2026; Nguyen et al., 2026) and are increasingly being integrated into large-scale vision-language-action (VLA) architectures (Chi et al., 2023; Black et al., 2024; Bjorck et al., 2025). Extending VOTP to align these powerful generative policies therefore represents a promising direction for future research (Xia et al., 2025; Miao et al., 2025). Specifically, our framework could leverage optimal transport to efficiently fine-tune foundation-scale VLAs without requiring expensive dense feedback annotations. Beyond policy parameterization, the effectiveness of preference propagation also depends on representation quality for capturing nuanced behaviors in precision manipulation. Incorporating recent advances in self-supervised pretraining (Oquab et al., 2023; Nguyen et al., 2023; Assran et al., 2023) and 3D scene understanding (Vu et al., 2022; 2023; Park et al., 2026) into the VOTP latent space could further improve semantic structure and generalization. Finally, although our experiments focus on robotics and continuous control, the underlying principle of optimal-transport-based preference propagation may generalize to other domains characterized by scarce annotations and structured sequential data, including healthcare diagnostics, assistive systems, and decision-making pipelines (Kim et al., 2021; Yoon et al., 2022; 2023; Koo et al., 2024; 2025). 21 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.04 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.59 
+
+VOTP 
+
+(a) hopper-medium-replay-v2 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.65 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.70 
+
+VOTP (b) hopper-medium-expert-v2 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.84 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.94 
+
+VOTP 
+
+(c) walker2d-medium-replay-v2 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.42 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.88 
+
+VOTP (d) walker2d-medium-expert-v2 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.57 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.93 
+
+VOTP 
+
+(e) door-open 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.59 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.91 
+
+VOTP (f) drawer-open 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.58 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.71 
+
+VOTP 
+
+(g) plate-slide 0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Estimated Reward
+
+r=0.45 
+
+P-IQL 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+GT Reward 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+> Estimated Reward
+
+r=0.56 
+
+VOTP (h) sweep-into 
+
+Figure 17. Correlation between learned rewards and ground-truth rewards for P-IQL and VOTP. Pearson correlation coefficients ( r) are shown for each dataset. 
+
+22 Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning 𝜎 0 𝜎 1 𝜎 2 𝜎 3 𝜎 4 𝜎 5 𝜎 6 𝜎 7
+
+𝜎 0 0 0 0 0 1 0 0 0
+
+𝜎 1 0 0 0 0 0 -1 0 0
+
+𝜎 2 0 0 0 0 0 0 -1 0
+
+𝜎 3 0 0 0 0 0 0 0 1
+
+𝜎 4 -1 0 0 0 0 0 0 0
+
+𝜎 5 0 1 0 0 0 0 0 0
+
+𝜎 6 0 0 1 0 0 0 0 0
+
+𝜎 7 0 0 0 -1 0 0 0 0
+
+Preference Matrix 𝑹                                   
+
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.25 0.12
+> 𝜎 10.1 0.23
+> 𝜎 20.1 0.25
+> 𝜎 30.24 0.13
+> 𝜎 40.16 0.2
+> 𝜎 50.17 0.1 9
+> 𝜎 60.14 0.23
+> 𝜎 70.14 0.23
+> ത𝜎 0ത𝜎 1
+> 𝜎 000.12
+> 𝜎 10.12 0
+> 𝜎 20.12 0
+> 𝜎 300.12
+> 𝜎 40.01 0.11
+> 𝜎 500.12
+> 𝜎 60.12 0.01
+> 𝜎 70.12 0.01
+
+𝜎 0
+
+𝜎 1
+
+𝜎 2
+
+𝜎 3
+
+𝜎 4
+
+𝜎 5
+
+𝜎 6
+
+𝜎 7
+
+ҧ
+
+𝜎 0
+
+ҧ
+
+𝜎 1
+
+Preference Score :
+
+𝑺 ഥ𝝈 𝟎 , ഥ𝝈 𝟏 = −𝟎 . 𝟓𝟐 𝟖 𝟒 
+
+Labeled Pairs  Unlabeled Pairs  Cost Matrix  Transport Plan                                                                     
+
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.26 0.16
+> 𝜎 10.12 0.22
+> 𝜎 20.12 0.24
+> 𝜎 30.25 0.13
+> 𝜎 40.16 0.19
+> 𝜎 50.17 0.1 8
+> 𝜎 60.14 0.22
+> 𝜎 70.13 0.23
+> ത𝜎 0ത𝜎 1
+> 𝜎 000.12
+> 𝜎 10.12 0
+> 𝜎 20.12 0
+> 𝜎 300.12
+> 𝜎 40.01 0.12
+> 𝜎 500.12
+> 𝜎 60.12 0
+> 𝜎 70.12 0
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.13 0.26
+> 𝜎 10.25 0.16
+> 𝜎 20.27 0.15
+> 𝜎 30.08 0.25
+> 𝜎 40.23 0.15
+> 𝜎 50.21 0.1 6
+> 𝜎 60.25 0.17
+> 𝜎 70.24 0.17
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.12 0
+> 𝜎 10.02 0.11
+> 𝜎 200.12
+> 𝜎 30.12 0
+> 𝜎 40.03 0.1
+> 𝜎 50.11 0.02
+> 𝜎 60.04 0.09
+> 𝜎 70.06 0.06
+
+ҧ
+
+𝜎 0
+
+ҧ
+
+𝜎 1
+
+Preference Score :
+
+𝑺 ഥ𝝈 𝟎 , ഥ𝝈 𝟏 = −𝟎 . 𝟓𝟏𝟎𝟕                                   
+
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.2 0.29
+> 𝜎 10.18 0.17
+> 𝜎 20.22 0.14
+> 𝜎 30.21 0.29
+> 𝜎 40.12 0.21
+> 𝜎 50.13 0.2
+> 𝜎 60.21 0.14
+> 𝜎 70.22 0.14
+> ത𝜎 0ത𝜎 1
+> 𝜎 00.12 0
+> 𝜎 100.12
+> 𝜎 200.12
+> 𝜎 30.12 0
+> 𝜎 40.12 0
+> 𝜎 50.12 0
+> 𝜎 600.12
+> 𝜎 700.12
+
+Preference Score :
+
+𝑺 ഥ𝝈 𝟎 , ഥ𝝈 𝟏 = 𝟎 . 𝟓𝟖𝟐𝟕 
+
+ҧ
+
+𝜎 0
+
+ҧ
+
+𝜎 1
+
+Preference Score :
+
+𝑺 ഥ𝝈 𝟎 , ഥ𝝈 𝟏 = 𝟎 . 𝟒𝟖𝟔𝟒 
+
+ҧ
+
+𝜎 0
+
+ҧ
+
+𝜎 1
+
+Figure 18. Additional visualizations of the pseudo-labeling process from VOTP on the drawer-open task. We use 4 labeled pairs. All cost matrix and transport plan entries are rounded to two decimals. For clarity, each segment (originally 64 frames) is uniformly downsampled to 4 frames for visualization. Light ing Changes 
+
+(Ambient + Diffuse )
+
+Video Background 
+
+Unlabeled Data 
+
+Light ing Changes 
+
+(Direction + Position )
+
+Texture Changes 
+
+(Floor + Table )
+
+Labeled Data 
+
+Figure 19. Examples of scenarios with different types of visual distractions. For lighting changes, we consider two distractors: (1) variations in the direction and position of the light source, and (2) variations in ambient and diffuse lighting. For texture changes, we randomize the textures of the table and floor (20 possible combinations). For video background distractions, we use both the easy and hard videos from Yuan et al. (2023). Example segment clips are available at this link. Note that the distractor variation within each segment is fixed, but may vary across segments. 
+
+23

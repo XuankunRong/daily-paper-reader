@@ -1,0 +1,972 @@
+Title: Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards
+
+URL Source: https://arxiv.org/pdf/2606.18810v1
+
+Published Time: Thu, 18 Jun 2026 00:43:33 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards 
+
+Yingyu Shan 1, Yuhang Guo 1, †, Zihao Cheng 2, Zeming Liu 2, Xiangrong Zhu 3,Xinyi Wang 3, Jiashu Yao 1, Wei Lin 3, Hongru Wang 3, Heyan Huang 11Beijing Institute of Technology 2Beihang University 3Independent Researcher 
+
+> †
+
+Corresponding author Email: {shanyingyu, guoyuhang}@bit.edu.cn 
+
+Abstract 
+
+Reinforcement learning with verifiable rewards (RLVR) has driven substantial progress in train-ing LLMs for reasoning tasks, but represen-tative methods such as GRPO assign uniform credit across all tokens, wasting gradient on routine tokens while under-crediting pivotal reasoning steps. Existing token-level credit as-signment methods require resources beyond the model’s own rollouts. GRPO variants rely on process reward models or ground-truth an-swers. Knowledge distillation assigns credit through per-token divergence but requires ex-ternal teachers (On-Policy Distillation) or privi-leged information (On-Policy Self Distillation). However, these dependencies limit applicabil-ity in the pure RLVR setting. We observe that conditioning the model on its own veri-fied trajectories induces a measurable per-token KL divergence between the original and con-ditioned distributions, and prove that distilling from a self-teacher constructed by verified tra-jectories leads to infeasible weighted-average solutions when multiple verified trajectories ex-ist. We propose SC-GRPO ( Self-Conditioned GRPO), which uses KL divergence mentioned before as a multiplicative weight on GRPO gra-dients. Across five benchmarks spanning math, code, and agentic tasks, SC-GRPO consistently outperforms 8.1% over GRPO and 5.9% over DAPO with stronger OOD performance. More-over, SC-GRPO achieves higher performance than OPD. 
+
+1 Introduction 
+
+Large language models (LLMs) have shown strong capabilities in various tasks, but competition-level problems remain challenging. Reinforcement learn-ing with verifiable rewards (RLVR) (Guo et al., 2025; Yu et al., 2026; He et al., 2026a) has driven substantial progress in tackling such prob-lems. Representative methods in RLVR including GRPO (Guo et al., 2025; Liu et al.; Zheng et al., 
+
+Figure 1: Overview of SC-GRPO. Top: positioning of SC-GRPO among existing methods. Bottom: core mechanism illustrated on a LiveCodeBench example. 
+
+2025; Wang et al., 2025c) assign a single scalar re-ward per rollout, so every token shares the same ad-vantage. This uniform credit cannot identify which tokens caused success or failure, diluting gradient across routine tokens while under-crediting pivotal reasoning steps (He et al., 2026b; Xie et al., 2025). To enable token-level credit assignment, ex-isting approaches require resources beyond the model’s own rollouts (Figure 1, top). Recent GRPO variants have explored different directions: some train process reward models on step-level annota-tions (Wang et al., 2024b; Cui et al., 2025), while others rely on ground-truth answers (Wang et al., 2025b). Alternatively, knowledge distillation di-rectly assigns credit at the token level through per-position divergence between student and teacher distributions (Hinton et al., 2015). On-Policy Distil-lation (OPD) (Agarwal et al., 2024; Ko et al., 2024) 
+
+> arXiv:2606.18810v1 [cs.LG] 17 Jun 2026
+
+uses a stronger external teacher to provide token-level supervision, and On-Policy Self-Distillation (OPSD) (Hübotter et al., 2026; Zhao et al., 2026) similarly requires privileged information. These dependencies limit applicability in the pure RLVR setting, where only a binary verifier is available. However, we can identify which tokens carry credit by comparing predictions with and without access to the model’s own verified solution. Re-cent work has shown that conditioning models on their own verified trajectories improves generation quality (Yao et al., 2026). Building on this obser-vation, we propose SC-GRPO ( Self-Conditioned GRPO), which uses such conditioning to induce a measurable per-token distributional shift as a credit assignment signal. As shown in Figure 1 bottom, for problems where the model produces both cor-rect and incorrect rollouts, SC-GRPO injects one verified correct solution as an in-context demonstra-tion and re-scores all remaining rollouts under this prompt, constructing a self-conditioned teacher. A complete version of this example is provided in Figure 10. We quantify this shift via per-token Kullback– Leibler (KL) divergence between the original and demonstration-conditioned next-token distri-butions. Inspired by OPSD (Zhao et al., 2026), a natural approach would be to add this KL as an aux-iliary distillation loss. However, when multiple dis-tinct verified trajectories exist, the loss-minimizing student converges to a weighted average over these teachers, a distribution that does correspond to any feasible trajectory (we formalize this in §4.2). Em-pirically, such additive formulations consistently fail to improve over GRPO (§7.1). Instead, SC-GRPO uses the KL signal purely as a multiplicative weight on the GRPO gradient: the reward determines the update direction, and the KL determines only its intensity at each token. The same self-conditioned teacher handles both partial-solve groups, where a verified correct trajectory serves as the reference and the KL weight sharpens credit assignment, and solve-none groups, where a random rollout serves as the reference and the KL signal provides a slight exploration bonus that encourages diversity. On five benchmarks span-ning math, code, and multi-turn agentic tasks, SC-GRPO improves Average@8 by 8.1% over GRPO and 5.9% over DAPO, while achieving more con-sistent and higher performance than OPD with ex-ternal teachers. Our contributions are as follows: • In RLVR, verified trajectories are the only su-pervision beyond the binary verifier. We prove that distilling from a teacher constructed using these trajectories leads to infeasible solutions, and demonstrate empirically that such formu-lations fail to improve over GRPO. • We propose SC-GRPO, which constructs a teacher by conditioning the model on its own verified trajectories and uses the resulting token-level KL divergence as a multiplicative weight on GRPO gradients. • Across five benchmarks spanning math, code, and agentic tasks, SC-GRPO consistently out-performs RL baselines and achieves higher and more stable performance than OPD. 
+
+2 Related Work 
+
+2.1 On-Policy Distillation 
+
+On-policy distillation trains on student generated rollouts with a divergence to the teacher distribu-tion (Agarwal et al., 2024; Gu et al., 2024; Ko et al., 2024; Shing et al.), eliminating the train-test mis-match of offline distillation (Hinton et al., 2015). The divergence objective has been refined through skew-KL (Ko et al., 2024), α-β-divergence (Wang et al., 2025a), and adaptive interpolation (Shing et al.), highlighting the sensitivity of letting diver-gence set the gradient direction. Moreover, all vari-ants require a stronger external teacher. Self-distillation removes the external teacher de-pendency by constructing a teacher from the model itself, typically conditioned on privileged informa-tion such as textual feedback (Hübotter et al., 2026), ground truth (Zhao et al., 2026; Ding, 2026; Yang et al., 2026), or expert demonstrations (Shenfeld et al., 2026). SC-GRPO uses KL as a per-token weight, eliminating sensitivity to divergence form choice, and conditions the teacher solely on the model’s own verified rollouts. 
+
+2.2 Token-Level Credit Assignment in RL 
+
+Process reward models (PRMs) (Lightman et al., 2023; Wang et al., 2024b,a) provide step-level su-pervision but require training a separate reward model with large-scale annotation, and remain vul-nerable to reward hacking (Juneja et al., 2025; Gao et al., 2024). Annotation-free alternatives estimate token values through Monte Carlo sampling (Guan et al.) or segment-level sampling (Guo et al., 2026), requiring additional rollout compute. GRPO-based methods also need external PRM models (Cui et al., 2025) or ground truth (Wang et al., 2025b) to gain token-level credit during training. In contrast, SC-GRPO only depends on the model’s own rollouts to obtain token-level reward without external re-sources. 
+
+3 Preliminaries 
+
+Notation Let πθ denote the policy parameterized by θ. Given a query x sampled from the train-ing dataset D, the policy generates a response 
+
+o = ( o1, . . . , o |o|) ∼ πθ(· | x), where ot is the token at position t and o<t denotes the prefix be-fore position t. Each response is evaluated by a verifier r, yielding a scalar reward r(x, o ) ∈ [0 , 1] .
+
+3.1 GRPO 
+
+For each query x, GRPO samples a group of 
+
+G responses {oi}Gi=1 from the old policy πθold .Each response is evaluated by the verifier, yielding 
+
+ri = r(x, o i). Instead of learning a value function, GRPO normalizes rewards across the G responses in the same group to obtain a sequence-level ad-vantage. Equivalently, every token position t in response oi shares the same advantage: 
+
+ˆAi,t = ˆAi = r(x, o i) − mean( {r(x, o k)}Gk=1 )std( {r(x, o k)}Gk=1 ) .
+
+(1) The policy is then updated with following objective over response tokens: 
+
+JGRPO (θ) = Ex∼D , {oi}Gi=1 ∼πθold (·| x)
+
+"
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+|oi|
+
+> |oi|
+
+X
+
+> t=1
+
+min  ρi,t ˆAi,t , clip( ρi,t , 1 − ϵ, 1 + ϵ) ˆAi,t 
+
+#
+
+,
+
+with ρi,t = πθ(oi,t | x, o i,<t )
+
+πθold (oi,t | x, o i,<t ) .
+
+3.2 On-Policy Distillation 
+
+OPD (Agarwal et al., 2024) provides dense token-level signal along the student’s own trajectories. Let πθ and πT denote the student and frozen teacher policies, respectively. Given a prompt x ∼D, the student samples a response o ∼ πθ(· | x),which induces prefix states st = ( x, o <t ). At each prefix, the student and teacher next-token distribu-tions are πθ(· | st) and πT (· | st), and the token-level OPD objective is 
+
+LOPD (θ) = E x∼D , o ∼πθ (·| x)
+
+h 1
+
+|o|
+
+> |o|
+
+X
+
+> t=1
+
+D πT (· | st) ∥ πθ(· | st)i
+
+,
+
+(2) where D is a divergence such as the Kullback– Leibler (KL) divergence or the Jensen–Shannon divergence (JSD). OPSD (Ding, 2026; Hübotter et al., 2026; Zhao et al., 2026) removes the requirement of external teacher by conditioning the same model on priv-ileged information c (e.g., ground-truth or expert demonstration). The student distribution remains 
+
+πθ(· | st), while the self-teacher is instantiated as: 
+
+eπθ(· | st, c ) := sg[ πθ(· | x, c, o <t )] , (3) where sg[ ·] denotes the stop-gradient operator, in-dicating that the teacher distribution is treated as a fixed target for the current update. The train-ing objective keeps the same form as Eq. (2) , with 
+
+πT (· | st) replaced by eπθ(· | st, c ).
+
+4 Why Self-Distillation Fails in RLVR 
+
+4.1 Available Supervision in RLVR 
+
+For a query x, GRPO samples a group of responses 
+
+{oi}Gi=1 ∼ πθold (· | x), and a verifier assigns a sequence-level reward ri = r(x, o i) ∈ { 0, 1} to each response. Let 
+
+C(x) = { oi : r(x, o i) = 1 , i ∈ { 1, . . . , G } } 
+
+denote the set of verifier-approved trajectories. In conventional self-distillation mentioned be-fore, the teacher is conditioned on some form of privileged information. In the RLVR setting, however, no such privileged information is avail-able. Beyond the query x and the scalar reward 
+
+r, the only additional information we can access is a verifier-approved trajectory drawn from the model’s own rollouts, i.e., a sample from C(x).
+
+A verified trajectory is not privileged informa-tion. It certifies only end-task correctness, not reasoning quality. The trajectory may contain ex-ploratory steps, redundant derivations, or recover-able mistakes, and when multiple trajectories in 
+
+C(x) succeed, they may follow contradictory rea-soning paths. 4.2 Why OPSD Fails in RLVR 
+
+Despite this limitation, verified trajectories are the only additional structure available in RLVR. A natu-ral but naive adaptation is therefore to treat them as a substitute for privileged context. Concretely, for a student rollout oi with prefix states si,t = ( x, o i,<t )
+
+and a verifier-approved trajectory τj ∈ C (x), we instantiate the generic OPSD formulation in Sec-tion 3 by taking τj as the privileged context: 
+
+eπθ(· | si,t , τ j ) := sg[ πθ(· | x, τ j , o i,<t )] . (4) The training objective keeps the same form as Eq. (2) , replacing the external teacher πT with the self-conditioned teacher eπθ(· | si,t , τ j ).This adaptation, however, does not work. Apointwise analysis (detailed in Appendix A) shows that under both forward and reverse KL, the loss-minimizing student distribution at any prefix si,t is a aggregate of the self-conditioned teachers {pj }
+
+across C(x):
+
+q⋆ ∝
+
+(P  
+
+> j
+
+μx(j) pj (Forward KL), 
+
+Q 
+
+> j
+
+p μx(j) 
+
+> j
+
+(Reverse KL), where pj := eπθ(· | si,t , τ j ) and μx is the selection rule over C(x). This average distribution is prob-lematic: (i) it need not correspond to any single feasible trajectory; (ii) it assigns equal weight to all prefixes, even those where verified trajectories disagree about the next token; and (iii) it inherits whatever each τj happens to take to reach the cor-rect answer. These issues are fundamental to any distillation-based approach that treats the teacher as a target distribution. 
+
+5 SC-GRPO 
+
+Overview Section 4.2 shows that directly using verified trajectories as OPSD distillation targets fails in RLVR. Therefore, we propose SC-GRPO (Self-Conditioned GRPO), which takes a different approach. We construct a self-conditioned teacher 
+
+by conditioning the model on a verified trajectory, then measure the per-token distributional shift be-tween the teacher and the original student. This shift, quantified as token-level KL diver-gence, identifies which tokens depend on access to a verified solution. Tokens with small KL make the same prediction regardless of whether a verified so-lution is available. The token’s choice is unrelated to the rollout’s outcome, so applying sequence-level credit here misattributes success or failure. 
+
+Algorithm 1 SC-GRPO                                                                                                      
+
+> Require: policy πθ; query x; group size G; diversity coeffi-cient α
+> // Phase 1: Standard GRPO rollout
+> 1: Sample Gresponses {o1, . . . , o G} ∼ πθ(· | x)
+> 2: Verify each oi; let nc= number of correct responses 3: Compute group-normalized advantage ˆAifor each oi
+> // Phase 2: KL signal (if 2≤nc< G )
+> 4: for each response oido
+> 5: Pick a correct response τ̸=oias demonstration 6: Run teacher forward: eπθ(· | x, τ, o i,<t )
+> 7: Run student forward: πθ(· | x, o i,<t )
+> 8: Dt←KL( eπθ∥πθ)at each token t
+> 9: end for
+> 10: c←max  p75 ({Dt}all tokens ),10 −4
+> 11: ft←Dt/(Dt+c)// per-token weight ∈[0 ,1)
+> // Phase 3: Diversity signal (if nc= 0 )
+> 12: Pick a random response oras reference 13: for each oi̸=ordo
+> 14: Teacher forward with orin context (same as Phase 2) 15: Compute Dt, f tas in Phase 2 16: si←1
+> |oi|
+> P
+> tft// diversity score 17: end for
+> 18: ˆAi←α·(si−¯s)/std( s)for each oi// exploration signal for zero-reward groups
+> // Phase 4: Weighted update
+> 19: Update θto maximize 1
+> G
+> X
+> i
+> 1
+> |oi|
+> X
+> t
+> ft·ℓGRPO
+> i,t ( ˆAi)
+> // ft=1 for groups skipping Phase 2&3
+
+Tokens with large KL depend on verified solution, so the reward signal is informative. SC-GRPO uses this KL purely as a multiplicative weight on the GRPO gradient: the reward determines the update direction, and the KL determines its intensity at each token. Figure 2 and Algorithm 1 illustrate the method. The core mechanism is described in §5.1: we con-struct a self-conditioned teacher by conditioning the model on a reference trajectory, compute token-level KL, and use it to weight the GRPO gradient. The reference is selected based on the number of correct rollouts nc in the group: verified trajecto-ries for partial-solve groups ( 2 ≤ nc < G ), ran-dom rollouts for solve-none groups ( nc=0 ), and standard GRPO for nc=1 or nc=G. Section 5.2 analyzes the computational overhead. 
+
+5.1 Self-Conditioned GRPO Teacher construction For a rollout oi with prefix states si,t = ( x, o i,<t ) and a verified trajectory τ ∈C(x) , we instantiate the self-conditioned teacher 
+
+eπθ(· | si,t , τ ) via Eq. (4) , where τ appears only in the teacher’s system prompt. Appendix E provide the complete prompt templates. Both teacher and student are scored on the same prefix oi,<t of oi.At each response token, we compute the forward Figure 2: Overview of SC-GRPO. We construct a self-conditioned teacher by conditioning the model on a reference trajectory, compute token-level KL divergence, and use it to weight the GRPO gradient. 
+
+KL from teacher to student: 
+
+Di,t = KL( eπθ(· | si,t , τ ) ∥ πθ(· | si,t )) .
+
+KL weighting We map each Di,t to a bounded weight f (Di,t ) ∈ [0 , 1) to modulate the GRPO gradient: tokens with small KL are downweighted, while tokens with large KL are preserved. We map each Di,t to a bounded weight via 
+
+f (Di,t ) = Di,t 
+
+Di,t + c ,c = max( P75 (Dact ), c min ) ,
+
+where Dact is the set of active token KL values in the current micro-batch, P75 denotes its 75th percentile, and cmin > 0 is a small floor. We use 
+
+P75 instead of median because token-level KL is sparse (most tokens have near-zero KL). P75 en-sures low-KL tokens are suppressed while high-KL tokens are preserved. We visualize and analyze the KL distribution and weighting function in Ap-pendix C.3 and Appendix C.4. A detailed case study is provided in Appendix D. 
+
+Group routing The reference trajectory τ and ad-vantage ˆAi are selected based on the group’s solve pattern. Partial-solve groups have both correct and incorrect rollouts, allowing us to use verified trajec-tories as references. Solve-none groups have zero GRPO gradient, so we extract exploration signal via diversity. Partial-solve groups ( 2 ≤ nc < G ): For each rollout oi, we sample a verified trajectory τ ∈ C (x)
+
+uniformly (with τ̸ = oi when oi ∈ C (x)). We use the GRPO advantage ˆAi in Eq. (1). Solve-none groups ( nc = 0 ): We sample one rollout or uniformly as reference. For each remain-ing rollout oi (i̸ = r), we compute KL against the reference-conditioned teacher. The average KL weight over the reference-length prefix becomes a diversity score: 
+
+si = 1
+
+LiLiX
+
+> t=1
+
+f (Di,t ), Li = min( |oi|, |or|),
+
+where Li truncates at the reference length. Since the reference itself is a failed trajectory, we apply stricter supervision to prevent reward hacking: to-kens beyond the reference would have artificially high KL and inflate diversity scores for longer roll-outs. Scores are normalized within the group to form a pseudo-advantage: 
+
+ˆAdiv  
+
+> i
+
+= si − mean( {sk}Gk=1 )std( {sk}Gk=1 ) + ϵ , (5) which replaces ˆAi with α ˆAdiv  
+
+> i
+
+in the SC-GRPO objective. Since all rollouts failed which bring zero GRPO advantage, this diversity signal encourages exploring new modes rather than repeating com-mon ones. Fallback ( nc = 1 or nc = G): Standard GRPO (no KL weighting). SC-GRPO optimizes the weighted GRPO objec-tive: 
+
+JSC -GRPO (θ) = E
+
+h 1
+
+> GG
+
+X
+
+> i=1 1
+> |oi||oi|
+
+X
+
+> t=1
+
+f (Di,t ) min  ρi,t ˆAi, clip( ρi,t , 1−ϵ, 1+ ϵ) ˆAi
+
+i
+
+,
+
+where ρi,t = πθ(oi,t | si,t )/π θold (oi,t | si,t ) is the importance ratio, ˆAi is the advantage (GRPO advantage from Eq. (1) for partial-solve groups, α ˆAdiv  
+
+> i
+
+from Eq. (5) for solve-none groups). The KL weight f (Di,t ) is applied symmetrically: both correct and incorrect rollouts are downweighted at low-KL tokens, regardless of their advantage sign. LiveCode  
+
+> Bench
+> DAPO
+> Math
+> 0
+> 10
+> 20
+> 30
+> 40
+> Time (s)
+> +51%
+> +37%
+> Actor Update Time
+> LiveCode
+> Bench
+> DAPO
+> Math
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> Time (s)  +13%
+> +2%
+> End-to-End Step Time
+> GRPO SC-GRPO
+
+Figure 3: Timing overhead of SC-GRPO vs. GRPO. 
+
+Mean per-step wall-clock time (seconds) across training steps. 
+
+5.2 Computational Overhead 
+
+SC-GRPO adds a single new operation compared to GRPO: a teacher forward pass for per-token KL weighting. As shown in Figure 3, this makes the ac-tor update 51% slower on LiveCodeBench and 37% slower on DAPO-Math, but end-to-end step time grows by only 13% and 2% respectively, since roll-out generation dominates total latency. Combined with the gains in Section 6.3, this confirms that SC-GRPO’s improvements come from better use of existing rollouts rather than additional compute. 
+
+6 Experiments 
+
+6.1 Setup Tasks We train and evaluate on RLVR tasks span-ning mathematical reasoning, code generation, and multi-turn agentic interaction. ( i) Math : we train on DAPO-Math-17k (Yu et al., 2026) and evalu-ate on AIME 2024 & 2025. (ii ) Code : we use LiveCodeBench v6 (Jain et al., 2025) (LCB), hold-ing out half of each problem’s unit tests for train-ing and using the rest for evaluation. (iii ) App-World (Trivedi et al., 2024), ( iv ) WebShop (Yao et al., 2022). For both AppWorld and WebShop, we train and evaluated on the official splits. All runs share the same base model, Qwen3-8B with thinking disabled (Yang et al., 2025). Full per-task settings are detailed in Appendix B.1. 
+
+Metrics For each query we sample eight trajecto-ries and report two metrics: Avg@8 , the mean veri-fier reward across the eight samples; and Pass@8 ,the fraction of queries solved by at least one of the eight samples. 
+
+6.2 Baselines 
+
+We compare SC-GRPO against two families of baselines, all sharing the same base model, training data, rollouts-per-prompt, and step budget as our method. 
+
+Reinforcement learning GRPO (Guo et al., 2025) is the canonical RLVR algorithm. 
+
+DAPO (Yu et al., 2026) is a stronger GRPO variant incorporating decoupled clipping, dynamic sampling, and token-level loss normalization. 
+
+REINFORCE++ (Hu et al., 2025) simplifies PPO by removing the critic and shaping rewards with per-token KL penalties. 
+
+OPSD with external demonstrations Following Zhao et al. (2026), we report OPSD baselines that supply the teacher with demonstrations τ produced by external LLMs and train student with the same OPSD objective. We consider three demonstration sources of progressively higher quality: MiniMax-M2.7 1, DeepSeekv4-Pro (DeepSeek-AI, 2026), and Oracle , which obtain as many correct solutions as possible, simulating access to all reference solu-tions. Details and prompt templates are provided in Appendix B.2. 
+
+6.3 Main Results SC-GRPO consistently outperforms all base-lines. Across all five benchmarks (Table 1), SC-GRPO achieves the highest Avg@8 and Pass@8, outperforming DAPO by 5.86% and 8.92% respec-tively. The largest improvements appear on multi-turn agentic tasks, where credit assignment over long horizons is most challenging. We provide detailed training dynamics in Appendix C. 
+
+REINFORCE++ exhibits unstable performance across tasks. Despite also operating at the token level, REINFORCE++ shows inconsistent results: competitive on code generation but significantly weaker on mathematical reasoning, and collapsing on multi-turn agentic tasks. We analyze the train-ing dynamics in Appendix B.4. This instability highlights that removing the critic sacrifices robust-ness across diverse task structures. In contrast, SC-GRPO remains stable across all five benchmarks. 
+
+External demonstrations do not reliably help. 
+
+The three OPSD variants all stay close to the                                                                                                                  
+
+> 1https://huggingface.co/MiniMaxAI/MiniMax-M2.7 Method AIME24 AIME25 LCB v6 AppWorld WebShop Avg. Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Pass@8 Avg@8 Pass@8
+> Qwen3-8B 25.41 46.67 18.75 30.00 26.33 35.11 9.65 26.31 8.13 14.00 17.65 30.42
+> Reinforcement Learning
+> GRPO 41.67 70.00 34.16 50.00 39.59 43.51 12.50 33.33 68.93 69.40 39.37 53.25 DAPO 43.75 70.00 37.91 53.33 40.74 44.27 13.99 33.33 71.50 75.00 41.58 55.19 REINFORCE++ 18.33 26.67 16.25 30.00 39.69 44.27 ––––––
+> On-Policy Self Distillation with External Demonstrations
+> MiniMax-M2.7 †29.17 50.00 19.58 36.67 26.05 35.88 9.87 35.08 11.40 20.00 19.21 35.53 DeepSeekv4-Pro †33.75 56.67 22.08 33.33 26.05 35.88 9.43 29.82 9.88 16.80 20.24 34.50 Oracle 33.75 56.67 22.08 33.33 25.38 36.64 9.43 31.57 10.38 21.60 20.20 35.96
+> Ours
+> SC-GRPO 51.67 80.00 42.08 63.33 43.22 48.85 22.36 49.12 77.88 79.25 47.44 64.11
+
+Table 1: Main results. We report Avg@8 and Pass@8 across five RLVR benchmarks. † External LLM that generates demonstration trajectories for OPSD. Oracle collects as many correct demonstrations as possible by extending the thinking budget. Bold indicates the best result, underline indicates the second-best. 
+
+Qwen3-8B base model, substantially below the RL baselines. Unexpectedly, Oracle fails to outper-form DeepSeekv4-Pro and even underperforms the base model on LCB, suggesting that demonstration quantity and quality are not the bottleneck. These results indicate that OPSD constructed from exter-nal demonstrations provides an unreliable training signal, as we demonstrate in §4.2. SC-GRPO ad-dresses this by drawing the teacher trajectory from the model’s own verifier-approved rollouts, achiev-ing substantially stronger performance. 
+
+7 Analysis 
+
+In this section, we conduct a comprehensive anal-ysis to answer the following research questions: 
+
+RQ1: Why must the KL signal be a weight rather than a loss? (§7.1) RQ2: Which design choices within SC-GRPO matter most? (§7.2) RQ3: Do the gains transfer out of domain? (§7.3) 
+
+7.1 RQ1: Additive Loss 
+
+A natural alternative to SC-GRPO is to add the self-conditioned teacher’s KL divergence as an auxiliary distillation loss: LGRPO + β Ldistill . We test For-ward KL, Reverse KL (both with fixed β = 0 .1
+
+and linear warm-up β : 0 .03 → 0.1), and Bidirec-tional KL (combining both directions with comple-mentary coefficients). Table 2 shows that all five variants underperform SC-GRPO. Following Li et al. (2026), we compare SC-GRPO against OPD under two configurations (Fig-ure 4). The left panel (Qwen3-1.7B-Base stu-dent, Qwen3-4B-Base teacher) represents a failing 
+
+Variant Avg@8 Pass@8 
+
+GRPO 39.59 43.51 SC-GRPO [ours] 43.22 48.85 1. Forward KL loss 
+
+β = 0 .1 38.35 41.98 
+
+β : 0 .03 → 0.1 36.35 38.16 
+
+2. Reverse KL loss 
+
+β = 0 .1 36.06 38.93 
+
+β : 0 .03 → 0.1 39.11 41.98 
+
+3. Bidirectional KL loss 
+
+βfwd =0 .1−βrev , βrev : 0 .03 →0.1 34.35 36.64 
+
+Table 2: Using additive distillation loss results on LiveCodeBench v6. All variants use the same self-conditioned teacher and optimize LGRPO + β Ldistill .
+
+OPD setting, the right panel (DeepSeek-R1-Distill-Qwen-1.5B (Guo et al., 2025) student, JustRL-DeepSeek-1.5B (He et al., 2025) teacher) repre-sents a successful setting. Hyperparameters are detailed in Appendix B.3. Figure 4 shows that SC-GRPO consistently outperforms OPD in both set-tings. When OPD fails (left), SC-GRPO achieves 23% improvement, when OPD succeeds (right), SC-GRPO still outperforms OPD on both AIME tasks, while requiring no external teacher. 
+
+7.2 RQ2: Ablation Study 
+
+We validate the three core design choices in SC-GRPO (Table 3). 
+
+A1 Group Routing The KL weighting is de-signed to operate where meaningful contrast ex-ists. Partial-solve groups ( 2 ≤ nc < G ) pro-vide such contrast and benefit from KL weight-AIME24 AIME25     
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Avg@8
+> -85%
+> +23%
+> -90%
+> +35%
+> Qwen3-4B as Teacher
+> AIME24 AIME25
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Avg@8
+> +14% +17%
+> -7% -3%
+> JustRL-1.5B as Teacher
+> Student Base OPD SC-GRPO
+
+Figure 4: Comparison with OPD on AIME. We com-pare SC-GRPO against OPD using two student models on AIME 24 & 25. Percentages show relative gain over the student baseline.                                      
+
+> Variant Avg@8 Pass@8 A1. Which groups receive KL weighting?
+> Partial-solve ( 2≤nc≤7)41.41 45.80 Partial + solve-none ( {0}∪ [2 ,7] )[ours] 43.22 48.85
+> Any partial ( 1≤nc≤7)38.55 41.98 All-correct only ( nc=8 )40.17 42.74 All groups 36.64 42.75
+> A2. Threshold c f (KL) = KL /(KL + c)
+> Adaptive: max( p75 ,10 −4)[ours] 43.22 48.85
+> Fixed: c= 10 −442.93 48.09 Adaptive: p50 41.98 45.03
+> A3. Diversity coefficient αα= 0 .1[ours] 43.22 48.85
+> α= 0 .240.74 45.80
+
+Table 3: Ablation study on LiveCodeBench v6. nc =number of correct rollouts. p50 /p75 denote the 50th/75th percentile of token-level KL values in the current batch. 
+
+ing. Adding solve-none groups ( nc = 0 ) brings further improvement, as the diversity signal recov-ers useful updates from otherwise zero-gradient groups. Including single-correct groups ( nc = 1 )violates the design premise: the single verified tra-jectory dominates the KL signal, causing entropy collapse. Including all-correct groups ( nc = G)similarly fails: without incorrect rollouts for con-trast, self-conditioned teacher cannot separate criti-cal decision points from routine tokens. Covering all groups combines both failure modes and drops below GRPO. 
+
+A2 Normalization threshold The threshold 
+
+c separates the informative high-KL tail from the uninformative majority (visualization in Ap-pendix C.3). When c = p50 (median), the heav-ily right-skewed KL distribution pushes c below 
+
+10 −4, making f (KL) ≈ 1 for nearly all tokens and reducing to uniform weighting. Using c =max( p75 , 10 −4) achieves the intended separation: 
+
+p75 suppresses the low-KL majority while the floor Avg@8 Pass@8 Avg@8 Pass@8    
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Score
+> +6.1%
+> +10.3%
+> +5.2%
+> -1.6%
+> LCB v6 (In-Domain) Codeforces (OOD)
+> Qwen3-8B DAPO SC-GRPO
+
+Figure 5: In-Domain vs. OOD performance. Models trained on LiveCodeBench are evaluated on Codeforces. 
+
+prevents collapse when the entire batch has near-zero KL. A fixed constant achieves comparable performance but requires per-task calibration; p75 
+
+with floor is adaptive and hyperparameter-free. 
+
+A3 Diversity coefficient The diversity signal re-wards exploration rather than correctness, so it should serve as a weak exploration signal that does not override the reward gradient. The ablation con-firms this: α=0 .1 provides sufficient pressure to break repeated failure patterns, while α=0 .2 lets the exploration signal compete with the RL objec-tive and degrades performance. 
+
+7.3 RQ3: Out-of-Domain Performance 
+
+Both SC-GRPO and DAPO are trained exclusively on LiveCodeBench and evaluated on Codeforces without domain-specific fine-tuning. Figure 5 shows that SC-GRPO retains its advantage, achiev-ing 5.2% relative gain on Avg@8 (nearly identi-cal to the 6.1% in-domain gain on LCB v6) while maintaining comparable Pass@8. The consistent improvement across domains suggests that SC-GRPO’s gains stem from improved credit assign-ment rather than overfitting. 
+
+8 Conclusion 
+
+We propose SC-GRPO, a token-level credit assign-ment method for RLVR. By constructing a self-conditioned teacher from the model’s own verified rollouts and measuring token-level KL divergence, SC-GRPO assigns fine-grained credit to each to-ken. This KL signal is used as a per-token weight on the GRPO gradient, eliminating sensitivity to divergence form choice and requiring no external resources beyond what RLVR already provides. Experiments show that SC-GRPO consistently out-performs GRPO and other baseline with minimal computational overhead, demonstrating the effec-tiveness and robustness of SC-GRPO. Limitations 
+
+Due to computational resource constraints, our ex-periments are limited to models up to 8B parame-ters and response lengths up to 12288 tokens. The effectiveness of SC-GRPO on larger models and longer responses remains to be explored. Simi-larly, resource limitations restrict our evaluation to models operating in standard reasoning mode. The applicability of SC-GRPO to extended think-ing modes (e.g., chain-of-thought with explicit rea-soning steps, multi-turn refinement) or structured output formats remains unexplored. 
+
+Ethics Statement 
+
+This work focuses on improving token-level credit assignment in reinforcement learning with veri-fiable rewards. All LLMs, RL frameworks, and datasets used in our experiments are publicly avail-able and used in accordance with their respective licenses. As a training algorithm, SC-GRPO does not introduce new ethical concerns 
+
+References 
+
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Pi-otr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. 2024. On-policy distillation of language models: Learning from self-generated mistakes. In The twelfth international conference on learning representations .Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Yuchen Zhang, Jiacheng Chen, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, and 1 others. 2025. Pro-cess reinforcement through implicit rewards. arXiv preprint arXiv:2502.01456 .DeepSeek-AI. 2026. Deepseek-v4: Towards highly efficient million-token context intelligence. Ken Ding. 2026. Hdpo: Hybrid distillation policy optimization via privileged self-distillation. arXiv preprint arXiv:2603.23871 .Jiaxuan Gao, Shusheng Xu, Wenjie Ye, Weilin Liu, Chuyi He, Wei Fu, Zhiyu Mei, Guangju Wang, and Yi Wu. 2024. On designing effective rl reward at training time for llm reasoning. arXiv preprint arXiv:2410.15115 .Yuxian Gu, Hao Zhou, Fandong Meng, Jie Zhou, and Minlie Huang. 2024. Miniplm: Knowledge distilla-tion for pre-training language models. In The Thir-teenth International Conference on Learning Repre-sentations .Xinyu Guan, Li Lyna Zhang, Yifei Liu, Ning Shang, Youran Sun, Yi Zhu, Fan Yang, and Mao Yang. rstar-math: Small llms can master math reasoning with self-evolved deep thinking. In Forty-second Interna-tional Conference on Machine Learning .Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhu-oshu Li, Ziyi Gao, Aixin Liu, and 175 others. 2025. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081):633–638. Yiran Guo, Lijie Xu, Jie Liu, Dan Ye, and Shuang Qiu. 2026. Segment policy optimization: Effective segment-level credit assignment in rl for large lan-guage models. Advances in Neural Information Pro-cessing Systems , 38:114399–114431. Bingxiang He, Zekai Qu, Zeyuan Liu, Yinghao Chen, Yuxin Zuo, Cheng Qian, Kaiyan Zhang, Weize Chen, Chaojun Xiao, Ganqu Cui, and 1 others. 2025. Justrl: Scaling a 1.5 b llm with a simple rl recipe. arXiv preprint arXiv:2512.16649 .Bowei He, Minda Hu, Zenan Xu, Hongru Wang, Licheng Zong, Yankai Chen, Chen Ma, Xue Liu, Pluto Zhou, and Irwin King. 2026a. Search-r2: En-hancing search-integrated reasoning via actor-refiner collaboration. Preprint , arXiv:2602.03647. Yuhang He, Haodong Wu, Siyi Liu, Hongyu Ge, Hange Zhou, Keyi Wu, Zhuo Zheng, Qihong Lin, Zixin Zhong, and Yongqi Zhang. 2026b. Rethinking token-level credit assignment in rlvr: A polarity-entropy analysis. arXiv preprint arXiv:2604.11056 .Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 .Jian Hu, Jason Klein Liu, Haotian Xu, and Wei Shen. 2025. Reinforce++: Stabilizing critic-free policy optimization with global advantage normalization. 
+
+Preprint , arXiv:2501.03262. Jonas Hübotter, Frederike Lübeck, Lejs Behric, An-ton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, and 1 others. 2026. Reinforce-ment learning via self-distillation. arXiv preprint arXiv:2601.20802 .Naman Jain, Alex Gu, Wen-Ding Li, Fanjia Yan, Tian-jun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica. 2025. Livecodebench: Holistic and contamination free evaluation of large language models for code. In International Con-ference on Learning Representations , volume 2025, pages 58791–58831. Gurusha Juneja, Deepak Nathani, and William Yang Wang. 2025. Adversarial training for process reward models. arXiv preprint arXiv:2511.22888 .Jongwoo Ko, Sungnyun Kim, Tianyi Chen, and Se-Young Yun. 2024. Distillm: Towards streamlined distillation for large language models. In Forty-first International Conference on Machine Learning .Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan ang Gao, Wenkai Yang, Zhiyuan Liu, and Ning Ding. 2026. Rethinking on-policy distillation of large lan-guage models: Phenomenology, mechanism, and recipe. Preprint , arXiv:2604.13016. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2023. Let’s verify step by step. Preprint ,arXiv:2305.20050. Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. Understanding r1-zero-like training: A critical per-spective. In Second Conference on Language Model-ing .Idan Shenfeld, Mehul Damani, Jonas Hübotter, and Pulkit Agrawal. 2026. Self-distillation enables con-tinual learning. Preprint , arXiv:2601.19897. Makoto Shing, Kou Misaki, Han Bao, Sho Yokoi, and Takuya Akiba. Taid: Temporally adaptive interpo-lated distillation for efficient knowledge transfer in language models. In The Thirteenth International Conference on Learning Representations .Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. 2024. Appworld: A controllable world of apps and people for benchmarking interactive coding agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 16022–16076. Guanghui Wang, Zhiyong Yang, Zitai Wang, Shi Wang, Qianqian Xu, and Qingming Huang. 2025a. Abkd: Pursuing a proper allocation of the probability mass in knowledge distillation via α-β-divergence. In In-ternational Conference on Machine Learning , pages 65167–65212. PMLR. Guoqing Wang, Sunhao Dai, Guangze Ye, Zeyu Gan, Wei Yao, Yong Deng, Xiaofeng Wu, and Zhenzhe Ying. 2025b. Information gain-based policy opti-mization: A simple and effective approach for multi-turn llm agents. arXiv preprint arXiv:2510.14967 .Haoxiang Wang, Wei Xiong, Tengyang Xie, Han Zhao, and Tong Zhang. 2024a. Interpretable preferences via multi-objective reward modeling and mixture-of-experts. In EMNLP .Hongru Wang, Cheng Qian, Wanjun Zhong, Xiusi Chen, Jiahao Qiu, Shijue Huang, Bowen Jin, Mengdi Wang, Kam-Fai Wong, and Heng Ji. 2025c. Acting less is reasoning more! teaching model to act efficiently. 
+
+Preprint , arXiv:2504.14870. Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Yu Wu, and Zhifang Sui. 2024b. Math-shepherd: Verify and reinforce llms step-by-step without human annotations. In Proceed-ings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-pers) , pages 9426–9439. Can Xie, Ruotong Pan, Xiangyu Wu, Yunfei Zhang, Jiayi Fu, Tingting Gao, and Guorui Zhou. 2025. Un-locking exploration in rlvr: Uncertainty-aware advan-tage shaping for deeper reasoning. arXiv preprint arXiv:2510.10649 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Day-iheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, and 41 others. 2025. Qwen3 technical report. Preprint ,arXiv:2505.09388. Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. 2026. Self-distilled rlvr. 
+
+Preprint , arXiv:2604.03128. Jiashu Yao, Heyan Huang, Shuang Zeng, Chuwei Luo, Wangjie You, Jie Tang, Qingsong Liu, Yuhang Guo, and Yangyang Kang. 2026. Incorporating self-rewriting into large language model reasoning rein-forcement. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 34405– 34413. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. Webshop: Towards scalable real-world web interaction with grounded language agents. 
+
+Advances in Neural Information Processing Systems ,35:20744–20757. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, and 1 others. 2026. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38:113222–113244. Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. 2026. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 .Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, and 1 others. 2025. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 .A Derivation for Direct OPSD in RLVR 
+
+This section formalizes why directly adapting OPSD in the standard RLVR setting induces a token-level target mismatch. We fix a query x, a student rollout prefix oi,<t , and analyze the induced distribution over the next token. 
+
+A.1 Setup 
+
+Following Section 3, for a query x let {oi}Gi=1 ∼
+
+πθold (· | x) be the sampled response group, and let 
+
+r(x, o i) ∈ { 0, 1} be the verifier reward. The set of verifier-approved responses is 
+
+C(x) := { oi : r(x, o i) = 1 , i = 1 , . . . , G }.
+
+(A.1) Fix a student response oi and token position t, and let the prefix state be si,t := ( x, o i,<t ). The student next-token distribution is 
+
+πθ(· | si,t ) = πθ(· | x, o i,<t ). (A.2) For each verifier-approved response τj ∈ C (x),direct OPSD constructs a self-conditioned teacher by additionally conditioning the same model on τj :
+
+eπθ(· | si,t , τ j ) := sg[ πθ(· | x, τ j , o i,<t )] .
+
+(A.3) Let μx denote a selection distribution over C(x)
+
+that specifies which verifier-approved response is used as the privileged context (e.g., uniform over 
+
+C(x)). The stop-gradient operator sg[ ·] indicates that the self-conditioned teacher is treated as a fixed target for the current update, and gradients do not backpropagate through teacher logits. We further assume all distributions are defined over a common finite vocabulary V with shared support, which is satisfied by standard softmax LLM outputs. 
+
+A.2 Forward-KL Direct OPSD 
+
+We use forward KL as a representative distillation objective and analyze direct OPSD pointwise at a single prefix. 
+
+Notation. Fix a query x, a student rollout oi, and a token position t, with prefix state si,t = ( x, o i,<t ).Throughout this subsection we suppress the depen-dence on (i, t ) and write 
+
+q := πθ(· | si,t ),pj := eπθ(· | si,t , τ j ), τj ∈ C (x). (A.4) Here q is the student next-token distribution and each pj is a self-conditioned teacher distribution (treated as a fixed target via stop-gradient). All quantities are distributions over the vocabulary V,for a distribution p and a token y ∈ V , p(y) ∈ [0 , 1] 
+
+denotes the probability assigned to y.The direct OPSD loss at this prefix is 
+
+ℓOPSD (q) := Ej∼μx
+
+DKL 
+
+ pj ∥ q , (A.5) and the μx-averaged teacher distribution is the per-token weighted average 
+
+¯p(y) := X
+
+> j
+
+μx(j) pj (y), y ∈ V . (A.6) Inserting ¯p(y) into the log ratio in Eq. (A.5) and using Ej [pj (y)] = ¯ p(y) yields 
+
+ℓOPSD (q) = Ej∼μx
+
+X
+
+> y∈V
+
+pj (y) log pj (y)
+
+> q(y)
+
+= Ej∼μx
+
+X
+
+> y∈V
+
+pj (y) log pj (y)¯p(y)
+
++ Ej∼μx
+
+X
+
+> y∈V
+
+pj (y) log ¯p(y)
+
+> q(y)
+
+= Ej∼μx DKL 
+
+ pj ∥ ¯p
+
++ X
+
+> y∈V
+
+¯p(y) log ¯p(y)
+
+> q(y)
+
+= Ej∼μx DKL 
+
+ pj ∥ ¯p| {z }  
+
+> Ddisagree ≥0
+
++ DKL 
+
+ ¯p ∥ q.
+
+(A.7) where the expectation is over j ∼ μx and the sums are over y ∈ V . The first term Ddisagree ≥ 0 quan-tifies how much the self-conditioned teachers {pj }
+
+disagree with each other at this prefix: it is zero exactly when all pj coincide, and grows as they spread apart. Equivalently, when μx is uniform, 
+
+Ddisagree is the generalized Jensen–Shannon diver-gence of {pj }.The disagreement term Ddisagree measures how much the self-conditioned teachers disagree at this prefix, crucially, it is constant in q. The only q-dependent term is DKL (¯ p ∥ q) ≥ 0, with equality if and only if q = ¯ p. Hence the unconstrained pointwise minimizer of Eq. (A.5) is 
+
+q⋆ = ¯p. (A.8) Direct forward-KL OPSD does not target any particular verified trajectory’s local continuation, it targets the average ¯p of the self-conditioned teacher distributions. The disagreement term Ddisagree 
+
+shows that different verified trajectories can induce genuinely different local continuations, but this disagreement does not influence the optimizer be-cause it is constant in q. In a parametric policy class, the update can be viewed as projecting the student toward this average, an average that need not correspond to any single feasible trajectory. 
+
+A.3 Reverse-KL Variant 
+
+The previous analysis is specific to forward KL. We now repeat the pointwise analysis for the reverse-KL variant of direct OPSD, using the same notation (q, p j , μ x) as in Appendix A.2. The reverse-KL direct OPSD loss at the prefix 
+
+si,t is 
+
+ℓOPSD (q) := Ej∼μx
+
+DKL 
+
+ q ∥ pj
+
+ . (A.9) Unfolding the KL by definition and using the linearity of expectation in j:
+
+ℓOPSD (q) = Ej
+
+X
+
+> y∈V
+
+q(y) log q(y) 
+
+> pj(y)
+
+= X
+
+> y∈V
+
+q(y) log q(y)
+
+− X
+
+> y∈V
+
+q(y) Ej [log pj (y)] ,
+
+(A.10) Minimizing Eq. (A.10) over q subject to P 
+
+> y
+
+q(y) = 1 , we form the Lagrangian 
+
+L(q, λ ) = X
+
+> y
+
+q(y) log q(y)
+
+− X
+
+> y
+
+q(y) Ej [log pj (y)] + λ X
+
+> y
+
+q(y) − 1
+
+!
+
+,
+
+(A.11) where λ is the Lagrange multiplier for the normal-ization constraint. Setting ∂L/∂q (y) = 0 yields the stationarity condition 
+
+log q(y) + 1 − Ej [log pj (y)] + λ = 0 , (A.12) which gives q(y) ∝ exp  Ej [log pj (y)] . Enforcing the normalization constraint yields 
+
+q⋆(y) = exp  Ej [log pj (y)] P 
+
+> y′∈V
+
+exp  Ej [log pj (y′)]  . (A.13) Equivalently, q⋆ is the normalized weighted geo-metric mean of the teacher distributions: 
+
+q⋆(y) ∝ Y
+
+> j
+
+pj (y)μx(j). (A.14) 
+
+Interpretation Reverse-KL direct OPSD re-places the per-token arithmetic average ¯p from the forward-KL case (Eq. (A.8) ) with a normalized 
+
+geometric average of the self-conditioned teacher distributions. The two averages have very differ-ent behavior: the geometric mean q⋆(y) is large only when every pj (y) is non-negligible, so reverse KL exhibits mode-seeking behavior, concentrating mass on tokens that all teachers find plausible. The arithmetic mean ¯p(y), in contrast, is large whenever 
+
+any pj (y) is large, exhibiting mode-covering be-havior. Despite this difference, the overall conclu-sion is the same: changing the divergence merely changes the form of averaging, but the optimiza-tion target is still constructed from self-conditioned teacher distributions. 
+
+A.4 Summary: Why Direct OPSD Fails in RLVR 
+
+Combining Appendices A.2 and A.3, we obtain a unified characterization of direct OPSD at any prefix si,t .
+
+Pointwise minimizers under different diver-gences. Let {pj }j denote the self-conditioned teacher distributions induced by verifier-approved trajectories τj ∈ C (x), weighted by the selection rule μx. Then the pointwise minimizer of direct OPSD takes the form 
+
+q⋆(y) = 
+
+X
+
+> j
+
+μx(j) pj (y) (forward KL), 
+
+Q 
+
+> j
+
+pj (y)μx(j)
+
+P
+
+> y′
+
+Q 
+
+> j
+
+pj (y′)μx(j) (reverse KL), (A.15) a weighted arithmetic average and a normalized weighted geometric average of the teachers, respec-tively. 
+
+Three structural problems. Eq. (A.15) exposes three problems that arise regardless of the choice of divergence: 
+
+The optimization target is an average, not a trajectory. Both minimizers are constructed by combining multiple self-conditioned teachers. Even if every individual pj corresponded to a valid local continuation of τj , the average q⋆ generally does not correspond to any single feasible trajec-tory. The student is trained to imitate a synthetic distribution that no verified rollout actually instan-tiates. 
+
+Disagreement between teachers carries infor-mation, but the loss discards it. The forward-KL decomposition in Eq. (A.7) contains the disagree-ment term Ddisagree ≥ 0, which measures how much the teachers {pj } disagree about the next token at the current prefix. This quantity is large precisely at prefixes where different verified tra-jectories branch into different continuations—for example, a math prefix “ Solve 2x + 4 = 10 ,so ” where one verified trajectory continues with “2x = 6 ” while another continues with “ subtract 4 from both sides ”. Such prefixes are arguably the most informative ones for the student: they mark decision points where multiple valid continu-ations exist. Yet because Ddisagree does not depend on q, it contributes nothing to the gradient. As far as the loss is concerned, a prefix with strong teacher disagreement is treated identically to a prefix where all teachers agree. Direct OPSD therefore uses the disagreement signal only implicitly , through how it perturbs the average ¯p, and never as a per-token quantity that could focus learning on these branch points. 
+
+The teacher is not a verifier-defined ground truth. Each pj is constructed by conditioning the student on a single verifier-approved trajectory τj .As discussed in Section 5, τj certifies only end-task success and may contain redundant, lucky, or even flawed reasoning. Treating pj as a distillation target therefore propagates whatever artifacts τj contains into the student, weighted equally with genuinely informative predictions. 
+
+Implication. The three problems above are not artifacts of a particular divergence choice or selec-tion rule μx: they follow directly from the struc-tural fact that direct OPSD uses self-conditioned teachers as distillation targets . Any objective that asks the student to move toward {pj } in distribution will inherit some form of Eq. (A.15) , and hence in-herit (P1)–(P3). 
+
+B Experiment Details 
+
+B.1 Training Details 
+
+Table 4 summarizes the training settings for each task. All experiments use Qwen3-8B (thinking disabled) as the base model. For mathematical reasoning (AIME 24&25), we randomly sample 4,000 problems from DAPO-Math-17k (Yu et al., 2026). For code generation (LCB v6), we randomly sample half of the unit tests per problem in Live-CodeBench v6 (Jain et al., 2025) as our training set and reserve the other half for evaluation. For App-World (Trivedi et al., 2024), we train on the official training split. For WebShop (Yao et al., 2022), we randomly sample 2,400 tasks from the training split. All runs use 8 rollouts per prompt, a batch size of 8 prompts per update, and a learning rate of 1 × 10 −6.We conducted experiments using an 8-node cluster. Each node was equipped with 8 NVIDIA A100 80GB GPUs, 144-core AMD EPYC 7713 proces-sors, and 960 GB of RAM, running Ubuntu as the operating system. 
+
+B.2 OPSD Details 
+
+We follow the OPSD framework of Zhao et al. (2026). In the original formulation, the teacher is conditioned on the ground-truth answer y∗ (e.g., an answer with reference chain-of-thought), and the training objective minimizes the per-token di-vergence between the privileged teacher and the student along the student’s own rollouts: 
+
+LOPSD (θ) = Ex, ˆy∼πθ (·| x)
+
+ 1
+
+|ˆy|
+
+> |ˆy|
+
+X
+
+> t=1
+
+D ptT ptS
+
+ ,
+
+where ptT = πθ(· | x, y ∗, ˆy<t ),ptS = πθ(· | x, ˆy<t ).
+
+Demonstration Acquisition The key require-ment of OPSD is a ground-truth answer y∗ to serve as the teacher’s privileged context. How y∗ is ob-tained depends on whether ground-truth answers are available. 
+
+Math (DAPO-Math-17k). Ground-truth an-swers are available, so we directly use them as the privileged context y∗ to construct the self-conditioned teacher. To simulate varying teacher quality, we sample 500 questions and measure each external LLM’s accuracy; we then provide ground-truth to a corresponding fraction of training queries (matching that model’s coverage rate). Oracle pro-vides ground truth to 100% of queries. 
+
+Code generation (LCB v6), AppWorld, and WebShop. No ground-truth solutions exist. We instead query each teacher LLM up to 3 times per query and retain any correct trajectory (verified by execution) as the demonstration τ . Per-model coverage is reported in Table 5. 
+
+Training Hyperparameters All OPSD experi-ments use Qwen3-8B as the base model and train LoRA adapters with bfloat16 precision. Following (Zhao et al., 2026), we use LoRA rank r = 64 
+
+and scaling factor α = 128 on all attention and MLP projection layers ( q_proj , k_proj , v_proj ,Task Training Data Size Max Resp. Len LR Steps 
+
+AIME 24&25 DAPO-Math-17k 4000 8192 1e-6 500 LCB v6 LiveCodeBench v6 131 8192 1e-6 320 AppWorld AppWorld 90 12288 1e-6 110 WebShop WebShop 2400 8192 1e-6 300 
+
+Table 4: Training settings for each task. “Size” denotes the number of training set size. “Max Resp. Len” is the maximum response length in tokens.                 
+
+> Teacher Source DAPO-Math LCB v6 WebShop AppWorld
+> MiniMax-M2.7 93.60 46.56 43.38 70.00 DeepSeekv4-Pro 97.80 67.94 50.21 78.89 Oracle 100.00 79.39 64.13 86.67
+
+Table 5: OPSD teacher coverage (%, 3 attempts). For each query, we sample up to three attempts and retain any correct trajectory as the demonstration. Math uses ground-truth answer verification; code and agentic tasks use execution-based verifiers. 
+
+o_proj , gate_proj , up_proj , and down_proj ). We optimize with learning rate 1 × 10 −6, gradient clipping at 1.0, per-device batch size 1, gradient accumulation 2, and 8 training processes, yielding an effective batch size of 16. For OPSD, we use a fixed teacher, β = 0 , λ = 1 , temperature 1.0, top-
+
+p = 0 .95 , and token-level JSD clipping threshold 0.05. 
+
+OPSD Prompt The student prompt for each task follows that used in our main experiments. The teacher prompt injects a reference/answer block as privileged context. Below we show the teacher-specific prompt for each task type.         
+
+> Math Teacher Prompt
+> Problem: {problem}
+> The correct answer to this problem is: \boxed{{answer}}.
+> Now derive a complete step-by-step solution that arrives at this answer. Think carefully and show all reasoning. Put your final answer within \boxed{}.
+> Code (LCB) Teacher Prompt
+> {Standard LiveCodeBench SYSTEM PROMPT}
+> Here is a reference solution that passes all test cases:
+> ``` python
+> {reference solution}
+> ```
+> Hyperparameter Training Inference Max prompt length 4096 1024 Max response length 7168 31744 Thinking Mode False True
+
+Table 6: Training and inference hyperparameters used for the OPD comparison experiment (Figure 4).   
+
+> Now solve the problem yourself. Think step by step, write clean Python code, and put your final solution in a ``` python ``` code block.
+> WebShop Teacher Prompt
+> {Standard WebShop SYSTEM PROMPT}
+> Here is a reference trajectory that successfully completed this task: {successful trajectory}
+> Now complete this shopping task yourself, one action at a time.
+
+In all cases, the reference block is appended to the standard task prompt. The student never sees the reference block. 
+
+B.3 OPD Details 
+
+To align with the settings in (Li et al., 2026), we use the same training and inference configurations as (Li et al., 2026) in Figure 4. See Table 6 for details. Due to computational resource constraints, we sample 3,600 examples for RL training, which corresponds to the 60 step performance reported in (Li et al., 2026). 
+
+B.4 Analysis of Reinforce++ 
+
+REINFORCE++ (Hu et al., 2025) applies per-token credit assignment through discounted returns: 
+
+Gt = rt + γG t+1 . While competitive on short-horizon tasks (math, code), it collapses on long-horizon agentic tasks. On AppWorld, validation performance peaked at 0.175@step40, then declined to 0.035@step101. On WebShop, performance dropped from 0.327 (base model) to 0.0@step80, with training reward also reaching 0.0 in the final steps. The instability stems from gradient variance in long horizons. Early tokens accumulate returns from all subsequent tokens: G1 = PTt=1 γt−1rt.With γ = 1 .0 and trajectories spanning hundreds of tokens, gradient variance grows exponentially. Combined with sparse episode-level rewards, ad-vantage whitening fails to identify critical tokens, causing policy collapse. In contrast, SC-GRPO uses trajectory-level GRPO advantages and applies token-level credit assignment only through KL-based gradient modu-lation, avoiding variance explosion in long-horizon settings. 
+
+C Training Dynamics 
+
+C.1 Training Dynamics on AIME 24 & 25 
+
+Figure 6 shows the validation performance through-out training on AIME 2024 and 2025. Both meth-ods are trained on DAPO-Math-17k with identical hyperparameters and evaluated every 20 steps. 
+
+AIME 2024 (Top Row) On Avg@8 (left), SC-GRPO establishes an early advantage and main-tains it throughout training. Both methods exhibit some variance in the later stages of training, but SC-GRPO consistently stays above DAPO. On Pass@8 (right), the gap is more pronounced: SC-GRPO achieves 0.80 at step 280, while DAPO peaks at 0.72 around step 260 before declining slightly. 
+
+AIME 2025 (Bottom Row) AIME 2025 is harder than AIME 2024, with both methods achiev-ing lower absolute scores. On Avg@8 (left), SC-GRPO shows steady improvement throughout train-ing, reaching 0.40 by step 500. The advantage is more consistent here than on AIME 2024, with less variance in the later stages. On Pass@8 (right), SC-GRPO maintains a 5-10% advantage through-out most of training, reaching 0.63 compared to DAPO’s 0.57. 
+
+Stability and convergence Both methods exhibit training variance typical of RL with verifiable re-wards, where validation performance fluctuates due to the discrete nature of the reward signal. However, SC-GRPO demonstrates more stable improvement on AIME 2025, the harder test set, suggesting that token-level credit assignment becomes increasingly valuable as problem difficulty increases. The con-sistent gap across both metrics and both test sets confirms that the gains are not due to overfitting to a particular evaluation protocol. 
+
+C.2 Policy Entropy 
+
+Figure 7 shows the policy entropy throughout train-ing. SC-GRPO maintains consistently higher en-tropy than DAPO across all training steps, with the gap widening after step 200. This suggests that SC-GRPO preserves exploration capacity: by se-lectively suppressing gradients on tokens where the student already matches the teacher and encour-aging exploration when facing solve-none groups, SC-GRPO avoids premature convergence on the full trajectory. In contrast, DAPO’s uniform credit assignment drives the policy toward deterministic outputs more aggressively, reducing entropy and potentially limiting the model’s ability to explore alternative reasoning paths. The entropy gap correlates with the performance advantage observed in Figure 6: higher entropy en-ables the model to maintain diverse solution strate-gies, which is particularly valuable on harder prob-lems (AIME 2025) where multiple reasoning ap-proaches may be necessary to reach the correct answer. 
+
+C.3 KL Weighting Function 
+
+Figure 8 illustrates why we use the 75th percentile of token-level KL divergence as the threshold c in our weighting function. The function f (KL ) = 
+
+KL /(KL + c) maps each token’s KL divergence to a weight between 0 and 1, which modulates the RL gradient for that token. When c = p25 (orange curve), the threshold is near zero, so almost all tokens receive high weights ( f (KL ) ≈ 1), effectively reverting to uni-form credit assignment. When c = p90 (red curve), the threshold is too high, causing many tokens with moderate KL divergence (0.05–0.15) to receive low weights, over-suppressing the gradient signal. Our choice of c = p75 (blue curve) strikes a bal-ance: tokens with KL below p75 (the bottom 75% of the distribution) receive weights below 0.5, indi-cating the student has already learned these tokens from the teacher. Only the top 25% of tokens, those with the highest KL divergence, receive weights above 0.5, preserving the RL gradient where the student and teacher genuinely differ. This adaptive threshold ensures that credit assignment focuses on critical difference tokens while avoiding both under-discrimination and over-suppression. 0 100 200 300 400 500                
+
+> Training Step
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> Avg@8
+> AIME 2024 - Avg@8
+> DAPO
+> SC-GRPO
+> 0100 200 300 400 500
+> Training Step
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Pass@8
+> AIME 2024 - Pass@8
+> DAPO
+> SC-GRPO
+> 0100 200 300 400 500
+> Training Step
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Avg@8
+> AIME 2025 - Avg@8
+> DAPO
+> SC-GRPO
+> 0100 200 300 400 500
+> Training Step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Pass@8
+> AIME 2025 - Pass@8
+> DAPO
+> SC-GRPO
+
+Figure 6: Training dynamics on AIME 24 & 25. We compare validation performance of SC-GRPO (blue) and DAPO (red) throughout training. SC-GRPO consistently outperforms DAPO on both Avg@8 and Pass@8 metrics across both test sets. 0 100 200 300 400 500 
+
+> Training Step
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> Entropy
+> Policy Entropy During Training
+> DAPO
+> SC-GRPO
+
+Figure 7: Policy entropy during training. We com-pare the entropy of SC-GRPO (blue) and DAPO (red) throughout training on DAPO-Math-17k. SC-GRPO maintains consistently higher entropy, indicating better exploration and diversity preservation. 
+
+C.4 KL Distribution Evolution 
+
+Figure 9 shows how the KL distribution evolves throughout training. The distribution exhibits a heavy-tailed structure: the bottom 75% of tokens (p25 to p75, dark blue region) have very low KL divergence, often near zero, indicating that the stu-dent policy has already learned to match the teacher on these tokens. Only the top 25% of tokens show significant divergence. This distribution remains remarkably stable across training steps, with p75 fluctuating around 0.03–0.10 and p95 around 0.2–0.5. The stability validates our choice of using p75 as an adaptive threshold: it consistently identifies the boundary be-tween learned tokens and critical difference tokens, regardless of training stage. The occasional spikes in the lower percentiles (visible as vertical streaks in the p25-p75 region) correspond to batches with particularly challenging problems where even com-mon tokens require learning, but these are rare and do not affect the overall threshold selection. 
+
+D Case Study: Token-Level KL Heatmap 
+
+Figure 10 shows the per-token KL distribution a real LiveCodeBench problem (counting the mini-mum number of edges to remove so that an undi-rected graph becomes a forest) . The student roll-out oi implements the standard Disjoint Set Union 
+
+(DSU / Union-Find) approach, while the sampled verifier-approved trajectory τ used to condition the teacher implements a stack-based Depth-First Search (DFS) over an adjacency list. Both solve the problem correctly, but follow distinct algorithmic paths. 0.0 0.1 0.2 0.3 0.4 0.5    
+
+> Token-level KL Divergence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Weight f(KL) = KL / (KL + c)
+> KL Weighting Function with Different Thresholds
+> c = p25 7.17e-10
+> c = p75 0.035 (ours)
+> c = p90 0.189
+> weight = 0.5
+
+Figure 8: KL weighting function with different thresholds. We visualize the weighting function 
+
+f (KL ) = KL /(KL + c) for different choices of thresh-old c at training step 270 . Using c = p75 (blue) effec-tively separates tokens where the student matches the teacher (KL < c , weight < 0.5) from critical difference tokens (KL > c , weight > 0.5). Using c = p25 (orange) provides almost no discrimination, while c = p90 (red) over-suppresses moderately divergent tokens. 
+
+Panels (a) show the sampled verifier-approved trajectory τ that is injected into the teacher’s sys-tem prompt. Panel (b) shows the student roll-out oi, with each token shaded by its KL weight 
+
+ft = Dt/(Dt + c). Near-white tokens correspond to positions where the student’s distribution is es-sentially unchanged by conditioning on τ : the model would produce these tokens whether or not a verified solution was available. Deeply shaded to-kens mark positions where τ substantially redirects the next-token distribution, these are the tokens on which the GRPO update is preserved at full weight, while the near-white tokens are downweighted. 
+
+What tokens are selected Most low-level scaf-folding code (indentation, parentheses, simple vari-able assignments, generic loops) receives near-zero weight, since both DSU and DFS share these sur-face forms. The high-KL tokens concentrate at the points where the two algorithms genuinely di-verge: the import of collections and the choice of stdin reader; the allocation of the DSU parent = list(range(N+1)) array (absent under DFS, which builds an adjacency list instead); the bodies of def find and def union , the merge predicate 
+
+root_u != root_v , and the construction of the 
+
+components set; and finally the closed-form an-swer answer = M - (N - K) . These are precisely the tokens whose choice distinguishes a DSU im-plementation from a DFS one, and on which a verified DFS trajectory shifts the student’s belief most strongly. 0 100 200 300 400 500        
+
+> Training Step
+> 10 13
+> 10 11
+> 10 9
+> 10 7
+> 10 5
+> 10 3
+> 10 1
+> Token-level KL Divergence
+> KL Distribution During Training
+> p25-p75 (IQR)
+> p75-p90
+> p75 (threshold)
+> p95
+
+Figure 9: Evolution of KL distribution during train-ing. We track the percentiles of token-level KL diver-gence throughout training. The shaded regions show the interquartile range (p25-p75, dark blue) and the p75-p90 range (light blue). The p75 line (blue) serves as our adaptive threshold, while p95 (red dashed) marks the upper tail. The distribution remains stable throughout training, with p75 consistently separating the bottom 75% of tokens (low KL, student matches teacher) from the top 25% (high KL, critical difference tokens). 
+
+The pattern is consistent with the design intent of SC-GRPO: the self-teacher does not act as an additional supervision signal, it acts as a credit-assignment filter on the existing GRPO gradient. Sequence-level reward is preserved as the source of update direction, while gradient mass is concen-trated on the small subset of tokens that actually carry the algorithmic decision. 
+
+E Prompt Templates for SC-GRPO 
+
+E.1 Prompt Construction 
+
+For a given problem instance, we construct stu-dent and teacher prompts as follows: The student prompt consists of a base system prompt followed by the problem specification. The teacher prompt extends this by concatenating three components: the base system prompt, the guide instruction, and the reference trajectory. 
+
+E.2 LiveCodeBench Templates Example 
+
+We use LiveCodeBench as an example to illustrate our prompt templates. The same structure applies to other tasks (math and agentic tasks) with domain-specific guide instructions. 
+
+Base System Prompt 
+
+You are an expert Python programmer. You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. Guide Prompt 
+
+A reference correct solution is provided below. Use it as a high-level algorithmic guide, not as code to copy. Your goal is to write a solution that is correct, clean, and efficient: - Correct: passes all test cases within the time limit. - Clean: well-structured, readable, and free of dead code or redundant logic. - Efficient: chooses an algorithm with appropriate time and space complexity. When using the reference solution: 1. Understand the core algorithm and data structures it uses. 2. Adopt its strategy if it is sound; improve on it if you can. 3. Do not copy variable names, formatting, or boilerplate from the reference. 4. Handle all edge cases independently, do not assume the reference covers them. 5. Write your own solution from scratch, guided by the reference algorithm only. 
+
+Reference Template 
+
+### Reference Correct Solution {reference_trajectory} Use the reference algorithm as inspiration only. Write your own complete, correct Python solution from scratch. 
+
+For math tasks (DAPO-Math-17K) and agentic tasks (AppWorld & Webshop), we use task-specific system prompts and guide instructions. Figure 10: Token-level KL heatmap on a LiveCodeBench rollout. Each rollout token is shaded by its KL weight 
+
+ft, which measures the shift in the student’s next-token distribution induced by inserting the verified trajectory τ
+
+into the teacher’s context.

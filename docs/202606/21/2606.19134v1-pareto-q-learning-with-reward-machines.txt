@@ -1,0 +1,468 @@
+Title: Pareto Q-Learning with Reward Machines
+
+URL Source: https://arxiv.org/pdf/2606.19134v1
+
+Published Time: Thu, 18 Jun 2026 01:12:28 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# Pareto Q-Learning with Reward Machines 
+
+## Arnaud Lequen 1∗, Clément Legrand-Lixon 2∗, Léo Saulières 3∗
+
+> 1
+
+Linköping University, Sweden 
+
+> 2
+
+Univ. Lille, CNRS, Centrale Lille, UMR 9189 CRIStAL, F-59000 Lille, France 
+
+> 3
+
+Univ. Toulouse, INRAE-MIAT, Toulouse, France arnaud.lequen@liu.se, clement.legrand-lixon@univ-lille.fr, leo.saulieres@inrae.fr 
+
+Abstract 
+
+We present Pareto Q-Learning with Reward Machines (PQLRM), a multi-objective reinforcement learning algo-rithm for tasks whose reward structure is specified by a set of reward machines (RMs). PQLRM combines Pareto Q-Learning (PQL), which maintains sets of vector-valued Q-estimates to approximate the Pareto front, with enhancements from Q-Learning with Reward Machines (QRM), which ex-ploits the factored automaton structure of the reward signal. This yields a multi-policy algorithm that remains sample-efficient under non-Markovian, RM-encoded rewards. Exper-imental trials show that PQLRM converges faster than a naive PQL baseline applied to the cross-product MDP and can syn-thesize Pareto-optimal policies that QRM cannot. 
+
+## 1 Introduction 
+
+Reinforcement Learning (RL) is a paradigm for sequential decision-making in which an agent learns to act through in-teraction with an environment, with the aim of maximizing a cumulative reward signal. It has driven significant break-throughs across a broad range of domains, including video games (Badia et al. 2020), traffic control (Kusic et al. 2021), computer networks (Omoniwa, Galkin, and Dusparic 2022), and robotics (Gürtler et al. 2023). Central to RL is the de-sign of a reward function that encodes the desired behaviour of the agent. Yet, real-world tasks rarely reduce to a single scalar objective: they typically demand balancing several, of-ten conflicting criteria such as performance, safety, or energy consumption. This observation has motivated the development of Multi-Objective Reinforcement Learning (MORL), which extends the classical RL framework to vector-valued rewards, each component corresponding to a distinct objective. In such cases, no single policy is universally optimal. Instead, MORL seeks to approximate the Pareto front , i.e., the set of policies that are non-dominated across objectives, so that a user can later select an appropriate trade-off. Efficiently learning such a set, however, remains challenging, especially when the reward structure of the task is itself complex. Reward Machines (RMs) (Toro Icarte et al. 2018) have recently emerged as a powerful abstraction for represent-ing non-Markovian reward functions. A reward machine is a 
+
+> ∗
+
+These authors contributed equally. 
+
+finite-state automaton that encodes the reward structure of a task in a modular and structured way. This representation of-fers several advantages. First, it provides an interpretable de-scription of the reward function, making task specifications easier to design, understand and verify. Second, the explicit state structure of reward machines can be exploited to accel-erate learning, for example by decomposing value functions across the states of the automaton. In this work, we bring together the strengths of reward ma-chines and multi-objective reinforcement learning. We pro-pose a novel multi-objective RL algorithm that integrates re-ward machines with Pareto Q-Learning (Moffaert and Nowé 2014) to learn a set of non-dominated policies. Our approach leverages the structural decomposition induced by reward machines to guide exploration and value propagation across objectives, while maintaining a Pareto-based representation of value functions. As a result, the algorithm is inherently multi-policy, as it synthesizes a set of trade-off solutions af-ter a single run. 
+
+## 2 Background 
+
+2.1 Multi-Objective Reinforcement Learning 
+
+Multi-Objective Markov Decision Problem A Multi-Objective Markov Decision Problem (MOMDP) (Wiering and de Jong 2007) is a tuple 𝑀 = ⟨, , 𝐑 , 𝑝, 𝛾 ⟩, where 
+
+and  denote, respectively, the state space and action space, and 𝛾 ∈ (0 , 1] is the discount factor. 𝐑 ∶  ×  ×  → ℝ𝑑 
+
+is the reward function , which is a function that returns a vec-tor composed of 𝑑 scalars, each representing the reward as-sociated with an objective. 𝑝 ∶  ×  ×  → [0 , 1] de-notes the transition function, where, for all 𝑠 ∈ , 𝑎 ∈ ,
+
+𝑝 (𝑠, 𝑎, ⋅) is a probability distribution over 𝑠 ′ ∈ . 𝑝 (𝑠, 𝑎, 𝑠 ′)
+
+is the probability of reaching the state 𝑠 ′ by performing ac-tion 𝑎 from state 𝑠 . In this paper, however, we focus on de-terministic MDPs, where 𝑝 (𝑠, 𝑎, 𝑠 ′) ∈ {0 , 1} . We will write 
+
+𝗌𝗎𝖼𝖼 ∶  ×  →  the function such that 𝗌𝗎𝖼𝖼 (𝑠, 𝑎 ) = 𝑠 ′,where 𝑠 ′ is the only state such that 𝑝 (𝑠, 𝑎, 𝑠 ′) = 1 .A solution to an MOMDP is a policy , which is a mapping 
+
+𝜋 ∶ + →  (where + are tuples of states of size at least 1) that associates the history of visited states with the action that the agent chooses. For a given state sequence 𝑠 0, … , 𝑠 𝑡 ,
+
+𝜋 (𝑠 0, … , 𝑠 𝑡 ) = 𝑎 𝑡 is the action chosen by the agent at step 𝑡 ,leading to state 𝗌𝗎𝖼𝖼 (𝑠 𝑡 , 𝑎 𝑡 ) = 𝑠 𝑡 +1 .
+
+> arXiv:2606.19134v1 [cs.LG] 17 Jun 2026
+
+Pareto-Dominance Let Π be the set of all policies for an MOMDP 𝑀 , and let 𝜋, 𝜋 ′ ∈ Π . Policies are compared using their value functions 𝐕 𝜋 , defined as: 
+
+𝐕 𝜋 =
+
+> ∞
+
+∑
+
+> 𝑡 =0
+
+𝛾 𝑡 𝐫 𝜋 𝑡 +1 
+
+where 𝐫 𝜋 𝑡 is the reward obtained at time step 𝑡 after unfolding the policy 𝜋 .Let 𝐕 𝜋 𝑖 be the 𝑖 -th component of the value function of 𝜋 .Policy 𝜋 then dominates 𝜋 ′, noted 𝐕 𝜋 ≻𝑃 𝐕 𝜋 ′
+
+, if we have that, for all 𝑖 ≤ 𝑑 , 𝐕 𝜋 𝑖 ≥ 𝐕 𝜋 ′ 
+
+> 𝑖
+
+, and for at least one 𝑖 ≤ 𝑑 ,
+
+𝐕 𝜋 𝑖 > 𝐕 𝜋 ′ 
+
+> 𝑖
+
+.The Pareto front of 𝑀 is then the set of non-dominated policies 𝑃 𝐹 (Π) :
+
+𝑃 𝐹 (Π) = { 𝜋 ∈ Π ∣ ∄ 𝜋 ′ ∈ Π ∶ 𝐕 𝜋 ′
+
+≻𝑃 𝐕 𝜋 }
+
+The Pareto front contains the set of Pareto-optimal poli-cies that are not Pareto dominated in the sense of ≻𝑃 , i.e., policies for which there is no other policy with equal or greater value for all objectives. Since policy quality in the multi-objective setting cannot be scalarized, the convergence of the Pareto front is often evaluated through alternative metrics. A widely used one is the hypervolume (Bader and Zitzler 2011), which measures the volume of the region dominated by the front relative to a fixed reference point. 
+
+2.2 MORL with Reward Machines 
+
+Reward Machines A Reward Machine (RM) is a finite state machine that represents a global structured reward sig-nal, where each transition is associated with a reward func-tion (Toro Icarte et al. 2018). Given a set of propositional symbols , a state space  and action space , an RM is defined as a tuple  = ⟨𝑈 , 𝑢 𝑜 , 𝛿 st , 𝛿 re ⟩. 𝑈 and 𝑢 𝑜 ∈ 𝑈 de-note, respectively, a finite set of states and an initial state. 
+
+𝛿 st ∶ 𝑈 × 2  → 𝑈 denotes the state-transition function. 
+
+𝛿 st (𝑢, 𝜎 ) is the state reached after receiving truth assignment 
+
+𝜎 ∈ 2  while being in state 𝑢 . 𝛿 re ∶ 𝑈 × 𝑈 → [ ×  ×  →
+
+ℝ] denotes the reward-transition function; 𝛿 re (𝑢, 𝑢 ′) is the re-ward function to use when transitioning from state 𝑢 to 𝑢 ′ of the RM. 
+
+MOMDP with RMs An MOMDP with RMs (MOMD-PRM) over the set of propositions  is a tuple 𝑀 =
+
+⟨, , , 𝑝, 𝛾, 𝐿 ⟩ where , , 𝑝 and 𝛾 are defined as in an MOMDP.  = ⟨1, … , 𝑑 ⟩ is a vector of 𝑑 reward ma-chines 𝑖 = ⟨𝑈 𝑖 , 𝑢 𝑖 𝑜 , 𝛿 𝑖 
+
+> st
+
+, 𝛿 𝑖 
+
+> re
+
+⟩, for all 𝑖 ≤ 𝑑 . 𝐿 ∶  → 2 is a 
+
+labelling function that maps every state of the MOMDPRM with a truth assignment of the set of propositions it is built upon. 
+
+2.3 Algorithms 
+
+Multi-Objective RL algorithms can be split into two fam-ilies (Hayes et al. 2022), depending on whether the user’s preferences over objectives are known a priori. When such preferences are available, single-policy algorithms can scalarize the vector reward into a single signal and learn one policy aligned with these preferences, reducing the prob-lem to a standard single-objective RL problem. When pref-erences are unknown, multi-policy algorithms instead syn-thesize a set of policies realising different trade-offs between the objectives, with the aim of finding policies on the Pareto front. 
+
+Pareto Q-Learning Pareto Q-learning (PQL) (Moffaert and Nowé 2014) extends Q-learning (Watkins and Dayan 1992) to the multi-objective setting by maintaining, for each state-action pair (𝑠, 𝑎 ), a set ̂ 𝑄 𝑠𝑒𝑡 (𝑠, 𝑎 ) of vector-valued Q-values corresponding to Pareto-dominating policies. One of the main mechanisms behind PQL is that the al-gorithm learns the immediate and future components sep-arately: ℛ(𝑠, 𝑎 ) stores the running average of the observed immediate reward vector after taking action 𝑎 in state 𝑠 .
+
+ND 𝑡 (𝑠, 𝑎 ) stores the set of non-dominated vectors reachable from 𝑠 with action 𝑎 at time 𝑡 :
+
+ND 𝑡 (𝑠, 𝑎 ) = ND 
+
+(⋃
+
+> 𝑎 ′
+
+̂ 𝑄 𝑠𝑒𝑡 (𝑠 ′, 𝑎 ′)
+
+)
+
+where the ND operator only preserves the non-dominated vectors of the set it is provided. The ̂ 𝑄 𝑠𝑒𝑡 is then recon-structed at run time via: ̂𝑄 𝑠𝑒𝑡 (𝑠, 𝑎 ) ← ℛ(𝑠, 𝑎 ) ⊕ 𝛾 ND 𝑡 (𝑠, 𝑎 ) (1) where ⊕ denotes the vector-set sum, defined for a vector 𝐯 
+
+and a set of vectors 𝑉 as: 
+
+𝐯 ⊕ 𝑉 = {𝐯 + 𝐯 ′ ∣ 𝐯 ′ ∈ 𝑉 }
+
+This decoupling removes the need for explicit vector cor-respondence, but also lets each component converge inde-pendently. A specific Pareto-optimal policy is reconstructed at execution time by committing to a target vector in 
+
+⋃
+
+> 𝑎 𝑜 ∈
+
+̂ 𝑄 𝑠𝑒𝑡 (𝑠 0, 𝑎 0) and, at each subsequent step, selecting the action whose set contains the vector consistent with the chosen one, using the immediate reward to take into account the difference induced by the action applied. 
+
+Q-Learning with Reward Machines Q-learning with Re-ward Machines (QRM) (Toro Icarte et al. 2018) exploits the structure of an RM to decompose a (possibly non-Markovian) task into a set of Markovian sub-tasks, one for each RM state. For each state 𝑢 ∈ 𝑈 of the RM, QRM main-tains a separate Q-function 𝑞 𝑢 (𝑠, 𝑎 ) that predicts the expected return obtained from the environment state 𝑠 assuming the RM is currently in state 𝑢 .During an episode, the current agent’s RM state 𝑢 𝑝 is tracked. The decision rule selects actions using the Q-function associated with 𝑢 𝑝 , i.e. 𝑞 𝑢 𝑝 .Having multiple Q-functions may make the learning pro-cess significantly slower. The key idea is to update all Q-functions of an RM in parallel from a single transition 
+
+(𝑠, 𝑎, 𝑠 ′). For every RM state 𝑢 𝑗 , QRM uses the RM to syn-thesise the reward 𝑟 𝑗 = 𝛿 re (𝑢 𝑗 , 𝑢 𝑘 )( 𝑠, 𝑎, 𝑠 ′) that would have been received from 𝑢 𝑗 (where 𝑢 𝑘 = 𝛿 st (𝑢 𝑗 , 𝐿 (𝑠 ′)) is the cor-responding next RM state) and applies the standard update: 
+
+𝑞 𝑢 𝑗 (𝑠, 𝑎 ) 𝛼 
+
+←←←←←←← 𝑟 𝑗 + 𝛾 max  
+
+> 𝑎 ′
+
+𝑞 𝑢 𝑘 (𝑠 ′, 𝑎 ′)As the RM acts as a deterministic model of the reward structure, every transition observed in the environment yields a valid training sample for every sub-task simultaneously, which considerably improves sample efficiency. QRM is shown to converge to an optimal policy of the underlying MDPRM in the tabular setting. 
+
+## 3 Pareto Q-Learning with Reward Machines 
+
+Our approach to solving MOMDPRMs essentially consists in enhancing PQL with the core ideas of QRM, allowing the algorithm to leverage the factored decomposition of the state space induced by the reward machines. 
+
+Algorithm 1: PQLRM 
+
+Input : MOMDPRM 𝑀 , number of episodes 𝑇 
+
+Output: A set of Q-sets 𝑄 ⃗v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) 
+
+> 1
+
+Initialize 𝑄 ⃗ v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) as empty sets  
+
+> 2
+
+for 𝑇 episodes do  
+
+> 3
+
+Initialize state 𝑠 of the environment 
+
+> 4
+
+⃗ u ∶= ⟨u1, … , u𝑑 ⟩ ← ⟨𝑢 10, … , 𝑢 𝑑  
+
+> 0
+
+⟩ 
+
+> 5
+
+while 𝑠 is not terminal do  
+
+> 6
+
+Choose action 𝑎 using 𝑠 and ⃗ u 
+
+> 7
+
+𝑠 ′ ← 𝗌𝗎𝖼𝖼 (𝑠, 𝑎 ) 
+
+> 8
+
+for each ⃗ v ∶= ⟨v1, … , v𝑑 ⟩ of RM states do  
+
+> 9
+
+𝜎 ← 𝐿 (𝑠 ′)
+
+> 10
+
+⃗ v′ ← ⟨𝛿 1
+
+> st
+
+(v1, 𝜎 ), … , 𝛿 𝑑 
+
+> st
+
+(v𝑑 , 𝜎 )⟩ 
+
+> 11
+
+for 𝑖 ≤ 𝑑 do  
+
+> 12
+
+𝑟 𝑖 ← 𝛿 𝑖 
+
+> re
+
+(v𝑖 , v′
+
+> 𝑖
+
+) 
+
+> 13
+
+𝐫 ← (𝑟 1(𝑠, 𝑎 ), … , 𝑟 𝑑 (𝑠, 𝑎 ))  
+
+> 14
+
+ND ⃗ v(𝑠, 𝑎 ) ← ND (⋃ 
+
+> 𝑎 ′
+
+𝑄 ⃗ v′
+
+> 𝑠𝑒𝑡
+
+(𝑠 ′, 𝑎 ′))  
+
+> 15
+
+ℛ⃗ v(𝑠, 𝑎 ) ← ℛ⃗ v(𝑠, 𝑎 ) + 𝐫 −ℛ⃗ v(𝑠,𝑎 ) 
+
+> 𝑛 (𝑠,𝑎 )
+> 16
+
+𝑠 ← 𝑠 ′;⃗ u ← ⟨𝛿 1
+
+> st
+
+(u1, 𝜎 ), … , 𝛿 𝑑 
+
+> st
+
+(u𝑑 , 𝜎 )⟩
+
+The algorithm we propose is described in Algorithm 1. The procedure starts by initializing one set of Q-vectors 
+
+𝑄 ⃗ v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) per pair (𝑠, 𝑎 ) and per joint RM state ⃗ v =
+
+⟨v1, … , v𝑑 ⟩ (line 1). This is the multi-objective analogue of the family of Q-functions {𝑞 𝑢 }𝑢 ∈𝑈 maintained by QRM: where QRM stores one scalar Q-value per RM state, PQLRM stores, for each configuration of RM states, a whole set of Pareto-dominating value vectors as in PQL. At the start of every episode (line 2), the states of both the environment and of the RMs are reset (lines 3 and 4). The agent then interacts with the environment until a ter-minal state is reached (line 5), or until a fixed number of steps have been executed. At each step, an action 𝑎 is se-lected (line 6) following PQL’s set-evaluation rule applied to the Q-sets 𝑄 ⃗ u
+
+> 𝑠𝑒𝑡
+
+(𝑠, ⋅) (e.g. a hypervolume-based or Pareto-cardinality-based 𝜀 -greedy strategy). The key ingredient borrowed from QRM is the update of all RM states, done at lines 8–15: instead of updating only the entry corresponding to the currently visited RM tuple ⃗ u,         
+
+> (a) PBST
+> D⋆⋆C
+> c
+> ⋆om⋆
+> c
+> A⋆⋆B
+> (b) Office World
+
+Figure 1: The two environments used in our experiments. (a) In PBST, the submarine starts at the top-left corner and must choose among treasures of increasing value located deeper in the grid; dark cells are inaccessible. (b) In Office World (Toro Icarte et al. 2018), the agent (triangle) navigates an office-like grid containing several points of interest. the algorithm iterates over every joint RM state ⃗ v and updates 
+
+𝑄 ⃗ v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) as if the agent had been in ⃗ v when taking (𝑠, 𝑎 ). For each such ⃗ v, the corresponding next RM tuple ⃗ v′ is computed from the label 𝜎 = 𝐿 (𝑠 ′) of the observed successor state (lines 9–10), and the vector reward 𝐫 that would have been emitted from ⃗ v is synthesized by querying each RM’s reward function 𝛿 𝑖 
+
+> re
+
+(v𝑖 , v′
+
+> 𝑖
+
+) (lines 11–13). Because the dynamics of the environment are shared across all RM tuples, a single transition (𝑠, 𝑎, 𝑠 ′) thus produces |𝑈 1| ⋯ |𝑈 𝑑 | simultaneous updates, drastically improving sample efficiency compared to a naive PQL applied to the cross-product MDP. The two updates that follow implement the idea of PQL of decoupling the learning of the immediate reward and the future reward. Line 14 updates the set ND ⃗ v(𝑠, 𝑎 ) of non-dominated future return vectors reachable from (𝑠, 𝑎 ) under joint RM state ⃗ v, by collecting the 𝑄 ⃗ v′
+
+> 𝑠𝑒𝑡
+
+(𝑠 ′, 𝑎 ′) over all poten-tial future actions 𝑎 ′ and preserving only the non-dominated vectors. Line 15 updates the average immediate reward vec-tors with the synthesized 𝐫 and 𝑛 (𝑠, 𝑎 ), tracking the number of times action 𝑎 was taken from state 𝑠 during training. As in PQL, 𝑄 ⃗ v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) is then reconstructed on the fly via Equa-tion 1. Finally, line 16 advances both the environment state and the actually visited joint RM state ⃗ u according to the la-belling of 𝑠 ′, which is required for action selection. 
+
+Policy reconstruction A concrete policy is extracted by first committing to a target Q-vector 𝐯 ⋆ ∈ 𝑄 ⃗
+
+> u0
+> 𝑠𝑒𝑡
+
+(𝑠 0, 𝑎 0).Then, at each step, the joint RM state ⃗ u is advanced along-side 𝑠 . The residual target is updated via 𝐯 ⋆ ← (𝐯 ⋆ − 𝐫 )∕ 𝛾 ,and we then select the next action whose Q-set contains a vector closest to it. Indexing the Q-set by ⃗ u (rather than 𝑠 
+
+alone) is essential here, as each 𝑄 ⃗v
+
+> 𝑠𝑒𝑡
+
+(𝑠, 𝑎 ) is only meaning-ful under the assumption that the RMs are in state ⃗ v in the current environment in which the agent is evolving. 0 20 40 60 80 
+
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Steps ( ⋅10 3)
+> Normalized metric
+
+(a) Experiment 1 (PBST).        
+
+> 020 40 60 80 100 120 140
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Steps ( ⋅10 3)
+
+(b) Experiment 2 (OW).      
+
+> 0100 200 300 400 500
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Steps ( ⋅10 3)
+
+(c) Experiment 3 (OW).     
+
+> 0200 400 600 800
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Steps ( ⋅10 3)
+
+(d) Experiment 4 (OW). 
+
+PQLRM (hypervolume) PQL (hypervolume) QRM (sum of expected reward) 
+
+Figure 2: Progress of training over the number of training steps. For multi-policy algorithms (i.e. PQLRM and PQL), we report the normalized hypervolume. For QRM, we report the normalized sum of the expected reward of each policy from the initial state. Policies are evaluated every 2,000 steps. The first experiment reports results on PBST and the others on Office World. 
+
+## 4 Experimental Evaluation 
+
+4.1 Experimental Setup 
+
+Setup All experiments were conducted on an AMD Ryzen 7 PRO 5850U processor, with memory usage capped at 8 GB and a wall-clock limit of 10 minutes per run. Our implemen-tation is in Python 3.10 and builds on the Gymnasium envi-ronment interface (Towers et al. 2024). Our code is available at: https://github.com/arnaudlequen/PQLRM. 
+
+Baselines We compare against PQL, naively adapted to support RMs, by running it on the cross-product state space 
+
+ × 𝑈 1 × ⋯ × 𝑈 𝑑 , thus folding the joint RM state into the environment. We also compare against QRM. The algo-rithm, however, only learns policies on the extremities of the Pareto-front, since it only searches simultaneously policies that are single-objective. 
+
+4.2 Environments 
+
+Pressurized Bountiful Sea Treasure In the Pressurized Bountiful Sea Treasure (PBST) environment (Moffaert and Nowé 2014), illustrated in Figure 1a, is a grid-world multi-objective reinforcement learning problem in which an agent controls a submarine exploring the seabed to collect trea-sures. The agent must simultaneously optimize three con-flicting objectives: minimizing the time to reach a treasure, maximizing the value of the collected treasure, and minimiz-ing the pressure incurred by diving deep underwater. Higher-value treasures are located deeper and farther away, forcing the agent to trade off between speed, safety (low pressure), and reward. The PBST environment is modeled as a MOMDP:  =
+
+⟨, , 𝐑 , 𝑝 ⟩. Episodes terminate when the agent reaches a treasure state. A state corresponds to the position of the sub-marine on a two-dimensional grid: 𝑠 = ( 𝑥, 𝑦 ) ∈ 𝑆 where 
+
+𝑥 denotes the depth (row index) and 𝑦 the horizontal posi-tion (column index). The grid is of finite size 10 × 11 . The initial state is located at the surface, at the top-left corner. In this environment, the black positions are not part of the state space; the positions marked with a number are termi-nal states containing a treasure whose value corresponds to the number; and the blue positions are part of the state space (see Figure 1a). The agent can take four deterministic ac-tions:  = { up , down , left , right }. Each action moves the agent to an adjacent cell in the corresponding direction. Ac-tions that would move the agent outside the grid leave the state unchanged. The transition function is deterministic and defined as: 
+
+𝑃 (𝑠 ′ ∣ 𝑠, 𝑎 ) = 
+
+{1 if 𝑠 ′ = 𝑠 + 𝛿 (𝑎 )0 otherwise where 𝛿 (𝑎 ) is the move associated with action 𝑎 .The resulting state is clipped to remain within grid boundaries and reachable positions. The reward function is vector-valued with three components: 
+
+𝐑 (𝑠, 𝑎, 𝑠 ′) = (𝑟 time , 𝑟 treasure , 𝑟 pressure 
+
+). At each time step, the agent incurs a constant penalty: 𝑟 time = −1 . A positive reward is obtained only when reaching a treasure state: 
+
+𝑟 treasure =
+
+{𝑡𝑟 𝑖 if 𝑠 ′ is a treasure location 𝑖 
+
+0 otherwise where 𝑡𝑟 𝑖 is the value of treasure located at position 𝑖 ; it in-creases with depth and distance. The pressure penalty de-pends on the number of consecutive down actions performed by the agent. Let 𝑛 ↓ denote the number of consecutive down 
+
+actions executed up to and including the current action since the last non-down action. Then 
+
+𝑟 pressure =
+
+⎧⎪⎨⎪⎩
+
+−1 if 𝑛 ↓ = 1 ,
+
+−3 if 𝑛 ↓ = 2 ,
+
+−5 if 𝑛 ↓ ≥ 3.
+
+This reward component is non-Markovian because its value depends on the history of previously executed actions. In particular, the tuple (𝑠, 𝑎, 𝑠 ′) is not sufficient to determine 
+
+𝑟 pressure , since the same transition may receive different pres-sure penalties depending on how many consecutive down ac-tions preceded it. Consequently, this objective cannot be rep-resented by a standard state-transition reward function and instead requires an RM. The RM tracks the number of con-secutive downward movements through its internal state and relies on a propositional symbol emitted whenever a down 
+
+action is performed. Note that in our experiments, 𝑟 time and 
+
+𝑟 treasure are also encoded by RMs, although this is not a re-quirement, unlike 𝑟 pressure .
+
+Office World In the Office World environment (Toro Icarte et al. 2018), an agent navigates an office-like map to complete temporally extended tasks such as delivering coffee or mail, patrolling rooms, or avoiding decorations (Figure 1b). The Office World environment is modeled as an MOMDP: 
+
+ = ⟨, , 𝐑 , 𝑃 ⟩. Episodes terminate when the task speci-fication is completed or when the agent violates a forbidden condition (e.g., stepping onto a decoration tile). A state cor-responds to the position of the agent on a two-dimensional grid: 𝑠 = ( 𝑥, 𝑦 ) ∈ , where 𝑥 and 𝑦 denote the row and col-umn indices. The grid contains several special locations as-sociated with propositional events: coffee locations 𝑐 , mail locations 𝑚 , the office 𝑜 , decorations ⋆, and marked loca-tions 𝐴, 𝐵, 𝐶, 𝐷 used for patrol tasks. The agent can execute four deterministic actions:  = { up , down , left , right }. Each action moves the agent to the adjacent grid cell in the corre-sponding direction. Actions that would move the agent into a wall or outside the map leave the state unchanged. The tran-sition dynamics are deterministic and defined by: 
+
+𝑃 (𝑠 ′ ∣ 𝑠, 𝑎 ) = 
+
+{1 if 𝑠 ′ = 𝑠 + 𝛿 (𝑎 ),
+
+0 otherwise ,
+
+where 𝛿 (𝑎 ) denotes the move induced by action 𝑎 . The result-ing position is constrained to valid cells of the office map. Tasks are encoded by RMs. For the get mail and get coffee 
+
+tasks, the agent receives a reward of 1 when it reaches the object’s location and 1 when it reaches the office. For the pa-trol task involving going to positions A, B, C, and D (in this order), and the no hit decoration task involving not reaching the positions of the decorations, the agent receives a reward only when it has completed its task by reaching the office. 
+
+4.3 Results 
+
+We report the convergence speed with regard to the number of iterations of each algorithm in Figure 2. For multi-policy algorithms (i.e. PQLRM and PQL), we report the normal-ized hypervolume, while we report the normalized sum of the values of each policy for QRM. Each value is reported every 2,000 steps. Experiment 1 (Fig. 2a) is performed on the PBST environment, with the three objectives described. Both PQL and PQLRM reach all 15 Pareto optimal policies. Note that for some treasure there exist two or three poli-cies leading due to the conflicting objectives. QRM is able to solve the three tasks, but it struggles to reach the farthest treasures. QRM converges a bit slower than the multi-policy algorithms, PQLRM converges slightly faster than PQL. Experiments 2-4 are performed on the office world envi-ronment. In experiment 2 (Fig. 2b) the agent learns three tasks to reach the office, to get a coffee and to get the mail in a minimum number of steps. The results show that PQLRM converges faster towards the six Pareto optimal vectors than PQL. QRM is able to solve each task independently. Ex-periment 3 (Fig. 2c) is performed with the following three objectives: reaching the office without hitting a decoration, reaching the office with a coffee cup and reaching the of-fice with the mail. The results highlight that PQLRM is able to reach all four Pareto optimal policies, while PQL is not able to solve the tasks without hitting decorations and only returns three non-dominated policies that are not Pareto op-timal. Moreover, the results show that QRM is not robust on solving all tasks independently, and sometimes it fails to solve the mail task in the number of steps allowed. Finally, experiment 4 (Fig. 2d) is performed with two tasks: reaching the office after patrolling all checkpoints (in the right order A, B, C, D) and reaching the office without hitting any decora-tion. In this case, PQLRM is able to reach the two Pareto opti-mal policies quite quickly, although the policies are harder to find than for the other experiments. PQL is not able to solve any of the tasks given (i.e. the hypervolume is 0 for it). QRM is able to solve both tasks independently if enough steps are provided. 
+
+## 5 Conclusion 
+
+We introduced PQLRM, a multi-objective reinforcement learning algorithm that lifts Pareto Q-Learning to tasks whose objectives are specified by reward machines, by reusing QRM’s update method across the joint RM state space. Experimental results show that PQLRM is more sample-efficient than PQL, while being more flexible than QRM as it synthesizes more Pareto-optimal policies. Natural next steps include scaling the approach to stochastic environ-ments. 
+
+## References 
+
+Bader, J.; and Zitzler, E. 2011. HypE: An algorithm for fast hypervolume-based many-objective optimization. Evo-lutionary computation , 19(1): 45–76. Badia, A. P.; Piot, B.; Kapturowski, S.; Sprechmann, P.; Vitvitskyi, A.; Guo, Z. D.; and Blundell, C. 2020. Agent57: Outperforming the Atari Human Benchmark. In Proceedings of the 37th International Conference on Machine Learning (ICML) .Gürtler, N.; Widmaier, F.; Sancaktar, C.; Blaes, S.; Kolev, P.; Bauer, S.; Wüthrich, M.; Wulfmeier, M.; Riedmiller, M.; Allshire, A.; et al. 2023. Real Robot Challenge 2022: Learning Dexterous Manipulation from Offline Data in the Real World. In NeurIPS 2022 Competition Track , 133–150. PMLR. Hayes, C. F.; Rădulescu, R.; Bargiacchi, E.; Källström, J.; Macfarlane, M.; Reymond, M.; Verstraeten, T.; Zintgraf, L. M.; Dazeley, R.; Heintz, F.; et al. 2022. A practical guide to multi-objective reinforcement learning and planning. Au-tonomous Agents and Multi-Agent Systems , 36(1): 1–59. Kusic, K.; Ivanjko, E.; Vrbanic, F.; Greguric, M.; and Dus-paric, I. 2021. Spatial-Temporal Traffic Flow Control on Motorways Using Distributed Multi-Agent Reinforcement Learning. Mathematics , 9(23). Moffaert, K. V.; and Nowé, A. 2014. Multi-objective rein-forcement learning using sets of pareto dominating policies. 
+
+J. Mach. Learn. Res. , 15(1): 3483–3512. Omoniwa, B.; Galkin, B.; and Dusparic, I. 2022. Energy-Aware Optimization of UAV Base Stations Placements via Decentralized Multi-Agent Q-Learning. In IEEE Consumer Communications and Networking Conference (CCNC) .Toro Icarte, R.; Klassen, T. Q.; Valenzano, R.; and McIlraith, S. A. 2018. Using Reward Machines for High-Level Task Specification and Decomposition in Reinforcement Learn-ing. In Proceedings of the 35th International Conference on Machine Learning (ICML) , 2112–2121. Towers, M.; Kwiatkowski, A.; Terry, J. K.; Balis, J. U.; Cola, G. D.; Deleu, T.; Goulão, M.; Kallinteris, A.; Krimmel, M.; KG, A.; Perez-Vicente, R.; Pierré, A.; Schulhoff, S.; Tai, J. J.; Tan, H.; and Younis, O. G. 2024. Gymnasium: A Standard Interface for Reinforcement Learning Environments. CoRR ,abs/2407.17032. Watkins, C. J.; and Dayan, P. 1992. Q-learning. Machine learning , 8(3): 279–292. Wiering, M. A.; and de Jong, E. D. 2007. Computing Op-timal Stationary Policies for Multi-Objective Markov De-cision Processes. In 2007 IEEE International Symposium on Approximate Dynamic Programming and Reinforcement Learning , 158–165.
