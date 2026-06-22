@@ -1,0 +1,809 @@
+Title: ARB4WM: An Adversarial Robustness Benchmark for World Models in Continuous Control
+
+URL Source: https://arxiv.org/pdf/2606.16605v1
+
+Published Time: Tue, 16 Jun 2026 02:41:50 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# ARB4WM: An Adversarial Robustness Benchmark for World Models in Continuous Control 
+
+## Junjian Zhang a,d , Hao Tan b, Ruonan Li c, Dong Zhu a,d , Aiping Li a,d ,∗ and Zhaoquan Gu b,∗
+
+> a
+
+College of Computer Science, National University of Defense Technology, Changsha, 410073, China 
+
+> b
+
+College of Computer Science and Technology, Harbin Institute of Technology, Shenzhen, 518055, China 
+
+> c
+
+Department of New Networks, Peng Cheng Laboratory, Shenzhen, 518055, China 
+
+> d
+
+National Key Laboratory of Advanced Communication Networks, Shijiazhuang, 050081, Hebei, China 
+
+A R T I C L E I N F O 
+
+Keywords :Engineering informatics safety assessment adversarial robustness world models industrial continuous control reinforcement learning 
+
+A B S T R A C T 
+
+World models are widely used in robotic and continuous-control systems due to their ability to learn latent dynamics for planning and decision-making. As these systems are increasingly deployed in safety-critical settings, understanding their robustness under adversarial conditions has become essential. However, existing evaluations lack a unified benchmark for testing adversarial threats across the policy, value, and latent-dynamics levels of world-model agents. To fill this gap, we present ARB4WM, a unified evaluation framework for adversarial robustness of world-model agents under visual perturbations. ARB4WM defines five white-box loss objectives across these three levels and studies their effects when combined with single-step or multi-step perturbation strategies and temporal attack modes, including full-frame, half-sequence, and sparse-frame exposure. Specifically, we evaluate four Dreamer-style agents across 20 tasks from MetaWorld and the DeepMind Control Suite under different loss objectives, perturbation strategies, and temporal attack modes. Results show that attacks targeting value estimation, latent representations, and RSSM dynamics can be as damaging as direct policy disruption, and that early or frequent perturbations are especially harmful, while input-level defenses provide limited recovery under adaptive attacks. These findings suggest that robustness evaluation for world models should cover multiple component-oriented attack objectives and temporal exposure protocols rather than relying solely on action-space robustness. The source code is available at https://github.com/zaoanguai/ARB4WM .
+
+## 1. Introduction 
+
+World models are becoming an important component of intelligent continuous-control systems. Instead of map-ping raw observations directly to actions, these agents en-code visual inputs into compact latent states, learn recur-rent latent dynamics, and optimize behavior through imag-ined trajectories. This structure is attractive for industrial robotics, autonomous inspection, intelligent manufacturing, and other engineering systems in which controllers must reason from high-dimensional perception while interacting with physical processes. Early recurrent world models [1], PlaNet [2], and Dreamer-style latent imagination systems [3, 4, 5] have enabled strong performance on pixel-based control and robotic manipulation tasks. Recent variants [6, 7, 8, 9, 10] further improve representation learning, plan-ning, or model scaling through contrastive objectives, proto-typical representations, redundancy reduction, transformer dynamics, and model-predictive control. As these models move from benchmark control toward safety-sensitive en-gineering applications, their reliability under corrupted or adversarial visual observations becomes a practical safety-assessment problem. This concern is amplified by world-model-like systems [11, 12, 13, 14] being increasingly used 
+
+> ∗
+
+Correspondence: liaiping@nudt.edu.cn (A.L.); guzhao-quan@hit.edu.cn (Z.G.)  
+
+> zhangjunjian24@nudt.edu.cn
+
+(J. Zhang); 23b951016@stu.hit.edu.cn 
+
+(H. Tan); lirn@pcl.ac.cn (R. Li); zhud@nudt.edu.cn (D. Zhu);  
+
+> liaiping@nudt.edu.cn
+
+(A. Li); guzhaoquan@hit.edu.cn (Z. Gu) 
+
+> ORCID
+
+(s): 
+
+in robotics, autonomous driving, and general embodied in-telligence. In a closed-loop industrial controller, a small visual perturbation is not merely an image-level error. It may shift the estimated pose of a manipulator, destabilize a balancing controller, corrupt a latent belief state, or cause the agent to evaluate an unsafe trajectory as acceptable. Therefore, adversarial threats against world-model agents are not merely perception-level errors. They can propagate through latent dynamics, imagined rollouts, and decision-making, ultimately causing control degradation or internal decision failure. Adversarial examples [15, 16] provide a concrete and widely studied manifestation of such adversarial threats. In reinforcement learning, the problem is more difficult be-cause a perturbed observation can change the current action, future state distribution, and accumulated return. Prior work [17, 18, 19, 20, 21, 22, 23] has shown that deep policies can be vulnerable to adversarial observations, strategically timed attacks, adversarial policies, and perturbed state ob-servations. However, most existing attacks and evaluations are designed for model-free policies or fixed observation-space attacks. They usually treat the victim agent as a policy network and evaluate a limited set of attack objectives. This is insufficient for pixel-based world models. In Dreamer-style agents, an adversarial observation can affect not only the immediate action, but also the recurrent belief state, RSSM posterior and prior, latent representation, imagined value prediction, and future rollout dynamics. Therefore, a 
+
+Zhang et al.: Preprint submitted to Elsevier Page 1 of 19 
+
+> arXiv:2606.16605v1 [cs.AI] 15 Jun 2026 ARB4WM
+
+policy-level evaluation may miss important failure modes that occur inside the latent world-model pipeline. Recent work on world-model safety and adversarial eval-uation [24, 25, 26, 27, 28, 29] further highlights this concern. These studies show that world-model agents can fail under adversarial observations, latent-space perturbations, and at-tacks on learned dynamics, and that robustness estimates de-pend strongly on the attack protocol. However, we still lack a testing framework that compares multiple Dreamer-family agents across a broad task set while separating failures in policy distributions, value prediction, latent representation stability, and RSSM dynamics consistency. The central problem is therefore to diagnose where adversarial visual perturbations disrupt the Dreamer-style latent decision-making pipeline, how these vulnerabilities differ across Dreamer-family architectures, and how recur-rent latent states respond to continuous or temporally sparse attacks. To address this problem, we present ARB4WM, a repeatable robustness testing framework for world-model agents. ARB4WM evaluates Dreamer, R2-Dreamer, Dreamer-InfoNCE, and Dreamer-Pro on MetaWorld and the Deep-Mind Control Suite (DMC) [30, 31] under a unified attack interface. Given a victim world model, task suite, per-turbation objective, temporal exposure mode, and defense setting, the framework reports clean-normalized area under curve (nAUC), defense recovery, adaptive-defense gap, and policy saliency diagnostics to connect closed-loop return degradation with internal failure modes. In summary, we make the following contributions. 
+
+• We build a safety-oriented robustness testing frame-work for world-model agents in industrial continu-ous control, covering four Dreamer-family agents and 20 simulated robotic manipulation and continuous-control tasks from MetaWorld and DMC. 
+
+• We design five white-box test objectives that target different components of the world-model pipeline, including policy distributions, value estimation, latent representations, and RSSM dynamics consistency. 
+
+• We introduce clean-normalized robustness metrics, adaptive-defense recovery analysis, and saliency di-agnostics that support safety assessment by linking closed-loop performance loss to latent dynamics, value prediction, and policy evidence. 
+
+• We evaluate both single-step and multi-step iterative perturbation optimization, together with full-frame, half-sequence, and sparse temporal exposure pro-tocols, to study how adversarial effects propagate through recurrent latent states. 
+
+## 2. Related Work 
+
+In this section, we review the literature most relevant to ARB4WM, including world-model control, adversarial robustness in reinforcement learning, and recent safety eval-uations of world-model agents. 
+
+2.1. World Models for Visual Control 
+
+World models learn compact internal dynamics that can be used for planning, imagination, and policy opti-mization. Recent neural world-model approaches [1, 2, 3] showed that latent dynamics can support policy search, planning, and behavior learning from pixels. DreamerV2 and DreamerV3 [4, 5] scaled recurrent state-space models to Atari, continuous-control, and diverse control domains. Other model-based agents [9, 10, 7, 6, 8] improve se-quence modeling, model-predictive control, or representa-tion learning through transformer world models, TD-MPC-style objectives, reconstruction-free prototypical learning, contrastive predictive coding, and redundancy-reduced la-tent states. World models for autonomous driving, humanoid locomotion, embodied interaction, and general simulation [12, 13, 14, 32] are also increasingly studied beyond standard control benchmarks. These studies mainly emphasize return, sample efficiency, or representation quality. They do not evaluate whether the learned latent dynamics remain reliable when the visual input is adversarially perturbed across a controlled set of internal attack targets. 
+
+2.2. Adversarial Robustness in Reinforcement Learning 
+
+Adversarial-example studies [15, 33, 34] first showed in supervised learning that small bounded perturbations can cause incorrect predictions. Later attack and benchmark work [35, 36, 37, 38, 39, 40, 41] broadened the evalua-tion toolkit with black-box, decision-based, patch, physical-world, and standardized benchmark attacks. Defense studies [42, 43] also showed that apparent robustness can depend strongly on the evaluation protocol, motivating careful use of adaptive attacks and standardized metrics. In reinforcement learning, the problem is more complex because perturba-tions can change actions, future states, and accumulated returns. Early deep-RL attack work [17, 18, 19] showed that neural network policies are vulnerable to adversarial observation perturbations. Strategically timed attacks [20] perturb only selected frames while still degrading long-horizon behavior, and adversarial policies [21] show that the opponent or environment interaction can be used as an attack surface. Robustness-oriented methods [22, 23] have also been proposed, including robust adversarial reinforce-ment learning with adversarial dynamics disturbances and state-adversarial MDP formulations for observation pertur-bations. Safety-critical domains such as autonomous driving and robotic vision-language-action control [44, 45] further show that perception attacks can create downstream control risk. Most of these works focus on model-free policies or general observation attacks. They reveal that reinforcement learning agents are vulnerable, but they do not explain which internal components of a world model are responsible for the failure. 
+
+2.3. Adversarial Evaluation of World Models 
+
+World-model agents introduce new robustness chal-lenges because observations are first mapped into latent   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 2 of 19 ARB4WM
+
+states and then propagated through recurrent dynamics. Safety and robustness studies for world models [46, 25, 26, 47] have begun to examine safe exploration, robust model-based RL, adversarial corruption, and surprise-based detection. Diagnostic world-model evaluations [48] analyze the reliability of learned world models through physics disambiguation and related diagnostic tasks. Hallucination-driven policy failure [28] is closely related to our work because it directly studies adversarial attacks against world-model agents. It verifies the adversarial risk of early world-model controllers through white-box attacks and explores spatial and temporal vulnerability through latent-space and temporally correlated perturbations. However, its empirical scope is limited to the original World Models architecture and Dreamer, uses a smaller set of control tasks, and concentrates on policy-level and RSSM-level attack targets. WMAttack [29] is also related because it targets adversarial evaluation of world-model agents and shows that automated search can find stronger attack configurations than manually selected baselines. It formulates evaluation as a finite-budget search over attack families, perturbation budgets, optimization steps, restarts, schedules, and allocation rules, then uses retrieval and feedback-conditioned refinement to improve search efficiency. The existing literature establishes three relevant foun-dations: world models provide effective latent dynamics for visual control, adversarial reinforcement-learning stud-ies show that closed-loop policies can be vulnerable to observation perturbations, and recent world-model attack studies demonstrate that world-model agents can fail un-der adversarial visual inputs. However, prior work either focuses on nominal control performance, attacks model-free policies, studies a limited set of world-model agents and attack targets, or searches for strong attack configurations without isolating which internal component fails. ARB4WM is positioned as a complementary robustness benchmark. It compares four Dreamer-family agents on 20 MetaWorld and DMC tasks, separates five component-level objectives covering policy distributions, policy entropy, value predic-tion, latent-state drift, and RSSM dynamics consistency, and evaluates temporal exposure, input defense, adaptive-defense gaps, and saliency diagnostics within one repeatable testing workflow. 
+
+## 3. Preliminaries 
+
+In this section, we define the Dreamer-style world-model pipeline and the adversarial threat model used throughout the benchmark. 
+
+3.1. World-Model Reinforcement Learning 
+
+World-model reinforcement learning first maps high-dimensional observations into compact latent states and then uses learned latent dynamics for prediction, imagination, and control. At timestep 𝑡 , the agent receives an observation 
+
+𝑜 𝑡 , executes an action 𝑎 𝑡 , and receives a reward 𝑟 𝑡 . The observation is encoded as 
+
+𝑒 𝑡 = Enc( 𝑜 𝑡 ). (1) The world model maintains a latent state 𝑠 𝑡 and learns a transition model 𝑝 (𝑠 𝑡 ∣ 𝑠 𝑡 −1 , 𝑎 𝑡 −1 ), as well as an observation-conditioned posterior 𝑞 (𝑠 𝑡 ∣ 𝑠 𝑡 −1 , 𝑎 𝑡 −1 , 𝑜 𝑡 ). The latent state is then used for policy prediction, value estimation, and imagined rollouts. Among world-model agents, the Dreamer family [3, 4, 5] is a representative RSSM-based framework. Dreamer-style agents decompose the latent state into a stochastic state 𝑧 𝑡 
+
+and a deterministic recurrent state ℎ𝑡 , and use their concate-nation as the feature for downstream prediction: 
+
+𝑓 𝑡 = [ 𝑧 𝑡 , ℎ 𝑡 ], (2) where [⋅, ⋅] denotes concatenation. The actor predicts the ac-tion distribution 𝜋 (𝑎 𝑡 ∣ 𝑓 𝑡 ), the critic estimates 𝑉 (𝑓 𝑡 ), and the dynamics model supports latent imagination (𝑧 𝑡 +1 , ℎ 𝑡 +1 ) ∼ 
+
+𝑝 (⋅ ∣ 𝑧 𝑡 , ℎ 𝑡 , 𝑎 𝑡 ). This shared encoder–RSSM–actor-critic pipeline is the main reason why adversarial visual per-turbations can affect not only the current action, but also recurrent belief states, value estimates, and imagined future trajectories. This work evaluates four agents that share this general structure but differ in representation learning or optimization objectives: Dreamer [3], R2-Dreamer [8], Dreamer-Pro [7], and Dreamer-InfoNCE [6]. We do not rely on these variants having identical training losses. Instead, ARB4WM uses their shared inference components to define comparable attack surfaces for policy distributions, value prediction, latent-state drift, and RSSM dynamics consistency. 
+
+3.2. Adversarial Threat Model 
+
+We consider a white-box adversarial setting in which the attacker has full access to model parameters, gradients, and intermediate latent representations of the target agent. Given an input observation 𝑜 𝑡 , the attacker aims to con-struct an adversarial perturbation 𝛿 𝑡 that maximally degrades the agent’s decision-making performance while remaining visually imperceptible. The perturbation is constrained by 
+
+‖𝛿 𝑡 ‖∞ ≤ 𝜖 , where 𝜖 controls the maximum perturbation magnitude, and the perturbed adversarial observation is defined as ̃𝑜 𝑡 = 𝑜 𝑡 + 𝛿 𝑡 .Under the white-box setting, the attacker first defines an attack objective function , which can target policy distri-butions, value estimation, latent dynamics, or other internal components of the Dreamer-family agent. The adversarial perturbation is then generated by maximizing the attack objective with respect to the input observation: 
+
+𝛿 ∗ 
+
+> 𝑡
+
+= arg max  
+
+> ‖𝛿 𝑡 ‖∞≤𝜖
+
+(𝑜 𝑡 + 𝛿 𝑡 ). (3) To solve the above optimization problem, we consider single-step and multi-step iterative gradient-based attack methods. The single-step variant follows the Fast Gradient Sign Method (FGSM) [33], while the multi-step variant follows Projected Gradient Descent (PGD) [34].    
+
+> Zhang et al.: Preprint submitted to Elsevier Page 3 of 19 ARB4WM
+> Figure 1: Overview of ARB4WM. Panel (a) illustrates a motivating adversarial-attack example for robotic-arm visual control, where a bounded visual perturbation can change the controller’s action and trajectory. Panel (b) summarizes the common Dreamer-family world-model pipeline and the main differences among Dreamer, R2-Dreamer, Dreamer-InfoNCE, and Dreamer-Pro. Panel (c) defines the five component-level attack objectives used in ARB4WM: policy divergence, policy entropy, value suppression, latent drift, and dynamics consistency. Panel (d) shows the two perturbation optimizers, single-step and multi-step iterative attacks. Panel (e) shows the three temporal exposure modes: full-frame, half-sequence, and sparse-frame attacks. Panel (f) lists the 10 MetaWorld and 10 DMC tasks used for evaluation. Panel (g) summarizes the reported evaluation and analysis outputs, including clean performance, nAUC, defense recovery, adaptive-defense gap, robustness ranking, and policy saliency diagnostics.
+
+## 4. Methodology 
+
+In this section, we present the ARB4WM testing frame-work, including its attack objectives, optimization proce-dures, temporal exposure protocols, data-level defenses, and adaptive attack setting. 
+
+4.1. ARB4WM Overview 
+
+To evaluate the safety of world-model controllers un-der adversarial visual observations, we establish a unified robustness testing framework for the Dreamer family, in-cluding Dreamer [3], R2-Dreamer [8], Dreamer-Pro [7], and Dreamer-InfoNCE [6]. Dreamer and its optimized variants are representative world-model agents because they combine pixel encoders, RSSM latent dynamics, imagined rollouts, and actor-critic decision making within a common latent-control pipeline. Fig. 1(a) illustrates the motivating visual-control attack scenario, and Fig. 1(b) summarizes the shared Dreamer-family pipeline used to define comparable attack surfaces. Unlike conventional adversarial reinforcement learning studies that focus on a single attack objective or a single policy architecture, ARB4WM evaluates robustness from multiple perspectives of the latent world-model pipeline. Specifically, we design five test objectives targeting different components of the Dreamer architecture, including policy distributions, value estimation, latent representations, and RSSM dynamics consistency. In addition, we evaluate mul-tiple temporal exposure protocols to analyze both continu-ous and sparse adversarial perturbation scenarios. From an engineering-testing perspective, each run is defined by a task set, a victim controller, an attack objective, an optimizer, a perturbation budget, a temporal exposure mode, and an optional input defense. The output is a structured safety report containing clean performance, attacked performance curves, clean-normalized robustness summaries, recovery scores, adaptive-defense gaps, and saliency diagnostics. The framework consists of five major testing dimen-sions:   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 4 of 19 ARB4WM
+
+• Test Objectives: policy, value, latent, and dynamics-consistency attacks; 
+
+• Attack Optimizers: single-step and multi-step itera-tive adversarial perturbation generation; 
+
+• Temporal Exposure Modes: full-frame exposure, half-sequence exposure, and sparse periodic exposure; 
+
+• Data-Level Defense and Adaptive Testing: input preprocessing defenses such as compression, smooth-ing, and noise injection, together with defense-aware attacks that optimize perturbations through or around the defended inference pipeline. This framework enables a comprehensive robustness evaluation of world-model reinforcement learning agents under diverse adversarial conditions while preserving a system-level view of closed-loop safety. 
+
+4.2. Safety Testing Workflow 
+
+ARB4WM follows a four-stage workflow. The first stage defines the operational test bed by selecting continuous-control tasks, visual observation settings, victim world-model agents, and clean reference trajectories. The sec-ond stage configures adversarial exposure by selecting the component-level objective, perturbation optimizer, budget, and attack timing. The third stage runs closed-loop eval-uation and records task return or success rate together with intermediate world-model quantities, including policy outputs, value estimates, stochastic latent states, determin-istic recurrent states, and RSSM posterior-prior statistics. The fourth stage summarizes the results through robustness metrics and diagnostic visualizations. This workflow is intended to support pre-deployment assessment rather than post-hoc attack demonstration. For industrial continuous control, a testing framework should answer whether a controller fails under persistent corruption, whether it can recover after early perturbations stop, whether simple input transformations provide genuine protection under adaptive attacks, and whether the observed failure is associated with policy, value, latent-state, or dynamics-consistency disruption. The following sections describe how ARB4WM exposes these failure modes through a unified attack interface and a fixed taxonomy of test objectives. 
+
+4.3. Unified Attack Interface for Dreamer-family Agents 
+
+Although Dreamer [3], R2-Dreamer [8], Dreamer-Pro [7], and Dreamer-InfoNCE [6] differ in representation learn-ing objectives and policy optimization strategies, they share a common RSSM-based latent imagination architecture, as summarized in Section 3.1. This shared structure enables adversarial attacks to access and perturb multiple internal components of the world-model pipeline in a unified manner. At each timestep, the agent maintains latent represen-tations composed of stochastic latent states, deterministic recurrent hidden states, latent features, policy outputs, value predictions, and imagined future trajectories. These inter-mediate representations provide multiple attack surfaces beyond conventional observation-space attacks. To support unified adversarial evaluation across different Dreamer-family agents, we extract the policy distribution 
+
+𝜋 (𝑎 𝑡 |𝑓 𝑡 ), value prediction 𝑉 (𝑓 𝑡 ), stochastic latent state 𝑧 𝑡 ,deterministic recurrent hidden state ℎ𝑡 , RSSM posterior and prior distributions 𝑞 (𝑧 𝑡 ) and 𝑝 (𝑧 𝑡 ), and imagined latent trajec-tories with future value estimates (̂𝑧 𝑡 +𝑘 ,̂ ℎ 𝑡 +𝑘 ,̂ 𝑉 𝑡 +𝑘 ) during inference and imagination rollout. Based on these internal representations, adversarial ob-jectives can target different stages of the latent world-model pipeline, including policy-space perturbation, value-space disruption, latent representation manipulation, and transition dynamics inconsistency. This unified interface enables consistent adversarial evaluation across all considered Dreamer-family agents while preserving architecture-specific learning characteris-tics. 
+
+4.4. Attack Objective Taxonomy 
+
+ARB4WM defines five white-box attack objectives, each corresponding to a different failure mode in the latent decision-making pipeline. The first three objectives target policy or value quantities that are common to actor-critic reinforcement learning agents, while the last two target latent-state and dynamics-consistency mechanisms that are specific to Dreamer-style world models. These component-level objectives correspond to the attack targets summarized in Fig. 1(c). 
+
+4.4.1. Policy Divergence Attack (PDA) 
+
+PDA is motivated by prior adversarial attacks on deep reinforcement-learning policies [18, 19, 20], which show that small observation changes can induce harmful action changes. For continuous-control agents, however, an action sample alone is too narrow a target because the policy rep-resents a full Gaussian decision distribution. PDA therefore attacks the distributional stability of the policy by forcing the adversarial policy to deviate from the clean decision distribution: 
+
+PDA = 𝐷 KL 
+
+(𝜋 clean ‖ 𝜋 adv 
+
+) , (4) where 𝜋 clean and 𝜋 adv denote the policy distributions gener-ated from clean and adversarial observations, respectively, and 𝐷 KL (⋅‖⋅) denotes the Kullback–Leibler divergence. For continuous control policies modeled as Gaussian distribu-tions, the KL divergence is computed using the predicted action means and standard deviations. By maximizing policy divergence, the attack can shift the action mean away from the clean trajectory or alter the predicted standard deviation, leading to unstable action generation and degraded control performance. Compared with earlier policy-output attacks, PDA is used here as a controlled benchmark objective that can be applied to both model-free actor-critic agents and Dreamer-family world models while keeping the clean pol-icy as the reference distribution.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 5 of 19 ARB4WM
+
+4.4.2. Policy Entropy Attack (PEA) 
+
+PEA targets a different policy-level failure mode. En-tropy in actor-critic reinforcement learning [49] is a standard quantity because it controls the stochasticity of action selec-tion and exploration. During evaluation, excessive entropy can make a continuous-control policy indecisive even if its mean action is not explicitly pushed toward a chosen wrong direction. PEA therefore increases the uncertainty of the adversarial policy: 
+
+PEA = (𝜋 adv ), (5) where (⋅) denotes the entropy operator and 𝜋 adv denotes the adversarial policy distribution. For Gaussian policies, the entropy is computed from the predicted action variances. In continuous control, small increases in action stochasticity can accumulate into unstable torques, missed contacts, or inaccurate reaching motions, especially when the policy must maintain precise posture or object interaction. Unlike PDA, PEA does not require the adversarial policy to move away from the clean policy in a particular distributional direction. It evaluates whether the policy head preserves confident action selection under adversarial perturbations, and it is not tied to Dreamer-specific latent dynamics. 
+
+4.4.3. Value Suppression Attack (VSA) 
+
+VSA is motivated by the role of critic estimates in actor-critic methods [49] and by robust RL formulations in which value estimates are affected by adversarially perturbed ob-servations [23]. In Dreamer-family agents, this vulnerability is amplified because value prediction is also used inside latent imagination to guide long-horizon behavior learning. VSA therefore attacks the critic by minimizing the predicted state value: 
+
+VSA = − 𝑉 (̃𝑓 𝑡 ), (6) where 𝑉 (⋅) denotes the critic value function and ̃ 𝑓 𝑡 denotes the adversarial feature used by the critic. If adversarial ob-servations drive the critic to underestimate promising states, the agent may avoid useful actions or assign low value to imagined rollouts that would otherwise support successful control. Compared with policy-only attacks, VSA exposes a value-oriented attack surface: the perturbation does not need to directly maximize action error if it can corrupt the critic signal that shapes action selection and imagined trajectory evaluation. The second group targets components that are specific to Dreamer-family world models. Unlike PPO-style agents, Dreamer agents maintain recurrent latent states and learn RSSM transition dynamics. An adversarial observation can therefore affect future behavior by corrupting the internal belief state, even if the immediate policy output is not directly attacked. LDA and DCA are designed to evaluate these world-model-specific vulnerabilities. 
+
+4.4.4. Latent Drift Attack (LDA) 
+
+LDA is motivated by the dependence of Dreamer-family agents on stable latent belief states. The stochastic latent state 𝑧 𝑡 captures uncertainty-aware environment represen-tations, while the deterministic hidden state ℎ𝑡 carries re-current temporal information. If an adversarial observation moves either component away from its clean counterpart, the resulting belief error can propagate into policy prediction, value estimation, and imagination rollout. LDA therefore perturbs latent representations by maximizing the discrep-ancy between clean and adversarial latent states: 
+
+LDA = ‖𝑧 𝑡 − 𝑧 clean  
+
+> 𝑡
+
+‖22 + ‖ℎ𝑡 − ℎclean  
+
+> 𝑡
+
+‖22, (7) where 𝑧 𝑡 and ℎ𝑡 denote the adversarial stochastic latent state and deterministic recurrent hidden state, respectively, 𝑧 clean 
+
+> 𝑡
+
+and ℎclean  
+
+> 𝑡
+
+denote their corresponding clean latent represen-tations, and ‖ ⋅ ‖22 denotes the squared 𝓁 2 distance. Because the deterministic state ℎ𝑡 carries recurrent memory, latent drift can persist beyond the attacked frame and contaminate subsequent belief updates even when later observations are less perturbed. LDA evaluates the robustness of latent rep-resentation learning under adversarial perturbations. 
+
+4.4.5. Dynamics Consistency Attack (DCA) 
+
+DCA is motivated by the posterior-prior consistency that underlies RSSM learning in Dreamer-style agents. The posterior distribution incorporates the current observation, while the prior distribution predicts the latent state from past dynamics and actions. Stable latent imagination requires these two distributions to remain compatible. DCA therefore attacks the consistency between RSSM posterior and prior latent distributions: 
+
+DCA = 𝐷 KL 
+
+(𝑞 (𝑧 𝑡 ) ‖ 𝑝 (𝑧 𝑡 )) , (8) where 𝑞 (𝑧 𝑡 ) denotes the RSSM posterior latent distribution conditioned on current observations and 𝑝 (𝑧 𝑡 ) denotes the RSSM prior transition distribution predicted from previous latent states and actions. By maximizing this discrepancy, the attack degrades the fidelity of latent imagination roll-outs and destabilizes future trajectory prediction. When the posterior inferred from the current observation becomes inconsistent with the prior predicted from past dynamics, the agent receives conflicting latent information, which can weaken transition consistency and impair planning through imagination. DCA evaluates the robustness of RSSM dy-namics modeling against adversarial perturbations. These five objectives separate two levels of adversarial failure. PDA, PEA, and VSA evaluate whether adversarial observations can disrupt policy distributions or critic es-timates without relying on world-model-specific variables, so they are also meaningful for model-free actor-critic agents. LDA and DCA evaluate vulnerabilities introduced by Dreamer-style latent modeling: the recurrent belief state can drift away from the clean trajectory, and the posterior inferred from observations can become inconsistent with the prior predicted by learned dynamics. This taxonomy allows ARB4WM to compare general actor-critic attack surfaces with failure modes that arise from latent world-model learning.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 6 of 19 ARB4WM
+
+4.5. Adversarial Optimization 
+
+Following the white-box adversarial threat model de-fined in Section 3.2, we optimize adversarial perturbations using gradient-based attack methods under the 𝓁 ∞ pertur-bation constraint. ARB4WM uses two optimization regimes because they stress different aspects of robustness. A single-step update measures whether the local input gradient is already sufficient to disrupt the agent, while a multi-step iter-ative update tests whether repeated projected ascent can find stronger perturbation directions under the same budget. This distinction is useful for world models because a perturbation can affect both the immediate policy output and the recurrent belief state that is carried forward. Fig. 1(d) shows these two perturbation optimizers within the benchmark workflow. The single-step optimizer follows FGSM [33] and gen-erates the perturbation with one gradient ascent step: 
+
+𝛿 = 𝜖 ⋅ sign (∇𝑜 attack 
+
+) . (9) This optimizer provides an efficient local-sensitivity baseline. The multi-step optimizer follows PGD [34] and iteratively updates the perturbed observation through pro-jected gradient ascent: 
+
+𝑜 𝑘 +1 = Π 𝜖 (𝑜 )
+
+(𝑜 𝑘 + 𝛼 ⋅ sign (∇𝑜 attack 
+
+)) , (10) where Π𝜖 (𝑜 ) denotes projection onto the 𝓁 ∞ perturbation region. Compared with the single-step variant, the multi-step optimizer can refine the perturbation after projection and therefore evaluates robustness under more challenging attack conditions. 
+
+4.6. Temporal Attack Protocols 
+
+In practical deployment scenarios, continuous adversar-ial attacks on every observation frame may be unrealistic due to computational and resource constraints. Therefore, in addition to conventional full-frame attacks, we further evaluate robustness under partial and sparse temporal attack settings. These exposure modes are summarized in Fig. 1(e). 
+
+4.6.1. Full-frame Attacks 
+
+Full-frame attacks perturb every observation frame through-out the entire episode. This setting evaluates the fundamental robustness limit of world-model agents under continuous adversarial perturbations and represents the strongest adver-sarial scenario in our benchmark. Because every recurrent update receives an adversarially modified observation, full-frame attacks can continuously corrupt both immediate action selection and the latent state carried into future timesteps. This protocol therefore measures the upper-bound attack pressure that a fixed perturbation budget can impose during closed-loop evaluation. 
+
+4.6.2. Half-sequence Attacks 
+
+Half-sequence attacks perturb only part of the episode trajectory. We consider two variants: 
+
+• attacking only the first half of frames; 
+
+• attacking only the second half of frames. The first-half attack evaluates the long-term destructive effect of adversarial perturbations introduced during early-stage trajectory execution. Since Dreamer-family agents rely on recurrent latent memory and imagination rollout, early perturbations may propagate through future latent dynamics. If the agent fails to recover after the attack stops, this suggests that early latent corruption has been stored in the recurrent belief state and continues to affect subsequent decisions. The second-half attack evaluates the vulnerability of the agent during stable policy execution after latent states have already been formed. This setting is complementary to the first-half attack: it tests whether a policy that has already en-tered a reasonable trajectory can still be destabilized by late-stage adversarial observations, for example during precise reaching, balancing, or object interaction. Furthermore, by stopping adversarial perturbations mid-way through the episode, half-sequence attacks additionally evaluate the recovery capability of world-model agents after adversarial interference disappears. 
+
+4.6.3. Sparse Periodic Attacks 
+
+Sparse periodic attacks perturb observations every 𝑛 
+
+frames: 
+
+ = { 𝑡 ∣ 𝑡 mod 𝑛 = 0} . (11) This setting simulates realistic sparse adversaries with limited attack frequency. Sparse attacks evaluate include: 
+
+• the minimum perturbation frequency required to desta-bilize the agent; 
+
+• the temporal robustness of latent imagination dynam-ics; 
+
+• the resilience of recurrent latent states against inter-mittent adversarial interference. Compared with continuous attacks, sparse attacks pro-vide additional insights into how adversarial perturbations accumulate and propagate within world-model reinforce-ment learning systems. They are also closer to constrained attack scenarios where the adversary cannot perturb every frame due to limited computation, communication band-width, or sensing opportunities. If sparse perturbations still cause large return degradation, the result indicates that world-model agents may amplify low-frequency observation corruption through recurrent state updates. 
+
+4.7. Unified Attack Evaluation Procedure 
+
+Algorithm 1 summarizes the unified evaluation proce-dure implemented in ARB4WM. The procedure exposes the main experimental choices used in our benchmark: the attack objective, temporal attack mode, perturbation optimizer, op-tional input defense, and whether the attack is adaptive to the defense. When defense is enabled, the defended observation is passed to the agent before action selection. For adaptive attacks, gradients are computed through the defended input using BPDA/EOT-style approximation so that the attacker optimizes against the actual defended inference pipeline.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 7 of 19 ARB4WM
+
+Algorithm 1 ARB4WM Unified Adversarial Evaluation 
+
+Require: Agent 𝑀 , environment 𝐸 , objective 𝑎 , temporal mode 𝑞 , optimizer 𝑜 , budget 𝜖 , steps 𝐾 , defense 𝑑 ,adaptive flag 𝜂  
+
+> 1:
+
+Initialize recurrent state 𝑠 0 and previous action 𝑢 0 
+
+> 2:
+
+for each timestep 𝑡 until episode termination do  
+
+> 3:
+
+Receive clean observation 𝑥 𝑡 from 𝐸  
+
+> 4:
+
+if 𝑞 selects timestep 𝑡 then  
+
+> 5:
+
+Set 𝑥 0 
+
+> 𝑡
+
+= 𝑥 𝑡  
+
+> 6:
+
+for 𝑘 = 0 to 𝐾 − 1 do  
+
+> 7:
+
+Choose loss 𝑎 from {PDA, PEA, VSA, LDA, DCA}  
+
+> 8:
+
+if 𝑑 is enabled and 𝜂 is true then  
+
+> 9:
+
+Compute 𝑎 on defended input 𝑑 (𝑥 𝑘 𝑡 ) using adaptive gradients  
+
+> 10:
+
+else  
+
+> 11:
+
+Compute 𝑎 on current adversarial input 𝑥 𝑘 𝑡  
+
+> 12:
+
+end if  
+
+> 13:
+
+Update perturbation with optimizer 𝑜 (single-step if 𝐾 = 1 , multi-step if 𝐾 > 1) 
+
+> 14:
+
+Project 𝑥 𝑘 +1  
+
+> 𝑡
+
+to ‖𝑥 𝑘 +1  
+
+> 𝑡
+
+− 𝑥 𝑡 ‖∞ ≤ 𝜖  
+
+> 15:
+
+end for  
+
+> 16:
+
+Set attacked observation ̃𝑥 𝑡 = 𝑥 𝐾 𝑡  
+
+> 17:
+
+else  
+
+> 18:
+
+Set attacked observation ̃𝑥 𝑡 = 𝑥 𝑡  
+
+> 19:
+
+end if  
+
+> 20:
+
+if 𝑑 is enabled then  
+
+> 21:
+
+Set inference observation ̂𝑥 𝑡 = 𝑑 (̃𝑥 𝑡 ) 
+
+> 22:
+
+else  
+
+> 23:
+
+Set inference observation ̂𝑥 𝑡 =̃𝑥 𝑡  
+
+> 24:
+
+end if  
+
+> 25:
+
+Agent selects action 𝑢 𝑡 = 𝑀 (̂𝑥 𝑡 , 𝑠 𝑡 ) and updates recurrent state  
+
+> 26:
+
+Step environment with 𝑢 𝑡 and accumulate return  
+
+> 27:
+
+end for  
+
+> 28:
+
+return episode return and robustness metrics 
+
+## 5. Experimental Setup 
+
+In this section, we describe the benchmark tasks, victim agents, attack protocol, and evaluation metrics used to quan-tify robustness and recovery. 
+
+5.1. Evaluation Environments 
+
+We evaluate adversarial robustness on two pixel-based benchmarks that serve as simulated proxies for industrial visual control: MetaWorld [30] and the DeepMind Control Suite (DMC) [31]. MetaWorld contains goal-conditioned robotic manipulation tasks, where performance is mea-sured by task success rate. DMC contains MuJoCo-based continuous-control tasks with normalized return scores, where higher scores indicate better control performance. Using both benchmarks allows us to test whether adversarial vulnerabilities appear consistently across control regimes that are relevant to engineered automation systems, includ-ing reaching, object interaction, goal-conditioned manipu-lation, balance control, and locomotion. Fig. 1(f) summa-rizes the selected environments, and Fig. 1(g) summarizes the evaluation metrics and analysis dimensions used in ARB4WM. For MetaWorld, we select 10 manipulation tasks: coffee-pull , reach , reach-wall , window-close , window-open , button-press , handle-press , plate-slide-back , plate-slide-back-side ,and plate-slide-side . These tasks cover reaching, pushing, sliding, pressing, and object manipulation under different geometric constraints. MetaWorld places more emphasis on goal-conditioned visual manipulation and success-based evaluation, which makes it particularly relevant to industrial robotic-control settings. For DMC, we select 10 tasks: reacher easy , reacher hard , walker walk , walker run , walker stand , ball-in-cup catch , cartpole balance , cartpole swingup , finger turn easy ,and hopper stand . These tasks cover multiple control regimes, including sparse target reaching, balance control, locomo-tion, swing-up control, catching, and contact-rich stabiliza-tion. This diversity is important for safety testing because adversarial perturbations can affect agents differently de-pending on whether the task requires precise visual lo-calization, stable posture control, or long-horizon motion coordination. Although these environments are simulated rather than physical industrial plants, they provide repeatable visual closed-loop tasks for isolating safety-relevant failure modes before deployment in higher-fidelity digital twins or real equipment. 
+
+5.2. Victim Agents and Attack Protocol 
+
+We compare four Dreamer-family agents: Dreamer [3], R2-Dreamer [8], Dreamer-InfoNCE [6], and Dreamer-Pro [7]. All agents are evaluated from visual observations un-der the same task set, perturbation budgets, and evaluation episodes. The attack is applied only during evaluation and does not modify the environment dynamics, reward function, or model parameters. We consider one random perturbation baseline and five white-box attack objectives: PDA, PEA, DCA, VSA, and LDA. For each objective, adversarial pertur-bations are generated using both single-step and multi-step iterative optimizers. For comparability, all victim agents follow the training protocol and hyperparameter setting used by R2-Dreamer [8]. The four agents are trained with the same training budget and use the 12M model-size configuration. All reported attack results are averaged over 20 independent evaluation runs with random seeds from 20 to 39. For single-step attacks, the step size is set to the perturbation budget, 𝛼 = 𝜖 .For multi-step attacks, we use 10 iterations and set the step size to 𝛼 = 𝜖 ∕10 .Table 1 reports the average clean performance of the four victim models before adversarial perturbation. The DMC column reports normalized environment score, while the MetaWorld column reports average success rate. These clean results provide context for interpreting robustness, since             
+
+> Zhang et al.: Preprint submitted to Elsevier Page 8 of 19 ARB4WM
+> Table 1
+> Average clean performance of victim models on the selected MetaWorld and DMC tasks.
+> Model DMC Score MetaWorld Success
+> Dreamer [3] 943.22 1.00 R2-Dreamer [8] 928.52 0.98 Dreamer-InfoNCE [6] 903.34 1.00 Dreamer-Pro [7] 859.03 0.97
+
+models with different nominal performance may also have different robustness profiles. 
+
+5.3. Evaluation Metrics 
+
+Our evaluation covers five complementary aspects of robustness in world models: (i) task performance under perturbation, (ii) robustness aggregation across attack bud-gets, (iii) defense effectiveness and recovery, (iv) adaptive robustness gap, and (v) policy saliency behavior. Specif-ically, we evaluate clean performance, normalized area-under-curve robustness, defense recovery, adaptive attack gap, and saliency-based attention alignment. 
+
+5.3.1. Clean Performance 
+
+Let  denote a benchmark task set and let 𝑅 𝑚,𝜏 (𝜖 ) denote the evaluation return of model 𝑚 on task 𝜏 under perturbation budget 𝜖 . For DMC, 𝑅 𝑚,𝜏 is the normalized environment score. For MetaWorld, 𝑅 𝑚,𝜏 is the success rate. The average clean performance is computed as 
+
+Clean( 𝑚 ) = 1
+
+| |∑
+
+> 𝜏 ∈
+
+𝑅 𝑚,𝜏 (0) . (12) 
+
+5.3.2. Robustness AUC 
+
+To summarize robustness across perturbation magni-tudes, we compute the area under the return curve over a set of perturbation budgets  = { 𝜖 0, 𝜖 1, … , 𝜖 𝐾 }. For a given model 𝑚 , task 𝜏 , and attack objective 𝑎 , the AUC is approximated by the trapezoidal rule: 
+
+AUC = 
+
+> 𝐾 −1
+
+∑
+
+> 𝑘 =0
+
+𝑅 𝑚,𝜏,𝑎 (𝜖 𝑘 ) + 𝑅 𝑚,𝜏,𝑎 (𝜖 𝑘 +1 )2 (𝜖 𝑘 +1 − 𝜖 𝑘 ). (13) Because different models can have different clean perfor-mance, we use clean-normalized AUC (nAUC) to measure robust task performance against a fixed benchmark scale: 
+
+nAUC = AUC (𝜖 𝐾 − 𝜖 0)𝐶 
+
+, (14) where 𝐶  is the benchmark normalization constant. We use 
+
+𝐶  = 1000 for DMC normalized scores and 𝐶  = 1
+
+for MetaWorld success rates. The reported mean nAUC averages Eq. (14) over tasks and over single-step and multi-step iterative results for the same attack objective: 
+
+nAUC = 1
+
+| || |∑
+
+> 𝜏 ∈
+
+∑
+
+> 𝑜 ∈
+
+nAUC( 𝜏, 𝑜 ), (15) where  = {Single , Iterative} denotes the set of attack optimizers. Higher nAUC indicates stronger robust task performance under adversarial perturbations. 
+
+5.3.3. Defense Recovery 
+
+For defense evaluation, we further measure how much of the attack-induced performance loss is recovered by an input defense. Let 𝑅 def 
+
+> 𝑚,𝜏,𝑎,𝑑,𝑜
+
+(𝜖 ) denote the return of model 𝑚 on task 𝜏 under attack objective 𝑎 , defense 𝑑 , optimizer 𝑜 , and perturbation budget 𝜖 . Let 𝑅 atk 
+
+> 𝑚,𝜏,𝑎,𝑜
+
+(𝜖 ) denote the correspond-ing attacked return without defense, and let 𝑅 clean  
+
+> 𝑚,𝜏
+
+denote the clean return. The defense recovery score is defined as 
+
+Rec( 𝜖 ) = 𝑅 def 
+
+> 𝑚,𝜏,𝑎,𝑑,𝑜
+
+(𝜖 ) − 𝑅 atk 
+
+> 𝑚,𝜏,𝑎,𝑜
+
+(𝜖 )
+
+𝑅 clean  
+
+> 𝑚,𝜏
+
+− 𝑅 atk 
+
+> 𝑚,𝜏,𝑎,𝑜
+
+(𝜖 ) . (16) Thus, Rec = 0 means no improvement over the undefended attack, Rec = 1 means clean performance is restored, and negative values mean that preprocessing further de-grades performance. Mean recovery is obtained by averag-ing Eq. (16) over perturbation budgets, attack objectives, optimizers, tasks, and models as appropriate for each figure. 
+
+5.3.4. Adaptive Robustness Gap 
+
+To quantify whether a defense remains effective against an adaptive attacker, we compute the adaptive gap: 
+
+Gap = Rec non -adaptive  
+
+> 𝑚,𝜏,𝑑
+
+− Rec adaptive  
+
+> 𝑚,𝜏,𝑑
+
+, (17) where the overline denotes averaging over attack objectives, perturbation budgets, and attack optimizers. Larger values indicate that accounting for the defense more strongly re-duces the apparent defense benefit. 
+
+5.3.5. Policy Saliency Metrics 
+
+For the policy-saliency analysis, let 𝑆 (𝑖, 𝑗 ) denote the nonnegative occlusion saliency score at pixel location (𝑖, 𝑗 )
+
+after normalizing the saliency map so that ∑𝑖,𝑗 𝑆 (𝑖, 𝑗 ) = 1 .Let Ω denote the target region and let 𝑐 Ω denote the target center. The Target Ratio measures how much saliency mass lies inside the target region: 
+
+TR = ∑
+
+> (𝑖,𝑗 )∈Ω
+
+𝑆 (𝑖, 𝑗 ). (18) The Center Distance measures the Euclidean distance be-tween the saliency centroid and the target center: 
+
+CD = 
+
+‖‖‖‖‖‖∑
+
+> 𝑖,𝑗
+
+𝑆 (𝑖, 𝑗 )[ 𝑖, 𝑗 ]⊤ − 𝑐 Ω
+
+‖‖‖‖‖‖2
+
+. (19) The saliency entropy measures spatial dispersion: 
+
+Ent = − ∑
+
+> 𝑖,𝑗
+
+𝑆 (𝑖, 𝑗 ) log( 𝑆 (𝑖, 𝑗 ) + 𝜂 ), (20) where 𝜂 is a small numerical constant. Higher Target Ratio indicates stronger target-centered evidence; lower Center Distance and Entropy indicate more concentrated saliency around the target.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 9 of 19
+
+ARB4WM 
+
+(a) Dreamer (b) R2-Dreamer (c) Dreamer-InfoNCE (d) Dreamer-Pro 
+
+Figure 2: Success-rate curves under different perturbation magnitudes 𝜖 on 10 MetaWorld tasks. Each subplot corresponds to one Dreamer-family agent and compares five attack objectives under single-step and multi-step iterative optimization strategies. The x-axis denotes the perturbation budget 𝜖 , while the y-axis denotes the average task success rate. Lower curves indicate stronger adversarial attack effectiveness and weaker robustness. 
+
+(a) Dreamer (b) R2-Dreamer (c) Dreamer-InfoNCE (d) Dreamer-Pro 
+
+Figure 3: Normalized return curves under different perturbation magnitudes 𝜖 on 10 DMC tasks. Each subplot corresponds to one Dreamer-family agent and compares five attack objectives under single-step and multi-step iterative optimization strategies. The x-axis denotes the perturbation budget 𝜖 , while the y-axis denotes the normalized environment return. Lower curves indicate stronger adversarial attack effectiveness and weaker robustness. 
+
+Table 2 
+
+Mean clean-normalized Area Under Curve (nAUC) results on MetaWorld and DMC under different attack objectives. Higher nAUC indicates stronger robust task performance under attack.                        
+
+> Benchmark Model Random PDA PEA DCA VSA LDA Avg.
+> MetaWorld Dreamer [3] 0.916 0.509 0.469 0.548 0.476 0.478 0.566 R2-Dreamer [8] 0.873 0.587 0.468 0.651 0.497 0.597 0.612 Dreamer-InfoNCE [6] 0.930 0.519 0.436 0.656 0.427 0.571 0.590 Dreamer-Pro [7] 0.626 0.323 0.302 0.389 0.268 0.379 0.381 DMC Dreamer [3] 0.804 0.340 0.369 0.402 0.319 0.355 0.431 R2-Dreamer [8] 0.819 0.351 0.381 0.421 0.350 0.391 0.452 Dreamer-InfoNCE [6] 0.763 0.319 0.304 0.382 0.313 0.354 0.406 Dreamer-Pro [7] 0.597 0.225 0.243 0.301 0.210 0.292 0.311
+
+## 6. Experiments and Analysis 
+
+In this section, we analyze ARB4WM results across attack objectives, temporal exposure modes, data-level de-fenses, transferability tests, saliency diagnostics, and the testing-system interface. 
+
+6.1. Robustness Across Benchmarks and Attack Objectives 
+
+Figs. 2 and 3 reveal a consistent robustness gap be-tween random visual noise and optimized adversarial per-turbations. Although the perturbation budgets are small, the gradient-based attacks reduce returns much more strongly than the random baseline across both benchmarks. This gap indicates that the failure mode is not simply sensitivity to image corruption. Instead, the attacks exploit structured di-rections in observation space that are aligned with the agent’s policy, value, latent representation, or dynamics computa-tion. For world models, this is especially important because 
+
+Table 3 
+
+Number of model–task pairs for which each attack objective achieves the lowest mean nAUC. The count is computed over four models and 20 tasks. Lower nAUC indicates stronger attack performance. 
+
+Attack objective Strongest count Share 
+
+PDA 12 / 80 15.0% PEA 28 / 80 35.0% DCA 4 / 80 5.0% VSA 32 / 80 40.0% LDA 4 / 80 5.0% 
+
+the same perturbed observation can affect the current action and also update the recurrent belief state used by later decisions. The model ranking in Table 2 suggests that representa-tion design has a measurable effect on adversarial robust-ness. R2-Dreamer [8] achieves the strongest average nAUC on both MetaWorld and DMC, while Dreamer-Pro [7] is consistently the weakest model despite being designed to im-prove representation learning through prototypical structure. This contrast suggests that nominal representation quality and adversarial stability are not equivalent objectives. An agent can learn features that are effective for clean control while still relying on visual directions that are easy to manip-ulate adversarially. Dreamer-InfoNCE [6] performs compet-itively on MetaWorld but is weaker on DMC, indicating that the robustness effect of contrastive representation learning is task-dependent rather than uniformly beneficial. 
+
+Zhang et al.: Preprint submitted to Elsevier Page 10 of 19 ARB4WM 
+
+Table 4 
+
+Mean clean-normalized Area Under Curve (nAUC) results on four DMC tasks under different temporal attack modes. The full-frame row uses the main robustness experiments, restricted to the perturbation budgets shared with the partial-frame experiments, 𝜖 ∈ {0 , 0.04 , 0.08 , 0.12} . Higher nAUC indicates stronger robust task performance under attack.                                                            
+
+> Attack Mode Model Random PDA PEA DCA VSA LDA Avg.
+> Full-frame Dreamer [3] 0.911 0.521 0.516 0.585 0.470 0.534 0.589 R2-Dreamer [8] 0.912 0.487 0.500 0.607 0.442 0.540 0.581 Dreamer-InfoNCE [6] 0.872 0.438 0.385 0.513 0.399 0.464 0.512 Dreamer-Pro [7] 0.864 0.395 0.376 0.505 0.355 0.478 0.496 First-half Dreamer [3] 0.917 0.710 0.712 0.748 0.668 0.710 0.744 R2-Dreamer [8] 0.935 0.692 0.707 0.763 0.678 0.720 0.749 Dreamer-InfoNCE [6] 0.903 0.629 0.609 0.686 0.616 0.646 0.681 Dreamer-Pro [7] 0.905 0.631 0.630 0.703 0.610 0.671 0.692 Second-half Dreamer [3] 0.942 0.766 0.810 0.802 0.735 0.770 0.804 R2-Dreamer [8] 0.936 0.749 0.820 0.826 0.737 0.776 0.808 Dreamer-InfoNCE [6] 0.926 0.755 0.791 0.803 0.703 0.772 0.792 Dreamer-Pro [7] 0.919 0.703 0.781 0.783 0.684 0.769 0.773 Sparse ( 𝑛 = 2 )Dreamer [3] 0.921 0.743 0.745 0.803 0.680 0.754 0.774 R2-Dreamer [8] 0.922 0.719 0.738 0.804 0.678 0.762 0.771 Dreamer-InfoNCE [6] 0.913 0.711 0.670 0.773 0.616 0.698 0.730 Dreamer-Pro [7] 0.915 0.685 0.627 0.757 0.583 0.776 0.724 Sparse ( 𝑛 = 4 )Dreamer [3] 0.966 0.908 0.931 0.950 0.845 0.916 0.920 R2-Dreamer [8] 0.954 0.933 0.936 0.959 0.890 0.953 0.937 Dreamer-InfoNCE [6] 0.953 0.893 0.877 0.925 0.886 0.917 0.909 Dreamer-Pro [7] 0.946 0.899 0.887 0.926 0.906 0.929 0.916 Sparse ( 𝑛 = 6 )Dreamer [3] 0.966 0.949 0.947 0.963 0.891 0.952 0.945 R2-Dreamer [8] 0.962 0.950 0.949 0.964 0.940 0.964 0.955 Dreamer-InfoNCE [6] 0.954 0.926 0.905 0.942 0.934 0.933 0.932 Dreamer-Pro [7] 0.955 0.941 0.923 0.946 0.944 0.945 0.942
+
+The attack-objective trends also show why a single policy-level attack is insufficient for evaluating world mod-els. VSA is highly damaging in several settings, which indicates that corrupting value estimates can destabilize be-havior even when the attack is applied only to observations. This is consistent with Dreamer-style control, where values are used to evaluate imagined trajectories and guide actor learning. Table 3 provides a task-level count of the strongest attack objective across the 80 model–task pairs. For each pair, we average the nAUC of each objective over the single-step and multi-step optimizers and select the objective with the lowest mean nAUC. VSA is the strongest objective in 32 cases, and PEA is strongest in 28 cases, indicating that value suppression and policy-entropy disruption are the most frequent high-impact objectives in this benchmark. DCA and LDA remain competitive attack directions because they tar-get RSSM consistency and latent-state stability rather than the final action distribution alone. These results support the central design choice of ARB4WM: robustness evaluation for world-model agents should cover the latent decision-making pipeline, including policy outputs, critic estimates, latent representations, and dynamics consistency. 
+
+6.2. Temporal Vulnerability 
+
+Table 4 isolates a failure mode that is specific to re-current world-model agents: adversarial observations can contaminate the latent state over time. Full-frame attacks are the most damaging setting because every belief update is computed from a perturbed visual input. This means that the attacker does not need to rely only on immediate action errors; it can also maintain pressure on the RSSM posterior, deterministic recurrent state, value prediction, and subse-quent policy inputs throughout the episode. The lower nAUC 
+
+Figure 4: Defense recovery under non-adaptive and adaptive attacks, averaged over eight representative tasks from Meta-World and DMC. Panel (a) reports defense recovery, and panel (b) reports the adaptive gap. Higher recovery indicates stronger mitigation, while a larger adaptive gap indicates weaker protection under defense-aware attacks. 
+
+Figure 5: Task-level defense recovery on Plate Slide Back, the task with the highest average recovery among the eight evaluated tasks. 
+
+under full-frame attacks therefore reflects a compounding process rather than a collection of independent single-step mistakes. The difference between first-half and second-half attacks further supports this recurrent-state interpretation. Perturb-ing the first half of the episode is generally more damaging than perturbing the second half, even though both settings attack the same number of frames. Early perturbations occur before the agent has stabilized its internal belief and trajec-tory, so errors injected into the latent state can influence later decisions after the attack has stopped. By contrast, second-half attacks affect a shorter remaining horizon and begin after the agent has already accumulated a cleaner history. This asymmetry shows why robustness for world models should be evaluated temporally, not only frame by frame. Sparse attacks reveal a frequency threshold for main-taining adversarial influence. When every other frame is attacked ( 𝑛 = 2 ), the degradation remains substantial, sug-gesting that the recurrent state does not fully recover between adjacent clean frames. However, as the interval increases to 
+
+𝑛 = 4 and 𝑛 = 6 , the nAUC approaches the random baseline. This indicates that clean observations can partially re-anchor the latent belief state when they arrive frequently enough. The temporal results therefore refine the main robustness findings: attack strength depends not only on the objective and perturbation budget, but also on whether perturbations are frequent enough and early enough to propagate through the RSSM memory. 
+
+6.3. Robustness under Data-Level Defenses 
+
+Fig. 4 shows that simple input transformations can re-cover part of the attack-induced performance loss, but the 
+
+Zhang et al.: Preprint submitted to Elsevier Page 11 of 19 ARB4WM  
+
+> Figure 6: Task-level defense recovery on Cartpole Balance, the task with the lowest average recovery among the eight evaluated tasks.
+
+recovery is incomplete and highly sensitive to the attacker’s knowledge. Under non-adaptive attacks, JPEG compres-sion and median filtering obtain the largest Rec values be-cause they can remove high-frequency perturbation patterns while preserving much of the low-frequency visual structure needed for control. Gaussian noise is weaker because it does not selectively remove adversarial directions and can also corrupt task-relevant pixels. These results indicate that data-level preprocessing can be useful when the attack is generated against the undefended observation pipeline. The adaptive setting gives a stricter test. Once the attacker differentiates through, or approximates gradients through, the preprocessing step, the perturbation can be optimized to survive or exploit the transformation. The drop from non-adaptive Rec to adaptive Rec is summarized by 
+
+Gap in Fig. 4(b). JPEG compression and median filtering show larger Gap values than Gaussian noise because they impose structured, deterministic transformations that an adaptive attacker can model. Gaussian noise has a smaller 
+
+Gap , but this does not imply strong defense: its absolute recovery is weak and sometimes negative. Thus, none of the tested input defenses eliminates the underlying adversarial vulnerability; they only partially change the perturbation distribution seen by the model. The contrast between the representative tasks in Fig. 5 and Fig. 6 indicates that defense effectiveness depends on the visual and control demands of the task. Plate Slide Back benefits more from preprocessing, likely because its unde-fended adversarial failures are partly driven by perturbations to object and goal appearance that can be smoothed while retaining enough coarse spatial structure for sliding control. The task also has redundant visual cues: the plate, table, and goal geometry remain recognizable after JPEG compression or median filtering, so the defended observation can recover part of the clean policy evidence. Cartpole Balance is dif-ferent. In the undefended setting, adversarial perturbations can quickly damage the visual estimate of pole angle and cart position, and the control loop has little tolerance for delay or smoothing error. Preprocessing may remove some adversarial noise, but it can also blur the same thin pole and cart features that the agent needs for stabilization. This task dependence suggests that input defenses should not be evaluated only through average recovery. A defense can help in manipulation tasks with redundant visual cues while failing in balance or precision-control tasks where the agent depends on subtle image features. Overall, the defense study reinforces the main benchmark conclusion: adversarial ro-bustness for world models cannot be solved by generic image preprocessing alone and must be evaluated with adaptive, task-aware attacks. 
+
+6.4. Transferability of Adversarial Objectives 
+
+The preceding results evaluate attacks in a white-box setting. We further test whether perturbations generated on one Dreamer-family agent transfer to other agents on DMC Reacher Easy. For each source model, we generate multi-step perturbations with MI-FGSM [50] using the five ARB4WM objectives and evaluate the same perturbed ob-servations on held-out target models. We report Transfer Drop, defined as 1 − nAUC , where nAUC is computed over 
+
+𝜖 ∈ {0 , 0.02 , 0.04 , 0.08 , 0.12 , 0.16} and normalized by the DMC score range of 1000. Fig. 7 shows that transferability is not uniform across source models or objectives. Perturbations generated from Dreamer-InfoNCE transfer most strongly to the other agents, with average Transfer Drop around 0.76–0.77 across the three target models. Dreamer as a source produces weaker transferred attacks, with average Transfer Drop around 0.55– 0.56. Across objectives, VSA and PEA have the largest aver-age transfer effect, while DCA is the weakest in this setting. This suggests that attacks targeting value prediction and policy entropy capture failure directions that are less tied to a single source model than RSSM consistency perturbations on DMC Reacher Easy. 
+
+6.5. Policy Saliency under Adversarial Objectives 
+
+To complement the return-based robustness evaluation, we further analyze how adversarial objectives affect the spatial evidence used by the policy. We use an occlusion-based saliency method on DMC Reacher Easy. Starting from the same rollout, we select the 20th frame and compute saliency maps for four Dreamer-family agents under clean observations and multi-step iterative attacks with 𝜖 = 0 .06 
+
+and 10 optimization steps. The saliency score at each image location is defined by the change in the policy action mean after occluding a local image patch. This analysis does not measure trajectory-level performance directly; instead, it vi-sualizes where each policy becomes sensitive under different attack objectives. Fig. 8 shows that adversarial objectives can change the spatial sensitivity of the policy even when the visual frame itself remains almost unchanged. This distinction is impor-tant. The attacks are bounded pixel perturbations, so the arm configuration and target location in the displayed observa-tion can look visually identical across columns. However, the saliency maps are computed from the policy response after local occlusion, and therefore reveal how the internal decision function uses different image regions under each attack objective. The figure shows that the attacks do not merely add visually imperceptible noise; they also change which parts of the observation become causally relevant to the policy output.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 12 of 19
+
+ARB4WM 
+
+(a) Source-target transfer matrix (b) Objective-wise transfer strength (c) Objective transfer by target model 
+
+Figure 7: Multi-step transferability of adversarial objectives on DMC Reacher Easy. Perturbations are generated on a source model with MI-FGSM and evaluated on different target models. Higher Transfer Drop indicates stronger black-box degradation. Panel (a) averages over attack objectives and perturbation budgets for each source-target pair; diagonal entries are omitted. Panel (b) ranks the five attack objectives by average transfer strength. Panel (c) separates the same objective scores by target model, showing that VSA and PEA transfer more strongly than DCA in this task. 
+
+Table 5 
+
+Policy saliency metrics on DMC Reacher Easy at frame 20. Target Ratio measures the fraction of saliency mass inside the target region; higher is better. Center Distance measures the distance between the saliency centroid and the target; lower is better. Entropy measures saliency dispersion; lower values indicate more concentrated saliency. Model rows report clean metrics and the average over five adversarial objectives. Attack rows report the average over four models.                                                                                               
+
+> Group Name Clean Target Ratio Attack Target Ratio ΔTarget Ratio Clean Center Dist. Attack Center Dist. ΔCenter Dist. Clean Entropy Attack Entropy ΔEntropy
+> Model R2-Dreamer [8] 0.0301 0.0181 -0.0119 12.2265 14.1417 1.9152 0.9799 0.9813 0.0015 Dreamer [3] 0.0342 0.0209 -0.0133 15.3066 14.2989 -1.0077 0.9794 0.9780 -0.0013 Dreamer-InfoNCE [6] 0.0347 0.0246 -0.0101 14.6282 13.3585 -1.2697 0.9818 0.9867 0.0048 Dreamer-Pro [7] 0.0370 0.0283 -0.0087 10.8590 13.7272 2.8683 0.9859 0.9886 0.0026 Attack PDA –0.0238 -0.0102 –13.5156 0.2606 –0.9776 -0.0042 PEA –0.0226 -0.0114 –13.6084 0.3533 –0.9858 0.0041 DCA –0.0219 -0.0121 –14.1949 0.9398 –0.9878 0.0061 VSA –0.0224 -0.0116 –14.0942 0.8391 –0.9790 -0.0027 LDA –0.0242 -0.0098 –13.9948 0.7397 –0.9880 0.0062
+
+Figure 8: Policy saliency maps on DMC Reacher Easy at the 20th frame of a shared rollout. Rows correspond to Dreamer-family agents, and columns compare clean observations with adversarial observations generated by PDA, PEA, DCA, VSA, and LDA. The yellow dot marks the target position. The visualization shows that different attack objectives alter the spatial sensitivity of the policy in distinct ways, even when the underlying environment frame appears visually similar. 
+
+The model-wise patterns suggest that representation-learning choices affect not only return robustness but also the spatial organization of policy evidence. For R2-Dreamer [8], the clean saliency is not perfectly concentrated on the target, but several attacked maps still preserve visible sensitivity around the target-arm region. This is consistent with the main benchmark results, where R2-Dreamer obtains the strongest average robustness across MetaWorld and DMC. Dreamer [3] exhibits more objective-dependent behavior: some attacks preserve localized sensitivity, whereas oth-ers move salient regions toward background structures. Dreamer-InfoNCE [6] and Dreamer-Pro [7] show compar-atively diffuse maps under several objectives, indicating that adversarial perturbations can make their policy response depend on broader visual regions rather than a compact task-relevant area. These differences suggest that nominal representation objectives can shape the geometry of pol-icy sensitivity, even when the four agents share the same Dreamer-style RSSM decision pipeline. Table 5 provides a quantitative summary of these obser-vations. Across all four models, the average Target Ratio decreases under attack, indicating that adversarial pertur-bations reduce the fraction of saliency mass assigned to the target region. This decrease is modest in absolute value because the target occupies only a small part of the 64 × 64 image, but the trend is consistent across models. The Center Distance metric provides a complementary view: R2-Dreamer and Dreamer-Pro show positive average shifts un-der attack, meaning that the saliency centroid moves farther from the target, while Dreamer and Dreamer-InfoNCE show negative average shifts on this particular frame. This does not necessarily mean that Dreamer and Dreamer-InfoNCE are more robust; rather, it indicates that attacks can also concentrate saliency on localized non-target regions or move 
+
+Zhang et al.: Preprint submitted to Elsevier Page 13 of 19 ARB4WM 
+
+the centroid closer while still disrupting the policy-relevant evidence. Therefore, Target Ratio, Center Distance, and En-tropy should be interpreted jointly rather than as independent robustness scores. The attack-wise summary further shows that differ-ent objectives perturb the policy in different ways. DCA produces the largest average increase in Center Distance, suggesting that attacking RSSM posterior-prior consistency tends to move policy sensitivity away from the target more strongly than policy-level objectives. VSA also produces a large Center Distance increase, which is consistent with the return-based observation that value-oriented attacks can be damaging: corrupting value estimates can make the policy sensitive to regions that are not directly tied to target localization. LDA yields the smallest Target Ratio drop but one of the largest Entropy increases, suggesting a different failure mode in which saliency becomes more spatially diffuse rather than simply displaced. PDA and PEA cause smaller centroid shifts on average, but they still reduce Target Ratio, showing that direct policy attacks can weaken target-centered evidence without necessarily producing the largest spatial displacement. Overall, this saliency analysis provides a diagnostic bridge between pixel-level perturbations and trajectory-level robustness degradation. It supports the central claim of ARB4WM that adversarial vulnerability in world models is not limited to the final policy head. Attacks targeting policy distributions, value prediction, latent representations, and RSSM dynamics can induce different spatial failure modes, which are not fully captured by return curves alone. At the same time, because the analysis is based on one representative frame from DMC Reacher Easy, we treat it as complementary evidence rather than a standalone robustness metric. The return-based nAUC results remain the primary robustness measure, while saliency helps explain how dif-ferent attack objectives alter the visual evidence used by the agent. 
+
+6.6. Robustness Testing System Interface 
+
+Fig. 9 shows the system interface used to organize the ro-bustness evaluation and present the selected attack case. The left panel configures the task, victim world-model agent, per-turbation budget, step size, attack iterations, and component-level loss function. The center panel compares clean and attacked rollouts for the selected task, allowing the user to inspect how visually small perturbations change closed-loop behavior. The right panel summarizes the corresponding safety report, including robustness score, recovery estimate, adaptive gap, and diagnostic findings. The interface is de-signed as a reporting layer for ARB4WM: it does not replace the underlying attack implementation, but presents the attack configuration, replay evidence, and robustness indicators in a form suitable for model comparison and engineering safety review. 
+
+## 7. Model-wise Robustness Ranking and Mechanistic Interpretation 
+
+In this section, we summarize model-wise robustness rankings and interpret the observed differences through the shared encoder–RSSM–head inference structure. Fig. 10 summarizes model-wise robustness after the de-tailed attack, temporal, defense, and saliency analyses. This ranking is not intended to replace the per-objective tables. Instead, it provides a compact view of how each model behaves under four complementary conditions that stress different parts of the same inference pipeline. R2-Dreamer and Dreamer form the leading group in this overview. R2-Dreamer obtains the highest weighted score because the 20-task full-frame average and input-defense recovery outweigh Dreamer’s slightly stronger sparse-frame nAUC on the four-task temporal subset. Dreamer-InfoNCE and Dreamer-Pro trail the leading pair, consistent with their weaker DMC robustness in Table 2. The four agents share the same inference structure in our implementation: 
+
+𝑒 𝑡 = 𝐸 𝜃 (𝑜 𝑡 ), 𝑠 𝑡 = 𝐹 𝜙 (𝑠 𝑡 −1 , 𝑎 𝑡 −1 , 𝑒 𝑡 ), 𝑢 𝑡 = 𝐻 𝜓 (𝑠 𝑡 ), (21) where 𝐸 𝜃 is the visual encoder, 𝐹 𝜙 is the RSSM update, and 
+
+𝐻 𝜓 denotes the actor, critic, or attack-relevant prediction head. The architectural differences among the four agents are introduced mainly through the representation objective used during training, not through a different adversarial inference path. Therefore, the robustness ranking should be interpreted as a consequence of how the training objective shapes the local geometry of 𝐸 𝜃 and the RSSM features consumed by 
+
+𝐻 𝜓 .For a small visual perturbation 𝛿 𝑡 , a first-order expansion gives 
+
+Δ𝑢 𝑡 ≈ 𝐽 𝐻 (𝑠 𝑡 )𝐽 𝐹 (𝑠 𝑡 −1 , 𝑎 𝑡 −1 , 𝑒 𝑡 )𝐽 𝐸 (𝑜 𝑡 )𝛿 𝑡 , (22) where 𝐽 𝐸 , 𝐽 𝐹 , and 𝐽 𝐻 are the corresponding Jacobians. For recurrent world models, the perturbation also propagates through future belief states: 
+
+Δ𝑢 𝑡 ≈ ∑
+
+> 𝑘 ≤𝑡
+
+𝐽 𝐻 
+
+( 𝑡 ∏
+
+> 𝑗 =𝑘 +1
+
+𝐴 𝑗 
+
+)
+
+𝐵 𝑘 𝐽 𝐸 (𝑜 𝑘 )𝛿 𝑘 , (23) where 𝐴 𝑗 = 𝜕𝑠 𝑗 ∕𝜕𝑠 𝑗 −1 and 𝐵 𝑘 = 𝜕𝑠 𝑘 ∕𝜕𝑒 𝑘 . Equations (22) and (23) show why full-frame attacks receive the largest ranking weight: they repeatedly inject perturbations into every term of the recurrent sum, so the attacker can affect both the current action and the latent memory used by later decisions. They also show why models with identical inference graphs can have different robustness: the learned training objective changes the norms, correlations, and con-ditioning of 𝐽 𝐸 , 𝐵 𝑘 , and the feature directions used by 𝐻 𝜓 .The standard Dreamer variant adds an image recon-struction objective through the decoder, encouraging the encoder to retain pixel information while the RSSM KL, reward, continuation, actor, and value losses keep the latent   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 14 of 19
+
+ARB4WM 
+
+Figure 9: Robustness testing system interface for ARB4WM. The system integrates task and agent selection, adversarial-attack parameter configuration, loss-function selection, clean-versus-attacked rollout replay, and safety-report indicators. The displayed example uses a MetaWorld reach task with a value-suppression attack, showing how the framework connects adversarial visual perturbations with closed-loop behavior degradation and diagnostic robustness metrics. 
+
+Figure 10: Model-wise robustness overview with full-frame robustness computed over all 20 selected DMC and Meta-World tasks. The radar plots summarize four complementary robustness dimensions: full-frame attack nAUC over the full benchmark, first-half attack nAUC as a recovery proxy after perturbations stop, sparse-frame robustness with attacks every two frames, and input-defense recovery. The first-half, sparse-frame, and input-defense dimensions use the four DMC tasks from the temporal and defense analyses. For visualization and ranking, each dimension is min–max normalized across models and then mapped to the observed full-frame nAUC range, so the displayed scores remain on an nAUC-like scale rather than an exaggerated [0 , 1] scale. The weighted score assigns the largest weight to full-frame robustness ( 0.55 ) and equal weights to first-half recovery, sparse-frame robustness, and input-defense recovery ( 0.15 each). 
+
+state control-relevant. This may help preserve task-relevant visual cues under intermittent perturbations, consistent with Dreamer’s strong sparse-frame nAUC in Fig. 10. Because reconstruction does not explicitly decorrelate latent dimen-sions or constrain the input Jacobian, this advantage should still be interpreted empirically. R2-Dreamer adds a Barlow-Twins-style redundancy-reduction loss between projected RSSM features and de-tached encoder embeddings: 
+
+R2 = ∑
+
+> 𝑖
+
+(𝐶 𝑖𝑖 − 1) 2 + 𝜆 ∑
+
+> 𝑖 ≠𝑗
+
+𝐶 2 
+
+> 𝑖𝑗
+
+, (24) where 𝐶 is the cross-correlation matrix between normalized projected features and normalized embeddings. The diago-nal term preserves feature–embedding alignment, while the off-diagonal term penalizes redundant feature dimensions. By discouraging multiple latent coordinates from carry-ing the same perturbation-sensitive factor, this objective can improve conditioning under the linearized model in Eq. (23). This provides a plausible explanation for R2-Dreamer’s stronger first-half and defense-recovery behavior: after perturbations stop or are partially removed by prepro-cessing, a less redundant latent basis can re-anchor the belief state more effectively. Dreamer-InfoNCE uses the same projector branch but replaces the redundancy-reduction loss with an instance-discrimination objective: 
+
+InfoNCE = − log exp( 𝑞 ⊤𝑖 𝑘 𝑖 )
+
+∑𝑗 exp( 𝑞 ⊤𝑖 𝑘 𝑗 ) , (25) where 𝑞 𝑖 is a projected RSSM feature and 𝑘 𝑗 is a de-tached encoder embedding from the batch. This objective 
+
+Zhang et al.: Preprint submitted to Elsevier Page 15 of 19 ARB4WM 
+
+encourages features to separate positive samples from many negatives. Such separation can improve discriminability, but may also create sharper feature gradients near negative-sample boundaries. This helps explain Dreamer-InfoNCE’s intermediate ranking: its contrastive geometry can learn informative features without necessarily suppressing adver-sarially exploitable directions in the control-relevant latent state. Dreamer-Pro introduces prototype-based representation learning with normalized observation and feature projec-tions, low-temperature prototype logits, Sinkhorn assign-ments, EMA targets, and translation augmentation: 
+
+𝑝 (𝑐 ∣ 𝑜 𝑡 ) ∝ exp 
+
+( ⟨𝑔 (𝐸 𝜃 (𝑜 𝑡 )) , 𝑝 𝑐 ⟩
+
+𝜏 
+
+)
+
+. (26) Prototype structure can improve semantic grouping, but it also creates assignment boundaries in the projected feature space. With a small temperature 𝜏 , small changes in 𝐸 𝜃 (𝑜 𝑡 )
+
+can produce large logit changes near a boundary, altering the feature direction passed to the RSSM and policy/value heads. This mechanism is consistent with Dreamer-Pro’s low ranking and negative input-defense recovery, where prepro-cessing may shift observations across prototype boundaries or distort prototype-aligned cues. This interpretation does not claim that one auxiliary representation objective is universally more robust than an-other. It instead explains the observed ranking through the shared inference graph and the training-induced geome-try of each representation. Full-frame robustness depends strongly on recurrent amplification in Eq. (23), and the full benchmark average in Fig. 10 favors R2-Dreamer. Recovery-oriented settings depend more on how quickly the RSSM belief returns to a stable region after perturbations stop or are transformed, which also favors the redundancy-reduced geometry learned by R2-Dreamer. The main conclusion is that adversarial robustness depends not only on clean representation quality, but also on the local geometry of the encoder–RSSM–head composition induced by the training loss. 
+
+## 8. Engineering Implications 
+
+In this section, we discuss what the benchmark results imply for safety assessment and pre-deployment testing of world-model controllers in engineered continuous-control systems. The results have three implications for safety assessment of world-model controllers in engineered continuous-control systems. First, robustness should be evaluated as a pipeline property. The experiments show that value suppression, latent drift, and dynamics-consistency attacks can degrade control performance even when the attack is not designed to directly change the final action distribution. For an industrial controller, this means that testing only the policy output may miss failures in the critic, recurrent belief state, or learned transition model that later influence closed-loop behavior. Second, temporal exposure matters for risk assessment. Full-frame attacks produce the strongest degradation, but first-half and sparse attacks reveal whether early corruption persists in the recurrent latent state and whether clean ob-servations can re-anchor the belief after a disturbance. This distinction is relevant to industrial sensing systems, where corrupted frames may occur intermittently due to occlusion, communication faults, sensor interference, or malicious ma-nipulation. A controller that recovers quickly from sparse corruption presents a different safety profile from one whose latent state remains contaminated after the disturbance dis-appears. Third, input-level defenses should be treated as par-tial mitigations rather than certification mechanisms. JPEG compression and median filtering recover part of the attack-induced loss in some tasks, but adaptive attacks reduce this apparent benefit and task-level results vary substantially. This suggests that safety evaluation should include adaptive-defense testing and task-specific analysis instead of relying on average recovery alone. In practice, ARB4WM can be used as a pre-deployment screening tool: candidate world-model controllers can be compared under the same attack objectives, exposure protocols, and recovery metrics before more expensive testing in high-fidelity digital twins or phys-ical equipment. 
+
+## 9. Conclusion 
+
+This paper presents ARB4WM, a safety-oriented robust-ness testing framework for world-model agents in indus-trial continuous control. We evaluate four Dreamer-family agents across MetaWorld and DMC under five white-box test objectives, two gradient-based perturbation optimizers, and multiple temporal exposure protocols. The experimental results show that small visual perturbations can substan-tially degrade the performance of world-model agents, espe-cially under multi-step iterative attacks. They also show that failures targeting value estimation, latent representations, and RSSM dynamics can be as important as policy-space failures, indicating that safety assessment for world models should consider the full latent decision-making pipeline. Our results further suggest that architecture and rep-resentation design affect adversarial robustness differently across benchmarks and control regimes. R2-Dreamer [8] achieves the strongest average robustness in the main Meta-World and DMC evaluations, while Dreamer-Pro [7] shows weaker robustness despite its nominal policy optimiza-tion improvements. These findings highlight the need for robustness-aware world-model design and provide a testing foundation for future work on secure visual model-based control in engineering systems.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 16 of 19
+
+ARB4WM 
+
+## References 
+
+[1] David Ha and Jürgen Schmidhuber. World models. arXiv preprint arXiv:1803.10122 , 2018. [2] Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben Villegas, David Ha, Honglak Lee, and James Davidson. Learning latent dynamics for planning from pixels. In Proceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research , pages 2555–2565. PMLR, 2019. [3] Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning behaviors by latent imagination. In International Conference on Learning Representations , 2020. [4] Danijar Hafner, Timothy Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with discrete world models. arXiv preprint arXiv:2010.02193 , 2020. [5] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. Mastering diverse control tasks through world models. Nature , pages 1–7, 2025. [6] Aaron van den Oord, Yazhe Li, and Oriol Vinyals. Representa-tion learning with contrastive predictive coding. arXiv preprint arXiv:1807.03748 , 2018. [7] Fei Deng, Ingook Jang, and Sungjin Ahn. Dreamerpro: Reconstruction-free model-based reinforcement learning with prototypical representations. In International conference on machine learning , pages 4956–4975. PMLR, 2022. [8] Naoki Morihira, Amal Nahar, Kartik Bharadwaj, Yasuhiro Kato, Akinobu Hayashi, and Tatsuya Harada. R2-dreamer: Redundancy-reduced world models without decoders or augmentation. arXiv preprint arXiv:2603.18202 , 2026. [9] Vincent Micheli, Eloi Alonso, and Francois Fleuret. Transformers are sample-efficient world models. In International Conference on Learning Representations , 2023. [10] Nicklas Hansen, Hao Su, and Xiaolong Wang. Td-mpc2: Scalable, robust world models for continuous control. In International Confer-ence on Learning Representations , 2024. [11] Yann LeCun. A path towards autonomous machine intelligence version 0.9. 2, 2022-06-27. Open Review , 62(1):1–62, 2022. [12] Xinyang Gu, Yen-Jen Wang, Xiang Zhu, Chengming Shi, Yanjiang Guo, Yichen Liu, and Jianyu Chen. Advancing humanoid locomotion: Mastering challenging terrains with denoising world model learning. 
+
+arXiv preprint arXiv:2408.14472 , 2024. [13] Xiaofeng Wang, Zheng Zhu, Guan Huang, Xinze Chen, Jiagang Zhu, and Jiwen Lu. Drivedreamer: Towards real-world-drive world models for autonomous driving. In European Conference on Computer Vision , pages 55–72. Springer, 2024. [14] Wenzhao Zheng, Weiliang Chen, Yuanhui Huang, Borui Zhang, Yueqi Duan, and Jiwen Lu. Occworld: Learning a 3d occupancy world model for autonomous driving. In European conference on computer vision , pages 55–72. Springer, 2024. [15] Christian Szegedy, Wojciech Zaremba, Ilya Sutskever, Joan Bruna, Dumitru Erhan, Ian Goodfellow, and Rob Fergus. Intriguing proper-ties of neural networks. arXiv preprint arXiv:1312.6199 , 2013. [16] Xiaoyong Yuan, Pan He, Qile Zhu, and Xiaolin Li. Adversarial examples: Attacks and defenses for deep learning. IEEE transactions on neural networks and learning systems , 30(9):2805–2824, 2019. [17] Vahid Behzadan and Arslan Munir. On the robustness of deep reinforcement learning to adversarial attacks. In Machine Learning and Data Mining in Pattern Recognition , pages 262–274. Springer, 2017. [18] Sandy Huang, Nicolas Papernot, Ian Goodfellow, Yan Duan, and Pieter Abbeel. Adversarial attacks on neural network policies. arXiv preprint arXiv:1702.02284 , 2017. [19] Jernej Kos and Dawn Song. Delving into adversarial attacks on deep policies. arXiv preprint arXiv:1705.06452 , 2017. [20] Yen-Chen Lin, Zhang-Wei Hong, Yuan-Hong Liao, Meng-Li Shih, Ming-Yu Liu, and Min Sun. Tactics of adversarial attack on deep reinforcement learning agents. In Proceedings of the Twenty-Sixth International Joint Conference on Artificial Intelligence , pages 3756– 3762, 2017. doi: 10.24963/ijcai.2017/525. [21] Adam Gleave, Michael Dennis, Cody Wild, Neel Kant, Sergey Levine, and Stuart Russell. Adversarial policies: Attacking deep reinforcement learning. In International Conference on Learning Representations , 2020. [22] Lerrel Pinto, James Davidson, Rahul Sukthankar, and Abhinav Gupta. Robust adversarial reinforcement learning. In Proceedings of the 34th International Conference on Machine Learning , volume 70 of Proceedings of Machine Learning Research , pages 2817–2826. PMLR, 2017. [23] Huan Zhang, Hongge Chen, Chaowei Xiao, Bo Li, Mingyan Liu, Du-ane Boning, and Cho-Jui Hsieh. Robust deep reinforcement learning against adversarial perturbations on state observations. In Advances in Neural Information Processing Systems , volume 33, pages 21024– 21037, 2020. [24] Zifan Zeng, Chongzhe Zhang, Feng Liu, Joseph Sifakis, Qunli Zhang, Shiming Liu, and Peng Wang. World models: The safety perspective. In 2024 IEEE 35th International Symposium on Software Reliability Engineering Workshops (ISSREW) , pages 369–376. IEEE, 2024. [25] Weidong Huang, Jiaming Ji, Chunhe Xia, Borong Zhang, and Yaodong Yang. Safedreamer: Safe reinforcement learning with world models. In International Conference on Learning Representations ,2024. [26] Chenlu Ye, Jiafan He, Quanquan Gu, and Tong Zhang. Towards robust model-based reinforcement learning against adversarial cor-ruption. Proceedings of the 41st International Conference on Machine Learning , 235:56982–57017, 2024. [27] Ruixiang Sun, Hongyu Zang, Xin Li, and Riashat Islam. Learning la-tent dynamic robust representations for world models. arXiv preprint arXiv:2405.06263 , 2024. [28] Junjian Zhang, Hao Tan, Ruonan Li, Aiping Li, and Zhaoquan Gu. Adversarial attacks against world models: Hallucination-driven pol-icy failure. Applied Sciences , 16(11):5484, 2026. doi: 10.3390/ app16115484. [29] Zhixiang Guo, Siyuan Liang, Shi Fu, Cheng Guo, András Balogh, Márk Jelasity, and Dacheng Tao. Wmattack: Automated attack search for adversarial evaluation of world-model agents. arXiv preprint arXiv:2605.23220 , 2026. [30] Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Haus-man, Chelsea Finn, and Sergey Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning. In 
+
+Proceedings of the Conference on Robot Learning , volume 100 of Proceedings of Machine Learning Research , pages 1094–1100. PMLR, 2020. [31] Yuval Tassa, Yotam Doron, Alistair Muldal, Tom Erez, Yazhe Li, Diego de Las Casas, David Budden, Abbas Abdolmaleki, Josh Merel, Andrew Lefrancq, Timothy Lillicrap, and Martin Riedmiller. Deep-mind control suite. arXiv preprint arXiv:1801.00690 , 2018. [32] Sherry Yang, Yilun Du, Kamyar Ghasemipour, Jonathan Tompson, Leslie Kaelbling, Dale Schuurmans, and Pieter Abbeel. Learning interactive real-world simulators. In International Conference on Learning Representations , 2024. [33] Ian J Goodfellow, Jonathon Shlens, and Christian Szegedy. Ex-plaining and harnessing adversarial examples. arXiv preprint arXiv:1412.6572 , 2014. [34] Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu. Towards deep learning models resistant to adversarial attacks. arXiv preprint arXiv:1706.06083 , 2017. [35] Nicolas Papernot, Patrick McDaniel, Ian Goodfellow, Somesh Jha, Z Berkay Celik, and Ananthram Swami. Practical black-box attacks against machine learning. In Proceedings of the 2017 ACM on Asia conference on computer and communications security , pages 506– 519, 2017. [36] Jianbo Chen, Michael I Jordan, and Martin J Wainwright. Hop-skipjumpattack: A query-efficient decision-based attack. In 2020 ieee symposium on security and privacy (sp) , pages 1277–1294. IEEE, 2020. [37] Tom B Brown, Dandelion Mané, Aurko Roy, Martín Abadi, and Justin Gilmer. Adversarial patch. arXiv preprint arXiv:1712.09665 , 2017. 
+
+Zhang et al.: Preprint submitted to Elsevier Page 17 of 19 ARB4WM 
+
+[38] Kevin Eykholt, Ivan Evtimov, Earlence Fernandes, Bo Li, Amir Rahmati, Chaowei Xiao, Atul Prakash, Tadayoshi Kohno, and Dawn Song. Robust physical-world attacks on deep learning visual classi-fication. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 1625–1634, 2018. [39] Francesco Croce and Matthias Hein. Reliable evaluation of adver-sarial robustness with an ensemble of diverse parameter-free attacks. In International Conference on Machine Learning , pages 2206–2216. PMLR, 2020. [40] Maksym Andriushchenko, Francesco Croce, Nicolas Flammarion, and Matthias Hein. Square attack: A query-efficient black-box adver-sarial attack via random search. In European Conference on Computer Vision , pages 484–501. Springer, 2020. [41] Francesco Croce, Maksym Andriushchenko, Vikash Sehwag, Edoardo Debenedetti, Nicolas Flammarion, Mung Chiang, Prateek Mittal, and Matthias Hein. Robustbench: A standardized adversarial robustness benchmark. In Advances in Neural Information Processing Systems Datasets and Benchmarks Track , 2021. [42] David Stutz, Matthias Hein, and Bernt Schiele. Disentangling adver-sarial robustness and generalization. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6976– 6987, 2019. [43] Jeremy Cohen, Elan Rosenfeld, and Zico Kolter. Certified adversarial robustness via randomized smoothing. In international conference on machine learning , pages 1310–1320. PMLR, 2019. [44] Yulong Cao, Chaowei Xiao, Benjamin Cyr, Yimeng Zhou, Won Park, Sara Rampazzi, Qi Alfred Chen, Kevin Fu, and Z Morley Mao. Adversarial sensor attack on lidar-based perception in autonomous driving. In Proceedings of the 2019 ACM SIGSAC conference on computer and communications security , pages 2267–2281, 2019. [45] Eliot Krzysztof Jones, Alexander Robey, Andy Zou, Zachary Ravichandran, George J Pappas, Hamed Hassani, Matt Fredrikson, and J Zico Kolter. Adversarial attacks on robotic vision language action models. arXiv preprint arXiv:2506.03350 , 2025. [46] Yarden As, Bhavya Sukhija, and Andreas Krause. Safe exploration using bayesian world models and log-barrier optimization. arXiv preprint arXiv:2405.05890 , 2024. [47] Geigh Zollicoffer, Tanush Chopra, Mingkuan Yan, Xiaoxu Ma, Ken-neth Eaton, and Mark Riedl. World model robustness via surprise recognition. arXiv preprint arXiv:2512.01119 , 2025. [48] Rishi Upadhyay, Howard Zhang, Jim Solomon, Ayush Agrawal, Pranay Boreddy, Shruti Satya Narayana, Yunhao Ba, Alex Wong, Celso M. de Melo, and Achuta Kadambi. Worldbench: Disambiguat-ing physics for diagnostic evaluation of world models. arXiv preprint arXiv:2601.21282 , 2026. [49] Marcin Andrychowicz, Anton Raichuk, Piotr Stańczyk, Manu Orsini, Sertan Girgin, Raphaël Marinier, Leonard Hussenot, Matthieu Geist, Olivier Pietquin, Marcin Michalski, et al. What matters for on-policy deep actor-critic methods? a large-scale study. In International conference on learning representations , 2021. [50] Yinpeng Dong, Fangzhou Liao, Tianyu Pang, Hang Su, Jun Zhu, Xiaolin Hu, and Jianguo Li. Boosting adversarial attacks with momentum. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition , pages 9185–9193, 2018. 
+
+Zhang et al.: Preprint submitted to Elsevier Page 18 of 19 ARB4WM   
+
+> Figure 11: Task-level robustness curves on DMC Reacher Easy. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks.
+> Figure 12: Task-level robustness curves on DMC Reacher Hard. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks.
+
+## A. Task-Level Robustness Results 
+
+This appendix reports task-level robustness curves for all 20 benchmark tasks and four Dreamer-family agents. For each task, the figure shows the performance of each model under Random, PDA, PEA, DCA, VSA, and LDA perturbations. Solid lines denote single-step attacks, while dashed lines denote multi-step iterative attacks. 
+
+A.1. Per-Task Robustness Curves 
+
+The following figures provide the task-level results be-hind the aggregate nAUC values reported in the main paper. Each figure corresponds to one task and contains four panels, one for each victim model. Within a panel, colors denote attack objectives and line style denotes the optimizer. The Random curve provides a visual-noise baseline, while the five white-box objectives show how different components of the world-model pipeline fail as the perturbation bud-get increases. These figures reveal several effects that are averaged out in the main tables: some tasks exhibit abrupt performance collapse after a small perturbation threshold, some models retain high performance under random noise but fail quickly under optimized attacks, and the relative strength of PDA, PEA, DCA, VSA, and LDA varies across tasks and agents. They are included to make the benchmark results auditable at the level of individual environments rather than only through cross-task means.   
+
+> Zhang et al.: Preprint submitted to Elsevier Page 19 of 19
+
+ARB4WM 
+
+Figure 13: Task-level robustness curves on DMC Walker Walk. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 14: Task-level robustness curves on DMC Walker Run. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 15: Task-level robustness curves on DMC Walker Stand. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 16: Task-level robustness curves on DMC Ball In Cup Catch. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. Zhang et al.: Preprint submitted to Elsevier Page 20 of 19 ARB4WM 
+
+Figure 17: Task-level robustness curves on DMC Cartpole Balance. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 18: Task-level robustness curves on DMC Cartpole Swingup. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 19: Task-level robustness curves on DMC Finger Turn Easy. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 20: Task-level robustness curves on DMC Hopper Stand. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. Zhang et al.: Preprint submitted to Elsevier Page 21 of 19 ARB4WM 
+
+Figure 21: Task-level robustness curves on MetaWorld Coffee Pull. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 22: Task-level robustness curves on MetaWorld Reach. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 23: Task-level robustness curves on MetaWorld Reach Wall. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 24: Task-level robustness curves on MetaWorld Window Close. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. Zhang et al.: Preprint submitted to Elsevier Page 22 of 19 ARB4WM 
+
+Figure 25: Task-level robustness curves on MetaWorld Window Open. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 26: Task-level robustness curves on MetaWorld Button Press. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 27: Task-level robustness curves on MetaWorld Handle Press. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 28: Task-level robustness curves on MetaWorld Plate Slide Back. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. Zhang et al.: Preprint submitted to Elsevier Page 23 of 19 ARB4WM 
+
+Figure 29: Task-level robustness curves on MetaWorld Plate Slide Back Side. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. 
+
+Figure 30: Task-level robustness curves on MetaWorld Plate Slide Side. Each column shows one victim model. Solid lines denote single-step attacks, and dashed lines denote multi-step attacks. Zhang et al.: Preprint submitted to Elsevier Page 24 of 19

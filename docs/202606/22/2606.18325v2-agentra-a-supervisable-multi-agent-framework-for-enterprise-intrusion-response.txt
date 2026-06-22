@@ -1,0 +1,408 @@
+Title: Agentra: A Supervisable Multi-Agent Framework for Enterprise Intrusion Response
+
+URL Source: https://arxiv.org/pdf/2606.18325v2
+
+Published Time: Fri, 19 Jun 2026 00:58:16 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Agentra: A Supervisable Multi-Agent Framework for Enterprise Intrusion Response 
+
+Raj Patel 13 , Shaswata Mitra 14 , Michele Guida 25 , Stefano Iannucci 26 , Sudip Mittal 17 , Shahram Rahimi 18 1The University of Alabama, Alabama, USA 
+
+> 2
+
+Roma Tre University, Rome, Italy 
+
+{rpatel38 3, smitra3 4}@ua.edu, mic.guida1@stud.uniroma3.it 5, stefano.iannucci@uniroma3.it 6, {smittal1 7, srahimi1 8}@ua.edu 
+
+Abstract —Enterprise intrusion response still depends on static playbooks and analyst-driven triage, creating delay between alert generation and containment. We present Agentra, a supervisable multi-agent Intrusion Response System (IRS) framework that converts alerts from IDS, EDR, and XDR platforms into struc-tured incident response plans grounded in MITRE ATT&CK, MITRE D3FEND, and NIST CSF 2.0. Agentra decomposes response reasoning across role-scoped agents, validates proposed plans through a bounded Planner–Validator review loop, screens retrieved threat intelligence through a Moderator security gate-way, gates actions through an Action Catalog and risk score, and records decisions in an append-only audit log. We evaluate Agentra against a static OASIS CACAO v2.0 cyber-playbook baseline on a 120-event corpus drawn from ThreatHunter-Playbook, Splunk BOTSv3, and DARPA OpTC. The strongest configuration improves FP-aware IRS F1 from 0.61 to 0.84 and restores the projected harmful-action rate to the static baseline level of 0.0% after Planner-only configurations introduce unsafe overreaction. These results indicate that multi-agent response planning can improve ontology-grounded IRS coverage while preserving analyst approval and auditability. 
+
+Index Terms —Agentic AI, Intrusion Response System, Multi-agent Systems, Security Orchestration and Automation, Large Language Models, Cyber Threat Intelligence 
+
+I. I NTRODUCTION 
+
+Enterprise security platforms can surface incidents quickly, but response remains constrained by static playbooks and analyst-driven triage. CrowdStrike reports an average eCrime breakout time of 29 minutes in 2025, with the fastest observed breakout at 27 seconds, while Unit 42 reports that the fastest quartile of intrusions reaches exfiltration in 1.2 hours [1], [2]. At the same time, IBM reports a mean breach lifecycle of 241 days and an average United States breach cost of $10.22 million [3]. This gap shows that detection has accelerated faster than response. Modern IDS, EDR, and XDR platforms aggregate endpoint, identity, network, and cloud telemetry, yet response workflows still rely on Security Orchestration, Automation, and Re-sponse (SOAR) playbooks encoded as deterministic, analyst-maintained workflows [4]. These workflows support repeatable tasks but do not adapt well when adversaries vary tactics, chain actions across surfaces, or exploit gaps between siloed tools. Multi-vocal reviews of security orchestration also document recurring limits of workflow-centric automation, including rule maintenance burden and weak adaptation to previously unseen activity [4]. KuppingerCole identifies human cognitive capacity as a primary SOC constraint, and Unit 42 reports that many intrusions span multiple attack surfaces and require investigation across several telemetry sources [2], [5]. Recent work applies large language models to incident-response reasoning. IRCopilot automates incident response through LLM-driven analysis [6], and Tellache et al. cou-ple LLMs with cyber threat intelligence for autonomous response [7]. These systems show that language models can in-terpret heterogeneous evidence and propose response actions, but enterprise execution also requires layered supervision, including independent review of proposed plans, mediated retrieval, bounded action scope, analyst approval, and an integrity-protected record of decisions. The need for supervision is reinforced by work on LLM-integrated and tool-using agents. Greshake et al. [8] show that retrieved content can carry indirect prompt-injection payloads that alter model behavior, and AgentDojo evaluates injection attacks and defenses for agents that invoke external tools [9]. This work indicates that, for an enterprise IRS, both retrieved threat intelligence and model-generated actions should be treated as untrusted rather than authoritative. An agentic IRS is therefore needed because response planning requires more than selecting a stored playbook. A response system must interpret heterogeneous evidence, retrieve relevant internal and external context, map events to security ontologies, propose containment or remediation steps, and check whether those steps are safe for the affected environment. This paper presents Agentra ( Agentic Response Action ), a supervisable multi-agent framework for enterprise intrusion response. Agentra builds on the structured, ontology-grounded character of playbook-based response while replac-ing static lookup with LLM-assisted planning constrained by supervision. Rather than pursue direct autonomous execution, Agentra decomposes response reasoning across agents and gates the resulting plan through retrieval moderation, Validator review, analyst approval, bounded actions, risk scoring, and audit logging. We evaluate two questions. (RQ1) Can a supervisable agen-tic IRS extend static CACAO-based response planning while preserving contextual grounding and policy-aware planning? 
+
+(RQ2) What is the marginal contribution of each architectural component, and at what operational-safety cost? 
+
+> arXiv:2606.18325v2 [cs.CR] 18 Jun 2026
+
+This paper makes the following contributions:  
+
+> •
+
+Agentra, an agentic IRS framework that turns IDS, EDR, and XDR alerts into CACAO v2.0 plans with traceable MITRE D3FEND mitigation tags.  
+
+> •
+
+A supervisable orchestration pipeline in which Planner-generated Intrusion Response Plans (IRPs) undergo bounded Validator review, analyst approval, Action Cat-alog screening, sanity checking, and risk scoring.  
+
+> •
+
+A Moderator-based Security Gateway that screens enterprise-local and external retrievals for allow-list vi-olations, prompt-injection patterns, and out-of-ontology hallucinated mitigation identifiers.  
+
+> •
+
+A five-step ablation on a 120-event corpus drawn from ThreatHunter-Playbook, Splunk BOTSv3, and DARPA OpTC. II. T HE AGENTRA FRAMEWORK 
+
+Agentra is a response-side framework that converts alert evidence from existing security platforms into supervisable, ontology-grounded incident response plans. It consumes alert evidence but does not perform primary detection. This section defines the threat model, architecture, orchestration pipeline, and response controls. 
+
+A. Threat Model 
+
+We assume deployed IDS, EDR, XDR, enterprise enforce-ment APIs, identity infrastructure, endpoint controls, and the underlying enterprise network are not compromised. The adversary is scoped to the agentic response layer. Within this layer, the adversary may introduce misleading, poisoned, or instruction-like content into artifacts retrieved or summarized by LLM agents, including external threat intelligence, incident notes, logs, or contextual documents exposed to retrieval. The adversary’s goal is to cause the Planner, Moderator, or Val-idators to suppress containment, recommend an unsafe action, over-broaden the response, or operate outside its assigned role. Agentra’s objective is to prevent a single injected prompt, poisoned retrieval, or LLM-agent failure, including unsup-ported or hallucinated reasoning, from producing an unap-proved or unsafe response. The framework treats retrieved content and model outputs as untrusted and constrains them through moderated retrieval, role-scoped agents, Validator review, bounded action catalogs, risk scoring, analyst approval, state-change checks, and append-only audit logging. These controls support supervisable response planning; they do not provide formal verification of LLM behavior. These assumptions translate into six design goals: G1 ,generate high-quality response plans; G2 , prevent autonomous actions from reaching production surfaces without analyst authorization; G3 , preserve an integrity-protected record of prompts, retrievals, Validator votes, risk decisions, and analyst approvals; G4 , ground classification and response in MITRE ATT&CK, MITRE D3FEND, and NIST CSF 2.0 [10]; G5 ,prevent LLM-side vulnerabilities introduced by agentic or-chestration; and G6 , prevent approved plans from executing against materially changed system state without revalidation. 
+
+B. Architectural Overview 
+
+Fig. 1 presents Agentra as a response-side pipeline that begins after primary detection. Existing detection platforms provide alert evidence, which Agentra normalizes into an Incident Context, enriches through moderated retrieval, and converts into a new or revised IRP. The IRP is the framework-level artifact; in our evaluation, it is serialized as an OA-SIS CACAO v2.0 playbook, i.e., a Collaborative Automated Course of Action Operations security workflow [11]. Each IRP is validated, reviewed by an analyst, gated through execution controls, and logged. The decomposition reflects scope control, independent re-view, and tool isolation. The Planner proposes candidate response plans but has no execution access. Validator agents review the plan independently, reducing reliance on a single model output. The Moderator mediates retrieval, so the Plan-ner never consumes external threat intelligence directly. The Executor acts only through a bounded Action Catalog and risk gate. This separates reasoning, retrieval, validation, execution, and audit functions. 
+
+C. Formal Orchestration Model 
+
+Algorithm 1 formalizes the pipeline illustrated in Fig. 1. Alert evidence E is normalized into an enriched incident context I. Internal Graph-RAG and external threat-intelligence retrievals produce Xint and Xext , which are screened by the Moderator before being exposed to the Planner as sanitized context X. To determine whether a response strategy requires adaptation, the Planner evaluates the existing playbook library 
+
+L against I and X. It then drafts a candidate incident response plan P , composed of discrete actions a ∈ P that must later be checked against the Action Catalog C.Validator pool V = {v1, . . . , v n} reviews the plan inde-pendently. Each Validator vi returns a binary approval vote 
+
+bi ∈ { 0, 1} and a rationale ri. The plan advances only if at least k of the n Validators approve it. The framework is specified for a general k-of-n Validator pool; the reported evaluation instantiates this design with one Validator model per Planner–Validator combination under a bounded multi-round review loop. Larger heterogeneous Validator pools are therefore treated as extensions of the same orchestration model rather than evaluated claims in this study. During execution, each proposed action is gated by a risk evaluation function Risk( a) = f (κ(a), β (a), ρ (a)) , where 
+
+κ(a) denotes asset criticality, β(a) denotes blast radius, and 
+
+ρ(a) denotes reversibility. Policy thresholds Θ map this score to an authorization tier τ ∈ { advise , approve , senior-approve }.Through this structure, the Planner proposes, Validators re-view, the analyst authorizes, and the Executor acts only through predefined catalog and risk gates. The remainder of this section explains the framework com-ponents represented in Algorithm 1: Incident Context con-struction, Validator-based IRP generation, moderated knowl-edge augmentation, gated execution, and auditability. Validator              
+
+> Agents
+> Orchestrator Agent
+> External Know ledge Sources
+> XReddit CrowdStrike Mandiant
+> Retrieved
+> Knowledge
+> Context
+> Memory
+> Graph RAG
+> Retrieved
+> Knowledge Knowledge Extraction
+> Playbook Library GDPR ROE SLA
+> Intrusion Response Compliance Policies
+> Systems
+> Configurations
+> Internal
+> APIs
+> Internal Know ledge
+> Systems
+> Logs
+> Incident
+> Database
+> Admin
+> Control
+> Moderator Agent
+> Analyst Approved
+> IRS Action
+> Planner
+> Read/ Write
+> Read
+> Web Crawler
+> Web Search
+> Action Catalog Risk Score Sanity Checker
+> Executor Agent
+> Identity Endpoint ITSM
+> Executor Action
+> Network
+> Firewall IAM
+> Enterprise Sy stem - Post Remediations
+> SIEM EDR
+> Retrieved
+> Knowledge
+> Knowledge Extraction
+> Graph RAG
+> 3
+> 9
+> 7
+> 8
+> 8
+> 8
+> 5
+> 64Validator
+> Loop
+> Tamper- Evident
+> Memory
+> 10
+> SOC Analyst
+> Detection Sy stem
+> Alerting
+> (Existing Sources)
+
+... 
+
+> IDS
+> NDR
+> XDR
+> EDR
+> SIEM Alert
+> Identity / IAM
+> Alerts
+> Cloud /
+> Workload Alerts
+> Email / Web
+> Security
+> Threat Intel
+> Alerts
+
+... 
+
+> Incident
+> Context
+> RCA
+> Hypothesis
+> Context
+> Matching
+> Telemetry
+> Snapshot
+> Severity
+> & Risk
+> Timeline
+> Reconstruction
+> Alert Context /
+> Incident Context
+> Alert
+> Normalization
+> IoC
+> Extraction
+> Alert
+> Correlation
+
+...  
+
+> Threats & Defense
+> Context Enrichment
+> 12
+
+Fig. 1: The Agentra pipeline for agentic IRP generation and orchestration. Existing IDS, EDR, and XDR platforms supply alert evidence; Agentra normalizes this evidence into an Incident Context grounded in MITRE ATT&CK, MITRE D3FEND, and NIST CSF 2.0 and enriches it with internal and external threat intelligence. A deterministic Orchestrator drives a bounded Planner–Validator review loop over Moderator-sanitized retrieval and, after analyst sign-off, executes through the Executor Agent’s gated Action Catalog, with all activity recorded in a tamper-evident audit substrate. 
+
+D. Incident Context Construction 
+
+Incident Context Construction converts heterogeneous alert evidence into a compact typed record for response planning. The record includes IoCs, root-cause hypothesis, telemetry snapshot, severity, timeline, ATT&CK technique, D3FEND mitigation candidates, and NIST CSF function. Where up-stream tools have not supplied these mappings, Agentra en-riches the record through CVE, NVD, Cisco Talos, Virus-Total, MITRE ATT&CK, MITRE D3FEND [12], and NIST CSF 2.0 [10]. This typed interface prevents response agents from reading raw telemetry directly and preserves modularity between detection and response. 
+
+E. Supervisable IRP Generation and Validation 
+
+This stage implements Agentra’s core supervisability mech-anism. The deterministic Orchestrator coordinates agents but does not decide the response. After reading Moderator-sanitized context, the Planner drafts a plan composed of discrete candidate actions. The Planner has no execution access, so proposed actions must later pass catalog, sanity, and risk gates. The candidate plan, reasoning trace, and supporting context are sent to n Validator Agents . Each Validator vi evaluates the plan against the Incident Context, sanitized retrieved context, compliance-policy library, and Action Catalog C, returning a binary approval vote vote i ∈ 0, 1 and rationale rationale i. In the general framework, the plan advances only if at least k of the n Validators approve it. In the evaluated configuration, this mechanism is instantiated as a bounded Planner–Validator re-view loop with one Validator per model combination. Rejected candidates return to the Planner with structured feedback for a bounded number of revisions; if approval is not reached, the case is escalated to the SOC with the Validator transcript. We use Byzantine-style terminology as an analogy, while recognizing that shared base models do not satisfy classi-cal independent-failure assumptions. Agentra approximates independence through role-diverse prompts, diverse backends where feasible, and diverse decoding parameters. 
+
+F. Knowledge Augmentation through a Moderated Security Gateway 
+
+Knowledge augmentation is mediated by a dedicated Mod-erator agent , so the Planner never retrieves directly. The Moderator uses retrieval keys K from the Incident Con-text I to query two trust tiers. Internally, it retrieves logs, configurations, incident records, internal API data, IRP li-brary entries, and compliance policies. This internal retrieval is served through Graph-RAG, which captures relationships among logs, assets, incidents, and policies [13]. Externally, Algorithm 1: Agentra supervisable IRP orchestration 
+
+Input: Alert evidence E; playbook library L; Action Catalog C; Validator pool V = {v1, . . . , v n};approval threshold k; revision cap R; risk thresholds Θ; append-only audit ledger A
+
+Output: Analyst-approved incident response plan P ⋆,or terminal status: escalate , rejected ,
+
+invalidate , deny , or hold 
+
+I ← BuildContext( E); K ← ExtractKeys( I);
+
+Xint ← GraphRAG( I, K );
+
+Xext ← WebRetrieve( I, K );
+
+X ← Moderator( Xint ∪ Xext );
+
+Append( A, ⟨enrichment , X, Prov( X)⟩);
+
+P ← Planner( I, X, L ); approved ← false ;
+
+for t = 1 to R do 
+
+Y ← { (vote i, rationale i) = vi(P, I, X, C) | vi ∈V} ; Append( A, ⟨validator-votes , Y ⟩);
+
+approvals ← P 
+
+> (vote i,rationale i)∈Y
+
+vote i;
+
+if approvals ≥ k then 
+
+approved ← true ;
+
+break ;
+
+if t < R then 
+
+P ← Planner( I, X, P, Y );
+
+if approved = false then 
+
+Escalate( P, Y ); return escalate ;
+
+d ← AnalystReview( P );
+
+Append( A, ⟨analyst-decision , d ⟩);
+
+if d̸ = approve then return rejected ;
+
+if StateChanged( P ) then 
+
+Invalidate( P ); return invalidate ;
+
+foreach a ∈ P do if a / ∈ C then return (deny , catalog) ;
+
+if ¬SanityOK( a) then return (deny , consistency) ;
+
+s ← Risk( a);
+
+τ ← Tier( s, Θ) ;
+
+if ¬Authorized( a, τ ) then return (hold , τ );
+
+Execute( a, τ );
+
+Append( A, ⟨action , a, s, τ ⟩);
+
+P ⋆ ← P ; return P ⋆;the Moderator performs controlled retrieval over OSINT and threat-intelligence sources. External content remains untrusted. Prior work demonstrates indirect prompt injection through retrieved content [8] and vul-nerabilities in tool-using agents [9]. The Moderator therefore screens retrieved material for embedded instructions, indirect injection, allow-list violations, out-of-ontology hallucinated mitigations, contradictions with internal graph evidence, cross-site scripting, man-in-the-middle interference, data poisoning, and tool poisoning. Suspect content is rewritten with prove-nance metadata or rejected. The Moderator has no execution authority and writes only sanitized context to Context Mem-ory. In this paper, the Moderator is evaluated as a designed control within the response pipeline; we do not claim that its prompt-injection robustness has been fully validated against an adaptive adversarial retrieval suite. 
+
+G. Gated Execution and Auditability 
+
+Analyst sign-off authorizes response strategy, not unmedi-ated execution. Each action passes through three gates. The 
+
+Action Catalog defines permitted actions across Network, Identity, Endpoint, and ITSM surfaces, including host iso-lation, token revocation, IoC blocking, and ticket creation; actions outside this catalog cannot execute, addressing the IRP-to-API mapping problem identified by Sworna et al. [14]. The Sanity Checker verifies internal consistency, including dependencies on assets already quarantined by earlier actions. The Risk Score combines asset criticality κ(a), blast radius 
+
+β(a), and reversibility ρ(a) into the authorization tiers ad-vise , approve , and senior approve ; in the evaluation harness, these values are discretized from the static service-dependency overlay and mapped using fixed thresholds Θ. If the asset, dependency, or remediation state required by P differs from the state snapshot used during planning, StateChanged( P )
+
+invalidates the plan and triggers reanalysis. Agentra records prompts, retrievals, Moderator decisions, Validator votes, Risk Score outcomes, Sanity Checker out-comes, analyst decisions, and executed actions in a tamper-evident append-only audit substrate. Unlike mutable Context Memory, this substrate is write-once: records are hashed as Merkle-tree leaves, and each audit batch stores a Merkle root chained to the prior root, making deletion, insertion, or retroactive modification detectable. These controls are com-plementary: the Moderator reduces poisoned retrieval, the Validator review loop reduces single-planner failure, execution gates constrain action scope, and the audit log preserves review evidence. III. E XPERIMENTAL EVALUATION 
+
+Evaluating an IRS requires metrics beyond playbook emis-sion. A response system must identify when an alert warrants action, generate a grounded plan, avoid excessive disruption, and remain usable under incident-response latency constraints. We evaluate Agentra using four main measures: FP-aware IRS 
+
+F1, false-positive rate, D3FEND coverage and precision, and projected harmful-action rate; latency is reported as a batch-triage observation. The ablation adds Agentra components over a static CACAO baseline: A0 is CACAO lookup only, A1 adds the Planner, A2 adds Validator debate, A3 adds moderated threat-intelligence retrieval, and A4 adds Graph-RAG enterprise grounding. 
+
+A. Evaluation Scope and Corpus 
+
+The evaluation uses a 120-event corpus drawn from ThreatHunter-Playbook [15], Splunk BOTSv3 [16], and DARPA OpTC [17]. The corpus spans malicious intrusion activity, benign administrative activity, and false-positive stress cases in which benign event content is paired with an incorrect malicious label. This design tests both response coverage and misattribution robustness. The final split is 58 malicious events and 62 benign or false-positive stress events. The malicious events cover 43 MITRE ATT&CK techniques/sub-techniques across credential access, discovery, execution, per-sistence, privilege escalation, defense evasion, command and control, exfiltration, and impact. Each event is deterministi-cally anonymized before LLM processing by replacing host names, account identifiers, emails, public IPs, domains, and access keys with stable placeholders or documentation-range addresses. To preserve reproducibility, all ontology and framework artifacts used for grounding and scoring were cached at evalua-tion time, including the MITRE ATT&CK, MITRE D3FEND, NIST CSF 2.0, and CACAO references used by the harness. The evaluation therefore does not depend on live changes to online ontology pages or revised framework documentation after the experiment date. Listing 1 shows representative corpus entries. External threat-dataset scenarios are restaged as Kubernetes audit events before LLM processing. This restaging provides a common event format while preserving the ATT&CK technique, event summary, and benign or malicious ground truth used by the evaluation harness. Listing 1: Representative corpus events. External threat-dataset scenarios are re-staged as Kubernetes audit events; identifiers are anonymized before any LLM call.                                                                                                         
+
+> #THP -Credential Access (T1003.001): Mimikatz LSASS read, re-staged #as kubectl exec into apod by anon-approved service account. * id: EVT-THP-001 dataset: THP ttp: T1003.001 ground_truth: malicious raw_summary: "Mimikatz sekurlsa::logonpasswords --process opens handle to LSASS" state: {audit_event: {verb: create, subresource: exec, resource: pods, actor: dev-user-sa}} #BOTS -Persistence (T1098.001): compromised IAM identity requests #anew credential; k8s analogue is aTokenRequest. * id: EVT-BOTS-001 dataset: BOTS ttp: T1098.001 ground_truth: malicious raw_summary: "Compromised IAM identity attempted to create anew access key" state: {audit_event: {verb: create, resource: serviceaccounts/token, actor: anonymous-or-stolen-sa, source_ip: 203.0.113.10}} #OpTC -Discovery (T1087.002): no CACAO rule exists for this TTP. * id: EVT-OPTC-016 dataset: OPTC ttp: T1087.002 ground_truth: malicious raw_summary: "Bulk Domain Admin enumeration" state: {} #Benign control later used in afalse-positive stress case. * id: EVT-BOTS-030 dataset: BOTS ttp: null ground_truth: benign state: {dns_resolution_failures_per_minute: 1}
+
+Reference D3FEND labels are curated by mapping each malicious event’s ATT&CK technique to the D3FEND v1.0 ontology over a closed 44-identifier vocabulary. We treat these as reference sets rather than exhaustive ground truth because the mapping depends on analyst judgment and ontology in-terpretation. The TTP-to-state translation is deterministic and auditable, so each mapping is reproducible and independently re-derivable. Because all datasets pre-date the evaluated mod-els and are widely indexed online, anonymization reduces but does not eliminate dataset-recognition risk. 
+
+B. Metrics and Statistical Protocol 
+
+For each event e, let Ce be the set of D3FEND identifiers cited by the emitted playbook and Re be the curated reference set. An event is scored as response-positive when Ce ∩Re̸ = ∅
+
+and response-negative otherwise. We report precision, recall, and F1 = 2 P R/ (P + R) over the 120-event corpus, along with the false-positive rate on stress cases. Response quality is measured using D3FEND coverage, Cov e = |Ce ∩Re|/|Re|,and D3FEND precision, Prec D3 
+
+> e
+
+= |Ce ∩ Re|/|Ce|. Projected safety is measured by the harmful-action rate: a playbook is flagged harmful if it recommends an irreversible action for a reconnaissance or discovery-stage event. This conservative analytical overlay is not a live execution measurement or comprehensive safety guarantee. All results are reported for a single seed (seed 42); multi-seed dispersion and per-seed McNemar significance testing are deferred to the extended version. We therefore report point es-timates and emphasize the direction and magnitude of within-combination ablation deltas rather than formal significance. Listing 2 and Listing 3 illustrate how an emitted CACAO playbook is scored against the curated D3FEND reference set. Listing 2: Emitted CACAO v2.0 response playbook (Agentra A4) for EVT-OPTC-016 after a 2-round Planner–Validator debate. Each step cites a D3FEND countermeasure id.                    
+
+> {"type": "playbook", "playbook_types": ["T1087.002"], "workflow": [{"name":"enable-account-monitoring", "agent":"identity", "d3fend_ref":["D3-AM"], "command":"Enhanced account monitoring with LDAP activity baselining."}, {"name":"analyze-authentication-logs", "agent":"identity", "d3fend_ref":["D3-ANAA"], "command":"Cross-reference auth logs with domain-account enumeration."}, {"name":"monitor-endpoint-activity", "agent":"endpoint", "d3fend_ref":["D3-OSM"], "command":"OS-level monitoring for anomalous LDAP client behavior."} ]}
+
+Listing 3: ATT&CK-to-D3FEND reference mapping and scor-ing for the playbook in Listing 2.             
+
+> #Reference D3FEND set for the event’s TTP: T1087.002 -> {D3-AM (Account Monitoring, detect/identity),
+
+TABLE I: Additive ablations. A4 is the full Agentra stack.               
+
+> ID Definition A0 CACAO lookup only; no LLM. A1 A0 + Planner: keeps, extends, or synthesizes a CACAO playbook. A2 A1 + Validator debate. A3 A2 +Web-crawler +Moderator: local CTI grounding, sanitization, D3FEND breadth check. A4 A3 + Graph-RAG: enterprise-config grounding; full stack.
+
+TABLE II: Planner and Validator combinations.                                                                
+
+> ID Planner Validator Mode M1 Qwen3-32B-Instr. Mistral-Small-3.2-24B replace-CACAO M2 Qwen3-32B-Instr. Mistral-Small-3.2-24B enhance-CACAO M3 Qwen3-32B-Instr. Foundation-Sec-8B-Reas. enhance-CACAO M4 Claude Sonnet 4.6 Foundation-Sec-8B-Reas. enhance-CACAO M5 GPT-5 Claude Sonnet 4.6 enhance-CACAO
+> D3-ANAA (Auth. Activity Analysis, detect/identity), D3-OSM (Operating System Monitoring, detect/endpoint) }#Scoring the emitted playbook: #cited ={D3-AM, D3-ANAA, D3-OSM} #reference ={D3-AM, D3-ANAA, D3-OSM} #coverage =|cited nreference| /|reference| =3/3 =1.00 #precision =|cited nreference| /|cited| =3/3 =1.00
+
+C. Ablation Configurations and Model Backends 
+
+The additive ablation builds Agentra one component at a time over the CACAO baseline (Table I). We evaluate five Planner/Validator combinations under the same protocol (Table II). M1 uses the replace-CACAO archi-tecture, in which the Planner synthesizes from scratch; M2– M5 use enhance-CACAO , in which the catalog entry seeds the Planner. Local models are served through vLLM with FP8 quantization on a single NVIDIA H200 NVL with 143 GB 
+
+HBM3e. Foundation-Sec-8B, Qwen3-32B, and Mistral-Small-3.2-24B are used at their public releases [18]–[20]. The evaluation uses representative Planner–Validator pairs rather than simultaneous multi-validator quorums. Under the context length and serving configuration used in this study, a single NVIDIA H200 NVL could co-host the Planner and one Validator from the selected model class, but not several large heterogeneous Validators in parallel. Sequential multi-validator quorums are compatible with the framework, but would change the latency profile and were outside the compute envelope of this submission. We therefore report the single-Validator instantiation as a controlled evaluation of the Planner–Validator review loop and leave larger k-of-
+
+n deployments to future work. 
+
+D. Results and Analysis 
+
+Table III reports the full FP-aware IRS results. The static CACAO baseline (A0, identical across combinations) is an ATT&CK-keyed CACAO catalog mapped to the same closed D3FEND vocabulary as Agentra. It matches 49 /120 events and attains recall 0.55 and F1=0 .61 , but fires on half of the false-positive stress cases ( FP -rate=0 .50 ) because lookup uses the supplied TTP rather than benign-content features. The emission ceiling ( 49 ) exceeds the TP+FP count ( 47 )in Table III because two emitted catalog playbooks had no D3FEND identifier overlapping the event reference set and were therefore scored as response-negative. 
+
+a) A1 (Planner): large recall gain, planner-dependent false positives: Adding the Planner raises response-decision recall for capable back-ends (M4 0.55 →0.90 ; M5 0.91 ), but the output is operationally raw: D3FEND precision collapses (Prec D3≤0.30 for every combination) and the harmful-action rate rises to 14 –16% on the API planners. False-positive behavior splits by planner: local planners suppress misattri-butions more often, whereas M4 emits a playbook for almost every misattributed event ( FP -rate=0 .97 ). More permissive planners are therefore more vulnerable to TTP misattribution. 
+
+b) A2 (Validator): combination-dependent: Bounded de-bate sharpens some combinations and destabilizes others. It gives M1 its lowest false-positive rate ( 0.20 ) but does not lift response quality, and on M5 it collapses recall to 0.14 :the strict Sonnet validator rejects most GPT-5 proposals, and many events exhaust the 600 s debate budget. Without the closed-vocabulary and breadth checks added at A3, debate alone cannot reliably separate useful corrections from spurious citations. 
+
+c) A3 (Moderator + CTI): the response-quality transi-tion: Adding the Web-crawler and Moderator is the qualitative inflection across all combinations: D3FEND precision jumps (M1 0.23 →0.79 ; M4 0.15 →0.68 ; M5 0.20 →0.95 ) and the harmful-action rate falls to at most 0.9% , while recall recovers for the local combinations. The Moderator’s sanitization and post-hoc D3FEND breadth check narrow the citation set, and CTI grounding helps the Planner drop risky actions such as cluster-wide isolation or irreversible steps on reconnaissance-only TTPs. 
+
+d) A4 (full stack) and the recall–precision tradeoff: 
+
+Graph-RAG enterprise grounding completes the stack and yields the best results, but the FP-aware view reveals atradeoff hidden by malicious-only evaluation. M4 attains perfect recall ( 58 /58 ) yet the weakest false-positive control (FP -rate=0 .90 ), so its precision ( 0.68 ) caps F1 at 0.81 . M1 balances strong recall ( 0.90 ) with moderate false positives (FP -rate=0 .47 ), achieving the highest FP-aware IRS F1
+
+(0.84 ). M5 produces the cleanest playbooks (D3FEND pre-cision 0.95 ) but at lower recall ( 0.57 ). No single combination dominates: capability maximizes recall, but grounding and validation layers govern false-positive robustness and response quality. 
+
+E. Cross-Combination Behavior 
+
+Figure 2 compares the five combinations on FP-aware IRS F1, convergence rate, per-dataset F1 at A4, and the replace- versus enhance-CACAO pair (M1/M2). Two patterns hold. First, the additive ladder improves F1 and response quality across every combination, with A3 the consistent safety and quality inflection. Second, false-positive robustness is weaker for more permissive planners: the local-planner combinations (M1–M3) hold FP -rate ≤ 0.47 at A4, whereas TABLE III: FP-aware results on the 120 -event corpus (seed 42). Counts are TP/FN and FP/TN; P , R, and F1 are response-decision precision, recall, and their harmonic mean; FP stress 
+
+is the false-positive rate on stress cases; Cov. and Prec. are mean D3FEND coverage and precision; Harm% is projected harmful-action rate. Rates: 2 decimals; Harm%: 1 decimal. Blue rows mark per-ablation F1 winners; green marks best recall; orange marks best D3FEND coverage/precision.                                                                                                                                              
+
+> Counts Response Stress D3FEND Safety Combo Abl. TP/FN FP/TN PRF1FP stress Cov. Prec. Harm% M1 A0 32/26 15/47 0.68 0.55 0.61 0.50 0.37 0.85 0.0 A1 29/29 8/54 0.78 0.50 0.61 0.27 0.16 0.22 4.3 A2 27/31 6/56 0.82 0.47 0.59 0.20 0.17 0.23 6.3 A3 48/10 13/49 0.79 0.83 0.81 0.43 0.79 0.79 0.0 A4 52/6 14/48 0.79 0.90 0.84 0.47 0.84 0.84 0.0 M2 A0 32/26 15/47 0.68 0.55 0.61 0.50 0.37 0.85 0.0 A1 32/26 17/45 0.65 0.55 0.60 0.57 0.24 0.30 10.4 A2 17/41 8/54 0.68 0.29 0.41 0.27 0.19 0.26 2.2 A3 36/22 8/54 0.82 0.62 0.71 0.27 0.75 0.75 0.0 A4 38/20 10/52 0.79 0.66 0.72 0.33 0.76 0.76 0.0 M3 A0 32/26 15/47 0.68 0.55 0.61 0.50 0.37 0.85 0.0 A1 23/35 10/52 0.70 0.40 0.51 0.33 0.24 0.30 5.4 A2 20/38 13/49 0.61 0.34 0.44 0.43 0.23 0.27 8.5 A3 38/20 13/49 0.75 0.66 0.70 0.43 0.72 0.73 0.0 A4 32/26 12/50 0.73 0.55 0.63 0.40 0.77 0.77 0.0 M4 A0 32/26 15/47 0.68 0.55 0.61 0.50 0.37 0.85 0.0 A1 52/6 29/33 0.64 0.90 0.75 0.97 0.37 0.15 16.0 A2 52/6 25/37 0.68 0.90 0.77 0.83 0.37 0.15 17.5 A3 56/2 28/34 0.67 0.97 0.79 0.93 0.72 0.68 0.9 A4 58/0 27/35 0.68 1.00 0.81 0.90 0.73 0.68 0.0 M5 A0 32/26 15/47 0.68 0.55 0.61 0.50 0.37 0.85 0.0 A1 53/5 24/38 0.69 0.91 0.79 0.80 0.31 0.23 14.2 A2 8/50 1/61 0.89 0.14 0.24 0.03 0.42 0.20 33.3 A3 36/22 9/53 0.80 0.62 0.70 0.30 0.96 0.95 0.0 A4 33/25 8/54 0.81 0.57 0.67 0.27 0.95 0.95 0.0
+
+API-planner combinations over-emit on misattributed events. Replace-CACAO (M1) edges enhance-CACAO (M2) at A4 (0.84 versus 0.72 ), indicating that for a strong local planner the grounded A3 and A4 stages compensate for the absent catalog starting point. Finally, THP, BOTS, and OpTC pre-date all evaluated model training cutoffs and are widely indexed online, so residual memorization remains a validity threat that anonymization reduces but cannot eliminate. We therefore weight within-combination comparisons above absolute cross-model rank-ings. End-to-end latency on the M4 stack averages approx-imately 40 s per event, dominated by the Planner–Validator debate, and is reported as a batch-triage figure rather than a real-time guarantee. IV. D ISCUSSION AND LIMITATIONS 
+
+Agentra is strongest where its claims are architectural and most limited where they depend on model behavior. The Validator review loop, Moderator gateway, Action Catalog, tiered Risk Score, and append-only audit substrate are struc-tural controls that remain part of the framework regardless of the model assigned to each role. By contrast, response quality depends on emergent behaviors such as Planner over-generation, Validator sensitivity, timeout patterns, and whether multiple agents provide independent reasoning. The evaluation therefore supports Agentra as a model-agnostic architecture but not as a model-invariant system. The reported experiments instantiate the general Validator-pool design with one Validator per Planner–Validator combi-nation. This limits claims about Validator diversity: the results evaluate bounded Planner–Validator review, not the full fault-tolerance benefits of a heterogeneous k-of-n Validator pool. Under the serving configuration used in this study, a single NVIDIA H200 NVL could host the Planner and one Validator from the selected model class, but not several large Validators in parallel. We plan to evaluate larger heterogeneous Validator pools using additional accelerators, which will also require a separate latency study. The additive ablation clarifies the role of the architectural stages. On the M4 reference stack, A1 closes most of the CACAO-to-recall gap, but with low D3FEND precision ( 0.15 )and a projected harmful-action rate of 16 .0% . A2 does not improve this trade-off on the evaluated corpus. The qualitative transition occurs at A3, where threat-intelligence grounding and Moderator control raise D3FEND precision to 0.68 and reduce the projected harmful-action rate to 0.9% . On M4, A4 adds Graph-RAG enterprise grounding, attains perfect recall, and removes the residual projected harmful actions ( 0.0% ). This harmful-action result should be interpreted relative to the ablation path: the static CACAO baseline already has a projected harmful-action rate of 0.0% , Planner-only configura-tions introduce unsafe overreaction, and the A3/A4 grounding layers remove those Planner-induced harmful actions while preserving much of the recall gain. The evaluation does not include an adversarial retrieval benchmark for the Moderator. Static corpora can support prompt-injection evaluation by planting malicious instructions in fixed retrieved documents, as prior work has shown; therefore, this is an evaluation-scope limitation rather than a limitation imposed by the corpus format. In this pa-per, Moderator screening is evaluated as part of the de-signed response pipeline, while adaptive prompt-injection and poisoned-retrieval robustness are deferred to future work. Several additional limitations bound the results. The corpus is controlled and based on public datasets, so deterministic anonymization reduces but does not eliminate memorization risk. D3FEND labels are curated reference sets rather than exhaustive ground truth, and the study reports single-seed point estimates rather than multi-seed confidence intervals. Opera-tional safety is projected using a static dependency overlay rather than measured in deployment, and analyst approval is simulated in the harness. These constraints limit claims about production effectiveness, but they do not affect the within-ablation comparison of Agentra components under the same evaluation protocol. In future work, we plan to evaluate Agentra in a simulated enterprise environment or cyber range to measure MTTD, MTTR, playbook effectiveness, observed harmfulness, sanitization robustness, analyst burden, and re-A0 A1 A2 A3 A4                   
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> F1 (FP-aware, = 2 PR /( P+R))
+> 0.61
+> 0.61
+> 0.59
+> 0.81
+> 0.84
+> 0.61
+> 0.60
+> 0.41
+> 0.71
+> 0.72
+> 0.61
+> 0.51
+> 0.44
+> 0.70
+> 0.63
+> 0.61
+> 0.75
+> 0.77
+> 0.79
+> 0.81
+> 0.61
+> 0.79
+> 0.24
+> 0.70
+> 0.67
+> (a) FP-aware IRS F1
+> A0 A1 A2 A3 A4
+> CACAO 49/120
+> (b) Convergence rate
+> BOTS OPTC THP
+> (c) Per-dataset F1at A4 (full stack)
+> A0 A1 A2 A3 A4
+> 0.61 0.61 0.59
+> 0.81 0.84
+> 0.61 0.60
+> 0.41
+> 0.71 0.72
+> (d) Replace vs Enhance (M1, M2)
+> replace-CACAO
+> enhance-CACAO
+> M1 Qwen+Mistral (replace)
+> M2 Qwen+Mistral (enhance)
+> M3 Qwen+FoundSec (enhance)
+> M4 Sonnet+FoundSec (enhance)
+> M5 GPT-5+Claude (enhance)
+
+Fig. 2: Cross-combination results under the additive ablation ( 120 -event FP-aware corpus, seed 42). (a) FP-aware IRS 
+
+F1=2 P R/ (P +R) by ablation. (b) Convergence rate, i.e., Validator-approved plans within the revision/latency budget; the dotted line marks the CACAO emission ceiling ( 49 /120 ). (c) Per-dataset F1 at A4. (d) Replace-CACAO (M1) versus enhance-CACAO (M2). M4 attains the highest recall but the weakest false-positive control; M1 attains the highest FP-aware IRS F1.sponse blast radius. V. C ONCLUSION AND FUTURE WORK 
+
+Agentra frames intrusion response as supervisable multi-agent planning rather than direct autonomous execution. It converts alerts from existing detection platforms into ontology-grounded CACAO plans, validates proposed plans through a bounded Planner–Validator review loop, screens retrieved knowledge through a Moderator gateway, gates ac-tions through catalog and risk checks, and records decisions in an append-only audit substrate. On a 120-event corpus, the full Agentra stack improves FP-aware IRS F1 from 0.61 
+
+to 0.84 over the static CACAO baseline and restores the projected harmful-action rate to the static baseline level of 
+
+0.0% after Planner-only configurations introduce unsafe over-reaction. These results support Agentra as a response-planning architecture. In future work, we plan to evaluate Agentra in a simulated enterprise environment or cyber range rather than only on a static corpus. Such an environment would allow direct measurement of mean time to detect (MTTD), mean time to respond (MTTR), playbook completion rate, response ef-fectiveness, operational false positives, observed blast radius, analyst approval burden, and the gap between projected and realized harmfulness. We also plan adversarial retrieval ex-periments in which a red-team LLM or adversarial content generator injects malicious instructions into retrieved threat intelligence, incident notes, or internal documents to test Moderator robustness under controlled attack conditions. VI. A CKNOWLEDGMENT 
+
+The authors acknowledge the use of Flaticon (www.flaticon. com) in paper’s figures. Any opinions, findings, conclusions, or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of their institution or the funding agencies. REFERENCES [1] CrowdStrike, “2026 Global Threat Report.” https://www.crowdstrike. com/en-us/resources/reports/global-threat-report/, 2026. [Accessed 11-05-2026]. [2] Unit 42, Palo Alto Networks, “2026 Unit 42 global incident re-sponse report.” https://www.paloaltonetworks.com/resources/research/ unit-42-incident-response-report, 2026. [Accessed 11-05-2026]. [3] IBM Security and Ponemon Institute, “Cost of a Data Breach Report 2025.” https://www.ibm.com/reports/data-breach, 2025. [Accessed 11-05-2026]. [4] C. Islam, M. A. Babar, and S. Nepal, “A multi-vocal review of security orchestration,” ACM Computing Surveys , vol. 52, no. 2, 2019. [5] KuppingerCole Analysts, “Leadership compass: Emerging AI secu-rity operations center (SOC).” https://www.kuppingercole.com/reprints/ b23fa477e7a19a6e24f60c7413c25a44, 2026. [Accessed 11-05-2026]. [6] X. Lin, J. Zhang, G. Deng, T. Liu, T. Zhang, Q. Guo, and R. Chen, “IR-Copilot: Automated incident response with large language models,” in 
+
+Proceedings of the Network and Distributed System Security Symposium (NDSS 2025) , (San Diego, CA, USA), February 2025. [7] A. Tellache, A. A. Korba, A. Mokhtari, H. Moldovan, and Y. Ghamri-Doudane, “Advancing autonomous incident response: Leveraging LLMs and cyber threat intelligence.” https://arxiv.org/abs/2508.10677, 2025. [Accessed 11-05-2026]. [8] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection,” in Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security (AISec) ,pp. 79–90, ACM, 2023. [9] E. Debenedetti, J. Zhang, M. Balunovi´ c, L. Beurer-Kellner, M. Fischer, and F. Tram` er, “AgentDojo: A dynamic environment to evaluate prompt injection attacks and defenses for LLM agents,” in Advances in Neural Information Processing Systems (NeurIPS) , 2024. [10] National Institute of Standards and Technology, “The NIST cyberse-curity framework (CSF) 2.0.” https://nvlpubs.nist.gov/nistpubs/CSWP/ NIST.CSWP.29.pdf, 2024. [Accessed 11-05-2026]. [11] OASIS Open, “Collaborative automated course of action operations (CACAO) for cyber security version 2.0.” https://docs.oasis-open.org/ cacao/security-playbooks/v2.0/, 2022. [Accessed 11-05-2026]. [12] P. E. Kaloroumakis and M. J. Smith, “Toward a knowledge graph of cybersecurity countermeasures.” https://d3fend.mitre.org/resources/ D3FEND.pdf, 2021. [Accessed 11-05-2026]. [13] D. Edge, H. Trinh, N. Cheng, J. Bradley, A. Chao, A. Mody, S. Truitt, D. Metropolitansky, R. O. Ness, and J. Larson, “From local to global: A Graph RAG approach to query-focused summarization.” https://arxiv. org/abs/2404.16130, 2024. [Accessed 11-05-2026]. [14] Z. T. Sworna, M. Ali Babar, and A. Sreekumar, “IRP2API: Automated mapping of cyber security incident response plan to security tools’ APIs,” in 2023 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER) , pp. 546–557, 2023. [15] R. Rodriguez, “The ThreatHunter-Playbook.” https://github.com/OTRF/ ThreatHunter-Playbook. [Accessed 11-05-2026]. [16] Splunk Inc., “Boss of the SOC (BOTS) dataset version 3.” https://github. com/splunk/botsv3, 2018. [Accessed 11-05-2026]. [17] Defense Advanced Research Projects Agency (DARPA) and Five Di-rections, Inc., “Operationally transparent cyber (OpTC) data release.” https://github.com/FiveDirections/OpTC-data, 2020. [Accessed 11-05-2026]. [18] P. Kassianik, D. Kedia, A. Karbasi, et al. , “Llama-3.1-FoundationAI-SecurityLLM-Base-8B technical report.” https://arxiv.org/abs/2504. 21039, 2025. [Accessed 11-05-2026]. [19] Qwen Team, “Qwen3 technical report.” https://github.com/QwenLM/ Qwen3, 2025. [Accessed 11-05-2026]. [20] Mistral AI, “Mistral-Small-3.2-24B-Instruct-2506.” https://mistral.ai/ news/mistral-small-3-2, 2025. [Accessed 11-05-2026].

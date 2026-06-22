@@ -6,83 +6,80 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-21
-- 运行时间：2026-06-21 20:47:43 UTC
+- 最新运行日期：2026-06-22
+- 运行时间：2026-06-22 22:58:03 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：8
+- 本次总论文数：20
+- 精读区：7
 - 速读区：13
 
 ### 今日简报（AI）
-今日精读8篇、速读13篇，核心聚焦AI安全与强化学习前沿。最值得关注的是9分精读论文《From Refusal Geometry to Safety Geometry》，揭示动态对抗微调中“危害-拒绝耦合”机制，以及速读中《Video-Based Optimal Transport》等离线偏好强化学习新方法。建议优先深入理解安全几何的几何视角，再结合视频最优传输技术拓展对反馈高效RL的理解。
-- 详情：[/202606/21/README](/202606/21/README)
+今日阅读20篇论文，精读7篇，重点关注视觉自回归模型的概念擦除与AI系统优化治理两大方向。最值得精读的是《SACE》在视觉语义奇点上的概念擦除创新（9.0分），以及《Architectural Wisdom》提出的AI优化治理框架（9.0分）。建议读者优先研读这两篇高分论文，后续可关注GPU内核协同进化与连续控制鲁棒性等速读热点。
+- 详情：[/202606/22/README](/202606/22/README)
 
 ### 精读区论文标签
-1. [From Refusal Geometry to Safety Geometry: Harmfulness--Refusal Coupling under Dynamic Adversarial Fine-Tuning](/202606/21/2606.16349v1-from-refusal-geometry-to-safety-geometry-harmfulness--refusal-coupling-under-dynamic-adversarial-fine-tuning)  
+1. [SACE: Concept Erasure at the Semantic Singularity in Visual Autoregressive Models](/202606/22/2606.15819v1-sace-concept-erasure-at-the-semantic-singularity-in-visual-autoregressive-models)  
    标签：评分：9.0/10、query:ai-safety
-   evidence：有害性-拒绝耦合的安全几何协议
-2. [From Refusal Geometry to Safety Geometry: Harmfulness--Refusal Coupling under Dynamic Adversarial Fine-Tuning](/202606/21/2606.16349v2-from-refusal-geometry-to-safety-geometry-harmfulness--refusal-coupling-under-dynamic-adversarial-fine-tuning)  
+   evidence：视觉自回归模型中的概念擦除以实现安全对齐
+2. [Architectural Wisdom: A Framework for Governing Optimization in AI Systems](/202606/22/2606.16319v1-architectural-wisdom-a-framework-for-governing-optimization-in-ai-systems)  
    标签：评分：9.0/10、query:ai-safety
-   evidence：研究安全对齐中有害性与拒绝的耦合，与AI对齐相关
-3. [Greed Is Learned: Visible Incentives as Reward-Hacking Triggers](/202606/21/2606.16914v1-greed-is-learned-visible-incentives-as-reward-hacking-triggers)  
+   evidence：提出架构智慧框架治理AI系统优化，解决结构性失败和安全问题
+3. [Analyzing Defensive Misdirection Against Model-Guided Automated Attacks on Agentic AI Systems](/202606/22/2606.20470v1-analyzing-defensive-misdirection-against-model-guided-automated-attacks-on-agentic-ai-systems)  
    标签：评分：9.0/10、query:agent-safety
-   evidence：奖励通道成瘾作为强化学习中的安全故障
-4. [Trust-Aware Multi-Agent Traceability: Confidence-Calibrated Knowledge Graphs for Consistent Software Artifact Management](/202606/21/2606.17203v1-trust-aware-multi-agent-traceability-confidence-calibrated-knowledge-graphs-for-consistent-software-artifact-management)  
+   evidence：分析了智能体AI系统的攻防动态，识别了智能体安全的关键挑战
+4. [ToolMenuBench: Benchmarking Tool-Menu Filtering Strategies for Reliable and Efficient LLM Agents](/202606/22/2606.15508v1-toolmenubench-benchmarking-tool-menu-filtering-strategies-for-reliable-and-efficient-llm-agents)  
    标签：评分：8.0/10、query:agent-safety
-   evidence：面向安全关键多智能体系统的可信协调
-5. [WAM-RL: World-Action Model Reinforcement Learning with Reconstruction Rewards and Online Video SFT](/202606/21/2606.17906v1-wam-rl-world-action-model-reinforcement-learning-with-reconstruction-rewards-and-online-video-sft)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：世界-动作模型的在线RL联合优化
-6. [Agentic AI-based Framework for Mitigating Premature Diagnostic Handoff and Silent Hallucination in Healthcare Applications](/202606/21/2606.18068v1-agentic-ai-based-framework-for-mitigating-premature-diagnostic-handoff-and-silent-hallucination-in-healthcare-applications)  
+   evidence：对LLM代理工具菜单过滤的安全性和风险暴露进行基准测试
+5. [Agentra: A Supervisable Multi-Agent Framework for Enterprise Intrusion Response](/202606/22/2606.18325v1-agentra-a-supervisable-multi-agent-framework-for-enterprise-intrusion-response)  
    标签：评分：8.0/10、query:agent-safety
-   evidence：医疗场景下含安全机制的多智能体框架
-7. [AI Sandboxes: A Threat Model, Taxonomy, and Measurement Framework](/202606/21/2606.18532v1-ai-sandboxes-a-threat-model-taxonomy-and-measurement-framework)  
+   evidence：多代理入侵响应框架，包含安全验证和风险评估
+6. [HANSEL: Extracting Breadcrumbs from Web Agent Trajectories for Interactive Verification](/202606/22/2606.18671v1-hansel-extracting-breadcrumbs-from-web-agent-trajectories-for-interactive-verification)  
    标签：评分：8.0/10、query:agent-safety
-   evidence：为AI沙箱提供威胁模型和测量框架，用于评估智能体安全性
-8. [ROBOSHACKLES: A Safety Dataset for Human-Injury Prevention in Embodied Foundation Models](/202606/21/2606.18632v1-roboshackles-a-safety-dataset-for-human-injury-prevention-in-embodied-foundation-models)  
+   evidence：网页智能体轨迹的交互式验证系统
+7. [Model-Free Reinforcement Learning Control for Resilient Cyber-Physical Systems](/202606/22/2606.19069v1-model-free-reinforcement-learning-control-for-resilient-cyber-physical-systems)  
    标签：评分：8.0/10、query:agent-safety
-   evidence：面向具身智能体防止人类伤害的安全数据集
+   evidence：比较不同RL奖励类型在网络攻击下的弹性控制，直接相关于安全RL算法
 
 ### 速读区论文标签
-1. [Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning](/202606/21/2606.16856v1-video-based-optimal-transport-for-feedback-efficient-offline-preference-based-reinforcement-learning)  
-   标签：评分：8.0/10、query:ai-safety
-   evidence：基于偏好的强化学习用于价值学习，减少人类反馈
-2. [Dissecting model behavior through agent trajectories](/202606/21/2606.17454v1-dissecting-model-behavior-through-agent-trajectories)  
-   标签：评分：8.0/10、query:ai-safety
-   evidence：智能体的意图-执行差距与AI对齐相关
-3. [Knowledge Reutilization in Meta-Reinforcement Learning](/202606/21/2606.18132v1-knowledge-reutilization-in-meta-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：跨异构智能体的元强化学习知识迁移
-4. [Playful Agentic Robot Learning](/202606/21/2606.19419v1-playful-agentic-robot-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：通过自定玩耍进行智能体机器人技能学习
-5. [Deontic Policies for Runtime Governance of Agentic AI Systems](/202606/21/2606.19464v1-deontic-policies-for-runtime-governance-of-agentic-ai-systems)  
-   标签：评分：8.0/10、query:agent-safety
-   evidence：基于义务逻辑策略的智能AI运行时治理，确保安全与合规
-6. [Context-Aware RL for Agentic and Multimodal LLMs](/202606/21/2606.17053v1-context-aware-rl-for-agentic-and-multimodal-llms)  
+1. [daVinci-kernel: Co-Evolving Skill Selection, Summarization, and Utilization via RL for GPU Kernel Optimization](/202606/22/2606.16497v1-davinci-kernel-co-evolving-skill-selection-summarization-and-utilization-via-rl-for-gpu-kernel-optimization)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：面向智能LLM的上下文感知强化学习
-7. [Safety, Security, and Cognitive Risks in Neuro-Symbolic AI](/202606/21/2606.17223v1-safety-security-and-cognitive-risks-in-neuro-symbolic-ai)  
+   evidence：多智能体强化学习用于GPU内核优化
+2. [ARB4WM: An Adversarial Robustness Benchmark for World Models in Continuous Control](/202606/22/2606.16605v1-arb4wm-an-adversarial-robustness-benchmark-for-world-models-in-continuous-control)  
    标签：评分：7.0/10、query:agent-safety
-   evidence：神经符号AI中的安全风险，包括代理编排层
-8. [Rethinking Groups in Critic-Free RLVR](/202606/21/2606.17250v1-rethinking-groups-in-critic-free-rlvr)  
+   evidence：基于世界模型的智能体对抗鲁棒性基准
+3. [Dissecting model behavior through agent trajectories](/202606/22/2606.17454v2-dissecting-model-behavior-through-agent-trajectories)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：改进了LLM智能体的强化学习训练
-9. [Closing the Feedback Loop: From Experience Extraction to Insight Governance in Verbal Reinforcement Learning](/202606/21/2606.17591v1-closing-the-feedback-loop-from-experience-extraction-to-insight-governance-in-verbal-reinforcement-learning)  
+   evidence：分析代理轨迹和意图-执行差距，关注强化学习代理系统
+4. [StepGuard: Guarding Web Navigation via Single-Step Calibration](/202606/22/2606.17871v1-stepguard-guarding-web-navigation-via-single-step-calibration)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：LLM智能体通过语言RL从世界反馈中学习
-10. [Distributed General-Purpose Agent Networks: Architecture, Key Mechanisms, and Prototypes](/202606/21/2606.17368v1-distributed-general-purpose-agent-networks-architecture-key-mechanisms-and-prototypes)  
+   evidence：使用强化学习的网页导航代理
+5. [Qwen-RobotNav Technical Report: A Scalable Navigation Model Designed for an Agentic Navigation System](/202606/22/2606.18112v1-qwen-robotnav-technical-report-a-scalable-navigation-model-designed-for-an-agentic-navigation-system)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：使用RL训练的导航模型实现智能体导航
+6. [Agentra: A Supervisable Multi-Agent Framework for Enterprise Intrusion Response](/202606/22/2606.18325v2-agentra-a-supervisable-multi-agent-framework-for-enterprise-intrusion-response)  
+   标签：评分：7.0/10、query:agent-safety
+   evidence：多代理框架用于企业入侵响应，涉及代理安全
+7. [Task Allocation and Motion Planning in Dynamic, Cluttered Environments via CBBA and Graphs of Convex Sets](/202606/22/2606.18516v1-task-allocation-and-motion-planning-in-dynamic-cluttered-environments-via-cbba-and-graphs-of-convex-sets)  
+   标签：评分：7.0/10、query:agent-safety
+   evidence：安全约束的多智能体轨迹规划
+8. [Diffusion Offline Reinforcement Learning for Fair and Energy-Efficient UAV-Assisted Wireless Networks](/202606/22/2606.16331v1-diffusion-offline-reinforcement-learning-for-fair-and-energy-efficient-uav-assisted-wireless-networks)  
+   标签：评分：6.0/10、query:agent-safety
+   evidence：使用扩散离线强化学习实现无人机网络的公平和能效安全约束
+9. [A Unified Causal-Origin Taxonomy of Distributional Shifts in Reinforcement Learning](/202606/22/2606.16933v1-a-unified-causal-origin-taxonomy-of-distributional-shifts-in-reinforcement-learning)  
+   标签：评分：6.0/10、query:agent-safety
+   evidence：RL分布变化分类法，与安全强化学习相关
+10. [Reversal Q-Learning](/202606/22/2606.17551v1-reversal-q-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：分布式智能体网络架构，支持多智能体协作
-11. [Learning Red Agent Policy from Observations for Neurosymbolic Autonomous Cyber Agents](/202606/21/2606.18223v1-learning-red-agent-policy-from-observations-for-neurosymbolic-autonomous-cyber-agents)  
+   evidence：基于流策略的离策略强化学习算法
+11. [On the Reliability of Networks of AI Agents: Density Evolution, Stopping Sets, and Architecture Optimization](/202606/22/2606.18121v1-on-the-reliability-of-networks-of-ai-agents-density-evolution-stopping-sets-and-architecture-optimization)  
+   标签：评分：6.0/10、query:agent-safety
+   evidence：多代理网络的可靠性建模，与代理安全与鲁棒性相关
+12. [EvolveNav: Proactive Preflection and Self-Evolving Memory for Zero-Shot Object Goal Navigation](/202606/22/2606.18235v1-evolvenav-proactive-preflection-and-self-evolving-memory-for-zero-shot-object-goal-navigation)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：基于强化学习的自主网络智能体通过模仿学习对手策略
-12. [Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards](/202606/21/2606.18810v1-learning-from-own-solutions-self-conditioned-credit-assignment-for-reinforcement-learning-with-verifiable-rewards)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：面向可验证奖励强化学习的信用分配方法，适用于智能体强化学习
-13. [Pareto Q-Learning with Reward Machines](/202606/21/2606.19134v1-pareto-q-learning-with-reward-machines)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：多目标强化学习与奖励机
+   evidence：强化学习用于具身代理导航
+13. [Recover, Discover, Plan: Learning Skills and Concepts from Robot Failures](/202606/22/2606.18328v1-recover-discover-plan-learning-skills-and-concepts-from-robot-failures)  
+   标签：评分：6.0/10、query:agent-safety
+   evidence：利用强化学习进行故障恢复和技能学习，推动安全强化学习进展
 
 
 <div class="dpr-home-promo-card">

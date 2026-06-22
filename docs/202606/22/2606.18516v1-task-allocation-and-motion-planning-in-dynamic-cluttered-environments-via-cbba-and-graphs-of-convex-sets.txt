@@ -1,0 +1,398 @@
+Title: Task Allocation and Motion Planning in Dynamic, Cluttered Environments via CBBA and Graphs of Convex Sets
+
+URL Source: https://arxiv.org/pdf/2606.18516v1
+
+Published Time: Thu, 18 Jun 2026 00:15:52 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Task Allocation and Motion Planning in Dynamic, Cluttered Environments via CBBA and Graphs of Convex Sets 
+
+Matthew D. Osburn ∗, Cameron K. Peterson †, and John L. Salmon ‡
+
+Brigham Young University, Provo, Utah, 84602 
+
+Multi-agent task planning in cluttered, dynamic environments requires assigning tasks to agents while simultaneously determining safe, time-efficient trajectories through the environment. When tasks are dynamic, such as rendezvous objectives, allocation decisions depend not only on which agent is best suited for a task, but also on when and where that task can be reached. This paper presents a solution to this problem, which combines Graphs of Convex Sets (GCS) for trajectory optimization with the Consensus-Based Bundle Algorithm (CBBA) for distributed task allocation. In our approach, GCS finds optimal trajectories through dynamic environments using a time-extended (3D+time) configuration space. At the same time, CBBA coordinates task assignments across agents, enabling informed decision-making in a moving environment. We then connect allocation and planning to allow the agents to avoid collisions in the 3D+time configuration space and provide accurate time estimates for task completion. We demonstrate the effectiveness of our approach in simulated cluttered environments with static and dynamic tasks. 
+
+# I. Introduction 
+
+# Multi -agent systems operating in complex environments must reason jointly about task assignment and motion feasibility [ 1]. In multi-task scenarios, agents must decide which tasks to execute while also generating trajectories that satisfy dynamic constraints [ 2 ] and avoid obstacles [ 3]. These requirements create a coupled allocation–planning problem in which task utility depends not only on assignment decisions, but also on whether the assigned tasks can be physically realized. Motion planning plays a critical role in multi-agent task allocation. In realistic settings such as dense obstacle fields, narrow passages, and time-varying environments, the cost and feasibility of executing a task must be accurately coupled with the task allocation scheme [ 4]. Ignoring these constraints during allocation can produce assignments that are infeasible or significantly suboptimal when executed [ 5]. This motivates approaches that more tightly integrate motion planning into the decision-making process, enabling allocation strategies that are aware of geometric and temporal constraints [6]. Graphs of Convex Sets (GCS) have emerged as a powerful framework for motion planning that bridges discrete and continuous optimization. By decomposing the configuration space into convex regions and connecting them into a graph structure [ 7], optimal collision-free trajectories can be planned without requiring an initial guess from the end user [ 8]. This formulation uses mixed-integer convex programming, which quickly finds globally optimal trajectories through the provided graph [ 9, 10 ]. The GCS framework has been successfully applied to a variety of motion planning problems, including collision-free path planning [ 11 ], high-dimensional motion planning [ 12 ], and non-Euclidean planning domains [13]. Recent work, including our own, has extended GCS to 2D+time spatiotemporal domains, named Space-Time Graphs of Convex Sets (ST-GCS) [ 14 , 15 ]. ST-GCS introduces time as an explicit dimension, enabling the generation of collision-free, time-parameterized trajectories in dynamic environments [ 14 ]. By covering the space-time domain with convex sets, ST-GCS formulations incorporate velocity bounds, timing constraints, and dynamic obstacles within a unified optimization framework [ 15 ]. This formulation avoids the non-linear timing optimization step that was required in the prior GCS papers [ 8, 9, 11 , 13 , 16 ]. This paper extends ST-GCS to incorporate an additional dimension, allowing for 3D+time trajectory planning. The GCS literature has also briefly addressed multi-agent motion planning. In [ 10 ], the motion of two robotic arms was planned by combining and simplifying the configuration space of the systems and then using GCS to plan 
+
+> ∗Research Assistant, Electrical and Computer Engineering, osburnm@student.byu.edu, AIAA Student Member.
+> †Professor, Electrical and Computer Engineering, cammy.peterson@byu.edu, AIAA Senior Member.
+> ‡Professor, Mechanical Engineering, johnsalmon@byu.edu, AIAA Member.
+
+1
+
+> arXiv:2606.18516v1 [cs.RO] 16 Jun 2026
+
+the combined motion. In [ 14 ], the authors used a priority planning queue to alternate between planning the motion of agents and updating the representation of the collision-free space. To our knowledge, GCS has not been used as the motion planner within complex, decentralized, task-allocation frameworks, such as the Consensus-Based Bundle Algorithm (CBBA). CBBA is a widely used approach to multi-agent task allocation because it allows each agent to construct a locally ordered task bundle (the ordered subset of tasks that the agent intends to complete), exchange bids with its neighbors, and converge to a conflict-free assignment without centralized optimization [ 17 ]. Since these bundles are formed by selecting tasks according to their bid values, the resulting assignment is shaped by the cost or reward model used to compute those bids. In this work, we focus on settings where simplified bid models, such as geometric distance or nominal travel time, may not reflect the trajectory-level constraints that determine whether a task can be executed safely and efficiently. Several works have already explored tighter couplings between CBBA and motion generation. CBBA has been combined with Rapidly-Exploring Random Tree (RRT) planning in [ 18 ] to create collision-free dynamically feasible task allocations. CBBA can be modified to allow for real-time re-planning in dynamic environments and can be tailored for heterogeneous swarms of agents as in [ 19 ]. A more recent CBBA-based UAV mission-planning study extended the allocation loop to account for timing constraints, asynchronous reassignment, dynamic task insertion, and local replanning around the current execution path [ 20 ]. These results show that CBBA can absorb increasingly path- and time-dependent decision logic, but the motion layer is still often based on sampling-based or heuristic replanning, rather than one that can provide optimality guarantees. In this paper, we use ST-GCS as the planning backend for CBBA in cluttered, dynamic multi-agent task-allocation scenarios. Our first contribution is a 3D+time GCS formulation that explicitly plans over three spatial dimensions and time, extending existing space-time graph-of-convex-sets methods beyond lower-dimensional dynamic planning (2D+time) settings. Our second contribution is a motion-aware CBBA framework in which ST-GCS is used in the bidding process to compute task costs from convex trajectory optimization rather than from simplified distance or travel-time approximations. This integration allows allocation decisions to account directly for dynamic obstacles, temporal feasibility, and trajectory-level constraints. A third contribution is the extension of the task-allocation problem to include dynamic tasks, allowing task locations and availability to vary over time rather than assuming a fixed static location. In this paper, we interpret dynamic tasks as a rendezvous between agents and other vehicles that are not part of the planning cohort, but the same formulation applies to target interception, mobile sensing or inspection, and logistics handoff with moving assets. Finally, we evaluate ST-GCS as a distributed motion-planning backend for collision-free motion planning in dynamic environments with accurate task-completion estimates. The remainder of the paper is organized as follows. Section II reviews the relevant background on CBBA and GCS. The proposed ST-GCS-CBBA framework is developed in Section III, including the integration of task allocation and motion planning. Section IV evaluates the approach through representative case studies. Finally, Section V provides a conclusion and discussion of limitations and future work. 
+
+# II. Background 
+
+This section reviews the two key algorithmic components that underlie the proposed framework. We first summarize CBBA, which provides distributed task allocation over a finite task set, and then review GCS, which provides a motion-planning framework over a convex decomposition of the feasible domain. Figure 1 provides a high-level view of how these components interact in the overall planning pipeline. The objective is not to provide an exhaustive summary of both methods, but to establish the assumptions, terminology, and solution properties needed to understand the method developed in Section III. For a more comprehensive overview of these two topics see [ 17 ] for CBBA and [ 8 ] for GCS. 
+
+A. Consensus-Based Bundle Algorithm 
+
+CBBA is a distributed auction-based method for multi-agent, multi-task allocation originally introduced in [ 17 ]. Each agent incrementally constructs an ordered bundle of tasks together with an associated execution path by repeatedly selecting the task insertion that yields the largest positive marginal score. That score may reflect reward, travel cost, timing penalties, or fuel use, which makes CBBA well-suited to path-dependent allocation problems in which task value depends on execution order rather than on independent one-step assignments. After local bundle construction, agents exchange bid and winner information with their neighbors and apply a consensus step to resolve conflicts. Repeated bundle building and consensus produce a conflict-free assignment without requiring a centralized auctioneer. Figure 2 depicts this process. 2CBBA Task Allocation GCS Motion Planning Fig. 1 Coupled CBBA and GCS for Task Allocation. Distributed agents in a graph are allocated tasks, shown as grey stars, by the CBBA algorithm. The Graphs of Convex Sets (GCS) framework is used as the motion planner within a dynamic environment to plan trajectories and provide accurate information for informed CBBA bids. 
+
+The first phase of CBBA constructs a candidate bundle of tasks for each agent using a greedy insertion rule. During this phase, each agent independently evaluates every task that is not already in its bundle and computes the marginal improvement obtained by inserting that task into every feasible position in its current execution path. The agent then bids on the task that produces the largest valid marginal gain, provided that this bid exceeds the agent’s current estimate of the winning bid for that task. The selected task is appended to the agent’s bundle, inserted into the best position in its execution path, and the corresponding winning bid and winning-agent estimates are updated. This process repeats until the agent reaches its task capacity or no remaining tasks can be won. This process is outlined in Algorithm 1. The set of agents is denoted by A = {0, 1, . . . , 𝑁 agents − 1}, where each element 𝑖 ∈ A indexes one agent in the team. The set of tasks is denoted by T = {0, 1, . . . , 𝑀 tasks − 1}, where each element 𝑗 ∈ T indexes one candidate task. The scalar 𝐿 capacity defines the maximum number of tasks that any one agent may place in its bundle. For each agent 𝑖 , the vector b𝑖 denotes the agent’s task bundle. The bundle is ordered according to the sequence in which tasks were added by the greedy construction process. Thus, if a task appears earlier in b𝑖 , it was selected earlier by agent 𝑖 . The vector p𝑖 denotes the corresponding execution path. Unlike the bundle, the path is ordered according to the sequence in which agent 𝑖 plans to execute the selected tasks. Therefore, b𝑖 records task-selection order, while p𝑖 
+
+records task-execution order. The entry 𝑦 𝑖 𝑗 is agent 𝑖 ’s current estimate of the winning bid for task 𝑗 . This value represents the highest bid for task 
+
+𝑗 known to agent 𝑖 at the current point in the algorithm. The entry 𝑧 𝑖 𝑗 is agent 𝑖 ’s current estimate of the winning agent for task 𝑗 . Thus, 𝑧 𝑖 𝑗 = 𝑟 means that, according to agent 𝑖 ’s local information, agent 𝑟 is currently winning task 𝑗 .The variable 𝑐 𝑖 𝑗 is the marginal score, or bid, that agent 𝑖 computes for task 𝑗 . It measures the improvement in agent 
+
+𝑖 ’s path score if task 𝑗 is inserted into the best available position in the current path p𝑖 . The insertion index is denoted by 𝑘 , where 𝑘 ∈ { 0, 1, . . . , |p𝑖 |} . Since the algorithm is zero-indexed, 𝑘 = 0 corresponds to inserting the task at the beginning of the path, while 𝑘 = |p𝑖 | corresponds to appending the task to the end of the path. The operator ⊕𝑘 denotes insertion at index 𝑘 . For example, p𝑖 ⊕𝑘 𝑗 is the path obtained by inserting task 𝑗 into path 
+
+p𝑖 at position 𝑘 . The operator ⊕end denotes appending an element to the end of a list. Thus, b𝑖 ⊕end 𝐿 𝑖 is the updated bundle obtained by appending the selected task 𝐿 𝑖 to the end of b𝑖 .For each candidate task 𝑗 , the algorithm evaluates the score of the associated path 𝑆 𝑖 (·) and the score improvement associated with each feasible insertion index 𝑘 . These improvements are stored in Δ𝑘 , where Δ𝑘 = 𝑆 𝑖 (p𝑖 ⊕𝑘 𝑗 ) − 𝑆 𝑖 (p𝑖 ).
+
+3Algorithm 1 CBBA Greedy Bundle Construction 
+
+Input: A = {0, 1, . . . , 𝑁 agents − 1}, T = {0, 1, . . . , 𝑀 tasks − 1}, 𝐿 capacity ∈ N
+
+Input: b𝑖 , p𝑖 , y𝑖 , z𝑖 , ∀𝑖 ∈ A 
+
+Output: b𝑖 , p𝑖 , y𝑖 , z𝑖 , ∀𝑖 ∈ A 
+
+1: for 𝑖 ∈ A do 
+
+2: while |b𝑖 | < 𝐿 capacity do 
+
+3: for 𝑗 ∈ T do 
+
+4: 𝑐 𝑖 𝑗 ← −∞ 
+
+5: 𝑛 ∗ 
+
+> 𝑖 𝑗
+
+← 0
+
+6: if 𝑗 ∉ b𝑖 then 
+
+7: Δ𝑘 ← ∅ 
+
+8: for 𝑘 ∈ { 0, 1, . . . , |p𝑖 |} do 
+
+9: Δ𝑘 ← Δ𝑘 ⊕end 𝑆 𝑖 (p𝑖 ⊕𝑘 𝑗 ) − 𝑆 𝑖 (p𝑖 )
+
+10: end for 
+
+11: 𝑐 𝑖 𝑗 ← max 𝑘 Δ𝑘 
+
+12: 𝑛 ∗ 
+
+> 𝑖 𝑗
+
+← argmax 𝑘 Δ𝑘 
+
+13: else 
+
+14: 𝑐 𝑖 𝑗 ← 0
+
+15: 𝑛 ∗ 
+
+> 𝑖 𝑗
+
+← ∅ 
+
+16: end if 
+
+17: end for 
+
+18: ℎ𝑖 𝑗 ← I(𝑐 𝑖 𝑗 > 𝑦 𝑖 𝑗 ) ∀ 𝑗 ∈ T 
+
+19: 𝐿 𝑖 ← argmax 𝑗 𝑐 𝑖 𝑗 · ℎ𝑖 𝑗 
+
+20: if 𝑐 𝑖,𝐿 𝑖 ℎ𝑖,𝐿 𝑖 = 0 then 
+
+21: break 
+
+22: end if 
+
+23: b𝑖 ← b𝑖 ⊕end 𝐿 𝑖 
+
+24: p𝑖 ← p𝑖 ⊕𝑛 ∗
+
+> 𝑖𝐿 𝑖
+
+𝐿 𝑖 
+
+25: 𝑦 𝑖,𝐿 𝑖 ← 𝑐 𝑖,𝐿 𝑖 
+
+26: 𝑧 𝑖,𝐿 𝑖 ← 𝑖 
+
+27: end while 
+
+28: end for 
+
+29: return b𝑖 , p𝑖 , y𝑖 , z𝑖 , ∀𝑖 ∈ A 
+
+4Distributed Greedy Bundle Construction All Tasks Allocated Agent Communication And Bid Resolution 
+
+# XFig. 2 In CBBA, agents alternate between individual greedy local bundle construction and consensus-based bid resolution with neighboring agents until all the tasks are allocated. 
+
+The best marginal score for task 𝑗 is then 𝑐 𝑖 𝑗 = max 𝑘 Δ𝑘 , and the corresponding best insertion index is 𝑛 ∗ 
+
+> 𝑖 𝑗
+
+= arg max 𝑘 Δ𝑘 .This process quantifies how much additional value agent 𝑖 obtains by inserting task 𝑗 into position 𝑘 of its current path. After all candidate tasks have been evaluated, the binary variable ℎ𝑖 𝑗 indicates whether task 𝑗 is currently winnable by agent 𝑖 : ℎ𝑖 𝑗 = I(𝑐 𝑖 𝑗 > 𝑦 𝑖 𝑗 ). If ℎ𝑖 𝑗 = 1, then agent 𝑖 ’s bid for task 𝑗 exceeds its current estimate of the winning bid. If 
+
+ℎ𝑖 𝑗 = 0, then agent 𝑖 does not currently outbid the known winner for that task. The selected task is denoted by 𝐿 𝑖 , where 𝐿 𝑖 = arg max 𝑗 𝑐 𝑖 𝑗 ℎ𝑖 𝑗 . This selects the task with the largest valid marginal score. If the best valid score satisfies 𝑐 𝑖,𝐿 𝑖 ℎ𝑖,𝐿 𝑖 = 0, then no remaining task can be profitably added to the bundle, and the greedy construction process terminates for agent 𝑖 . Otherwise, 𝐿 𝑖 is appended to the bundle, inserted into the path at 
+
+𝑛 ∗ 
+
+> 𝑖𝐿 𝑖
+
+, and the winning bid and winning-agent estimates are updated according to 𝑦 𝑖,𝐿 𝑖 ← 𝑐 𝑖,𝐿 𝑖 , 𝑧 𝑖,𝐿 𝑖 ← 𝑖. 
+
+CBBA is widely used in distributed coordination problems because it scales well with agent count and can accommodate heterogeneous agents, path-dependent utilities, and communication-limited execution. Its standard formulation assumes a finite task set, a strongly connected communication network over which bid and winner information eventually propagates, and a scoring rule that permits meaningful marginal evaluation of candidate task insertions. In practice, the quality of the final allocation depends strongly on the fidelity of the bidding model: if motion costs are oversimplified, the resulting assignment may remain conflict-free yet still be inefficient or infeasible once detailed planning constraints are imposed. CBBA does not, in general, guarantee a globally optimal allocation. The bundle-building step is greedy, and agents reason locally during each consensus round. Its principal theoretical benefit is finite-time convergence to a consistent assignment under the standard communication and bidding assumptions. In the present work, CBBA is therefore used as a scalable distributed coordination layer whose performance depends on the accuracy of the ST-GCS planner. 
+
+B. Graphs of Convex Sets 
+
+GCS provides a trajectory optimization framework for solving certain nonlinear, multimodal planning problems to global optimality with respect to a specified graph [ 8]. An advantage that GCS has over other optimization and sampling methods is that the user does not have to specify an initial guess for the trajectory to find the global optimal solution. The method represents the planning problem as a shortest-path problem over a graph whose vertices correspond to convex subsets of the collision-free configuration space. Although the resulting formulation is naturally mixed-integer, GCS has a tight convex relaxation that can be solved efficiently. In practice, the graph is constructed by covering the collision-free configuration space with convex regions, adding edges between adjacent or overlapping regions, and optimizing a trajectory that passes through a sequence of these sets. The Iterative Region Inflation by Semidefinite Programming (IRIS) family of algorithms, used in [ 7, 21 , 22 ], is 51 2 3 4 5Fig. 3 The graphs of convex sets problem is solved by 1) establishing the start and end of the trajectory and determining the location of obstacles (shown in black), 2) segmenting collision free regions of free space into convex sets, 3) assigning small segments of the trajectory to each convex set (shown in blue), 4) solving the GCS problem for the optimal trajectory through the graph, 5) the trajectory is optimal with respect to the graph and is collision free. 
+
+commonly used to generate these convex regions in higher-dimensional configuration spaces. An abstract form of the GCS optimization problem is 
+
+min 
+
+> 𝑥
+
+∑︁ 𝑣 ∈ V 
+
+𝑓 𝑣 (® 𝑥 𝑣 ) + ∑︁ 
+
+> 𝑒 ∈ E
+
+𝑓 𝑒 (® 𝑥 𝑎 , ®𝑥 𝑏 ) (1a) s.t. 
+
+(V , E, C) ⊆ G (1b) 
+
+®𝑥 𝑣 ∈ X 𝑣 ∀𝑣 ∈ V (1c) 
+
+®𝑥 𝑎 ∈ X 𝑒 ∀𝑒 ∈ E (1d) 
+
+®𝑥 𝑏 ∈ X 𝑒 ∀𝑒 ∈ E , (1e) where 𝑥 represents all the continuous variables defining the trajectory curve segments, often Bézier control points. The variables ®𝑥 𝑣 are the design variables associated with the vertex 𝑣 . The vertex cost function 𝑓 𝑣 (® 𝑥 𝑣 ) represents the cost of the continuous variables within a vertex. The edge cost function 𝑓 𝑒 (® 𝑥 𝑎 , ®𝑥 𝑏 ) represents the cost of traversing an edge from 𝑣 𝑎 to 𝑣 𝑏 , and couples the continuous variables of the connecting vertices. The vertices V, edges E, and associated convex sets C that form the optimal trajectory are a subset of the graph G
+
+that minimizes the overall cost. The sets X𝑣 and X𝑒 define the vertex and edge constraints that the design variables must satisfy. Often, the formulation is rewritten with binary variables and transformed to take the form of a mixed-integer convex program (MICP) that can be repeatedly solved to find the global solution to the original problem. Figure 3 illustrates the GCS framework, beginning with a planning problem defined by a start state, a goal state, and obstacles in the environment. The collision-free portion of the workspace is then decomposed into a collection of convex sets, which form the vertices of a graph. Candidate trajectory segments are assigned to these convex regions, allowing the trajectory search to be posed as an optimization over both the sequence of convex sets and the continuous trajectory variables within them. Solving the resulting GCS problem produces a collision-free trajectory that is optimal with respect to the constructed graph. In this paper, the trajectory segment within each convex set is parameterized using Bézier curves. A Bèzier curve is defined as 
+
+®𝐵 (𝑠 ) =
+
+> 𝑛
+
+∑︁ 
+
+> 𝑘 =0
+
+𝑛 𝑘 
+
+
+
+𝑠 𝑘 (1 − 𝑠 )𝑛 −𝑘 ®𝑥 𝑘 , 0 ≤ 𝑠 ≤ 1, (2) 6Fig. 4 The Bèzier curve (blue) is entirely contained in the convex set (orange) if its connecting control points (black) are contained within the convex set. 
+
+where 𝑠 is a parameter that varies between 0 and 1, 𝑛 is the polynomial order of curve, and 𝑥 𝑘 is the 𝑘 th control point defining the curve. This parameterization choice is useful because constraining all control points to lie inside a convex set ensures that the entire Bézier curve segment remains inside that set. Thus, collision avoidance can be enforced through convex containment constraints on the control points rather than through dense sampling along the trajectory. Figure 4 depicts this property. Adjacent curve segments are connected through edge constraints that enforce continuity between neighboring convex regions in the graph. A downside of this parameterization is the increased difficulty in enforcing feasibility for highly nonlinear vehicle dynamics. When solved using branch and bound, or if the convex relaxation returns a complete solution, the resulting trajectory is globally optimal over the family of trajectories that can be represented with the pairing of Bèzier curves and convex sets. In practice, using rounding procedures and sub-optimality metrics can substantially reduce computational cost. These approaches can yield strong candidate solutions close to or equal to the global optimum because of the tightness of the convex relaxation, but global optimality is no longer guaranteed. The effectiveness of GCS depends on the quality of the convex decomposition and graph construction. The method assumes that feasible motion can be adequately represented by convex regions, and it inherits any flaws present in that representation. If important areas in the collision-free space are not covered within the graph, the trajectory will be optimal with respect to the provided graph, but not with respect to the actual collision-free space. This is an additional source of error that must be analyzed when evaluating the performance of GCS motion planning. All of these modeling considerations are especially important in cluttered environments, where narrow passages and obstacle geometry strongly influence the creation of the convex sets. For dynamic environments, the same idea can be extended into ST-GCS [ 14 ]. In ST-GCS, time is treated as an explicit planning dimension, so each convex region occupies a subset of the 2D+time domain rather than the spatial domain alone. Dynamic obstacles, timing constraints, and velocity limits can be encoded directly in the space-time configuration space. An example of a dynamic obstacle in the 2D+time configuration space is depicted in Figure 5. It shows that a rectangular obstacle in 2D space becomes a parallelepiped in 2D+time dimensions. ST-GCS ensures that collisions of dynamic obstacles are avoided. The resulting solution of ST-GCS is both geometrically feasible and time-parameterized, which makes it well-suited to the coupled allocation-and-planning setting considered in this paper. Existing CBBA extensions incorporate path-dependent or timing-aware bids, often through sampling-based planners, heuristic replanning, or simplified trajectory models, as in [ 20 ]. In parallel, GCS and ST-GCS methods provide strong trajectory optimization tools for planning through constrained environments, but they have not been tightly integrated with decentralized bundle-based task allocation in which each bid depends on solving a motion-planning problem. This paper addresses that interface by combining task allocation and trajectory optimization so that agents can form path-aware bids, navigate safely around obstacles, and reach both static and dynamic task objectives. 7Fig. 5 A dynamic obstacle moving in the 𝑦 direction in R2 becomes a static parallel-piped in the time 2D+time configuration space. 
+
+# III. Methods 
+
+The preceding sections motivate the need for a bid model that reflects trajectory-level feasibility rather than only geometric proximity or nominal travel time. In this section, we develop a CBBA+ST-GCS framework in which each agent evaluates candidate task insertions by solving space-time GCS motion-planning problems. This allows the CBBA bidding process to account directly for obstacle geometry, dynamic constraints, task timing, and trajectory cost during distributed bundle construction. We first describe how ST-GCS is embedded into the CBBA greedy bidding step, then present the 3D+time planning representation and the assumptions required to couple distributed task allocation with space-time motion planning. 
+
+A. ST-GCS-Informed CBBA Greedy Bundle Construction 
+
+The key coupling between CBBA and ST-GCS occurs in the marginal bid computation. In standard CBBA implementations, an agent often evaluates a candidate task insertion using a simplified surrogate cost, such as Euclidean distance, nominal travel time, or a hand-designed heuristic [ 17 ]. These surrogate models are computationally convenient, but they may not reflect whether the resulting task sequence is feasible in a cluttered, time-varying environment. In contrast, the proposed approach evaluates candidate insertions using the cost of a trajectory optimization problem solved in the same space-time domain in which the agent will execute its motion. For each agent 𝑖 , let b𝑖 denote the ordered task bundle and let p𝑖 denote the corresponding ordered execution path. The bundle records the order in which tasks are added during greedy construction, while the path records the order in which the agent plans to execute those tasks. During greedy bundle construction, agent 𝑖 considers each candidate task 𝑗 
+
+not already in its bundle and each possible insertion index 𝑘 , producing a candidate path 
+
+p𝑖 ⊕𝑘 𝑗 . (3) Rather than assigning a bid based only on the geometric distance added by this insertion, the agent evaluates the resulting execution sequence using ST-GCS. Each candidate path is decomposed into a sequence of point-to-point space-time planning problems between consecutive tasks or states. The resulting trajectory costs are then combined to evaluate the full path. Thus, each bid reflects not only task proximity, but also obstacle geometry, dynamic obstacles, timing constraints, velocity limits, and the feasibility of the resulting trajectory. Because ST-GCS is formulated as a cost-minimization problem, we define the CBBA path score as a reward-minus-cost quantity. Let 
+
+𝐺 𝑖 ( 𝑝 𝑎 , 𝑝 𝑏 ) (4) denote the optimal ST-GCS trajectory cost for agent 𝑖 to move from task or state 𝑝 𝑎 to task or state 𝑝 𝑏 . The computation 8of the trajectory cost is described in detail in Section III.B. The score for a candidate path is defined as 
+
+𝑆 𝑖 (p𝑖 ) = − 
+
+> |p𝑖 | − 1
+
+∑︁ 
+
+> ℓ=0
+
+𝐺 𝑖 ( 𝑝 ℓ , 𝑝 ℓ+1), (5) where 𝑝 ℓ represents the ℓth task in the candidate execution path. The negative indicates that the minimum cost trajectory will be chosen. For cost maximization instead of minimization, the negative sign should be omitted in front of the sum. If any ST-GCS segment is infeasible, the full path is assigned 
+
+𝑆 𝑖 (p𝑖 ) = −∞ , (6) so that infeasible insertions cannot win a bid. Should all tasks and bundles be infeasible, then the agent is not assigned any tasks. The marginal score associated with inserting task 𝑗 into path p𝑖 at index 𝑘 is 
+
+Δ𝑖 𝑗 𝑘 = 𝑆 𝑖 (p𝑖 ⊕𝑘 𝑗 ) − 𝑆 𝑖 (p𝑖 ). (7) The best bid that agent 𝑖 can place on task 𝑗 is then 
+
+𝑐 𝑖 𝑗 = max  
+
+> 𝑘
+
+Δ𝑖 𝑗 𝑘 , (8) with corresponding insertion index 
+
+𝑛 ∗ 
+
+> 𝑖 𝑗
+
+= arg max  
+
+> 𝑘
+
+Δ𝑖 𝑗 𝑘 . (9) This preserves the standard CBBA greedy insertion structure, but replaces the local bid model with a trajectory-level optimization model. As a result, the task selected by CBBA is the task that provides the largest feasible improvement to the agent’s space-time execution plan. After all candidate tasks have been evaluated, agent 𝑖 determines whether its bid for task 𝑗 exceeds its current estimate of the winning bid for that task. Let 𝑦 𝑖 𝑗 denote agent 𝑖 ’s current estimate of the winning bid for task 𝑗 , and let 
+
+𝑧 𝑖 𝑗 denote its current estimate of the winning agent. The binary variable 
+
+ℎ𝑖 𝑗 = I(𝑐 𝑖 𝑗 > 𝑦 𝑖 𝑗 ) (10) indicates whether task 𝑗 is currently winnable by agent 𝑖 . The selected task is 
+
+𝐿 𝑖 = arg max  
+
+> 𝑗
+
+𝑐 𝑖 𝑗 ℎ𝑖 𝑗 . (11) Task 𝐿 𝑖 is appended to the bundle and inserted into the execution path at 𝑛 ∗ 
+
+> 𝑖𝐿 𝑖
+
+, and the local winning-bid and winning-agent estimates are updated as 
+
+𝑦 𝑖𝐿 𝑖 ← 𝑐 𝑖𝐿 𝑖 , 𝑧 𝑖𝐿 𝑖 ← 𝑖. (12) This formulation is the main interface between distributed task allocation and motion planning in the proposed framework. CBBA remains responsible for decentralized task selection, conflict resolution, and consensus among agents, while ST-GCS supplies the feasibility-aware path scores that determine the bids. Each agent can therefore make local allocation decisions using motion plans that are consistent with the final trajectory-generation constraints. This is especially important in dynamic environments, where two task insertions with similar geometric distances may have very different space-time feasibility because of moving obstacles or task timing. In implementation, the ST-GCS solution associated with a candidate insertion may be performed for the full candidate path or only for the path segments affected by the insertion. For example, inserting a task in the middle of a bundle affects all tasks following, while appending a task changes only the final connection. Previously computed segment costs can therefore be cached and reused during greedy bundle construction. This preserves the CBBA structure while reducing the number of repeated ST-GCS solves required to evaluate candidate bids. When agents exchange information during the consensus phase, they exchange the ST-GCS-informed bid values 𝑐 𝑖 𝑗 
+
+and the corresponding winning-agent estimates 𝑧 𝑖 𝑗 . Once conflicts are resolved, the winning task sequence defines the agent’s committed path. 9B. 3D+Time ST-GCS Representation 
+
+The proposed CBBA bidding mechanism requires a motion planner that can evaluate not only geometric path length, but also time feasibility, dynamic obstacles, and task timing. To provide this capability, we extend the ST-GCS representation to a full 3D+time planning space. This extension allows each candidate CBBA task sequence to be evaluated using the same space-time constraints that will govern the executed trajectory, rather than using a simplified spatial approximation. Each trajectory point is represented by a four-dimensional state, 
+
+𝑥 𝑘 =
+
+"
+
+𝑠 𝑘 
+
+𝜏 𝑘 
+
+#
+
+∈ R4, (13) where 𝑠 𝑘 ∈ R3 is the spatial position of the multirotor and 𝜏 𝑘 ∈ R is the corresponding time coordinate. In this representation, time is not treated as a post-processing variable assigned after a spatial path is found. Instead, time is optimized directly as part of the trajectory. This allows moving obstacles, moving tasks, causality, and velocity limits to be represented within a single convex-set planning framework. To enforce physically meaningful motion, consecutive trajectory control points are constrained by velocity and causality conditions. For control points 𝑥 𝑣,𝑖 and 𝑥 𝑣,𝑖 +1 within a convex region, the maximum-speed constraint is 
+
+𝑥 𝑣,𝑖 +1 − 𝑥 𝑣,𝑖 𝑠, 2 ≤ 𝑣 max 𝑥 𝑣,𝑖 +1 − 𝑥 𝑣,𝑖 𝜏 , (14) and the causality constraint is 
+
+𝑥 𝑣,𝑖 +1 − 𝑥 𝑣,𝑖 𝜏 ≥ 𝜆 𝜖 . (15) Here, ∥ · ∥ 𝑠, 2 denotes the Euclidean norm over the spatial components and | · | 𝜏 denotes the signed magnitude of the temporal component. The constants 𝑣 max and 𝜆 𝜖 represent the maximum velocity magnitude and the minimum time spacing between control points, respectively. The first constraint ensures that spatial displacement is consistent with the elapsed time between consecutive trajectory points. The second prevents degenerate solutions in which trajectory points collapse to the same time coordinate or move backward in time. Together, these constraints form a Lorentz-cone-type feasibility condition in 3D+time [23]. For a single graph vertex, the trajectory cost combines distance, elapsed time, and smoothness: 
+
+𝑓 𝑣 (x𝑣 ) = 𝑤 𝑑 𝐺 𝑑𝑖𝑠𝑡 (x𝑣 ) + 𝑤 𝑡 𝐺 𝑡𝑖𝑚𝑒 (x𝑣 ) + 𝑤 𝑠 𝐺 𝑠𝑚𝑜𝑜𝑡 ℎ (x𝑣 ), (16) where 𝑤 𝑑 , 𝑤 𝑡 , and 𝑤 𝑠 are nonnegative weights. The distance and time terms are 
+
+𝐺 𝑑𝑖𝑠𝑡 (x𝑣 ) =
+
+> 𝑛 −1
+
+∑︁ 
+
+> 𝑖 =0
+
+x𝑣,𝑖 +1 − x𝑣,𝑖 𝑠, 2 , (17) and 
+
+𝐺 𝑡𝑖𝑚𝑒 (x𝑣 ) = x𝑣,𝑛 − x𝑣, 0 𝜏 . (18) The smoothness term penalizes large changes in the spatial direction of the trajectory and discourages aggressive maneuvers that would be difficult for the multirotor to track. One suitable convex surrogate is 
+
+𝐺 𝑠𝑚𝑜𝑜𝑡 ℎ (x𝑣 ) =
+
+> 𝑛 −2
+
+∑︁ 
+
+> 𝑖 =0
+
+x𝑣,𝑖 +2 − 2x𝑣,𝑖 +1 + x𝑣,𝑖 𝑠, 2 . (19) In this work, this term is used as a smoothness penalty rather than as a complete dynamic model. The ST-GCS planner enforces geometric collision avoidance, timing feasibility, and velocity bounds, while a lower-level tracking controller is assumed to execute the resulting sufficiently smooth reference trajectory. The sum of all vertex costs 𝑓 𝑣 over the graph at the end of optimization is the cost function 𝐺 ( 𝑝 𝑎 , 𝑝 𝑏 ) in Equation 4. One major contribution of this paper is the introduction of dynamic tasks that can be naturally described in the ST-GCS framework. For static tasks, the terminal spatial region is fixed, and the arrival time is optimized within the planning horizon. For dynamic tasks, the terminal region changes with time. Both static and dynamic tasks can be generally represented by the constraint 
+
+𝐴𝑥 𝑓 ≤ 𝑏 (20) 10 Fig. 6 The moving target (black arrow) can be formed by the 𝐴 and 𝑏 matrices. This depiction is in R3, but is representative of constant velocity targets in higher dimensions. 
+
+where 
+
+𝐴 =
+
+
+
+1 0 0 𝑣 𝑥 
+
+−1 0 0 −𝑣 𝑥 
+
+0 1 0 𝑣 𝑦 
+
+0 −1 0 −𝑣 𝑦 
+
+0 0 1 𝑣 𝑧 
+
+0 0 −1 −𝑣 𝑧 
+
+
+
+, 𝑏 =
+
+
+
+𝑥 𝑓 𝑖𝑛𝑎𝑙 
+
+−𝑥 𝑓 𝑖𝑛𝑎𝑙 
+
+𝑦 𝑓 𝑖𝑛𝑎𝑙 
+
+−𝑦 𝑓 𝑖𝑛𝑎𝑙 
+
+𝑧 𝑓 𝑖𝑛𝑎𝑙 
+
+−𝑧 𝑓 𝑖𝑛𝑎𝑙 
+
+
+
+, (21) 
+
+𝑥 𝑓 is the final control point of the ST-GCS trajectory, and 𝑣 𝑥 , 𝑣 𝑦 , 𝑣 𝑧 are the 3D constant velocities of the task. If the task is static, then the velocity values will all be zero. Figure 6 depicts the moving task defined by the 𝐴 and 𝑏 matrices. The contribution of this formulation is not merely adding one more coordinate to the spatial planner. By treating time as an explicit optimization variable, the planner can determine both where and when the multirotor should move through the environment. This is essential for the proposed task-allocation framework because CBBA bids depend on the feasibility and cost of executing an ordered task sequence. A task that appears close in Euclidean space may be expensive or infeasible in space-time because of moving obstacles, moving task locations, or conflicts with other agents. The 3D+time ST-GCS representation allows these effects to be reflected directly in the bid values used during distributed allocation. 
+
+# IV. Results 
+
+This section evaluates the proposed CBBA+ST-GCS framework on two representative planning scenarios of increasing complexity. The first experiment isolates the ST-GCS planning component for a single multirotor assigned to three tasks. The second experiment evaluates the full multi-agent allocation and planning pipeline in cluttered dynamic environments with three agents and six tasks. Across all experiments, trajectories are generated in the 3D+time configuration space, and task bids are computed using the GCS-derived path score described in Section III. All experiments were run on a desktop computer with a 12th-generation Intel i7 CPU with 16GB of RAM. The implementation was written in PYTHON, with optimization problems modeled using CVXPY and solved using the open-source solver CLARABELL. All timing results report wall-clock computation time on the aforementioned machine. 
+
+A. Experiment 1: Single multirotor with Three Tasks 
+
+The first experiment considers a single multirotor assigned to complete three tasks in a 3D environment. Since only one agent is present, no inter-agent consensus or conflict resolution is required; instead, this case isolates the effect of the ST-GCS planner on greedy bundle construction. The multirotor begins at a fixed location and determines the task 11 Fig. 7 The agent must visit the three tasks shown as stars on the three buildings shown in grey. Slow dynamic obstacles, shown as orange boxes, and fast dynamic obstacles, shown as blue boxes, clutter the airspace. 
+
+ordering that minimizes the total travel time while satisfying velocity and obstacle-avoidance constraints. Figure 7 depicts the first scenario. The environment contains static obstacles that represent buildings that the multirotor will visit. The environment contains sets of dynamic obstacles that either move quickly or slowly through the airspace, making traversal between tasks more difficult. For each candidate insertion considered during greedy bundle construction, the planner solves a sequence of GCS problems between consecutive tasks in the proposed path. The resulting travel time is used to evaluate the marginal score of adding the candidate task. Table 1 reports the parameters used for the experiment. Figure 8 shows the resulting collision-free trajectory created by the CBBA+GCS pipeline. Table 2 reports the success of this experiment along with the task assignment bundle that resulted from the CBBA algorithm and the total mission time. In this experiment, each task was successfully reached while each agent remained collision-free. 
+
+B. Experiment 2: Static and Dynamic Tasks 
+
+The second experiment evaluates the integrated CBBA+ST-GCS pipeline with three multirotors and six tasks. Two of these tasks are moving in time through an intersection. Each multirotor is allowed to accept up to two tasks. Unlike the single-agent case, the allocation now depends on distributed bidding and consensus. Each agent computes GCS-informed bids for candidate task insertions, exchanges winner and bid information, and updates its bundle until a conflict-free assignment is reached. The environment includes only static obstacles. Table 3 describes the important parameters of the second experiment. Table 4 summarizes the results of the experiment, with the resulting trajectories depicted in Fig. 10. Each task, including time-varying tasks, is accomplished by the team of agents. 
+
+Table 1 Experiment 1 setup 
+
+Parameter Value Agents 1 multirotor Tasks 3Maximum tasks per agent 3Speed limit 12 m/s Planning horizon 60 s Static obstacles 3Dynamic obstacles 7
+
+Table 2 Experiment 1 results 
+
+Metric Value Selected task order East, West, North Completed tasks 3/3 Total mission duration 27.49s 12 Fig. 8 The CBBA+GCS successfully visits the three tasks while remaining collision-free (left). The dynamic obstacles make the airspace between tasks cluttered (right). 
+
+Fig. 9 The agents must visit the six tasks shown as purple stars at the intersection. Moving tasks are indicated by arrows. There is a no-fly zone designated in red. 
+
+Fig. 10 The agents successfully distributed tasks using CBBA+GCS, including the time-varying tasks moving through the intersection, as well as avoiding the no-fly zone. 
+
+13 Table 3 Experiment 2 setup 
+
+Parameter Value Agents 3 multirotors Static tasks 4Dynamic tasks 2Maximum tasks per agent 2Speed limit 12 m/s Planning horizon 60 s Static obstacles 5Dynamic obstacles 0
+
+Table 4 Experiment 2 results 
+
+Metric Value Agent 1 Bundle Southwest, Moving Eastbound Agent 2 Bundle Northwest, Moving Southbound Agent 3 Bundle Northeast, Southeast Completed tasks 6/6 Total mission duration 20.89s 
+
+# V. Conclusion 
+
+This paper presented a framework for coupling distributed CBBA task allocation with GCS motion planning in cluttered, dynamic environments. By integrating CBBA with ST-GCS, agents compute task bids from space-time feasible trajectories rather than from simplified distance-based estimates. This allows allocation decisions to reflect not only which tasks are nearby, but which task sequences are feasible and efficient. The proposed framework also extends ST-GCS to multirotor planning in a 3D+time representation, where static obstacles, dynamic obstacles, moving tasks, and inter-agent conflicts can be modeled within a common space-time domain. The simulation results demonstrate that GCS-informed bidding can produce conflict-free trajectories that are consistent with the final motion-planning constraints, avoid dynamic obstacles, and complete both static and time-varying tasks. These results support the use of trajectory-aware bid generation as a mechanism for improving allocation quality in environments where geometric proximity alone is not a reliable indicator of execution cost or feasibility. Future work will focus on improving both realism and scalability. On the coordination side, we will consider more realistic distributed communication models, including communication delays, packet loss, limited communication range, and asynchronous consensus updates. On the planning side, we will improve the computational performance of the ST-GCS backend through graph reuse, cost caching, warm starts, and more efficient convex-region generation. Additionally, the issues of agents colliding with each other and planning around other agent’s bids will be addressed in future work. These improvements will be important for scaling the integrated CBBA+ST-GCS framework to larger teams, denser task sets, and more complex dynamic environments. 
+
+# Acknowledgments 
+
+This project was supported by NSF SBIR Phase 2 Award Number 2404858 and 4D Avionic Systems, LLC. We thank Dr. Garth Thompson for his feedback and insightful suggestions. During the preparation of this work, the authors used ChatGPT to improve the readability and wording of different sections of the paper. Additionally, ChatGPT was used to help prototype ideas and quickly iterate on code. After using ChatGPT, all writing and prototype code were extensively reviewed and edited/modified to ensure accuracy and coherence. The authors take full responsibility for the content of the published article. 
+
+# References       
+
+> [1] Antonyshyn, L., Silveira, J., Givigi, S., and Marshall, J., “Multiple Mobile Robot Task and Motion Planning: A Survey,” ACM Computing Surveys , Vol. 55, No. 10, 2023, pp. 1–35. https://doi.org/10.1145/3564696, URL https://dl.acm.org/doi/10.1145/ 3564696. [2] Savla, K., Frazzoli, E., and Bullo, F., “Traveling Salesperson Problems for the Dubins Vehicle,” IEEE Transactions on Automatic Control , Vol. 53, No. 6, 2008, pp. 1378–1391. https://doi.org/10.1109/TAC.2008.925814, URL http://ieeexplore.ieee.org/ document/4610030/. [3] Kim, B., Kaelbling, L. P., and Lozano-Pérez, T., “Adversarial Actor-Critic Method for Task and Motion Planning Problems Using Planning Experience,” Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 33, No. 01, 2019, pp. 8017–8024. https://doi.org/10.1609/aaai.v33i01.33018017, URL https://ojs.aaai.org/index.php/AAAI/article/view/4803.
+
+14 [4] Hauser, K., and Latombe, J.-C., “Integrating task and PRM motion planning: Dealing with many infeasible motion planning queries,” ICAPS09 Workshop on Bridging the Gap between Task and Motion Planning , 2009. [5] Bidot, J., Karlsson, L., Lagriffoul, F., and Saffiotti, A., “Geometric backtracking for combined task and motion planning in robotic systems,” Artificial Intelligence , Vol. 247, 2017, pp. 229–265. https://doi.org/10.1016/j.artint.2015.03.005, URL https://linkinghub.elsevier.com/retrieve/pii/S000437021500051X. [6] Motes, J., Sandstrom, R., Lee, H., Thomas, S., and Amato, N. M., “Multi-Robot Task and Motion Planning With Subtask Dependencies,” IEEE Robotics and Automation Letters , Vol. 5, No. 2, 2020, pp. 3338–3345. https://doi.org/10.1109/LRA.2020. 2976329, URL https://ieeexplore.ieee.org/document/9013090/. [7] Deits, R., and Tedrake, R., “Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming,” 
+
+Algorithmic Foundations of Robotics XI , Vol. 107, edited by H. L. Akin, N. M. Amato, V. Isler, and A. F. Van Der Stappen, Springer International Publishing, 2015, pp. 109–124. https://doi.org/10.1007/978-3-319-16595-0_7, URL https://link.springer. com/10.1007/978-3-319-16595-0_7, series Title: Springer Tracts in Advanced Robotics. [8] Marcucci, T., Umenberger, J., Parrilo, P. A., and Tedrake, R., “Shortest Paths in Graphs of Convex Sets,” , Jul. 2023. URL http://arxiv.org/abs/2101.11565, arXiv:2101.11565 [cs, math]. [9] Morozov, S., Marcucci, T., Amice, A., Graesdal, B. P., Bosworth, R., Parrilo, P. A., and Tedrake, R., “Multi-Query Shortest-Path Problem in Graphs of Convex Sets,” , Sep. 2024. https://doi.org/10.48550/arXiv.2409.19543, URL http: //arxiv.org/abs/2409.19543, arXiv:2409.19543 [cs]. [10] Garg, S., Cohn, T., and Tedrake, R., “Planning Shorter Paths in Graphs of Convex Sets by Undistorting Parametrized Configuration Spaces,” , Nov. 2024. https://doi.org/10.48550/arXiv.2411.18913, URL http://arxiv.org/abs/2411.18913, arXiv:2411.18913 [cs]. [11] Marcucci, T., Petersen, M., Von Wrangel, D., and Tedrake, R., “Motion planning around obstacles with convex optimization,” 
+
+Science Robotics , Vol. 8, No. 84, 2023, p. eadf7843. https://doi.org/10.1126/scirobotics.adf7843, URL https://www.science. org/doi/10.1126/scirobotics.adf7843. [12] Marcucci, T., “Graphs of Convex Sets with Applications to Optimal Control and Motion Planning,” Thesis, Massachusetts Institute of Technology, May 2024. URL https://dspace.mit.edu/handle/1721.1/156598, accepted: 2024-09-03T21:10:34Z. [13] Cohn, T., Petersen, M., Simchowitz, M., and Tedrake, R., “Non-Euclidean motion planning with graphs of geodesically convex sets,” The International Journal of Robotics Research , 2024, p. 02783649241302419. https://doi.org/10.1177/ 02783649241302419, URL https://journals.sagepub.com/doi/10.1177/02783649241302419. [14] Tang, J., Mao, Z., Yang, L., and Ma, H., “Space-Time Graphs of Convex Sets for Multi-Robot Motion Planning,” , Jun. 2025. https://doi.org/10.48550/arXiv.2503.00583, URL http://arxiv.org/abs/2503.00583, arXiv:2503.00583 [cs]. [15] Osburn, M. D., Peterson, C. K., and Salmon, J. L., “Systematic Constraint Formulation and Collision-Free Trajectory Planning Using Space-Time Graphs of Convex Sets,” , Sep. 2025. https://doi.org/10.48550/arXiv.2508.10203, URL http: //arxiv.org/abs/2508.10203, arXiv:2508.10203 [cs]. [16] Marcucci, T., Petersen, M., Wrangel, D. v., and Tedrake, R., “Motion Planning around Obstacles with Convex Optimization,” , May 2022. https://doi.org/10.48550/arXiv.2205.04422, URL http://arxiv.org/abs/2205.04422, arXiv:2205.04422 [cs]. [17] Choi, H.-L., Brunet, L., and How, J. P., “Consensus-Based Decentralized Auctions for Robust Task Allocation,” IEEE Transactions on Robotics , Vol. 25, No. 4, 2009, pp. 912–926. Retain this citation unless a different canonical CBBA reference is preferred for the final manuscript. [18] Luders, B., Levine, D., Ponda, S., and How, J., “Information-rich Task Allocation and Motion Planning for Heterogeneous Sensor Platforms,” Infotech@Aerospace 2011 , American Institute of Aeronautics and Astronautics, St. Louis, Missouri, 2011. https://doi.org/10.2514/6.2011-1588, URL https://arc.aiaa.org/doi/10.2514/6.2011-1588. [19] Ponda, S., Redding, J., Han-Lim Choi, How, J. P., Vavrina, M., and Vian, J., “Decentralized planning for complex missions with dynamic communication constraints,” Proceedings of the 2010 American Control Conference , IEEE, Baltimore, MD, 2010, pp. 3998–4003. https://doi.org/10.1109/ACC.2010.5531232, URL http://ieeexplore.ieee.org/document/5531232/. [20] Chen, J., Qing, X., Ye, F., Xiao, K., You, K., and Sun, Q., “Consensus-based bundle algorithm with local replanning for heterogeneous multi-UAV system in the time-sensitive and dynamic environment,” The Journal of Supercomputing , Vol. 78, No. 2, 2022, pp. 1712–1740. https://doi.org/10.1007/s11227-021-03940-z, URL https://link.springer.com/10.1007/s11227-021-03940-z. 
+
+15 [21] Petersen, M., and Tedrake, R., “Growing Convex Collision-Free Regions in Configuration Space using Nonlinear Programming,” , Mar. 2023. https://doi.org/10.48550/arXiv.2303.14737, URL http://arxiv.org/abs/2303.14737, arXiv:2303.14737 [cs]. [22] Werner, P., Cohn, T., Jiang, R. H., Seyde, T., Simchowitz, M., Tedrake, R., and Rus, D., “Faster Algorithms for Growing Collision-Free Convex Polytopes in Robot Configuration Space,” , Nov. 2024. https://doi.org/10.48550/arXiv.2410.12649, URL http://arxiv.org/abs/2410.12649, arXiv:2410.12649 [cs]. [23] Boyd, S. P., and Vandenberghe, L., Convex optimization , version 29 ed., Cambridge University Press, Cambridge New York Melbourne New Delhi Singapore, 2023. 
+
+16
