@@ -1,0 +1,710 @@
+Title: AutoSpec: Safety Rule Evolution for LLM Agents via Inductive Logic Programming
+
+URL Source: https://arxiv.org/pdf/2606.24245v2
+
+Published Time: Thu, 25 Jun 2026 01:20:54 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming 
+
+# Pingchuan Ma 
+
+Zhejiang University of Technology China pma@zjut .edu .cn 
+
+# Zhaoyu Wang ∗
+
+HKUST Hong Kong SAR zwangjz@cse .ust .hk 
+
+# Zimo Ji 
+
+HKUST Hong Kong SAR zjiag@cse .ust .hk 
+
+# Yuguang Zhou 
+
+HKUST Hong Kong SAR ygzhou02@gmail .com 
+
+# Zhantong Xue 
+
+HKUST Hong Kong SAR zxueai@connect .ust .hk 
+
+# Zongjie Li 
+
+HKUST Hong Kong SAR zligo@cse .ust .hk 
+
+# Shuai Wang 
+
+HKUST Hong Kong SAR shuaiw@cse .ust .hk 
+
+# Xiaoqin Zhang 
+
+Zhejiang University of Technology China zhangxiaoqinnan@gmail .com 
+
+## Abstract 
+
+Large language model (LLM) agents increasingly automate complex tasks by integrating language models with external tools and envi-ronments. However, their autonomy poses significant safety risks: agents may execute destructive commands, leak sensitive data, or violate domain constraints. Existing safety approaches face a fun-damental tradeoff: hand-crafted rules are interpretable but brittle, with overly conservative rules blocking safe operations (high false positives) while permissive rules miss unsafe behaviors (high false negatives). Neural classifiers lack the interpretability required for safety-critical deployments. We present AutoSpec , a framework that automatically evolves deployed expert-designed safety rules from user safe/unsafe annota-tions through counterexample-guided inductive synthesis (CEGIS) guided by inductive logic programming (ILP). Starting from the expert rules and a stream of annotated traces, AutoSpec iteratively evaluates rules, mines false-positive and false-negative counterex-amples, uses ILP to learn which predicates discriminate them, gen-erates candidate rule edits, and verifies candidates to select the best revision. The key insight is that ILP efficiently identifies predicates that appear frequently in false negatives but rarely in false posi-tives (or vice versa), dramatically pruning the exponential search space of rule edits. This continues until convergence, producing interpretable rules that balance precision and recall. We evaluate AutoSpec on 291 execution traces spanning code execution and embodied agent domains. AutoSpec raises rule F1 to 0.98 and 0.93 across the two domains, achieving up to 94% false positive reduction while maintaining high recall, and converges within 4–5 iterations. The ILP-guided approach achieves up to 4.8 × higher F1 than heuristic CEGIS. The learned rules are human-readable, auditable, and generalize to unseen scenarios. 
+
+## 1 Introduction 
+
+Large language model (LLM) agents [ 27 , 36 , 37 ] have emerged as a transformative paradigm for automating complex tasks. By 
+
+> ∗Corresponding author.
+
+integrating LLMs with external tools, memory, and planning capa-bilities [ 17 ], these agents can execute code, manipulate files, control robots, and interact with physical environments. This has enabled applications ranging from software development assistants [ 6, 23 ]to autonomous driving [ 35 ] and household robotics [ 1]. However, the very autonomy that makes LLM agents powerful also makes them dangerous: an agent tasked with “cleaning up temporary files” may execute “ rm -rf / ” and a household robot may place a laptop near a running stove [39]. 
+
+The Safety Challenge. Ensuring LLM agent safety is fundamen-tally challenging. Unlike traditional software, LLM agents operate in open-ended environments with natural language inputs, mak-ing pre-deployment verification intractable. As a result, even well-tested agents can exhibit novel failure modes in deployment [42]. 
+
+Key Motivation: Expert Rules Must Evolve with the Agent. In practice, deployed agents rarely start from a blank slate: they ship with a set of expert-designed safety rules that catch known hazards, such as blocking rm -rf / or restricting access to sensitive files [ 33 ]. These hand-crafted rules encode valuable domain expertise and are interpretable and auditable, which is why practitioners rely on them. The difficulty is that the rules are static while the agent is not: models are updated, new tools are integrated, and prompts are revised, continually shifting the boundary between safe and unsafe behavior. Risks also frequently emerge from combinations of actions rather than individual ones (reading credentials is benign and calling an external API is routine, but doing one after the other may constitute exfiltration), which no fixed rule set anticipates in advance. Consequently, rules that were well-calibrated at deploy-ment gradually drift, raising false alarms on benign workflows or missing newly introduced hazards, and maintaining them by hand demands scarce expert attention that cannot keep pace with how fast agent environments change. Crucially, running agents generate exactly the signal needed to keep these rules current. As agents execute, users and reviewers routinely annotate individual actions as safe or unsafe, e.g., by ap-proving or rejecting the borderline tool calls that agents surface for confirmation. Together with the structured tool-call traces that 
+
+> arXiv:2606.24245v2 [cs.SE] 24 Jun 2026 Ma et al.
+
+agent frameworks already record, these annotations accumulate into a stream of labeled execution traces. Our key observation is that this feedback can be used to automatically refine the initial expert-designed rules , adapting them to the evolving agent environment rather than discarding the expertise they encode or rewriting them from scratch. This reframes safety-rule maintenance from a man-ual, one-off authoring task into a continuous, annotation-driven 
+
+evolution problem, which is the problem AutoSpec addresses. Current approaches to agent safety fall into two categories, each with critical limitations. Static rule-based approaches [33 ] define safety constraints as hand-crafted rules (e.g., “block any command containing rm -rf / ”). While interpretable and auditable, these rules face a fundamental precision-recall tradeoff: overly conser-vative rules flag benign operations as unsafe (high false positives), disrupting legitimate workflows, while permissive rules miss novel unsafe patterns (high false negatives), leaving vulnerabilities un-addressed. Manually balancing this tradeoff requires deep domain expertise and continuous maintenance as agent behaviors evolve. 
+
+Neural classification approaches [ 8 ] train classifiers to distinguish safe from unsafe behaviors. While more adaptive, these black-box models cannot explain why a behavior is flagged, making them unsuitable for safety-critical deployments where auditability and trust are paramount. Critically, neither category turns the accu-mulating safe/unsafe annotations into automatic updates of the deployed expert rules: static rules must be revised by hand, while neural classifiers replace the interpretable rules rather than refining 
+
+them. What is missing is a way to evolve the existing symbolic rules directly from this feedback while preserving their interpretability. 
+
+Key Insight: Rule Evolution as CEGIS. We observe that this evolution problem, starting from the deployed expert rules and systematically refining them against the annotated traces, has a natural formulation as counterexample-guided inductive synthesis 
+
+(CEGIS) [ 9, 30 ]. Here the human annotations play the role of coun-terexamples: an action labeled unsafe that the current rules let through, or one labeled safe that they block, is exactly an instance where the rules disagree with ground truth. In CEGIS, a synthe-sizer proposes candidate programs, a verifier checks them against specifications, and counterexamples from failed verification guide the next synthesis iteration. Applied to safety rules, this means: (1) evaluate the current rules on the annotated execution traces, (2) mine false positives (safe traces incorrectly flagged) and false negatives (unsafe traces missed), (3) synthesize rule edits that re-solve these counterexamples, and (4) verify candidates to select the best revision. This loop guarantees progress: each counterexample eliminates at least one incorrect candidate. However, naive CEGIS faces a critical challenge: the search space of possible rule edits is exponential in the number of available predi-cates (e.g., is_system_path , writes_to_disk , near_danger_zone ). Enumerating all combinations of predicates and edit operations (add conjunct, add exception, relax, create disjunctive branch) quickly becomes intractable. Prior work on CEGIS relies on heuristic search strategies [ 22 ] that explore this space uniformly, leading to slow convergence and suboptimal rules. 
+
+Our Approach: ILP-Guided CEGIS. We propose AutoSpec , a framework that addresses this challenge by using Inductive Logic Programming (ILP) [ 12 , 19 ] to guide the CEGIS search. The key insight is that ILP can efficiently learn which predicates are dis-criminating for counterexamples, namely predicates that appear frequently in false negatives but rarely in false positives (or vice versa). By prioritizing these predicates, AutoSpec prunes the search space dramatically, focusing on edits most likely to resolve coun-terexamples while maintaining rule interpretability. Specifically, given false-positive and false-negative counterex-amples, AutoSpec formulates an ILP learning task where the goal is to learn a hypothesis that distinguishes unsafe traces (positive examples) from safe traces (negative examples). The ILP solver (ILASP [ 12 ]) outputs a ranked list of predicates with suggested edit operations (e.g., “add is_temp_file as exception to reduce false positives”). AutoSpec then generates candidate rule edits guided by these suggestions, verifies each candidate on the full dataset, and selects the best revision using a score that prioritizes F1 while also favoring precision, fewer unresolved counterexamples, and simpler rules. This process iterates until convergence or a target score threshold is reached. 
+
+Contributions. Our contributions are threefold: (1) Conceptually , we frame safety-rule maintenance as evolving deployed expert rules from user safe/unsafe annotations, and cast it as ILP-guided CEGIS in which annotations act as coun-terexamples and ILP prunes the exponential space of rule edits. (2) Technically , we build AutoSpec , the first safety-evolution tool: it refines symbolic guardrails via counterexample mining, ILP-guided predicate ranking, candidate generation, and verifica-tion, producing auditable rules that complement existing de-fenses and deploy directly. (3) Empirically , across 291 traces from code-execution and embodied-agent domains, AutoSpec reaches F1 of 0.98 and 0.93, with ILP guidance yielding up to 4.8 × improvement over heuristic CEGIS; the rules converge in 4–5 iterations, generalize to un-seen tasks, and are rated far more interpretable and trustworthy than neural classifiers by practitioners. 
+
+## 2 Background 2.1 LLM Agent Architecture 
+
+An LLM agent consists of a language model M, a set of tools T =
+
+{𝑡 1, 𝑡 2, . . . , 𝑡 𝑘 }, and an execution loop that iteratively selects and invokes tools based on the model’s output. At each step 𝑖 , the agent observes the current state 𝑠 𝑖 (including conversation history, tool outputs, and environment state), generates an action 𝑎 𝑖 =
+
+(𝑡, args ) specifying a tool 𝑡 ∈ T and its arguments, and receives an observation 𝑜 𝑖 from the environment. While this architecture enables powerful autonomous behavior, it also introduces significant safety risks. The agent’s autonomy means it can execute actions with real-world consequences, such as deleting files, sending network requests, or controlling physical actuators, based solely on the LLM’s predictions. Since LLMs are stochastic and can produce unexpected outputs, especially when faced with adversarial inputs [ 15 , 20 ] or distribution shift [ 25 ], agents may take unsafe actions even when given benign user re-quests. These risks are exacerbated in production deployments where agents operate with elevated privileges and limited human oversight. AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming 
+
+Table 1: Example predicates from the predicate library P.Domain Example Predicates        
+
+> Code destructive_os_inst ,involve_system_file ,
+> high_risk_syscall ,execute_script ,
+> write_to_io ,submit_post_request
+> Embodied near_danger_zone ,handling_fragile_object ,
+> carrying_liquid ,source_is_heat
+
+To formalize agent behavior for safety analysis, we represent each agent session as an execution trace. 
+
+Definition 2.1 (Execution Trace). An execution trace 𝜏 = ⟨𝑒 1, 𝑒 2, . . . , 𝑒 𝑛 ⟩
+
+is a sequence of events, where each event 𝑒 𝑖 = (𝑡 𝑖 , type 𝑖 , 𝑠 𝑖 , 𝑎 𝑖 , 𝑜 𝑖 )
+
+records the timestamp 𝑡 𝑖 , event type type 𝑖 ∈ { before_action ,
+
+after_action , state_change }, state snapshot 𝑠 𝑖 , action 𝑎 𝑖 , and tool output 𝑜 𝑖 .Execution traces capture the complete history of an agent’s in-teraction with its environment, enabling post-hoc analysis of agent behavior. Each trace is labeled as safe or unsafe based on whether the agent’s actions violated safety properties. For example, a trace where the agent executes rm -rf /home/user/.ssh/ would be la-beled unsafe, while a trace that only reads files would be labeled safe. These labeled traces form the training data D𝐿 for rule refinement (see §3). 
+
+## 2.2 Predicate-Based Safety Constraints 
+
+We model safety knowledge as a set of predicate-based constraints over agent traces. The central object is the predicate library P:each predicate captures an interpretable property of an event or its local context. Constraints (or rules ) are constructed by compos-ing these predicates into conjunctions, exceptions, and disjunctive branches. In our implementation, these constraints are encoded in the AgentSpec framework [ 33 ], but the formulation used in this paper depends only on predicate evaluation over traces rather than on any particular DSL. 
+
+Predicate Library. AutoSpec maintains a cross-domain predi-cate library P organized by application domain. Each predicate is a boolean function 𝑝 : E → {⊤ , ⊥} (true or false) that evalu-ates properties of an event, implemented as a program function that asserts whether the predicate holds on a specific agent event. Table 1 shows representative predicates from each domain. For example, destructive_os_inst checks if a code execution action invokes destructive operations like rm -rf or os.remove , while 
+
+near_danger_zone checks if a robot is approaching hazardous areas (stove, knife, fire). Our evaluation uses domain-specific predi-cate libraries ranging in size from 16 to 24 predicates per domain; the full lists are provided in the supplementary material. 
+
+Safety Constraints. Building upon the foundational predicates in 
+
+P, we construct safety constraints that operate fundamentally at the granularity of individual events. Formally, we define a rule 𝑟 as a logical formula composed of these base predicates, and establish its activation as follows: 
+
+Definition 2.2 (Rule Firing). Given a trace 𝜏 and a safety constraint 
+
+𝑟 , rule 𝑟 fires on event 𝑒 𝑖 ∈ 𝜏 if the predicate condition associated with 𝑟 evaluates to ⊤ on 𝑒 𝑖 .
+
+Example 2.3. For instance, a representative safety rule 𝑟 ∈ R is: 
+
+𝑟 (𝑒 ) = destructive_os_inst (𝑒 ) ∧ ¬ is_temp_file (𝑒 )
+
+which evaluates to ⊤ (fires) to block destructive file operations unless they target temporary files. While rules like this evaluate at the localized event level, overall trace safety is determined by aggregating these individual firings: 
+
+Definition 2.4 (Safety Classification). A trace 𝜏 is classified as 
+
+unsafe by a rule set R if there exists a rule 𝑟 ∈ R that fires on an event 𝑒 𝑖 ∈ 𝜏 . Otherwise, 𝜏 is classified as safe .These two definitions establish a deliberate two-level structure: rules operate on individual events (Def. 2.2), while supervision is provided at trace granularity (Def. 2.4). This reflects common practice where a human operator observes that an agent session produced an undesirable outcome without necessarily identifying the exact offending action. AutoSpec bridges these two levels in its ILP encoding by recording which predicates hold at each event within a trace, then learning trace-level classification rules over these per-event facts (§4.3). 
+
+## 2.3 Inductive Logic Programming and CEGIS 
+
+AutoSpec combines two synthesis paradigms: inductive logic pro-gramming (ILP) for learning discriminating predicates, and counterexample-guided inductive synthesis (CEGIS) for iterative refinement. This subsection provides the formal background for both. 
+
+Inductive Logic Programming. ILP [ 12 , 19 ] is a machine learn-ing approach that learns logic programs from examples. Given a background knowledge base 𝐵 , positive examples 𝐸 +, and negative examples 𝐸 − , an ILP solver searches for a hypothesis 𝐻 (a set of Horn clauses) such that: 
+
+𝐵 ∪ 𝐻 |= 𝑒 + ∀𝑒 + ∈ 𝐸 + (completeness) 
+
+𝐵 ∪ 𝐻 ̸ |= 𝑒 − ∀𝑒 − ∈ 𝐸 − (consistency) The hypothesis space is typically constrained by mode declara-tions that specify the structure of learnable clauses. For instance, a mode declaration might restrict hypotheses to conjunctions of pred-icates from a fixed vocabulary, with each predicate appearing at most once. Modern ILP solvers like ILASP [ 12 ] support answer set programming semantics and can optimize for hypothesis simplicity through length-based scoring. 
+
+Counterexample-Guided Inductive Synthesis. CEGIS [ 30 ] is an iterative synthesis framework with two components: a synthesizer that proposes candidate solutions, and a verifier that checks candi-dates against a specification. The loop proceeds as follows: ➊ the synthesizer generates a candidate 𝑐 from the current constraint set; 
+
+➋ the verifier checks whether 𝑐 satisfies the specification on all inputs; ➌ if verification succeeds, it returns 𝑐 , otherwise it produces a counterexample 𝑥 where 𝑐 fails; and ➍ 𝑥 is added to the constraint set and the loop repeats. Formally, let C be the set of constraints (initially empty), 𝜙 the specification, and H the hypothesis space. At iteration 𝑖 , the syn-thesizer solves: 
+
+𝑐 𝑖 = arg max  
+
+> ℎ∈ H
+
+score (ℎ) s.t. ℎ satisfies C𝑖 
+
+The verifier then checks 𝑐 𝑖 |= 𝜙 . If not, it finds a counterexample 𝑥 
+
+such that 𝑐 𝑖 (𝑥 ) ≠ 𝜙 (𝑥 ), and updates C𝑖 +1 = C𝑖 ∪ { 𝑥 }.Ma et al. AutoSpec    
+
+> Initial Rules
+> Labeled
+> Traces
+> Predicate
+> Library
+> Stage 1:
+> Evaluation & Mining
+> Where to refine
+> Stage 2: ILP
+> Predicate Learning
+> What predicates to use
+> ILP Solver → Ranked
+> Discrimi nating Predicates
+> Stage 3: Candidate
+> Gen. & Selection
+> How & Which edits
+> [+Conjunt] [+Exception]
+> [Relax] [+Disjunct]
+> Stage 4:
+> Verification
+> Accept or continue
+> ?
+> Refined Rules
+> (high F1)
+> Counterexamples {FN, FP}
+> Ranked
+> predicates
+> Best candidate
+> Ri+1
+> Rules
+> Traces Predicates
+> Converged
+
+Figure 1: Overview of AutoSpec .
+
+AutoSpec instantiates this framework for safety rule refinement: the synthesizer uses ILP to propose predicate-based rule edits, and the verifier evaluates candidates on labeled execution traces to identify false positives and false negatives as counterexamples. 
+
+## 3 Overview 
+
+The central challenge is that safety-rule refinement lives in a large combinatorial space while the output must remain interpretable as a symbolic safety constraint. AutoSpec addresses this by combin-ing the feedback loop of CEGIS with ILP-guided predicate selection: counterexamples indicate where rules fail, ILP identifies promis-ing predicates for repair, and constrained edit operators translate these signals into verifiable candidate rules. The remainder of this section introduces the optimization problem (§ 3.1), summarizes the workflow (§ 3.2), and situates AutoSpec within the broader defense-in-depth stack (§ 3.3). 
+
+## 3.1 Problem Formulation 
+
+To systematically navigate this refinement process, we frame rule evolution as a discrete optimization problem. The goal is to maxi-mize the performance of an initial rule set over a labeled dataset by applying a sequence of logical edits. 
+
+Definition 3.1 (Rule Evolution Problem). Given an initial rule set 
+
+R0, a set of labeled traces D = {( 𝜏 𝑖 , 𝑦 𝑖 )} 𝑁 𝑖 =1 where 𝑦 𝑖 ∈ { safe , unsafe },and a predicate library P, find a rule set R∗ that maximizes the validation score on D:
+
+R∗ = arg max   
+
+> R ∈ Edit ∗( R 0,P )
+
+𝑆 (R) 
+
+where Edit ∗ (R 0, P) is the set of all rule sets reachable from R0
+
+through a sequence of edit operations using predicates from P, and 
+
+𝑆 (·) is the candidate score defined later in this section. Because the search space Edit ∗ (R 0, P) grows exponentially with the number of available predicates and edit steps, exhaustive enu-meration is computationally intractable. To overcome this bottle-neck, AutoSpec utilizes an ILP-guided CEGIS approach to effi-ciently navigate this space and discover optimal rules. 
+
+## 3.2 Workflow 
+
+Fig. 1 illustrates AutoSpec ’s architecture. The system takes as input: (1) an initial rule set R0, which in the intended deployment is the existing expert-authored guardrail for the domain (the algorithm also accepts a minimal seed rule when one wishes to bootstrap, but 
+
+AutoSpec ’s goal is to evolve deployed rules, not to synthesize them from scratch), (2) a labeled dataset D𝐿 of execution traces with 
+
+Algorithm 1: ILP-Guided Rule Evolution 
+
+Input: Initial rules R0, labeled traces D𝐿 , predicate library 
+
+P, max iterations 𝐾 , target score 𝜃 
+
+Output: Refined rules R∗ 
+
+> 1
+
+R ← R 0; 
+
+> 2
+
+for 𝑖 = 1 to 𝐾 do  
+
+> 3
+
+if 𝑆 (R) ≥ 𝜃 then return R; ;  
+
+> 4
+
+CE ← MineCounterexamples (R , D𝐿 ); 
+
+> 5
+
+if CE = ∅ then return R; ;  
+
+> 6
+
+suggestions ← LearnILP (CE , D𝐿 , P) ; 
+
+> 7
+
+candidates ← CandidateGen (R , CE , suggestions ); 
+
+> 8
+
+best ← SelectBest (candidates , D𝐿 ); 
+
+> 9
+
+if 𝑆 (best ) > 𝑆 (R) then R ← best ; ;  
+
+> 10
+
+else return R; ;  
+
+> 11
+
+end  
+
+> 12
+
+return R;ground-truth safety labels, and (3) a predicate library P. AutoSpec 
+
+outputs a refined rule set R∗ with high validation quality on D𝐿 ,using F1 as the primary metric. To efficiently navigate the massive edit space defined above, 
+
+AutoSpec organizes each refinement iteration into four focused stages. Each stage systematically narrows the search space for the next: counterexamples localize the failures, ILP selects the most discriminating predicates, constrained edit operators generate a manageable set of candidates, and a greedy-ascent check ensures monotonic progress. Alg. 1 formalizes this loop, whose four stages we detail in § 4 and summarize below: 
+
+➀ Counterexample mining evaluates R𝑖 on D𝐿 and collects the misclassified traces—false negatives (missed unsafe traces) and false positives (wrongly flagged safe traces)—that pinpoint where the rules fail. ➁ ILP-guided predicate learning finds the few predicates that best separate these counterexamples, shrinking the edit space to a short list of suggestions. ➂ Candidate generation and selec-tion turns the suggestions into concrete edits with the operators of Table 2, scores each candidate on D𝐿 , and keeps the best. ➃ Verifi-cation accepts that candidate if it improves the score, and otherwise stops. The loop also ends when the target score is reached or the iteration budget 𝐾 is exhausted. 
+
+## 3.3 Application Scope 
+
+AutoSpec targets the rule-based enforcement layer in defense-in-depth architectures for LLM agents (Fig. 2). Production deployments typically combine multiple orthogonal layers: constitutional AI (Layer 0) for alignment, symbolic rules (Layer 1) for deterministic enforcement, neural guardrails (Layer 2) for semantic detection, sandboxing (Layer 3) for execution isolation, and human supervi-sion (Layer 4) for final verification. While rule-based systems offer high explainability, their static nature makes them brittle against evolving threats. AutoSpec ad-dresses this by introducing ILP-guided CEGIS to automate rule refinement. This enables the symbolic layer to self-improve over time while preserving its core advantages: deterministic decisions, zero inference cost, and auditability. Therefore, we anticipate Au-toSpec being most beneficial when used in conjunction with other AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming Constitutional AI  
+
+> Safety Instructions, RLHF, alignment
+
+L0        
+
+> Rule -based System ( AutoSpec )
+> rule @inspect_credential trigger Bash(…)
+> check is_inspect_api_key enforce stop end
+
+L1      
+
+> Neural Guardrail
+> Llama Guard, NeMo ,fine -tuned classifier
+
+L2    
+
+> Sandbox / Access Control
+> Goal: Deny; Path: tool:$A→*→tool:$B; ID:…
+
+L3     
+
+> Human -in -the -loop
+> Interactive approval for risky operations
+> (e.g., rm –rf /)
+
+L4 
+
+Figure 2: Defense-in-depth layers for LLM agent safety. 
+
+layers, where it can adapt the rule set to evolving threats while leveraging the complementary strengths of the broader defense-in-depth framework. We emphasize that AutoSpec is intended for continuous, periodic maintenance rather than one-shot offline tuning: deployed agents continually produce tool-call traces and approval signals that serve as labels, and AutoSpec refines the deployed rules asynchronously as models, tools, and workloads evolve. In this setting ILP guidance contributes not merely search speed but rule quality : removing it lowers final quality substantially (heuristic CEGIS and random search reach far lower F1 than AutoSpec in §6), because uniform exploration of the edit space rarely lands on the predicate combi-nations that cleanly separate counterexamples within a practical budget. We do not claim global optimality; the goal is practical, auditable improvement of the guardrails practitioners already run. 
+
+## 4 Approach 
+
+We detail each stage of the loop below, following a single run-ning example throughout (Fig. 3). Starting from one rule 𝑟 0 (𝑒 ) =
+
+net_call (𝑒 ) on a dataset of 10 unsafe and 15 safe traces, Au-toSpec reaches a precise rule in two iterations. Iteration 1 finds nine safe package-manager scripts wrongly flagged (FP), discovers that 
+
+is_pkg_mgr distinguishes them, and adds it as an exception, raising precision to 0.75. Iteration 2 finds one missed exfiltration script (FN) that reaches the network through subprocess —so net_call never fires—discovers that rd_cred ∧ ext_host characterizes it, and adds that branch, at which point the rule set converges. The subsections that follow explain how each step is produced: counterexample mining (§4.1) surfaces the FP and FN traces, the edit operators (§4.2) supply moves such as AddException and AddDisjunct, ILP (§4.3) discovers the discriminating predicates, candidate generation and selection (§4.4) pick the best edit, and the convergence rule (§4.5) decides when to stop. 
+
+## 4.1 Rule Evaluation and Counterexample Mining 
+
+The first stage of each iteration evaluates the current rule set R𝑖 on the labeled dataset D𝐿 and extracts counterexamples that localize its failures. 
+
+Rule Evaluation. For each trace 𝜏 ∈ D 𝐿 , AutoSpec replays its events through R𝑖 and labels 𝜏 unsafe if any rule fires and safe 
+
+otherwise (Def. 2.4). Comparing predictions with ground truth                             
+
+> 𝑟 0(𝑒 )=net_call (𝑒 )Prec = 0.50 Rec = 0.90
+> AddException( is_pkg_mgr )FP ⇒tighten
+> 𝑟 1(𝑒 )=net_call (𝑒 ) ∧ ¬ is_pkg_mgr (𝑒 )Prec = 0.75 Rec = 0.90
+> AddDisjunct( rd_cred ∧ext_host )FN ⇒broaden
+> 𝑟 1(𝑒 )∨(rd_cred (𝑒 ) ∧ ext_host (𝑒 ) ) 𝐹 1= 0.95
+> converged
+
+Figure 3: Running example: a network-safety rule evolving over two CEGIS iterations—an FP-driven tightening, then an FN-driven broadening. 
+
+gives the usual true/false positives and negatives, and hence the precision, recall, and F1 of R𝑖 .
+
+Counterexample Mining. The misclassified traces are the engine of refinement, and the key observation is that each kind of mistake points in a definite repair direction, as the two iterations of Fig. 3 show: a false negative (FN) is a missed unsafe trace, so the rule is too narrow and must be broadened ; a false positive (FP) is a false alarm, so the rule is too broad and must be tightened . For every counterexample AutoSpec records which rule fired and which predicate failed, handing the later stages not just a failing trace but the direction in which to repair it. 
+
+## 4.2 Rule Edit Operations 
+
+Given the counterexamples, AutoSpec needs a vocabulary of rewrites that turn rules into more accurate variants. Each rule is a pair 
+
+𝑟 = (𝑔, 𝜙 ): a trigger 𝑔 that scopes which events the rule inspects (e.g., before_action events on the PythonREPL tool), and a body 
+
+𝜙 that is a conjunction of predicates from P (§ 2). The operators in Table 2 rewrite 𝜙 (single-rule edits) or the rule set R (disjunctive repair) while holding 𝑔 fixed, since in our domains the trigger is fixed by the guarded tool and is not a source of error; operators that also rewrite 𝑔 are a straightforward extension left to future work. 
+
+Table 2: Primitive edit operators as rewrites over predicates.                          
+
+> Operator Rewrite
+> AddConjunct (𝑔, 𝜙 )⇒(𝑔, 𝜙 ∧𝑝 )
+> AddException (𝑔, 𝜙 )⇒(𝑔, 𝜙 ∧ ¬ 𝑝 )
+> AddDisjunct R⇒R ∪ { ( 𝑔, 𝜓 ) }
+> Relax (𝑔, 𝜙 ∧ℓ)⇒(𝑔, 𝜙 )
+
+Table 2 summarizes the language. AddConjunct and AddExcep-tion specialize a rule (the latter via an explicit exception) to cut false positives; Relax does the inverse, dropping a literal to recover recall; AddDisjunct works at the rule-set level, appending a new branch to widen coverage without touching existing rules. Since a trace is unsafe whenever any rule fires (Def. 2.4), a two-branch set 
+
+{𝑟 1, (𝑔,𝜓 )} behaves as a disjunction, which we write as the short-hand 𝑟 2 (𝑒 ) = 𝑟 1 (𝑒 ) ∨ 𝜓 (𝑒 ). AutoSpec searches the neighborhood these operators induce and validates candidates on labeled traces, as the example below illustrates. 
+
+Example 4.1. Consider a file-deletion safety rule that is iteratively refined. Ma et al. 
+
+Baseline constraint. 
+
+𝑟 0 (𝑒 ) = destructive_os_inst (𝑒 )
+
+Exception edit. If 𝑟 0 yields false positives on safe deletions of temporary files, AutoSpec applies AddException and obtains 
+
+𝑟 1 (𝑒 ) = destructive_os_inst (𝑒 ) ∧ ¬ is_temp_file (𝑒 )
+
+Disjunctive repair. If 𝑟 1 still misses unsafe deletions performed via shutil.rmtree , AutoSpec adds a second branch: 
+
+𝑟 2 (𝑒 ) = 𝑟 1 (𝑒 ) ∨ uses_shutil_rmtree (𝑒 )
+
+This example shows how edit operators from Table 2 can be com-posed to iteratively address different types of classification errors within a single refinement sequence. 
+
+## 4.3 ILP-Guided Predicate Learning 
+
+The edit operators of §4.2 still need to know which predicates to apply. With 16–24 predicates per domain and several opera-tors, trying every combination is infeasible, so AutoSpec learns 
+
+the useful predicates from the counterexamples. The question it poses is deliberately narrow: among all predicates, which few sep-arate the unsafe traces we missed (FN) from the safe traces we wrongly flagged (FP)? AutoSpec answers it with Inductive Logic Programming (ILP) [ 12 , 19 ], which (unlike a black-box classifier) returns a symbolic hypothesis—a small combination of the existing predicates—and favors the fewest predicates, guarding against over-fitting the handful of counterexamples. ILP does not write rules; it 
+
+nominates predicates , and the operators of Table 2 do the rewriting. 
+
+4.3.1 Learning Discriminating Predicates. AutoSpec poses this as an inductive learning task and hands it to an off-the-shelf ILP system, ILASP [12]. 
+
+Encoding. To pose this question to the solver, AutoSpec reuses the same predicates, only evaluated per event: a fact holds (𝜏, 𝑖, 𝑝 )
+
+records that predicate 𝑝 is true on event 𝑖 of trace 𝜏 —no new rep-resentation is introduced. The missed unsafe traces (FN) are the positive examples and the wrongly flagged safe traces (FP) are the negatives, and AutoSpec asks ILP for the simplest predicate com-bination that holds on every positive but no negative. The answer has the form 
+
+𝐻 = (𝑝 11 ∧ 𝑝 12 ∧ · · · ) ∨ · · · ∨ ( 𝑝 𝑘 1 ∧ 𝑝 𝑘 2 ∧ · · · ) ,
+
+an or of small and -groups, where the predicates in a group must hold together on one event. “Simplest” means fewest predicates, which keeps the result readable. The predicates appearing in 𝐻 are exactly the discriminating ones AutoSpec turns into rule edits, as the example illustrates. 
+
+Example 4.2. Zooming into iteration 2 of the running exam-ple (Fig. 3), the current rule flags any trace containing a network call, producing two FP traces 𝜏 fp1 , 𝜏 fp2 (safe scripts fetching pack-age metadata) and one FN trace 𝜏 fn (credential exfiltration). The predicate library includes net_call , reads_cred , ext_host , and 
+
+is_pkg_mgr . The diagram below shows which predicates hold on each trace (top) and the clause the ILP solver learns (bottom).                   
+
+> net_call rd_cred ext_host pkg_mgr
+> 𝜏 fn FN –✓✓–
+> 𝜏 fp1 FP ✓––✓
+> 𝜏 fp2 FP ✓––✓
+> ILP
+> learns rd_cred ∧ext_host
+
+The learned clause covers 𝜏 fn (both predicates hold, at different steps) without covering the FP traces, identifying reads_cred and 
+
+ext_host as the discriminating predicates for candidate generation. 
+
+4.3.2 From Hypothesis to Edit Suggestions. Each predicate in 𝐻 
+
+carries a direction, which selects its operator just as in the two iterations of Fig. 3: a predicate that helps cover a missed unsafe trace raises recall (applied via AddDisjunct or Relax), whereas one that helps exclude a false alarm raises precision (AddConjunct or AddException). AutoSpec scores each suggestion by how cleanly it separates the counterexamples—the FN traces it newly covers minus the FP traces it newly violates—and then applies a greedy set cover, with separate quotas for recall- and precision-improving operators, to keep a small, diverse batch instead of many variants of the same fix. Every surviving suggestion becomes a candidate that is verified on D𝐿 (§4.4); the scores only steer exploration and never replace this verification. 
+
+## 4.4 Candidate Generation and Selection 
+
+From the ILP-pruned suggestions, AutoSpec builds candidate rule sets through three strategies: a single-step edit applies one sugges-tion to the implicated rule; a mixed repair chain bundles a precision-improving edit with one or more recall-improving ones, for when fixing an FN creates new FPs; and a failure-driven branch adds high-precision disjuncts for residual FNs via a precision-constrained greedy set cover. AutoSpec then evaluates each candidate on D𝐿 
+
+and greedily keeps, as R𝑖 +1, the one maximizing 𝑆 (R ′) = (𝐹 1, Prec , −𝑈 , −|R ′ |) 
+
+in lexicographic order (F1, then precision, then fewer unresolved counterexamples 𝑈 , then fewer rules). 
+
+## 4.5 Multi-Iteration Convergence 
+
+The greedy ascent in Alg. 1 improves the score each iteration, but across iterations the ILP solver tends to re-propose predicates al-ready in the rule set (they still look discriminative), which stalls progress. AutoSpec down-weights suggestions that overlap the cur-rent rules, steering each iteration toward novel refinements while still allowing reuse when the score gain is large enough—a soft novelty pressure that prevents oscillation between near-identical rule sets. The loop terminates when the current rule set reaches the target score threshold, when no candidate improves upon the current score, or when the iteration budget is exhausted. Iteration 2 of the running example (Fig. 3) exercises this diversity pressure: rd_cred 
+
+and ext_host are down-weighted because they appeared in the previous hypothesis, yet they are still selected since no alternative matches their coverage. 
+
+Convergence properties. The algorithm terminates in finite time (bounded by 𝐾 iterations) with three guarantees: (1) monotonic AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming 
+
+score improvement ( 𝑆 (R 𝑖 +1) ≥ 𝑆 (R 𝑖 )), (2) local optimality at termi-nation (no single-step edit improves the score), and (3) deterministic output given fixed inputs. However, since the underlying synthe-sis problem is NP-hard, we do not guarantee global optimality or convergence rate; solution quality depends on the richness of the predicate library P. Despite that, we find that even a modest predicate set combined with ILP guidance can yield significant improvements in practice, as shown in our experiments. 
+
+## 5 Experimental Setup 5.1 Research Questions 
+
+We evaluate AutoSpec to answer the following research questions (RQs): 
+
+RQ1: Effectiveness How much does AutoSpec improve safety rule quality (precision, recall, F1) compared to baseline rules? 
+
+RQ2: Search Efficiency How efficiently does AutoSpec refine rules, in terms of convergence behavior and the contribution of ILP guidance? 
+
+RQ3: Transfer and Usability Do the learned rules generalize across agent configurations, and do practitioners find them inter-pretable and actionable? 
+
+## 5.2 Datasets 
+
+We evaluate AutoSpec on execution traces from the two application domains introduced in §2: code execution and embodied household robotics. All traces are manually labeled as safe or unsafe at trace granularity as defined in §2. Representative predicates for these domains are shown in Table 1, and the full domain-specific predicate libraries are deferred to the supplementary material. 
+
+Code Execution Domain. Following the tool-using LLM-agent setting discussed in §2 and implemented in AgentSpec [ 33 ], we collect traces from agents invoking PythonREPL. Unsafe traces (91) are sampled from RedCode-Exec [ 14 ], covering 25 risk categories (destructive operations, sensitive file access, dangerous subprocess calls, unauthorized network requests), with up to 4 traces per cat-egory. Safe traces (100) are generated using GPT-5.1-Codex with prompts producing benign operations that mirror unsafe categories but avoid triggering security predicates. All 191 traces are labeled and used for rule synthesis and evaluation. Code-execution traces are short, ranging from 1 to 9 events (mean 1.4). 
+
+Embodied Agent Domain. Following the embodied household-robot setting in §2 and prior work on language-conditioned robot planning [ 1 ], we collect traces from SafeAgentBench [ 38 ], where simulated household robots in AI2-THOR perform tasks like “fetch the laptop from the table.” Agents use GPT-5.1-Codex with zero-shot ReAct prompting and interact through a high-level robotic controller supporting 16 primitive actions (e.g., find, pick, slice). Traces are labeled unsafe when the robot approaches danger zones without precautions, handles fragile objects with excessive force, carries liquids near electronics, or ignores collision risks. Safe traces involve legitimate household tasks with proper object handling. This dataset contains 100 traces (52% unsafe); embodied traces are longer than code-execution traces, ranging from 1 to 15 events (mean 5.1). 
+
+## 5.3 Evaluation Metrics 
+
+Because rules fire on individual events but labels are provided per trace (see §2), all classification metrics are reported at trace granularity: a trace is predicted unsafe if any rule fires on any of its events, and safe otherwise. We report standard classification metrics: precision, recall, and F1 score. We also measure convergence iterations (the number of CEGIS iterations until termination), rule complexity (the number of rules and predicates in the final rule set), and candidate efficiency (the fraction of generated candidates that improve F1). 
+
+## 5.4 Baselines 
+
+We compare AutoSpec against the following baselines. As dis-cussed in § 3.3, we focus on approaches within the rule-based layer rather than cross-layer alternatives (e.g., neural guardrails, sand-boxing), as the latter would conflate orthogonal design axes. 
+
+B1: Expert-Designed Rule. The expert-authored AgentSpec [ 33 ]guardrail deployed for the domain, i.e., the human-written, expert-optimized rule set rather than a toy rule authored only for this evalu-ation. B1 therefore is our comparison against expert-designed rules: it is simultaneously the starting point for evolution and the human-expert reference. This reflects AutoSpec ’s positioning, which is not to reinvent safety rules from scratch but to evolve expert-written static rules as the agent environment, models, tools, and human annotations shift. Accordingly, the margin of AutoSpec over B1 in Table 3 directly quantifies the value AutoSpec adds on top of expert-designed rules. 
+
+B2: LLM-based Classifier. A neural classifier that consumes the same labeled traces as AutoSpec , but uses them as few-shot exemplars (5 per class) to label a trace safe or unsafe rather than to evolve rules. It is the alternative way of turning the annotation feedback into an adaptive guardrail. Our claim is not universal supe-riority over every LLM classifier, but that AutoSpec turns the same signal into deterministic, auditable rules with strong effectiveness and better actionability. 
+
+B3: CEGIS without ILP. AutoSpec without ILP guidance, where candidate generation uses only coverage-based predicate ranking without learning from counterexamples. 
+
+B4: Random Search. Randomly sample candidate edits from the search space and select the best after a fixed budget of evaluations. 
+
+## 5.5 Experimental Protocol 
+
+We make the measurement protocol explicit because two of our research questions report scores under different conditions. In RQ1 
+
+(Table 3), the refinement methods (B3, B4, and AutoSpec ) evolve the initial guardrail on a seed split and are then evaluated on a disjoint held-out test split, while B1 is that same guardrail eval-uated without refinement. The greedy-acceptance step in Alg. 1 guarantees monotonic improvement on the seed score, not on the held-out score; consequently a refined method can score below B1 on the held-out split when it over-specializes to the seed. This is a generalization gap, not a violation of Algorithm 1, and is precisely where ILP helps (§6). In RQ2 (Fig. 4, Table 4), we instead report the in-sample convergence trajectory on the refinement set; for the code domain the curve is seeded from a minimal single-predicate rule (hence F1 ≈ 0 at iteration 0), whereas the embodied domain is Ma et al. 
+
+seeded from the initial guardrail (F1 = 0.493). RQ3 uses a 70%/30% split into initial and incoming tasks: rules are learned on the initial split and evaluated on the disjoint held-out incoming split, which simulates the future workloads the rules must generalize to. 
+
+## 5.6 Implementation 
+
+AutoSpec is implemented in Python 3.10 with 12K lines of code (on the basis of AgentSpec’s predicate library). We use ILASP v4.4.1 [ 12 ]as the ILP backend with a 120-second timeout per learning task. All experiments run on a MacBook Pro (M2 Max, 32 GB RAM). 
+
+## 6 Evaluation 6.1 RQ1: Effectiveness 
+
+Table 3: Effectiveness comparison across domains. Best re-sults in bold. 
+
+Method Precision Recall F1 FP/FN 
+
+Code Execution Domain 
+
+Baseline Rule (B1) 0.544 0.974 0.698 31/1 LLM Classifier (B2) 1.000 0.684 0.813 0/12 CEGIS w/o ILP (B3) 1.000 0.316 0.480 0/26 Random Search (B4) 0.536 0.974 0.692 32/1 
+
+AutoSpec (Ours) 0.960 1.000 0.980 2/0 
+
+Embodied Agent Domain 
+
+Baseline Rule (B1) 1.000 0.327 0.493 0/35 LLM Classifier (B2) 0.842 0.923 0.881 9/4 CEGIS w/o ILP (B3) 1.000 0.500 0.667 0/26 Random Search (B4) 1.000 0.327 0.493 0/35 
+
+AutoSpec (Ours) 0.925 0.942 0.933 4/3 
+
+Table 3 presents the effectiveness of AutoSpec compared to base-lines across two domains. The results demonstrate that AutoSpec 
+
+consistently achieves the highest F1 scores across both domains, with F1 of 0.980 for code execution and 0.933 for embodied agents. Among the baselines, the expert-designed rules (B1) exhibit con-trasting failure patterns across domains: over-approximation in code execution (recall 0.974 but precision 0.544, producing 31 FP) versus under-approximation in embodied agents (precision 1.000 but recall 0.327, missing 35 unsafe cases). This illustrates the funda-mental precision-recall tradeoff of static rules. The LLM classifier (B2) achieves moderate F1 (0.813 and 0.881) but struggles to capture precise decision boundaries, missing 12 unsafe cases in code execu-tion and producing 9 false positives in embodied agents; moreover, its black-box nature limits interpretability and actionability. CEGIS without ILP (B3) maintains perfect precision but suffers from ex-tremely low recall (0.316 and 0.500), missing 26 unsafe cases in each domain, demonstrating that heuristic predicate selection fails to discover discriminating predicates. Notably, in code execution B3’s held-out F1 (0.480) falls below the unrefined baseline B1 (0.698). Per the protocol in §5.5, this is a generalization gap rather than a con-tradiction of Algorithm 1: without ILP guidance B3 over-specializes to the seed split (seed precision 1.0, recall 0.316), so its held-out F1 drops; AutoSpec , refined from the same seed, instead reaches 0.980, directly isolating ILP’s contribution. Random search (B4) performs comparably to B1, confirming that guided search is essential. In contrast, AutoSpec achieves near-optimal performance: F1 of 0.980 in code execution (only 2 FP, perfect recall) and 0.933 in embodied 1 2 3 4    
+
+> Iteration
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Score
+> 0.980
+> 0.960
+> 1.000
+> Code Execution
+> F1
+> Precision
+> Recall
+> 12345
+> Iteration
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Score
+> 0.933 0.925
+> 0.942
+> Embodied Agent
+> F1
+> Precision
+> Recall
+
+Figure 4: Convergence trajectories showing F1, Precision, and Recall over iterations. Code execution converges in 4 itera-tions (F1=0.980), while embodied agents require 5 iterations (F1=0.933). 
+
+agents (4 FP, 3 FN), improving over baselines by 40.4% and 89.2% respectively. These results demonstrate that ILP-guided CEGIS ef-fectively learns precise safety rules that balance false positive and false negative rates. 
+
+## 6.2 RQ2: Search Efficiency 
+
+6.2.1 Convergence. Fig. 4 shows that AutoSpec achieves rapid con-vergence in both domains. In code execution, AutoSpec reaches the target F1 threshold of 0.95 within 4 iterations (final F1 0.980), with the first iteration alone jumping from 0.000 to 0.815, indicat-ing that the predicate library contains highly discriminating fea-tures. The 0.000 starting point reflects the RQ2 protocol (§5.5): the code-domain convergence curve is seeded from a minimal single-predicate rule that fires on nothing, which is distinct from the deployed guardrail used as B1 in RQ1 (F1 0.698). This is a deliber-ate stress test of convergence from a weak seed, not AutoSpec ’s intended deployment mode; in deployment AutoSpec evolves the expert guardrail, as in the embodied curve below, which starts from that guardrail (F1 0.493), and as in RQ1. The embodied agent domain converges more gradually: starting from F1 of 0.493, the system improves through 5 iterations (0.493 → 0.771 → 0.835 →
+
+0.870 → 0.885 → 0.933), terminating at the iteration limit rather than the target threshold. The final iteration still shows meaningful improvement (0.885 to 0.933), suggesting additional iterations could yield further gains. 
+
+6.2.2 Impact of ILP Guidance. Table 4 compares AutoSpec with ILP-guided predicate learning against a variant using heuristic-based predicate ranking. Both variants learn from counterexam-ples, but differ in how they prioritize predicates for candidate generation. We emphasize that AutoSpec (Heuristic) here and CEGIS w/o ILP (B3) in Table 3 are the same ablation, i.e., AutoSpec 
+
+with ILP removed so that candidate predicates are ranked by cover-age statistics instead of ILP suggestions (selection is deterministic, not random sampling). They report different F1 only because of the protocol in §5.5: B3 is measured on the held-out split, whereas 
+
+AutoSpec (Heuristic) reports the in-sample RQ2 convergence tra-jectory. The results demonstrate that ILP-guided learning significantly outperforms heuristic approaches in both domains. In code exe-cution, it achieves F1 of 0.980 versus the heuristic’s 0.203 (a 382% improvement); the heuristic terminates after only 2 iterations, un-able to find improving candidates without formal learning from counterexamples. In the embodied agent domain, ILP achieves F1 of AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming 
+
+Table 4: ILP-guided vs heuristic predicate selection. 
+
+Method Iterations Final F1 Candidates Time (s) 
+
+Code Execution Domain 
+
+AutoSpec (Heuristic) 2 0.203 197 4.4 
+
+AutoSpec (ILP) 4 0.980 319 20.1 
+
+Embodied Agent Domain 
+
+AutoSpec (Heuristic) 4 0.758 372 4.3 
+
+AutoSpec (ILP) 5 0.933 600 11.8 Precision Recall F1   
+
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> Score
+> 0.947
+> 1.000
+> 0.973
+> 1.000
+> 0.917
+> 0.957
+> 0.016
+> Code Execution
+> Initial
+> Incoming
+> Precision Recall F1
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> 1.05
+> Score
+> 0.842
+> 0.941
+> 0.889
+> 0.800
+> 0.889
+> 0.842
+> 0.047
+> Embodied Agent
+> Initial
+> Incoming
+
+Figure 5: Generalization to incoming agent tasks. Rules learned from 70% of initial tasks maintain high performance on 30% incoming tasks, with small generalization gaps of 1.6% (code) and 4.7% (embodied). 
+
+0.933 versus 0.758 (23% improvement). The heuristic evaluates 372 candidates versus ILP-guided learning’s 600, but the additional can-didates explored by ILP are better targeted due to formal learning, leading to superior final quality. Regarding the execution time, ILP-guided learning incurs moder-ate time overhead (20.1s vs 4.4s for code, 11.8s vs 4.3s for embodied), but the heuristic approach produces rules inadequate for deploy-ment. Given the substantial quality gains, this overhead is a favor-able tradeoff, especially as AutoSpec can operate asynchronously alongside agent execution without increasing actual user wait time in practice. 
+
+## 6.3 RQ3: Transfer and Usability 
+
+6.3.1 Generalization. We evaluate whether rules learned from ini-tial agent tasks generalize to incoming tasks. For each domain, we randomly partition the dataset into 70% initial tasks (used for rule learning) and 30% incoming tasks (held out to simulate future workloads). Fig. 5 visualizes the performance comparison. Fig. 5 shows that AutoSpec demonstrates strong generalization across both domains, with minimal performance degradation on incoming tasks. In code execution, the learned rules achieve F1 of 0.973 on initial tasks and 0.957 on incoming tasks (1.6 percentage point gap), with incoming tasks achieving perfect precision (1.000) and high recall (0.917), indicating the rules capture genuine unsafe patterns rather than memorizing examples. In the embodied agent domain, the gap is slightly larger (F1 0.889 → 0.842, 4.7 points), with balanced precision (0.800) and recall (0.889) on incoming tasks. Overall, these results confirm that ILP-guided CEGIS produces rules that generalize well to evolving agent workloads, a critical property for production deployment. 
+
+6.3.2 Interpretability. To evaluate whether AutoSpec ’s learned rules are interpretable to practitioners, we conducted a user study comparing AutoSpec ’s learned rules against LLM classifier deci-sions. Interpretability Actionability Trust   
+
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> Rating
+> =1.52
+> =2.10 =2.03
+> AutoSpec Rules LLM Classifier
+
+Figure 6: Interpretability evaluation comparing AutoSpec 
+
+rules and LLM classifiers across three dimensions. Choice of baseline. Accumulated annotations can be turned into an adaptive guardrail in two ways: by training a neural classifier over the labeled traces, or by evolving symbolic rules from them, as AutoSpec does. Both consume the same feedback and differ only in the form of their output, opaque scores versus inspectable rules, so they are the two options a practitioner actually chooses between. We therefore compare them on the properties that de-cide deployment: interpretability, actionability, and trust. The static expert guardrail is AutoSpec ’s input rather than an adaptive al-ternative, and shares AutoSpec ’s symbolic form, so it is not the relevant contrast here. 
+
+Protocol. We recruited 10 practitioners with more than one year of experience in developing or deploying ML-based systems. Participants evaluated two approaches across four scenarios (two code execution, two embodied agent domains). For each scenario, participants were shown: (1) an execution trace, (2) the ground truth label, and (3) the decision explanation from each method. Participants rated each method on three dimensions using a 5-point Likert scale (1=Very Poor, 5=Excellent): Interpretability (ease of understanding why a decision was made), Actionability (ease of modifying the approach to improve it), and Trust (confidence in deploying the approach in production). Participants were also encouraged to provide brief written explanations for their ratings and suggested modifications to each approach. 
+
+Results. As Fig. 6 summarizes, AutoSpec rules outperformed LLM classifiers on all three dimensions (Wilcoxon signed-rank test, 𝑝 < 0.01 ), and participants preferred AutoSpec in 101 of 120 pairwise comparisons (84.2%), the remaining 19 being ties. The per-dimension gaps reveal where symbolic rules help most. On in-terpretability (4.97 vs. 3.45), participants found AutoSpec rules fully traceable, pinpointing which predicate fired and reasoning about counterfactuals, whereas LLM explanations read fluently yet left the decision boundary opaque. On actionability (4.83 vs. 2.73, the widest gap), they proposed exact, locally scoped edits to 
+
+AutoSpec rules but doubted prompt-level fixes to the classifier: “we can not ensure LLM not to accidentally unblock those calls by these few changes.” On trust (4.80 vs. 2.77), all 10 ranked AutoSpec 
+
+most production-ready, citing determinism and auditability, while the classifier was seen as “prone to hallucinations.” Notably, the actionability and trust gaps (both > 2 points) far exceed the inter-pretability gap ( 1.5): practitioners could read the LLM’s rationale but not safely act on or rely on it, which is exactly where AutoSpec ’s symbolic output pays off. 
+
+Takeaway. The rules participants judged were AutoSpec ’s syn-thesized constructs, the predicate combinations, exceptions, and Ma et al. 
+
+disjunctive branches it evolved from counterexamples, so the rat-ings reflect AutoSpec ’s actual output. The picture is consistent: a neural classifier learns from the same annotations but produces decisions practitioners find hard to inspect, edit, and trust, whereas 
+
+AutoSpec reaches comparable adaptivity while staying auditable. Adapting from feedback without giving up interpretability is the combination AutoSpec is designed to provide. 
+
+## 6.4 Ablation Study 
+
+Table 5 presents an ablation study evaluating the contribution of key components in AutoSpec . The results validate the design choices made in § 4.3 and § 4.4, demonstrating that ILP guidance is the most critical component, with its removal causing F1 to drop from 0.98 to 0.20. Multi-step edits and failure-driven branches also contribute significantly to both effectiveness and efficiency. 
+
+Table 5: Ablation study on code execution domain. Variant F1 Iterations Candidates 
+
+AutoSpec (Full) 0.98 4 319 - ILP guidance 0.20 2 197 - Failure-driven branches 0.97 6 677 - Multi-step edits 0.72 10 300 
+
+Finding 1: ILP guidance is essential. Removing ILP-based predicate learning causes F1 to drop by 78 points (from 0.98 to 0.20), confirming that the ILP approach in § 4.3 is critical for identifying discriminating predicates. Without ILP, the system falls back to heuristic predicate ranking, which fails to learn which predicates characterize unsafe traces. 
+
+Finding 2: Multi-step edits handle complex interactions. 
+
+Restricting the system to single-step edits reduces F1 to 0.72 and increases iterations from 4 to 10, demonstrating why the mixed repair chains in § 4.4 are necessary: many counterexamples require coordinated changes across multiple rule components. This is a factor distinct from ILP: repair chains form whether predicates are ranked by ILP or by coverage, so the two rows ablate independent components. 
+
+Finding 3: Failure-driven branches improve efficiency. Dis-abling failure-driven disjunct generation maintains high F1 (0.97) but doubles the iteration count (from 4 to 6) and increases candidate evaluations by 112% (from 319 to 677). The precision-constrained greedy set cover strategy (§ 4.4) accelerates convergence by directly generating high-precision disjunctive branches without introduc-ing excessive false positives. 
+
+## 7 Discussion and Threats to Validity 
+
+Handling agent-specific safety concerns. Open-ended tool use, hallucinated actions, context-dependent safety, and adversarial ma-nipulation are all handled at the predicate layer : predicates expose tool calls, action history, state snapshots, and domain context, and integrating a new tool simply adds predicates through the exist-ing AgentSpec interface. AutoSpec evolves executable, auditable guardrails over these predicates, and adversarial traces obtained from red-teaming [ 20 ] enter the loop as additional counterexam-ples, so coverage strengthens as new attack patterns are observed. Because predicates are the unit of expressiveness, the counterexam-ples that remain unresolved at convergence also pinpoint exactly where a new predicate would help, turning library coverage into a measurable signal rather than a hidden assumption. 
+
+Design choices. AutoSpec drives candidate generation with ILP rather than a decision tree or a single global synthesis call by design. A decision tree classifies feature vectors, whereas AutoSpec must emit AgentSpec rules with triggers, enforcement actions, and local-ized, traceable edits to a deployed rule set, for which ILP provides a simplicity bias under mode declarations that a greedy split lacks. The CEGIS loop further passes only the current counterexamples to each ILP query, so refinement scales with the number of mistakes to fix rather than the size of the whole trace pool, and yields auditable edits to the existing rules instead of a flat hypothesis that replaces them. ILP also runs off the critical path, asynchronously alongside agent execution, so its cost does not affect runtime enforcement. 
+
+Temporal and stateful properties. AutoSpec evaluates predi-cates over individual events and their local context. Properties that depend on history or state can already be encoded inside predicates, and richer native temporal operators (e.g., LTL [ 21 ]) are a natural extension; because the CEGIS loop is agnostic to the constraint language, such an extension reuses the same refinement algorithm. 
+
+Threats to validity. Our evaluation spans two domains, code ex-ecution and embodied agents, covering diverse safety properties; other settings such as web or database agents remain to be explored. The code-domain safe traces mirror the RedCode [ 14 ] unsafe cate-gories with benign counterparts, deliberately stressing false posi-tives, and labels rely on human annotation. We mitigate both by drawing unsafe traces from an established benchmark and super-vising at trace granularity, the level at which operators judge agent sessions. 
+
+## 8 Related Work 
+
+LLM Agent Safety. Existing defenses for LLM agents are authored statically and do not improve from observed behavior: symbolic-rule DSLs [ 33 ] and probabilistic runtime monitors [ 34 ], neural clas-sifiers and LLM judges [ 3, 8, 40 ], privilege, access-control, and security-principle frameworks [ 10 , 29 , 41 ], multi-layered runtime guardrails for foundation-model agents [ 28 ], and testing or red-teaming harnesses [ 20 , 26 , 32 ]. These defenses respond to a rapidly expanding attack surface, from prompt injection [ 16 ] to agent tool-protocol threats [ 7]. To our knowledge, AutoSpec is the first safety-evolution tool: it refines symbolic-rule guardrails from agent traces, complementing these mechanisms, with the failures they expose (e.g., red-teaming traces) entering its loop as counterexamples. 
+
+Program Synthesis, Rule Learning, and Formal Methods. 
+
+CEGIS [ 9, 30 ] synthesizes programs from specifications, and Sy-GuS [ 2] adds grammar-based search; on the learning side, ILP sys-tems such as Progol [ 18 ], FOIL [ 24 ], Aleph [ 31 ], and ILASP [ 12 ]learn logic programs from examples, while rule-based classifiers like RIPPER [ 5 ] and CN2 [ 4] learn if-then rules from labeled data. 
+
+AutoSpec adapts CEGIS to safety rules with domain-specific edit operations and uses ILASP to learn the discriminating predicates that guide the loop, rather than synthesizing rules from scratch. Complementarily, runtime verification [ 13 ] monitors execution against temporal specifications (LTL [ 21 ], MTL [ 11 ]); AutoSpec 
+
+instead evolves an existing set of interpretable rules enforced at run-time, with temporal extensions left to future work. More broadly, AutoSpec : Safety Rule Evolution for LLM Agents via Inductive Logic Programming 
+
+recent position papers argue that trustworthy LLM agents must in-tegrate formal methods with learning [ 43 ]; AutoSpec is a concrete step, coupling inductive logic learning with counterexample-guided synthesis to keep its guardrails adaptive yet interpretable. 
+
+## 9 Conclusion 
+
+We present AutoSpec , the first tool that evolves an LLM agent’s deployed safety rules rather than authoring them from scratch. Its key idea is that the safe/unsafe annotations an agent accrues in operation are counterexamples, making rule maintenance a natu-ral ILP-guided CEGIS problem: counterexamples localize failures, ILP finds the few predicates that separate them, and constrained operators turn those predicates into auditable edits. Across code-execution and embodied-agent traces, AutoSpec raises rule F1 to 0.98 and 0.93 within a few iterations, and practitioners rate the re-sulting rules far more interpretable and trustworthy than a neural classifier trained on the same annotations—giving the symbolic guardrail layer the adaptivity of a learned classifier while keeping it deployable. 
+
+## References 
+
+[1] Michael Ahn, Anthony Brohan, Noah Brown, Yevgen Chebotar, Omar Cortes, Byron David, Chelsea Finn, Chuyuan Fu, Keerthana Gopalakrishnan, Karol Hausman, et al . 2022. Do as I can, not as I say: Grounding language in robotic affordances. In Conference on robot learning . PMLR, 287–318. [2] Rajeev Alur, Rastislav Bodik, Garvit Juniwal, Milo MK Martin, Mukund Raghothaman, Sanjit A Seshia, Rishabh Singh, Armando Solar-Lezama, Em-ina Torlak, and Abhishek Udupa. 2013. Syntax-guided synthesis. In 2013 Formal Methods in Computer-Aided Design . IEEE, 1–8. [3] Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, et al . 2022. Constitutional AI: Harmlessness from AI feedback. arXiv preprint arXiv:2212.08073 (2022). [4] Peter Clark and Tim Niblett. 1989. The CN2 induction algorithm. Machine learning 3, 4, 261–283. [5] William W Cohen. 1995. Fast effective rule induction. In Machine learning proceedings 1995 . Elsevier, 115–123. [6] Sirui Hong, Xiawu Zheng, Jonathan Chen, Yuheng Cheng, Jinlin Wang, Ceyao Zhang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, et al . 2024. MetaGPT: Meta programming for multi-agent collaborative framework. In Inter-national Conference on Learning Representations .[7] Xinyi Hou, Yanjie Zhao, Shenao Wang, and Haoyu Wang. 2025. Model Context Protocol (MCP): Landscape, Security Threats, and Future Research Directions. 
+
+arXiv preprint arXiv:2503.23278 (2025). [8] Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, et al . 2023. Llama guard: LLM-based input-output safeguard for human-AI conversations. 
+
+arXiv preprint arXiv:2312.06674 (2023). [9] Susmit Jha, Sumit Gulwani, Sanjit A Seshia, and Ashish Tiwari. 2010. Oracle-guided component-based program synthesis. In 2010 ACM/IEEE 32nd Interna-tional Conference on Software Engineering , Vol. 1. IEEE, 215–224. [10] Zimo Ji, Daoyuan Wu, Wenyuan Jiang, Pingchuan Ma, Zongjie Li, Yudong Gao, Shuai Wang, and Yingjiu Li. 2026. Taming various privilege escalation in LLM-based agent systems: A mandatory access control framework. arXiv preprint arXiv:2601.11893 (2026). [11] Ron Koymans. 1990. Specifying real-time properties with metric temporal logic. 
+
+Real-time systems 2, 4 (1990), 255–299. [12] Mark Law, Alessandra Russo, and Krysia Broda. 2014. The ILASP system for learning answer set programs. arXiv preprint arXiv:1407.3898 (2014). [13] Martin Leucker and Christian Schallhart. 2009. A brief account of runtime verification. The Journal of Logic and Algebraic Programming 78, 5 (2009), 293– 303. [14] Chengquan Li, Zikang Ouyang, Yixin Liu, Yifan Zhao, Jianfeng Huang, Chuyue Xiao, Kaixin Jiang, Yongchao Ding, Sheng Yin, Chao Xu, et al . 2024. RedCode: Risky code execution and generation benchmark for code agents. In NeurIPS 2024 Datasets and Benchmarks Track .[15] Shuyuan Liu, Jiawei Chen, Shouwei Ruan, Hang Su, and Zhaoxia Yin. 2024. Exploring the robustness of decision-level through adversarial attacks on llm-based embodied models. In Proceedings of the 32nd ACM international conference on multimedia . 8120–8128. [16] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao Wang, Xiaofeng Wang, Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, and Yang Liu. 2023. Prompt Injection attack against LLM-integrated Applications. arXiv preprint arXiv:2306.05499 (2023). [17] Mahmoud Mohammadi, Yipeng Li, Jane Lo, and Wendy Yip. 2025. Evaluation and benchmarking of llm agents: A survey. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 . 6129–6139. [18] Stephen Muggleton. 1995. Inverse entailment and Progol. New generation computing 13, 3-4 (1995), 245–286. [19] Stephen Muggleton and Luc De Raedt. 1994. Inductive logic programming: Theory and methods. The Journal of Logic Programming 19 (1994), 629–679. [20] Ethan Perez, Saffron Huang, Francis Song, Trevor Cai, Roman Ring, John Aslanides, Amelia Glaese, Nat McAleese, and Geoffrey Irving. 2022. Red teaming language models with language models. In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing . 3419–3448. [21] Amir Pnueli. 1977. The temporal logic of programs. In 18th Annual Symposium on Foundations of Computer Science (sfcs 1977) . IEEE, 46–57. [22] Yewen Pu, Zachery Miranda, Armando Solar-Lezama, and Leslie Kaelbling. 2018. Selecting representative examples for program synthesis. In International Con-ference on Machine Learning . PMLR, 4161–4170. [23] Chen Qian, Xin Cong, Cheng Yang, Weize Chen, Yusheng Su, Juyuan Xu, Zhiyuan Liu, and Maosong Sun. 2024. ChatDev: Communicative agents for software development. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics . 608–626. [24] J Ross Quinlan. 1990. Learning logical definitions from relations. Machine learning 5, 3 (1990), 239–266. [25] Qibing Ren, Hao Li, Dongrui Liu, Zhanxu Xie, Xiaoya Lu, Yu Qiao, Lei Sha, Junchi Yan, Lizhuang Ma, and Jing Shao. 2025. Llms know their vulnerabilities: Uncover safety gaps through natural distribution shifts. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) .24763–24785. [26] Yangjun Ruan, Honghua Dong, Andrew Wang, Silviu Pitis, Yongchao Zhou, Jimmy Ba, Yann Dubois, Chris J Maddison, and Tatsunori Hashimoto. 2024. Identifying the risks of LM agents with an LM-emulated sandbox. In International Conference on Learning Representations .[27] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Lan-guage models can teach themselves to use tools. arXiv preprint arXiv:2302.04761 
+
+(2023). [28] Md Shamsujjoha, Qinghua Lu, Dehai Zhao, and Liming Zhu. 2024. Swiss Cheese Model for AI Safety: A Taxonomy and Reference Architecture for Multi-Layered Guardrails of Foundation Model Based Agents. arXiv preprint arXiv:2408.02205 
+
+(2024). [29] Tianneng Shi, Jingxuan He, Zhun Wang, Hongwei Li, Linyu Wu, Wenbo Guo, and Dawn Song. 2025. Progent: Programmable privilege control for LLM agents. 
+
+arXiv preprint arXiv:2504.11703 (2025). [30] Armando Solar-Lezama, Liviu Tancau, Rastislav Bodik, Sanjit Seshia, and Vijay Saraswat. 2006. Combinatorial sketching for finite programs. In ACM SIGPLAN Notices , Vol. 41. ACM, 404–415. [31] Ashwin Srinivasan. 2001. The Aleph manual. Machine Learning at the Computing Laboratory, Oxford University (2001). [32] Eric Wallace, Shi Feng, Nikhil Kandpal, Matt Gardner, and Sameer Singh. 2019. Universal adversarial triggers for attacking and analyzing NLP. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing .2153–2162. [33] Haoyu Wang, Christopher M Poskitt, and Jun Sun. 2025. AgentSpec: Customiz-able Runtime Enforcement for Safe and Reliable LLM Agents. arXiv preprint arXiv:2503.18666 (2025). [34] Haoyu Wang, Chris M. Poskitt, Jun Sun, and Jiali Wei. 2025. Pro2Guard: Proactive Runtime Enforcement of LLM Agent Safety via Probabilistic Model Checking. 
+
+arXiv preprint arXiv:2508.00500 (2025). [35] Licheng Wen, Daocheng Fu, Xin Li, Xinyu Cai, Tao Ma, Pinlong Cai, Min Dou, Botian Shi, Liang He, and Yu Qiao. 2023. DiLu: A knowledge-driven approach to autonomous driving with large language models. arXiv preprint arXiv:2309.16292 
+
+(2023). [36] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie Jin, Enyu Zhou, et al . 2023. The rise and potential of large language model based agents: A survey. arXiv preprint arXiv:2309.07864 
+
+(2023). [37] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Representations .[38] Sheng Yin, Xianghe Hu, Qi Qi, Jing Hu, Chao Xu, and Haifeng Zhang. 2024. SafeAgentBench: A benchmark for safe task planning of embodied LLM agents. In arXiv preprint arXiv:2410.17359 .[39] Tongxin Yuan, Zhiwei He, Lingzhong Dong, Yiming Wang, Ruijie Zhao, Tian Xia, Lizhen Xu, Binglin Zhou, Fangqi Li, Zhuosheng Zhang, et al . 2024. R-judge: Benchmarking safety risk awareness for llm agents. In Findings of the Association Ma et al. 
+
+for Computational Linguistics: EMNLP 2024 . 1467–1490. [40] Tongxin Yuan, Zhiwei He, Lingzhong Dong, Yiming Wang, Ruijie Zhao, Tian Xia, Lizhen Xu, Binglin Zhou, Fangqi Liang, Zhuosheng Han, et al . 2024. R-Judge: Benchmarking safety risk awareness for LLM agents. In Findings of the Association for Computational Linguistics: EMNLP 2024 .[41] Kaiyuan Zhang, Zian Su, Pin-Yu Chen, Elisa Bertino, Xiangyu Zhang, and Ninghui Li. 2025. LLM Agents Should Employ Security Principles. arXiv preprint arXiv:2505.24019 (2025). [42] Shaokun Zhang, Ming Yin, Jieyu Zhang, Jiale Liu, Zhiguang Han, Jingyang Zhang, Beibin Li, Chi Wang, Huazheng Wang, Yiran Chen, and Qingyun Wu. 2025. Which Agent Causes Task Failures and When? On Automated Failure Attribution of LLM Multi-Agent Systems. In Forty-second International Conference on Machine Learning . https://openreview .net/forum?id =GazlTYxZss [43] Yedi Zhang, Yufan Cai, Xinyue Zuo, Xiaokun Luan, Kailong Wang, Zhe Hou, Yifan Zhang, Zhiyuan Wei, Meng Sun, Jun Sun, Jing Sun, and Jin Song Dong. 2024. The Fusion of Large Language Models and Formal Methods for Trustworthy AI Agents: A Roadmap. arXiv preprint arXiv:2412.06512 (2024).

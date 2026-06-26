@@ -1,0 +1,1262 @@
+Title: Temporal Self-Imitation Learning
+
+URL Source: https://arxiv.org/pdf/2606.19752v1
+
+Published Time: Fri, 19 Jun 2026 00:25:18 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Temporal Self-Imitation Learning 
+
+Yinsen Jia Boyuan Chen 
+
+Duke University 
+
+https://generalroboticslab.com/TSIL 
+
+Abstract: Long-horizon robot manipulation policies trained with reward shaping can still exploit dense rewards through inefficient interaction, while rare efficient behaviors may be forgotten during training. We argue that temporal efficiency itself provides a powerful and underutilized source of self-supervision for rein-forcement learning. We introduce Temporal Self-Imitation Learning (TSIL) ,a reinforcement learning framework that mines temporally efficient successful trajectories generated during learning and converts them into reusable supervi-sion for future policy improvement. TSIL progressively refines learning using configuration-conditioned adaptive temporal targets derived from fast successful trajectories, while preserving and replaying efficient behaviors through efficiency-weighted self-imitation learning. Across 15 distinct long-horizon manipulation tasks, TSIL consistently improves learning efficiency, task-completion efficiency, revisitation of fast successful behaviors, and robustness to unstable training con-ditions. More broadly, our results suggest that the temporal structure of successful behavior itself provides a scalable self-supervisory signal for reinforcement learn-ing beyond manually engineered reward shaping alone. 
+
+Keywords: Robot Learning, Reinforcement Learning, Self-Imitation Learning 
+
+1 Introduction t=0.0s  t=0.4s  t=1.1s   
+
+> t=1.7s t=2.1s t=2.5s Fast-success memory
+> New training iteration
+> Update
+> temporal target
+> Imitate
+> efficient behavior
+
+Fig. 1: Temporal Self-Imitation Learning. Previously discovered fast successful trajectories set adaptive temporal targets and are replayed to guide further policy improvement. 
+
+Motor learning in humans and animals progressively re-fines behavior toward more efficient and reliable movement. Through repeated interaction and reinforcement, biological systems learn to suppress unnecessary motion, reduce behav-ioral variability, and discover increasingly direct strategies for achieving a goal [1, 2]. Skilled behavior therefore emerges not only from eventual task success, but from refining success into efficient and reproducible interaction patterns. In contrast, reinforcement learning for robot manipulation largely evaluates successful trajectories through cumulative reward alone. Long-horizon manipulation policies are com-monly trained with dense shaping rewards and sparse task-success rewards [3, 4, 5]. Dense rewards help exploration, but they can also create a mismatch: high return does not neces-sarily imply efficient task-solving behavior. This mismatch is especially problematic in long-horizon ma-nipulation. A robot may exploit reward-dense intermediate states, linger near partially solved configurations, or perform long unstable recovery sequences before eventually complet-ing the task. Such behavior can still achieve high discounted return despite being inefficient, brittle, or behaviorally poor. In practice, a robot that solves a task quickly and decisively is often substantially more useful than one that eventually succeeds after prolonged interaction. 
+
+> arXiv:2606.19752v1 [cs.RO] 18 Jun 2026
+
+Importantly, we argue that temporal efficiency is not merely a deployment preference, but a valuable 
+
+learning signal (Fig. 1). Successful trajectories can differ substantially in behavioral quality even when they achieve similar return. Some trajectories solve the task through direct and coherent interaction sequences, while others wander through irrelevant states, exploit shaping rewards, or rely on accidental recoveries before eventually succeeding. Fast successful trajectories therefore contain information that reward alone may fail to isolate. 10 10 2 10 3 10 4 10 5 10 60.00      
+
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Success rate
+> Infinite-horizon PPO
+> 10 10 210 310 410 510 6
+> Reward scale
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Success rate
+> Temporal Self-Imitation Learning
+
+Fig. 2: Simple success-reward tun-ing is brittle. Increasing the success-reward scale can weaken dense guid-ance, whereas TSIL remains robust by converting fast successes into temporal training signal. 
+
+Existing approaches encourage efficient behavior mostly through manually designed temporal preferences. Increasing sparse success rewards can weaken dense guidance and in-crease advantage-estimation variance, whereas overly influ-ential shaping rewards can attract the policy toward reward collection rather than efficient task completion, as shown in Fig. 2. Per-step penalties can favor shorter behavior [6], but weak penalties often have little effect and strong penalties can suppress exploration. Dense-to-sparse schedules [7] and time-limit MDPs [8] expose or alter temporal structure, but still re-quire hand-specified schedules, penalties, or generic horizons. They do not treat the temporal structure of successful behavior that emerges during learning as reusable supervision for dis-covering increasingly efficient policies. 
+
+Our central hypothesis is that temporally efficient successful behavior discovered during learning contains reusable self-supervisory signals for future policy improvement. Once a policy discovers that a task config-uration can be solved efficiently, subsequent learning should bias toward behaviors that match or exceed this efficiency, allowing temporal targets to be discovered and refined by the policy itself. 
+
+We present Temporal Self-Imitation Learning (TSIL) , a reinforcement learning framework that mines temporal efficiency from successful trajectories and converts it into reusable supervision. TSIL uses fast successful trajectories in two complementary ways. First, the completion time of a successful trajectory becomes a configuration-conditioned adaptive temporal target that conditions future observations and rewards. As faster solutions emerge, this target tightens and encourages increasingly efficient behavior. Second, efficient successful trajectories are preserved in a replay buffer and reused through efficiency-weighted self-imitation, helping the policy revisit behaviors that may otherwise disappear under on-policy distribution shift. We evaluate TSIL on 15 distinct long-horizon manipulation tasks spanning articulated-object in-teraction, insertion, tool use, transport, and contact-rich manipulation. Across these settings, TSIL consistently improves learning efficiency, behavioral efficiency, successful behavior revisitation, and robustness under unstable training conditions. In summary, our contributions are: • We identify temporal efficiency as a self-supervisory signal for long-horizon robot reinforcement learning, and show that reward alone can fail to distinguish efficient successful behavior from slower or reward-distracted success. • We introduce temporal self-imitation learning that enables configuration-conditioned adaptive temporal targets with efficiency-weighted self-imitation of efficient successful trajectories. • We demonstrate consistent improvements in learning efficiency, behavioral efficiency, successful behavior revisitation, and robustness across 15 long-horizon manipulation tasks. 
+
+2 Related Work 
+
+Temporal reinforcement learning. Temporal reinforcement learning studies how time enters the decision process, from finite-horizon state augmentation and time-limit handling [8] to continuous-time or discretization-robust control [9, 10, 11, 12] and temporal abstraction through options [13], action repetition [14, 15], or learned action timing [16]. Recent time-aware RL methods further address irregular decision intervals [17, 18], time-step-conditioned world models [19], and timing-aware driving or robot navigation [20, 21]. Adjacent safe offline RL also conditions trajectory plan-2ning on dynamically specified deployment budgets, though these budgets denote cost constraints rather than task-time variables [22]. Closest to our setting, time-aware policy learning for robot con-trol conditions a trained manipulation policy on remaining time and a time ratio, enabling inference-time tempo adaptation [23]. In contrast, TSIL uses time-awareness during training: the policy’s own fast successes set configuration-conditioned adaptive temporal targets that reshape rewards, observations, and self-imitation priorities. 
+
+Self-imitation learning. Self-imitation learning uses an agent’s own experience as supervision. The original SIL objective imitates high-return trajectories through advantage filtering [24], while later variants extend this idea with episodic hindsight replay [25], sparse or delayed robot rewards [26], and planning-based robot motion learning [27, 28]. In robot learning, successful experience has also been reused through sparse-reward relabeling [29], task reduction [30], and goal-conditioned self-imitation [31, 32]. Recent self-improving robot systems further turn autonomous practice into supervision for manipulation and foundation-model post-training [33, 34, 35]. TSIL differs by mak-ing replay selection temporal: it prioritizes fast successful trajectories and relabels them under the current adaptive temporal target. 
+
+3 Temporal Self-Imitation Learning 
+
+The central idea of Temporal Self-Imitation Learning (TSIL) is to treat temporally efficient suc-cessful behavior during learning as reusable self-supervision for future policy improvement. Long-horizon manipulation presents two coupled challenges. Policies can over-exploit dense rewards through slow or reward-distracted behavior rather than completing the task efficiently. Meanwhile, the rare fast successes that reveal better behavior may disappear during later on-policy updates due to distribution shift or unstable optimization. TSIL addresses these challenges by mining temporal efficiency from successful trajectories and feeding it back into future learning. The completion time of efficient successful trajectories becomes a progressively refined temporal target, while the trajec-tories themselves are replayed through efficiency-weighted self-imitation. Once efficient behavior emerges, future optimization increasingly biases toward reproducing and improving upon it. 
+
+3.1 Temporal target conditioning 
+
+Robot manipulation policies are commonly trained with an infinite-horizon discounted objective, 
+
+J(π) = Eπ [P∞ 
+
+> t=0
+
+γtr(st, a t, s t+1 )] , using truncated rollouts and bootstrapping. Although discount-ing weakly favors shorter trajectories, tuning it is a blunt temporal preference: small discount factors can suppress delayed success signals, while large ones only mildly favor faster completion. More-over, it does not explicitly distinguish efficient successful behavior from slow or reward-distracted behavior. In long-horizon manipulation, policies can still accumulate substantial return through prolonged recovery sequences or repeated exploitation of dense shaping rewards before eventually succeeding. Instead of manually engineering temporal objectives, TSIL derives temporal supervision directly from successful behavior discovered during learning. Let ϕ denote a task configuration, such as object initialization, target pose, and robot initial state. Let N be the episode horizon, ∆t the control interval, and T max = N ∆t the maximum rollout duration. A central design choice is that temporal targets are configuration-conditioned rather than global. The same task can have very different feasible completion times depending on ϕ, so a target discovered for an easy configuration should not be imposed on a harder one. For each training configuration, TSIL maintains an adaptive temporal target D(ϕ) ≤ T max , representing the fastest successful com-pletion time discovered so far under comparable initial conditions. The policy receives the original observation together with elapsed interaction time and the active target, ˜ot = ( ot, T used  
+
+> t
+
+, D (ϕ)) ,where T used 0 = 0 and T used  
+
+> t+1
+
+= T used  
+
+> t
+
++ ∆ t.Importantly, the temporal target is not a hard environment constraint. Rollouts may continue be-yond D(ϕ) until task completion or rollout truncation at T max . Instead, the temporal target acts as adaptive supervision that progressively biases learning toward increasingly efficient behavior. The resulting objective is J(π; D) = Eπ [P∞ 
+
+> t=0
+
+γtr(st, a t, s t+1 , T used  
+
+> t
+
+, D (ϕ))] .33.2 Adaptive temporal supervision 
+
+A successful trajectory reveals that a specific configuration can be solved within a particular amount of interaction time. Let Di denote the temporal target function at training iteration i, initialized as 
+
+D1(ϕ) = T max . For a successful trajectory τ , let Kτ be its completion step and T succ (τ ) = Kτ ∆t.After each iteration, TSIL updates the target using the fastest successful trajectory discovered so far: 
+
+Di+1 (ϕ) = min 
+
+Di(ϕ), min   
+
+> τ∈T i(ϕ)
+> 1succ (τ)=1
+
+T succ (τ )
+
+ , (1) where the inner minimum is ignored if no successful trajectory for ϕ appears in Ti(ϕ). Thus, tem-poral targets progressively tighten as the policy discovers more efficient successful behavior. We further use the temporal target to shape the terminal success reward. For a trajectory terminating at step K with elapsed interaction time T used = K∆t, the target-conditioned success reward is 
+
+rsucc  
+
+> K
+
+= rsucc 1succ 
+
+
+
+1 + min 
+
+ Di(ϕ)
+
+T used , 1
+
+ 
+
+. (2) This reward preserves the task-completion incentive while adding a temporal bonus relative to the current target. Trajectories that finish before the target receive maximal temporal bonus, while slower trajectories receive less as T used grows. With task rewards, the final reward is rt = rtask  
+
+> t
+
++
+
+rsucc  
+
+> t
+
+.
+
+3.3 Efficiency-weighted self-imitation 
+
+Adaptive temporal supervision biases the current rollout toward efficient behavior, but efficient suc-cessful trajectories may still disappear during later policy updates. TSIL therefore stores temporally efficient successful trajectories in an auxiliary replay buffer. Unlike standard self-imitation learning, which prioritizes high-return trajectories [24], TSIL prioritizes fast successful trajectories because high return can still contain slow or reward-distracted behavior. For each configuration ϕ, TSIL maintains a replay buffer Bi(ϕ), with capacity k and retaining the fastest successful trajectories discovered so far. Before replay, the current replay buffer is relabeled using the current target Di, yielding ˆBi(ϕ). For each trajectory τ collected under configuration ϕτ ,the observation becomes ˆoτt = ( oτt , T used ,τ t , D i(ϕτ )) , the reward becomes ˆrτt = rtask ,τ t + 1(t =
+
+Kτ )ˆ rsucc ,τ Kτ , and the relabeled return is ˆGτt = P|τ |− 1 
+
+> j=t
+
+γj−t ˆrτj , where |τ | is the stored trajectory length. Not every transition in a successful trajectory should be imitated. Following self-imitation learn-ing, TSIL uses a positive return-value gap, A+ 
+
+> t
+
+(τ ) = [ ˆGτt − Vψ (ˆ oτt )] +, as a soft gate so re-play pressure vanishes once the critic judges the current policy to match the stored behavior. To further prioritize temporally efficient success, trajectories are weighted by wi(τ ) = 1 + 
+
+1succ (τ ) min( Di(ϕτ )/T succ (τ ), 1) .The full objective is L = LPPO + λSI LSI , where the auxiliary self-imitation loss is 
+
+LSI = E(τ,t )∼ ˆBi
+
+
+
+−wi(τ )A+ 
+
+> t
+
+(τ ) log πθ (aτt | ˆoτt ) + λV,SI 
+
+2
+
+ A+ 
+
+> t
+
+(τ )2
+
+
+
+. (3) 
+
+3.4 Implementation details 
+
+Algorithm 1 in the Appendix summarizes the complete TSIL training procedure. TSIL was imple-mented on top of PPO using a standard actor-critic architecture. PPO itself is unchanged except for temporal target conditioning, target-conditioned rewards, and the auxiliary efficiency-weighted self-imitation objective. Training uses parallel simulation environments, each maintaining its own task configuration, temporal target, and replay buffer. Unless otherwise specified, each configuration stores the top-k (k = 5 ) fastest successful trajectories. During very early training, when successful trajectories are scarce, the replay buffer is supplemented with high-return trajectories to stabilize replay. 44 Experiments Assembly Basketball Bin picking Box close Door lock     
+
+> Hammer Lever pull Peg insert side Pick out of hole Soccer
+
+Fig. 3: Representative evaluation tasks. Our tests cover long-horizon manipulation skills including assembly, insertion, transport, tool use, articulated-object interaction, and contact-rich manipulation. We evaluate TSIL along three questions: (1) Effectiveness: does temporal self-supervision improve long-horizon manipulation performance? (2) Efficiency: does TSIL improve both learning effi-ciency and behavioral efficiency? (3) Robustness: does preserving temporally efficient successful behavior improve robustness under unstable training conditions? 
+
+Tasks and training settings. We evaluate TSIL on 15 distinct long-horizon Meta-World manipula-tion tasks [5] (Fig. 3) implemented in Isaac Gym through MTBench [36], spanning articulated-object interaction, insertion, transport, tool use, and contact-rich manipulation. We report results under both standard training and disturbed training settings. Disturbed settings included policy gradient noise, dense reward dropout, PPO clip ratio sweeps, and learning rate sweeps to evaluate robustness under unstable optimization. Additional implementation details are provided in the Appendix. 
+
+Baselines. All methods used PPO [4] as the base optimizer. We compared against: (1) standard dense reward infinite-horizon PPO (IH), (2) IH with per-step penalties (Step-cost IH) testing whether manually penalizing duration is sufficient, (3) dense-to-sparse reward scheduling (D2S IH) testing whether reducing reward distraction during training is sufficient, (4) fixed temporal target learning (FTTL) that observes used time and a fixed temporal target equal to the maximum episode length, testing whether temporal conditioning alone is sufficient, (5) adaptive temporal target learning with-out replay (ATTL), (6) ATTL with standard self-imitation learning (ATTL + SIL), and (7) full TSIL with efficiency-weighted fast-success replay. All methods use the same success reward scale rsucc 
+
+for fair comparison. 
+
+Metrics. We evaluated effectiveness using success rate. Learning efficiency was evaluated using area under the success curve (AUC, summarizing sample efficiency over the full training budget), steps-to-80% success, and successful episode count (total number of successful episodes collected under the same training budget, indicating how much self-generated successful experience was avail-able for temporal target updates and replay). Behavioral efficiency was evaluated using successful episode completion time (mean completion time among successful evaluation episodes, where lower values indicate less wasted interaction time). We additionally analyzed positive-advantage mass (fraction of total positive PPO advantage contributed by a target trajectory group, measuring where reinforcement pressure concentrates), buffer time (mean completion time of successful trajectories stored in the replay buffer, where lower values indicate faster preserved successful behavior), and replay revisitation NLL (negative log likelihood of replay-buffer actions with positive self-imitation gap, where lower values indicate easier revisitation of efficient successful behavior) to study how adaptive temporal targets and efficiency-weighted replay alter optimization dynamics. Unless oth-erwise stated, results are averaged over three training random seeds, with evaluation performed over 2,000 trials per seed on independently sampled task configurations from the same reset distribution. 5Tab. 1: Main evaluation. TSIL achieves the strongest overall performance across effectiveness, learning efficiency, and behavioral efficiency. Values report mean ± standard deviation. 
+
+Method Success rate ↑ AUC ↑ Steps to 80% ( 10 6) ↓ Completion time ↓ Success count ( 10 3) ↑
+
+IH 0.365 ± 0.420 0.218 ± 0.264 21 .791 ± 8.376 1.246 ± 0.554 180 .580 ± 265 .500 
+
+Step-cost IH 0.513 ± 0.429 0.317 ± 0.262 23 .055 ± 8.940 1.140 ± 0.533 267 .720 ± 273 .220 
+
+D2S IH 0.750 ± 0.381 0.336 ± 0.210 32 .340 ± 7.499 0.949 ± 0.457 313 .670 ± 224 .310 
+
+FTTL 0.957 ± 0.053 0.628 ± 0.187 20 .111 ± 11 .143 1.448 ± 0.672 482 .320 ± 301 .670 
+
+ATTL 0.977 ± 0.035 0.656 ± 0.191 19 .647 ± 10 .632 0.759 ± 0.284 728 .700 ± 333 .220 
+
+ATTL + SIL 0.924 ± 0.227 0.660 ± 0.212 17 .306 ± 8.727 0.788 ± 0.370 739 .550 ± 342 .560 
+
+TSIL 0.986 ± 0.022 0 .692 ± 0.149 17 .569 ± 8.412 0.674 ± 0.148 765 .740 ± 291 .740 
+
+4.1 TSIL improves effectiveness, learning and behavioral efficiency 0 1 2 3 4 5       
+
+> Steps ×10 7
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Success rate
+> 02468
+> Interaction time (s) ×10 5
+> 0
+> 2
+> 4
+> 6
+> 8
+> ×10 5Successful episodes
+> TSIL
+> D2S IH
+> ATTL+SIL
+> Step-cost IH
+> ATTL
+> IH
+> FTTL
+
+Fig. 4: Main training curves. TSIL reaches high sample efficiency and success while completing more suc-cessful episodes under the same inter-action budget. Shaded regions denote the standard error of the mean. 
+
+As shown in Tab. 1 and Fig. 4, TSIL achieved the strongest overall performance across effectiveness, learning efficiency, and behavioral efficiency. In particular, TSIL achieved the highest final success rate and AUC while also producing the fastest successful behaviors and the largest number of success-ful episodes collected during training. These results support our key hypothesis that temporally efficient successful trajec-tories provide valuable self-supervision for policy improve-ment. The progression across baselines further clarifies the contribu-tion of each component. Reward-engineering baselines im-proved some individual metrics, but remained substantially weaker than temporal-target-based methods in overall success and learning efficiency. FTTL achieved high final success, showing that temporal conditioning alone was beneficial, yet its fixed temporal target did not consistently encourage effi-cient completion behavior, resulting in the slowest successful episodes. Introducing adaptive temporal targets (ATTL) substantially improved behavioral effi-ciency by progressively tightening supervision toward faster successful behavior discovered during learning. Adding generic self-imitation replay (ATTL + SIL) further accelerated early learning, but replaying high-return trajectories alone could still preserve slower or less reliable successful behav-ior. In contrast, full TSIL consistently achieved the best overall tradeoff between success, learning and behavioral efficiency, demonstrating that replaying temporally efficient successful trajectories provided substantially more effective supervision than replaying generic high-return experience. 
+
+4.2 TSIL improves robustness under unstable training 
+
+Long-horizon robot learning is often highly sensitive to optimization instability. In practice, policy gradient noise, unstable policy updates, imperfect reward signals, and aggressive hyperparameter choices can cause policies to drift away from previously discovered successful behaviors. Since TSIL explicitly preserves and replays temporally efficient successful trajectories, we hypothesize that it should also improve robustness under unstable training conditions by anchoring optimization toward efficient successful behavior even when the current on-policy signal becomes unreliable. To evaluate this, we introduced four classes of training disturbances as discussed above. Tab. 2 reports aggregate robustness metrics averaged across disturbance levels for each setting. Replay-based methods substantially improved robustness over adaptive temporal supervision alone. The largest gains appeared under policy gradient noise and aggressive PPO clip ratio settings, where unstable updates rapidly moved the policy away from previously discovered successful behaviors. In these settings, TSIL consistently achieved the strongest overall performance, indicating that replay-ing efficient successful trajectories provided an effective optimization anchor against policy drift. The disturbances also revealed an important distinction between generic and temporally efficient replay. Under dense reward dropout, replay substantially stabilized training even when shaped guid-6Tab. 2: Aggregate robustness evaluation under disturbed training conditions. Replay-based methods substantially improve robustness under unstable optimization. TSIL consistently achieves the strongest overall tradeoff between effectiveness, learning efficiency, and behavioral efficiency, particularly under severe policy drift and aggressive optimization settings. Values report mean ±
+
+standard deviation across disturbance levels and random seeds. 
+
+Experiment Method Success rate ↑ AUC ↑ Steps to 80% ( 10 6) ↓ Completion time ↓ Success count ( 10 3) ↑
+
+Policy gradient noise ATTL 0.682 ± 0.484 0.286 ± 0.272 27 .289 ± 4.489 1.131 ± 0.528 133 .081 ± 136 .166 
+
+ATTL + SIL 0.763 ± 0.391 0.330 ± 0.247 23 .347 ± 4.171 1.010 ± 0.508 151 .871 ± 121 .044 
+
+TSIL 0.953 ± 0.063 0 .336 ± 0.181 23 .643 ± 4.759 0.922 ± 0.347 155 .937 ± 99 .890 
+
+Dense reward dropout ATTL 0.664 ± 0.575 0.439 ± 0.405 32 .562 ± 9.896 0.962 ± 0.701 499 .523 ± 473 .819 
+
+ATTL + SIL 0.859 ± 0.239 0 .498 ± 0.377 27 .352 ± 13 .541 0.845 ± 0.512 576 .420 ± 442 .846 
+
+TSIL 0.805 ± 0.331 0.494 ± 0.371 27 .762 ± 12 .812 0.762 ± 0.369 567 .974 ± 440 .873 
+
+PPO clip ratio sweep ATTL 0.774 ± 0.383 0.553 ± 0.277 20 .406 ± 1.991 1.005 ± 0.734 323 .198 ± 164 .696 
+
+ATTL + SIL 0.995 ± 0.001 0.745 ± 0.042 13 .426 ± 0.927 0.563 ± 0.004 457 .255 ± 25 .756 
+
+TSIL 0.995 ± 0.000 0 .770 ± 0.008 13 .175 ± 0.948 0.561 ± 0.006 466 .346 ± 23 .681 
+
+Learning rate sweep ATTL 0.964 ± 0.028 0.616 ± 0.178 18 .043 ± 4.291 0.705 ± 0.126 303 .353 ± 123 .223 
+
+ATTL + SIL 0.987 ± 0.011 0.608 ± 0.150 16 .293 ± 3.858 0.667 ± 0.096 318 .226 ± 107 .809 
+
+TSIL 0.983 ± 0.022 0.624 ± 0.132 16 .862 ± 3.692 0.677 ± 0.119 315 .736 ± 113 .130 
+
+ance became sparse or unreliable. ATTL + SIL achieved slightly higher success rates in some settings, likely because replaying broader high-return experience provided more diverse supervision when fast successful trajectories were scarce. In contrast, TSIL consistently produced faster suc-cessful behaviors and stronger behavioral efficiency, showing that prioritizing temporally efficient successful trajectories biased optimization toward more compact and reliable interaction strategies rather than merely preserving generic successful behavior. These results suggest that temporally efficient successful trajectories provide not only effective supervision for policy improvement, but also a stabilizing memory signal that improves robustness under unstable reinforcement learning optimization. 
+
+4.3 Analysis Cell: success rate (SR)                           
+
+> SR=1 0.5<SR<1 SR<=0.5 01
+> Overlay: positive advantage mass
+> 024
+> # Episodes log 10 (1 + n)
+> 0
+> 1ATTL
+> iter: 0-25% 25-50% 50-75% 75-100% # Episodes
+> 0
+> 1FTTL
+> 0
+> 1
+> Normalized  Gtask
+> D2S IH
+> 0
+> 1Step-cost IH
+> 01
+> 0
+> 1IH
+> 0101
+> Normalized Tused
+> 0101
+> 01
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+> success mass
+> fast-success mass
+> 01
+> Weighted positive advantage
+> mass fraction
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+> reward-distracted mass
+> slow-failure mass
+
+Fig. 5: Adaptive temporal targets redirect PPO opti-mization. Adaptive temporal targets rapidly concentrate positive PPO update signal on fast successful trajectories while suppressing reward-distracted and slow-failure behav-ior. Left: one representative Peg Insertion Side learning-signal map. Right: aggregated results over all 15 tasks. Er-ror bars denote the standard error of the mean. Details on metric computation are reported in the Appendix. 
+
+Why adaptive temporal targets help. We next analyzed how adap-tive temporal targets altered PPO op-timization before replay was added. For each episode, we aggregated the positive-advantage mass used by PPO and grouped episodes by nor-malized completion time and dense task return. In Fig. 5, cell color in-dicates empirical success rate, while the overlaid color gradient indicates the fraction of positive-advantage mass assigned to that region. The summary bars further aggregate this update signal into four categories: success, fast-success, slow-failure, and reward-distracted behavior. Met-ric computation details are reported in the Appendix. As shown in Fig. 5, adaptive tempo-ral targets rapidly concentrated PPO update signal on fast successful tra-jectories while assigning little optimization pressure to reward-distracted or slow-failure behavior. Fixed temporal targets improved time awareness but could not distinguish achievable efficient be-havior from generic timing constraints, allowing slow high-return trajectories to continue receiving positive updates. Infinite-horizon baselines were substantially more vulnerable to reward distraction, while D2S IH partially mitigated this effect by removing dense rewards at the cost of losing shaped 7−0.04 0.00 0.04              
+
+> PPO update axis
+> −0.04
+> 0.00
+> 0.04
+> SIL-only axis
+> orthogonal to PPO
+> 25% steps
+> PPO update
+> TSIL update
+> current policy
+> 50% steps 75% steps 100% steps 25% steps
+> ATTL+SIL update
+> 50% steps 75% steps 100% steps
+> 0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96
+> Normalized fast-success memory log-prob
+
+Fig. 6: Fast-success revisitation landscapes. Left: TSIL with efficiency-weighted fast-success replay. Right: generic high-return replay. The background shows fast-success replay-buffer log probability around the current policy. Replay rotated PPO updates toward stored successful be-havior, but TSIL aligned updates more strongly with regions containing high fast-success memory likelihood. guidance. These results suggest that adaptive temporal targets improve behavioral efficiency by progressively redirecting reinforcement pressure toward increasingly efficient successful behavior discovered during learning. Tab. 3: Replay diagnostics. Lower buffer time means faster stored successes; lower replay NLL means easier revisitation.                       
+
+> Method Buffer time ↓Replay NLL ↓
+> ATTL 0.533 ±0.240 5.458 ±1.721
+> ATTL + SIL 0.509 ±0.217 4.703 ±1.124
+> TSIL 0.485 ±0.186 4.924 ±1.265
+
+Why efficiency-weighted replay helps. Adaptive temporal targets bias the current PPO update toward efficient successful behavior, but later on-policy up-dates can still move the policy away from those trajec-tories. TSIL addresses this by preserving temporally efficient successful trajectories in replay and explicitly increasing their likelihood during optimization. Ta-ble 3 shows that replay makes stored behavior easier to revisit, reducing replay NLL relative to ATTL alone; for ATTL, the replay buffer is used only for diagnostics, not replay updates. Generic SIL gives the lowest NLL because it stores broader high-return behavior, which can include easier but slower trajectories. In contrast, TSIL stores the fastest successful trajectories while maintaining strong revisitation, aligning replay supervision with the adaptive temporal objective. Figure 6 further reveals how replay changes optimization dynam-ics. Both replay methods rotated PPO updates toward stored successful behavior, helping the policy recover trajectories that might otherwise disappear during unstable on-policy learning. However, TSIL aligned updates more strongly with regions containing high fast-success memory likelihood, whereas generic replay provided weaker alignment because replay selection was driven by return rather than temporal efficiency. These results suggest that replaying temporally efficient successful trajectories improves not only behavior preservation, but also the direction of policy optimization itself. 
+
+5 Conclusion & Limitations 
+
+We introduced Temporal Self-Imitation Learning (TSIL), a reinforcement learning framework that treats temporally efficient successful behavior as reusable self-supervision for future policy im-provement. TSIL progressively refines policy learning through adaptive temporal targets derived from successful trajectories while preserving efficient behavior through self-imitation. Across 15 long-horizon manipulation tasks and disturbed training settings, TSIL consistently improves effec-tiveness, learning efficiency, behavioral efficiency, and robustness. Our analysis further shows that adaptive temporal targets redirect reinforcement pressure toward efficient successful behavior, while temporally efficient replay improves revisitation of behaviors that unstable on-policy learning might otherwise lose. 
+
+Limitations. TSIL does not directly solve initial exploration. It improves exploitation and consol-idation after rare successful manipulation trajectories appear, so the base learner still needs enough exploration or task guidance to discover success. Temporal efficiency is also only one behavioral signal considered here. If deployment requires diverse modes such as slower, safer, smoother, or more stable behavior, future systems could first learn reliable efficient behavior and then combine temporal targets with additional metrics that reflect those requirements. Finally, TSIL requires stor-ing successful trajectories in memory. We used a small fixed-size replay buffer, whereas more memory-efficient replay and compression could preserve fast successes more effectively. 8Acknowledgments 
+
+This work is supported by DARPA TIAMAT program under award HR00112490419, ARO under award W911NF2410405, NSF ERC PreMiEr under award 2133504, and ARL STRONG program under awards W911NF2320182, W911NF2220113, and W911NF242021. 
+
+References 
+
+[1] J. W. Krakauer, A. M. Hadjiosif, J. Xu, A. L. Wong, and A. M. Haith. Motor learning. Com-prehensive Physiology , 9(2):613–663, 2019. doi:10.1002/cphy.c170043. [2] P. Vassiliadis, G. Derosiere, C. Dubuc, A. Lete, F. Crevecoeur, F. C. Hummel, and J. Duque. Reward boosts reinforcement-based motor learning. iScience , 24(7):102821, 2021. doi:10. 1016/j.isci.2021.102821. [3] S. Gu, E. Holly, T. Lillicrap, and S. Levine. Deep reinforcement learning for robotic manipula-tion with asynchronous off-policy updates. In 2017 IEEE international conference on robotics and automation (ICRA) , pages 3389–3396. IEEE, 2017. [4] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [5] T. Yu, D. Quillen, Z. He, R. Julian, K. Hausman, C. Finn, and S. Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning. In Conference on robot learning , pages 1094–1100. PMLR, 2020. [6] A. Y. Ng, D. Harada, and S. Russell. Policy invariance under reward transformations: Theory and application to reward shaping. In Icml , volume 99, pages 278–287, 1999. [7] Y. Luo, K. Dong, L. Zhao, Z. Sun, C. Zhou, and B. Song. Balance between efficient and effective learning: Dense2Sparse reward shaping for robot manipulation with environment uncertainty. arXiv preprint arXiv:2003.02740 , 2020. [8] F. Pardo, A. Tavakoli, V. Levdik, and P. Kormushev. Time limits in reinforcement learning. In 
+
+International Conference on Machine Learning , pages 4045–4054. PMLR, 2018. [9] K. Doya. Reinforcement learning in continuous time and space. Neural computation , 12(1): 219–245, 2000. [10] C. Tallec, L. Blier, and Y. Ollivier. Making deep q-learning methods robust to time discretiza-tion. In International Conference on Machine Learning , pages 6096–6104. PMLR, 2019. [11] C. Yildiz, M. Heinonen, and H. L¨ ahdesm¨ aki. Continuous-time model-based reinforcement learning. In International Conference on Machine Learning , pages 12009–12018. PMLR, 2021. [12] S. Ramstedt and C. Pal. Real-time reinforcement learning. In Advances in Neural Information Processing Systems , volume 32, pages 3067–3076, 2019. [13] R. S. Sutton, D. Precup, and S. Singh. Between mdps and semi-mdps: A framework for tem-poral abstraction in reinforcement learning. Artificial intelligence , 112(1–2):181–211, 1999. [14] A. S. Lakshminarayanan, S. Sharma, and B. Ravindran. Dynamic action repetition for deep reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 31, 2017. [15] S. Sharma, A. Srinivas, and B. Ravindran. Learning to repeat: Fine grained action repetition for deep reinforcement learning. In International Conference on Learning Representations ,2017. 9[16] A. Biedenkapp, R. Rajan, F. Hutter, and M. Lindauer. Temporl: Learning when to act. In 
+
+International Conference on Machine Learning , pages 914–924. PMLR, 2021. [17] Y. J. Kim and M. Chi. Time-aware q-networks: Resolving temporal irregularity for deep reinforcement learning. arXiv preprint arXiv:2105.02580 , 2021. [18] Y. J. Kim and M. Chi. Time-aware deep reinforcement learning with multi-temporal abstrac-tion. Applied Intelligence , 53(17):20007–20033, 2023. [19] A. N. Nhu, S. Son, and M. Lin. Time-aware world model for adaptive prediction and control. In Forty-second International Conference on Machine Learning , 2025. [20] G. Li, J. Wu, and Y. He. Act better by timing: A timing-aware reinforcement learning for autonomous driving. arXiv preprint arXiv:2406.13223 , 2024. [21] Y. Chen, R. Ye, Z. Tao, H. Liu, G. Chen, J. Peng, J. Ma, Y. Zhang, J. Ji, and Y. Zhang. Reinforcement learning for robot navigation with adaptive forward simulation time (afst) in a semi-markov model, 2023. URL https://arxiv.org/abs/2108.06161 .[22] Q. Lin, B. Tang, Z. Wu, C. Yu, S. Mao, Q. Xie, X. Wang, and D. Wang. Safe offline rein-forcement learning with real-time budget constraints. In Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research ,pages 21127–21152. PMLR, 2023. URL https://proceedings.mlr.press/v202/ lin23h.html .[23] Y. Jia and B. Chen. Time as a control dimension in robot learning, 2026. URL https: //arxiv.org/abs/2511.07654 .[24] J. Oh, Y. Guo, S. Singh, and H. Lee. Self-imitation learning. In International Conference on Machine Learning , pages 3878–3887. PMLR, 2018. [25] T. Dai, H. Liu, and A. A. Bharath. Episodic self-imitation learning with hindsight. Electronics ,9(10):1742, 2020. [26] Z. Chen and M. Lin. Self-imitation learning for robot tasks with sparse and delayed rewards. In 2021 IEEE International Conference on Mechatronics and Automation (ICMA) , pages 477– 482. IEEE, 2021. [27] S. Luo, H. Kasaei, and L. Schomaker. Self-imitation learning by planning. In 2021 IEEE International Conference on Robotics and Automation (ICRA) , pages 4823–4829. IEEE, 2021. [28] S. Luo and L. Schomaker. Reinforcement learning in robotic motion planning by combined experience-based planning and self-imitation learning. Robotics and Autonomous Systems ,170:104545, 2023. [29] J. Bujalance and F. Moutarde. Reward relabelling for combined reinforcement and imitation learning on sparse-reward tasks. In Proceedings of the 2023 International Conference on Autonomous Agents and Multiagent Systems , pages 2565–2567, 2023. [30] Y. Li, Y. Wu, H. Xu, X. Wang, and Y. Wu. Solving compositional reinforcement learning problems via task reduction. In International Conference on Learning Representations , 2021. [31] Y. Li, T. Gao, J. Yang, H. Xu, and Y. Wu. Phasic self-imitative reduction for sparse-reward goal-conditioned reinforcement learning. In International Conference on Machine Learning ,pages 12765–12781. PMLR, 2022. [32] Y. Li, Y. Wang, and X. Tan. Self-imitation guided goal-conditioned reinforcement learning. 
+
+Pattern Recognition , 144:109845, 2023. 10 [33] A. Sharma, A. M. Ahmed, R. Ahmad, and C. Finn. Self-improving robots: End-to-end autonomous visuomotor reinforcement learning. In Proceedings of The 7th Conference on Robot Learning , volume 229 of Proceedings of Machine Learning Research , pages 3292–3308. PMLR, 2023. URL https://proceedings.mlr.press/v229/sharma23b.html .[34] K. Bousmalis, G. Vezzani, D. Rao, C. Devin, A. X. Lee, M. Bauza, T. Davchev, Y. Zhou, A. Gupta, A. Raju, et al. Robocat: A self-improving generalist agent for robotic manipulation. 
+
+Transactions on Machine Learning Research , 2023. [35] S. K. Seyed Ghasemipour, A. Wahid, J. Tompson, P. Sanketi, and I. Mordatch. Self-improving embodied foundation models. In Advances in Neural Information Processing Systems , 2025. URL https://arxiv.org/abs/2509.15155 .[36] V. Joshi, Z. Xu, B. Liu, P. Stone, and A. Zhang. Benchmarking massively parallelized multi-task reinforcement learning for robotics tasks. In Reinforcement Learning Conference , 2025. URL https://openreview.net/forum?id=z0MM0y20I2 .11 A Algorithm and Implementation Details 
+
+A.1 Algorithm details Optimization objective. TSIL uses the same PPO objective as all baselines; temporal target con-ditioning only changes the observation and reward passed to PPO. For rollout data Ti collected at training iteration i, define the PPO probability ratio 
+
+ρt(θ) = πθ (at | ˜ot)
+
+πθold (at | ˜ot) . (4) 
+
+¯ρt(θ) = clip( ρt(θ), 1 − ϵ, 1 + ϵ). (5) 
+
+ℓclip  
+
+> t
+
+(θ) = − min( ρt(θ)At, ¯ρt(θ)At) . (6) 
+
+LPPO = Et∼T i
+
+h
+
+ℓclip  
+
+> t
+
+(θ) + cV
+
+2 (Vψ (˜ ot) − Gt)2 − cH H(πθ (· | ˜ot)) 
+
+i
+
+. (7) 
+
+L = LPPO + λSI LSI . (8) Here πθ is the current actor with parameters θ, πθold is the rollout policy used to collect Ti, at is the action sampled at time step t, and ˜ot is the temporally augmented observation. The operator 
+
+clip( x, l, u ) = min(max( x, l ), u ) truncates its first argument to the interval [l, u ], ϵ is the PPO clip-ping threshold, ¯ρt is the clipped probability ratio, and ℓclip  
+
+> t
+
+is the per-transition clipped policy loss. 
+
+At and Gt are the on-policy PPO advantage and return estimates, Vψ is the critic with parameters ψ,
+
+cV and cH are the value-loss and entropy coefficients, and H(πθ (· | ˜ot)) is the policy entropy. The expectation Et∼T i averages over rollout timesteps in Ti. The self-imitation coefficient is λSI , and the self-imitation loss LSI is defined in Eq. (3). 
+
+Replay buffer update. The replay buffer is intended to preserve behaviors that show a configura-tion can be solved efficiently. For each configuration, TSIL therefore keeps at most k successful trajectories with the shortest completion times and discards slower successful trajectories once the replay buffer is full. Given a candidate set S, this update is 
+
+TopKFastSuccess( S, k ) = sort T succ ↑ ({τ ∈ S | 1succ (τ ) = 1 })1: k . (9) where T succ (τ ) is the completion time of trajectory τ . The arrow T succ ↑ denotes ascending order, so smaller completion times are ranked first and retained with higher priority. 
+
+Fallback replay. For compactness, Algorithm 1 shows the fast-success replay buffer update. In implementation, the replay buffer also maintains a return-ranked fallback pool. When fewer than k
+
+successful trajectories are available for the fast-success replay buffer of a configuration, the remain-ing replay slots are filled by top-return trajectories from the same configuration to stabilize early minibatch updates. These fallback trajectories use the same target-conditioned relabeling as fast successes. Let |τ | denote the stored length of trajectory τ in replay transitions. For truncated stored trajectories, relabeled returns are computed with value bootstrap, 
+
+ˆGτt = 
+
+> |τ|− 1
+
+X
+
+> j=t
+
+γj−t ˆrτj + γ|τ |− t(1 − dτ )Vψ (ˆ oτ 
+
+> |τ|
+
+), (10) 
+
+Algorithm 1 Temporal Self-Imitation Learning 
+
+Require: configurations {ϕm}Mm=1 , horizon N , interval ∆t, replay buffer size k, PPO epochs E, step size η,SIL coefficients λSI , λ V,SI 
+
+1: θ, ψ ← initialize actor and critic; B0(ϕ) ← ∅ ; D1(ϕ) ← T max 
+
+2: for iteration i = 1 , 2, . . . do 
+
+3: Ti ← Rollout( πθ , D i), with ˜ot = ( ot, T used  
+
+> t
+
+, D i(ϕ)) , rt = rtask  
+
+> t
+
++ rsucc  
+
+> t
+
+Eq. (2) 4: Bi(ϕ) ← TopKFastSuccess( Bi−1(ϕ) ∪ T i(ϕ), k ) Eq. (9) 5: ˆBi(ϕ) ← Relabel( Bi(ϕ), D i); compute ˆGτt , A+ 
+
+> t
+
+(τ ), wi(τ ) Sec. 3.3 6: for e = 1 , . . . , E do 
+
+7: L ← L PPO (θ, ψ ; Ti) + λSI LSI (θ, ψ ; ˆBi) Eq. (8) 8: (θ, ψ ) ← (θ, ψ ) − η∇θ,ψ L
+
+9: end for 
+
+10: Di+1 ← TargetUpdate( Di, Ti) Eq. (1) 11: end for 
+
+12 where dτ = 1 if the stored trajectory terminates with task completion and dτ = 0 if it is truncated. 
+
+On-policy training clarification. The PPO loss is computed only from the freshly collected on-policy rollout batch Ti. Stored trajectories do not enter the PPO likelihood ratio or an off-policy Bellman backup. They are used only through the auxiliary self-imitation loss in Eq. (3). The value term in LSI regresses the critic toward relabeled Monte Carlo or bootstrapped replay-buffer returns when the positive return-value gap is nonzero. This is auxiliary value supervision rather than a one-step off-policy Bellman target. Thus, TSIL remains an on-policy PPO method augmented with a small fast-success memory for self-imitation. 
+
+A.2 Implementation details Parallel-environment implementation. Temporal efficiency is configuration-conditioned: a com-pletion time that is efficient for one object initialization or target pose may be slow for another. We therefore fix spatial randomization within each parallel environment: each environment keeps a persistent configuration ϕ across resets, while configurations are sampled independently across environments. TSIL maintains the adaptive temporal target D(ϕ) and replay buffer independently for each parallel environment. 
+
+Replay relabeling. During replay, stored trajectories keep their original observations, actions, and elapsed-time channel, but the target channel is relabeled using the current temporal target D(ϕ).The task reward is unchanged, and the terminal temporal success reward is recomputed under the current target. Replay returns use the relabeled rewards; truncated fallback trajectories additionally use the value bootstrap in Eq. (10). 
+
+Replay sampling. Each environment stores a small in-memory replay buffer with top-k fastest suc-cessful trajectories ( k = 5 ). The replay buffer also maintains a top-return ranking used as fallback when few fast successes are available early in training. TSIL samples replay at the trajectory level: it first samples stored trajectories and then flattens all valid time steps under the same transition bud-get as a PPO minibatch. This increases full-trajectory revisitation of efficient behavior and prevents the fastest successful trajectories from being diluted by uniform transition sampling. For trajectory-level replay, TSIL uses the speed-priority weights defined in Sec. 3.3. The generic SIL baseline uses the same replay code path but samples high-return trajectories at the transition level, matching the original SIL-style uniform transition replay. 
+
+Normalization. All methods use the same normalization pipeline. Physical observation and state features use running mean–standard-deviation normalization. Temporal features, including elapsed time and the current temporal target, are excluded from running-statistic normalization and are in-stead scaled by T max . Rewards are normalized with the same per-task discounted-return normalizer for on-policy rollouts and relabeled replay trajectories. When value normalization is enabled, PPO returns, critic predictions, and relabeled replay-buffer returns are mapped into the same normalized value space before value losses or the positive return-value gap are computed. PPO advantages are normalized per task before the policy gradient update. 
+
+Optimization hyperparameters. The PPO update, rollout length, minibatch size, discounting, GAE parameter, value coefficient, entropy coefficient, and learning rate schedule are shared with all baselines. The method-specific settings are the replay buffer size, replay batch size, and auxiliary loss coefficients λSI and λV,SI . The complete shared PPO settings and replay-specific settings are listed in Tables 5 and 6. 
+
+B Training and Evaluation Setup 
+
+B.1 Benchmark and agent setup Tasks. All methods used MTBench, a Meta-World manipulation benchmark implemented on the Isaac Gym simulator. The simulator, PPO optimizer, task rewards, rollout hori-zon, and evaluation procedure were shared across all methods. For the MT15 benchmark, each task was trained in a separate job with 6400 parallel environments; the 15 task ids are 
+
+{0, 1, 2, 3, 14 , 18 , 21 , 22 , 27 , 28 , 29 , 30 , 43 , 44 , 46 }. Figure 7 shows the complete MT15 task suite. 13 Agent design. The policy observes robot proprioceptive features and task state, including end-effector position, gripper openness, object poses, target position, and a one-step memory of robot and object state. For temporal-target methods, this observation is augmented with elapsed time and the adaptive temporal target as described in Sec. 3.1. The action is a four-dimensional continuous command consisting of a Cartesian end-effector position delta and a gripper command, which is executed by the Franka controller in Isaac Gym. The actor and critic are five-hidden-layer MLPs with hidden sizes [512 , 256 , 128 , 64 , 32] , tanh activations, and LayerNorm. The actor predicts a mean μθ (˜ ot) and uses a state-independent diagonal covariance, 
+
+at ∼ πθ (· | ˜ot), πθ (· | ˜ot) = N  μθ (˜ ot), diag( σ2) , (11) where σ ∈ R4 is the action-standard-deviation vector parameterized by a learned state-independent log-standard-deviation vector. The operator diag( σ2) forms a diagonal covariance matrix with en-tries σ2 
+
+> j
+
+on the diagonal. The policy observation can be obtained on a real setup from robot state estimation and calibrated perception or tracking. Elapsed time and the temporal target are directly available scalar signals. 
+
+Controller design. The high-level policy outputs Cartesian end-effector position deltas and a grip-per command at 60 Hz. The arm command is converted by damped differential inverse kinematics into target joint positions. These joint targets can be tracked by a low-level joint impedance con-troller at 250 Hz, which converts joint-position errors into torque commands. The differential IK module applies joint-velocity limiting and includes an exponential moving average smoothing op-tion for joint increments, which can be used for future real-robot deployment to attenuate abrupt command changes and reduce oscillatory motion. This hierarchy keeps the learned interface close to standard real-robot control stacks by delegating robot-specific dynamics to IK and impedance control. T00 Assembly T01 Basketball T02 Bin picking T03 Box close T14 Door lock         
+
+> T18 Drawer open T21 Hammer T22 Hand insert T27 Lever pull T28 Peg insert side
+> T29 Peg unplug side T30 Pick out of hole T43 Soccer T44 Stick pull T46 Sweep into goal
+
+Fig. 7: MT15 task suite. The appendix contact sheet shows all 15 Meta-World manipulation tasks used in our MTBench evaluation. 
+
+B.2 Disturbed training settings 
+
+All disturbance experiments used the same training setting and compared ATTL, ATTL + SIL, and TSIL over the same MT15 tasks. Each experiment perturbed one training factor while leaving the 14 remaining preprocessing and loss-scaling settings unchanged. Table 4 lists the disturbance type and swept values used in each experiment. 
+
+Policy gradient noise. We injected zero-mean Gaussian noise directly into the policy gradients during the optimizer step. For each policy parameter, the noise standard deviation was set to the current PPO policy gradient root mean square multiplied by the noise scaling value. This simulated noisy or drifting policy updates in long-horizon on-policy training. 
+
+Dense reward dropout. We dropped dense shaping rewards episode-wise with dropout probability 
+
+p, while keeping the target-conditioned success reward. The dropout mask was resampled when an environment finished an episode. This tested whether replay could help policy training when shaped guidance became intermittent or unreliable. 
+
+PPO clip ratio sweep. We increased the PPO clip ratio value beyond the default setting, allowing larger policy updates per minibatch and weakening PPO’s trust-region-style constraint. This sweep tested whether self-imitation could stabilize these more aggressive updates while preserving training efficiency. 
+
+Learning rate sweep. We increased the learning rate above the default setting to simulate a more aggressive optimizer. This tested robustness to optimizer overshoot, a common practical failure mode in large-scale parallel robot learning. Tab. 4: Disturbed training settings. Each experiment sweeps one disturbance type while keeping the rest of the training configuration fixed.              
+
+> Disturbance type Values Policy gradient noise scaling 5,10 ,20
+> Dense reward dropout probability 0.4,0.6,0.8
+> PPO clip ratio 0.3,0.5,0.7
+> Learning rate 0.001 ,0.005 ,0.01
+
+B.3 Baselines and hyperparameters 
+
+All methods used PPO as the base optimizer and shared the same agent architecture, rollout collec-tion, preprocessing, and other training components. We used the baseline set described in Sec. 4. All methods use the same success reward scale: rsucc = 100 . Dense task rewards are scaled by 0.1
+
+to keep shaped guidance balanced with the terminal success signal. Table 5 lists the shared training configuration. 
+
+Baseline-specific settings. Beyond the shared configuration, IH uses dense reward PPO without temporal conditioning or replay; Step-cost IH adds a per-step penalty of 0.01 ; D2S IH switches the dense reward scale from 1 to 0 at 50% of training steps; FTTL uses the fixed temporal target 
+
+D(ϕ) = T max ; ATTL enables the adaptive target update in Eq. (1); ATTL + SIL adds return-prioritized transition-level replay; and TSIL uses fast-success trajectory-level replay. Self-imitation methods use the same auxiliary coefficients and perform joint updates every PPO minibatch. Table 6 lists these replay-specific settings. 
+
+B.4 Diagnostic metric computation 
+
+We provide detailed definitions for the diagnostic metrics used in Sec. 4.3. These metrics quantify where positive-advantage mass concentrates and how self-imitation affects revisitation of stored behavior. 
+
+Learning-signal diagnostics. For the learning-signal analysis in Fig. 5, completed episodes were grouped into bins by normalized completion time and discounted task-reward return. Cell color shows empirical success rate in each bin, while the red overlay gradient shows the fraction of total positive-advantage mass assigned to that bin. Let E be the set of completed training episodes, and let b ⊂ E denote the subset of episodes assigned to a given visualization bin. We define 
+
+Mass( b) = 
+
+P 
+
+> τ∈b
+
+P 
+
+> t∈τ
+
+[ ˆAPPO  
+
+> t
+
+(τ )] +
+
+P 
+
+> τ∈E
+
+P 
+
+> t∈τ
+
+[ ˆAPPO  
+
+> t
+
+(τ )] +
+
+, (12) 15 Tab. 5: Shared training configuration. Values follow the MTBench configuration unless explicitly swept in the disturbance experiments. 
+
+Item Value Parallel environments 6400 
+
+Episode horizon 150 steps Total training budget 50 × 10 6 steps PPO rollout length 32 steps Discount / GAE parameter γ = 0 .995 / λ = 0 .95 
+
+Learning rate 5 × 10 −4
+
+Task reward scale 0.1
+
+Success reward scale rsucc = 100 
+
+PPO clip ratio 0.2
+
+PPO epochs / minibatch size 5 / 20480 
+
+Value coefficient 4
+
+Entropy coefficient 0.005 
+
+Evaluation trials per seed 2000 
+
+Reported checkpoint best final-10% success rate 
+
+Tab. 6: SIL-specific replay configuration. ATTL + SIL reuses high-return experience with transition-level sampling, while TSIL prioritizes the fastest successful trajectories and revisits full trajectories. 
+
+Item ATTL + SIL TSIL Replay source high-return fast-success Sampling unit transition trajectory Trajectory weighting none speed-priority Per-env. replay buffer top-k 5 5
+
+Replay batch size 20480 20480 
+
+Policy replay coefficient λSI = 0 .05 λSI = 0 .05 
+
+Value replay coefficient λV,SI = 0 .05 λV,SI = 0 .05 
+
+where [x]+ = max( x, 0) and ˆAPPO  
+
+> t
+
+(τ ) is the advantage after the same normalization used for the PPO policy update. For the summary bars, let mτ = P 
+
+> t∈τ
+
+[ ˆAPPO  
+
+> t
+
+(τ )] + be the positive-advantage mass of episode τ , and let M = P  
+
+> τ∈E
+
+mτ be the total positive-advantage mass over the completed episodes. We also let sτ ∈ { 0, 1} be the success indicator, ¯Tτ = Tτ /T max be normalized comple-tion time, and Gtask  
+
+> τ
+
+= P 
+
+> t∈τ
+
+γtrtask  
+
+> t
+
+be the discounted return from the task-reward component. Let 
+
+Gmin = min τ ∈E Gtask  
+
+> τ
+
+, Gmax = max τ ∈E Gtask  
+
+> τ
+
+, and define the normalized task return as 
+
+ρτ = Gtask  
+
+> τ
+
+− Gmin 
+
+max( Gmax − Gmin , ϵ ) , (13) where ϵ is a small numerical constant. The four aggregate mass fractions are defined as: 
+
+Fsuccess = 1
+
+M
+
+X 
+
+> τ∈E
+
+mτ sτ , (14) 
+
+Ffastsuccess = 1
+
+M
+
+X 
+
+> τ∈E
+
+mτ sτ (1 − ¯Tτ ), (15) 
+
+Fslowfailure = 1
+
+M
+
+X 
+
+> τ∈E
+
+mτ (1 − sτ ) ¯Tτ , (16) 
+
+Frewarddistracted = 1
+
+M
+
+X 
+
+> τ∈E
+
+mτ ρτ ¯Tτ , (17) If M = 0 , all fractions are set to zero. Fsuccess measures how much positive-advantage mass comes from successful episodes, indicating whether the update reinforces task completion. Ffastsuccess fur-ther weights successful episodes by temporal efficiency, indicating whether the update concentrates 16 0 5 10 20                        
+
+> noise scale
+> 0.0
+> 0.5
+> 1.0
+> Success rate  Policy-gradient noise
+> 00.4 0.6 0.8
+> drop probability
+> Dense reward dropout
+> 0.2 0.3 0.5 0.7
+> clip range
+> PPO clip
+> 5e-4 1e-3 5e-3 1e-2
+> learning rate
+> Learning rate
+> 0510 20
+> noise scale
+> 0.0
+> 0.5
+> 1.0
+> AUC
+> 00.4 0.6 0.8
+> drop probability
+> 0.2 0.3 0.5 0.7
+> clip range
+> 5e-4 1e-3 5e-3 1e-2
+> learning rate
+> TSIL ATTL+SIL ATTL
+
+Fig. 8: Disturbance-sweep results. Each column sweeps one training disturbance from Table 4; rows report success rate and AUC. Values are averaged over MT15 tasks and seeds for ATTL, ATTL + SIL, and TSIL. The error bars represent standard error of the mean. on earlier successes. Fslowfailure measures positive-advantage mass assigned to late unsuccessful tra-jectories, which indicates whether PPO still reinforces horizon-consuming failures. Frewarddistracted 
+
+measures positive-advantage mass assigned to late trajectories with high dense task return, indicating whether shaped rewards attract updates toward slow reward-seeking behavior rather than compact completion. 
+
+Self-imitation diagnostics. For replay diagnostics, let B be the reference trajectories stored in the replay buffer, and let Bsucc ⊂ B be the successful trajectories in this set. Buffer time is the mean completion time of successful trajectories currently preserved in the replay buffer, 
+
+Tbuf = 1
+
+|B succ |
+
+X 
+
+> τ∈B succ
+
+T succ (τ ). (18) Lower buffer time indicates that the replay buffer has preserved faster successful behavior on aver-age. Replay NLL measures how easily the current policy can revisit stored actions that still have positive self-imitation gap. For each stored transition (τ, t ) in the top-k reference set Bk, we used the self-imitation gap defined in Sec. 3.3, A+ 
+
+> t
+
+(τ ) = [ ˆGτt − Vψ (ˆ oτt )] +. Let B+ 
+
+> k
+
+= {(τ, t ) ∈ B k :
+
+A+ 
+
+> t
+
+(τ ) > 0} be the stored transitions with positive self-imitation gap. The reported replay NLL is the positive-gap-weighted negative log likelihood, 
+
+NLL replay = −
+
+P
+
+> (τ,t )∈B +
+> k
+
+A+ 
+
+> t
+
+(τ ) log πθ (aτt | ˆoτt )
+
+P
+
+> (τ,t )∈B +
+> k
+
+A+ 
+
+> t
+
+(τ ) , (19) computed when the positive-gap denominator is nonzero. Lower values indicate that the current policy assigns higher likelihood to useful stored behavior. For the scalar replay table, reported buffer time is the mean completion time of successful trajectories in the replay buffer after training, and reported replay NLL is the mean NLL at the middle of training (50% of training steps); both values are averaged over tasks and seeds. 
+
+C Additional Results and Diagnostics 
+
+C.1 Disturbance-sweep results 
+
+The disturbance sweeps varied policy gradient noise, dense reward dropout, PPO clip ratio, and learning rate using the settings in Table 4. Figure 8 reports success rate and AUC for ATTL, ATTL + SIL, and TSIL. Replay generally improved robustness under aggressive or degraded training. TSIL was strongest under severe update drift, while generic SIL could be competitive when sparse fast-success memories made broader high-return replay useful. 17 C.2 Additional diagnostics 
+
+We include additional per-task diagnostics beyond the representative examples in Sec. 4.3. Fig-ures 9–11 show learning-signal maps using the same success-rate cells and positive-advantage over-lays as Fig. 5. Figure 12 shows the corresponding self-imitation landscapes using the same update axes and fast-success likelihood background as Fig. 6. Adaptive temporal targets focus policy up-dates on fast successes, while fast-success replay increases revisitation of efficient behavior and mitigates forgetting caused by distribution shift. 
+
+T0: Assembly Cell: success rate (SR)     
+
+> SR=1 0.5<SR<1 SR<=0.5 01
+
+Overlay: positive advantage mass   
+
+> 024
+
+# Episodes log 10 (1 + n) 
+
+> 0
+> 1ATTL
+
+iter: 0-25% 25-50% 50-75% 75-100% # Episodes        
+
+> 0
+> 1FTTL
+> 0
+> 1
+> Normalized  Gtask
+> D2S IH
+> 0
+> 1Step-cost IH
+> 01
+> 0
+> 1IH
+> 0101
+
+Normalized Tused     
+
+> 0101
+> 01
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+
+success mass 
+
+fast-success mass  
+
+> 01
+
+Weighted positive advantage 
+
+mass fraction 
+
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+
+reward-distracted mass 
+
+slow-failure mass 
+
+T18: Drawer Open Cell: success rate (SR)     
+
+> SR=1 0.5<SR<1 SR<=0.5 01
+
+Overlay: positive advantage mass   
+
+> 024
+
+# Episodes log 10 (1 + n) 
+
+> 0
+> 1ATTL
+
+iter: 0-25% 25-50% 50-75% 75-100% # Episodes        
+
+> 0
+> 1FTTL
+> 0
+> 1
+> Normalized  Gtask
+> D2S IH
+> 0
+> 1Step-cost IH
+> 01
+> 0
+> 1IH
+> 0101
+
+Normalized Tused      
+
+> 0101
+> 01
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+> success mass
+> fast-success mass
+> 01
+
+Weighted positive advantage 
+
+mass fraction 
+
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+> reward-distracted mass
+> slow-failure mass
+
+Fig. 9: Additional learning-signal maps: Assembly and Drawer Open. Positive-advantage mass is summarized over completion time and task-reward return for T0 and T18. 18 T21: Hammer Cell: success rate (SR) 
+
+SR=1 0.5<SR<1 SR<=0.5 0 1
+
+Overlay: positive advantage mass 
+
+0 2 4
+
+# Episodes log 10 (1 + n)
+
+0
+
+1 ATTL 
+
+iter: 0-25% 25-50% 50-75% 75-100% # Episodes 
+
+0
+
+1 FTTL 
+
+0
+
+1
+
+> Normalized  Gtask
+
+D2S IH 
+
+0
+
+1 Step-cost IH 
+
+0 1
+
+0
+
+1 IH 
+
+0 1 0 1
+
+Normalized Tused 
+
+0 1 0 1
+
+0 1
+
+ATTL 
+
+FTTL 
+
+D2S IH 
+
+Step-cost IH 
+
+IH 
+
+success mass 
+
+fast-success mass 
+
+0 1
+
+Weighted positive advantage 
+
+mass fraction 
+
+ATTL 
+
+FTTL 
+
+D2S IH 
+
+Step-cost IH 
+
+IH 
+
+reward-distracted mass 
+
+slow-failure mass 
+
+T29: Peg Unplug Side Cell: success rate (SR) 
+
+SR=1 0.5<SR<1 SR<=0.5 0 1
+
+Overlay: positive advantage mass 
+
+0 2 4
+
+# Episodes log 10 (1 + n)
+
+0
+
+1 ATTL 
+
+iter: 0-25% 25-50% 50-75% 75-100% # Episodes 
+
+0
+
+1 FTTL 
+
+0
+
+1
+
+> Normalized  Gtask
+
+D2S IH 
+
+0
+
+1 Step-cost IH 
+
+0 1
+
+0
+
+1 IH 
+
+0 1 0 1
+
+Normalized Tused 
+
+0 1 0 1
+
+0 1
+
+ATTL 
+
+FTTL 
+
+D2S IH 
+
+Step-cost IH 
+
+IH 
+
+success mass 
+
+fast-success mass 
+
+0 1
+
+Weighted positive advantage 
+
+mass fraction 
+
+ATTL 
+
+FTTL 
+
+D2S IH 
+
+Step-cost IH 
+
+IH 
+
+reward-distracted mass 
+
+slow-failure mass 
+
+Fig. 10: Additional learning-signal maps: Hammer and Peg Unplug Side. Positive-advantage mass is summarized over completion time and task-reward return for T21 and T29. 19 T44: Stick Pull Cell: success rate (SR) 
+
+SR=1 0.5<SR<1 SR<=0.5 0 1
+
+Overlay: positive advantage mass 
+
+0 2 4
+
+# Episodes log 10 (1 + n) 
+
+> 0
+> 1ATTL
+
+iter: 0-25% 25-50% 50-75% 75-100% # Episodes        
+
+> 0
+> 1FTTL
+> 0
+> 1
+> Normalized  Gtask
+> D2S IH
+> 0
+> 1Step-cost IH
+> 01
+> 0
+> 1IH
+> 0101
+
+Normalized Tused     
+
+> 0101
+> 01
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+
+success mass 
+
+fast-success mass  
+
+> 01
+
+Weighted positive advantage 
+
+mass fraction 
+
+> ATTL
+> FTTL
+> D2S IH
+> Step-cost IH
+> IH
+
+reward-distracted mass 
+
+slow-failure mass 
+
+Fig. 11: Additional learning-signal map for T44: Stick Pull. Positive-advantage mass is summa-rized over completion time and task-reward return for the representative Stick Pull task. 20 T0: Assembly −0.04 0.00 0.04 
+
+PPO update axis 
+
+−0.04 
+
+0.00 
+
+0.04 
+
+> SIL-only axis
+> orthogonal to PPO
+
+25% steps 
+
+PPO update 
+
+TSIL update 
+
+current policy 
+
+50% steps 75% steps 100% steps 25% steps 
+
+ATTL+SIL update 
+
+50% steps 75% steps 100% steps 
+
+0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96 
+
+Normalized fast-success memory log-prob 
+
+T18: Drawer Open −0.04 0.00 0.04 
+
+PPO update axis 
+
+−0.04 
+
+0.00 
+
+0.04 
+
+> SIL-only axis
+> orthogonal to PPO
+
+25% steps 
+
+PPO update 
+
+TSIL update 
+
+current policy 
+
+50% steps 75% steps 100% steps 25% steps 
+
+ATTL+SIL update 
+
+50% steps 75% steps 100% steps 
+
+0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96 
+
+Normalized fast-success memory log-prob 
+
+T21: Hammer −0.04 0.00 0.04 
+
+PPO update axis 
+
+−0.04 
+
+0.00 
+
+0.04 
+
+> SIL-only axis
+> orthogonal to PPO
+
+25% steps 
+
+PPO update 
+
+TSIL update 
+
+current policy 
+
+50% steps 75% steps 100% steps 25% steps 
+
+ATTL+SIL update 
+
+50% steps 75% steps 100% steps 
+
+0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96 
+
+Normalized fast-success memory log-prob 
+
+T29: Peg Unplug Side −0.04 0.00 0.04 
+
+PPO update axis 
+
+−0.04 
+
+0.00 
+
+0.04 
+
+> SIL-only axis
+> orthogonal to PPO
+
+25% steps 
+
+PPO update 
+
+TSIL update 
+
+current policy 
+
+50% steps 75% steps 100% steps 25% steps 
+
+ATTL+SIL update 
+
+50% steps 75% steps 100% steps 
+
+0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96 
+
+Normalized fast-success memory log-prob 
+
+T44: Stick Pull −0.04 0.00 0.04 
+
+PPO update axis 
+
+−0.04 
+
+0.00 
+
+0.04 
+
+> SIL-only axis
+> orthogonal to PPO
+
+25% steps 
+
+PPO update 
+
+TSIL update 
+
+current policy 
+
+50% steps 75% steps 100% steps 25% steps 
+
+ATTL+SIL update 
+
+50% steps 75% steps 100% steps 
+
+0.00 0.12 0.24 0.36 0.48 0.60 0.72 0.84 0.96 
+
+Normalized fast-success memory log-prob 
+
+Fig. 12: Additional fast-success revisitation landscapes. Landscapes for T0, T18, T21, T29, and T44 compare TSIL and generic SIL update directions relative to stored fast-success behavior. 21

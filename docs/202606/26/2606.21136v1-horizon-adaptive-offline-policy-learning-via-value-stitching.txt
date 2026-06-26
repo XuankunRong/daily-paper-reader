@@ -1,0 +1,828 @@
+Title: Horizon Adaptive Offline Policy Learning via Value Stitching
+
+URL Source: https://arxiv.org/pdf/2606.21136v1
+
+Published Time: Tue, 23 Jun 2026 00:40:16 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# Horizon Adaptive Offline Policy Learning via Value Stitching 
+
+Kexin Zheng 1 Xianyuan Zhan 2† Xintao Yan 1† 
+
+> 1
+
+The University of Hong Kong 2 Tsinghua University 
+
+whiterr@link.cuhk.edu.hk zhanxianyuan@air.tsinghua.edu.cn xintaoy@hku.hk 
+
+## Abstract 
+
+Learning accurate value functions plays a decisive role for reinforcement learn-ing (RL) agents to solve long-horizon, complex tasks. Conventional temporal-difference (TD) learning objectives suffer from value-estimation bias that accu-mulates over the horizon, while extended-horizon modeling methods, such as n-step TD backups and Q-chunking, adopt a rigid, fixed-horizon value-modeling recipe that is often not flexible enough to capture complex value structures in long-horizon, multi-stage tasks. In this paper, we show that enabling value updates with dynamic horizon composition can yield a strong offline policy learning scheme. Our method, Horizon Adaptive Offline Policy Learning via VAlue STitching (VAST ), replaces fixed-horizon backups with recursive, horizon-adaptive value composition. Its key ingredient is to couple value optimiza-tion with a future state- and horizon-length-conditioned auxiliary value func-tion that is learned through direct data supervision, and a stitching policy that optimally selects the reward-maximizing horizon length and future sub-goal to achieve horizon-adaptive value stitching. This design enables direct estima-tion and compositional "stitching" of variable-length returns grounded in ac-tionable sub-goal states, providing an accurate and greedily exploitable value-supervision signal for offline policy optimization. Across 50 tasks on OGBench, 
+
+VAST outperforms fixed-step, extended-horizon methods, and generative-value of-fline RL baselines, achieving strong performance particularly in high-complexity, long-horizon decision-making tasks. The official implementation is available at: https://github.com/Whiterrrrr/value-stitching .
+
+## 1 Introduction 
+
+The quintessence of reinforcement learning (RL) lies in value [1–5]: it evaluates how present choices shape future consequences, provides the key signal for value judgment [6–8], and ultimately steers both the direction of optimization and the quality of the learned policy [9]. However, in long-horizon, complex task settings, conventional temporal-difference (TD) learning is highly susceptible to error compounding over the horizon due to myopic bootstrapping iterations on compressed scalar targets, which often yields biased value estimates and inefficient learning [6, 9–13]. To mitigate this limitation, recent works have started pursuing horizon-extended backups [14–18], distributional value modeling [19–21], or structured value representations that encode temporal relationships [22]. While extending the effective horizon can improve value scalability by supplying richer and more structured supervision signals [13], existing approaches, which are typically formulated as fixed-step TD backups [14] or chunked action/reward sequences [14, 15, 17, 18], still exhibit deficiencies due to their rigid, fixed-horizon parameterization. 
+
+> †Corresponding author. Preprint.
+> arXiv:2606.21136v1 [cs.LG] 19 Jun 2026
+
+V
+
+G               
+
+> Time Steps tt+1…t+2t+𝐤 t+𝐤 +𝟏 …
+
+# Value 
+
+# Stitching       
+
+> k=1
+> k=2
+> …
+> k=n
+> Horizon
+
+V( )               
+
+> V( )+𝜸 k
+> G(,,k)
+> G( ,,k)
+> V( )+𝜸 k
+> G( ,,k)
+> V( )+𝜸 k
+> * Optimal Target
+
+𝛑 stitch ( k* , | )Figure 1: VAST compositionally stitches cumulative returns between adaptive-lengths, actionable sub-goals, thereby enhancing value learning optimality and stability. (Left ): VAST leverages the horizon-based cumulative return (G-function) to measure the expected discounted return between two reachable states over a specific horizon, coupled with a stitching policy performing horizon-aware optimal sub-goal selection. ( Right ):   
+
+> VAST enables principled horizon adaptive value supervision guided by G-function with learnable backups.
+
+In stark contrast, human decision-making in real-world scenarios exhibits a high degree of dynamism and adaptability regarding credit assignment over task horizons. When planning for distant objec-tives, humans typically only conceptualize coarse-grained sub-goals with a rough estimate of hori-zon length (e.g., walk straight for about 100m and then turn right); while for immediate and critical decisions, they will focus exclusively on proximal, actionable consequences (e.g., decelerate and move left to avoid an obstacle). This mixed-horizon modeling requirement is akin to the idea of the "option" framework [23, 24], which solves a semi-Markov decision process by optimizing tem-porally extended actions (i.e., macro-actions) with a terminal condition, thereby securing global optimality through localized decisions [25–27]. However, existing option-based methods remain structurally heavy and cumbersome to solve complex practical control problems. To simplify the modeling framework, many studies also resort to the hierarchical RL framework [28–30, 13], which jointly optimizes a high-level and a low-level policy at two distinct time scales. However, the hier-archical frameworks still can only capture two fixed modeling horizons, and the truly adaptive and practically deployable mixed-horizon offline RL paradigms remain largely underexplored. To address this challenge, we propose VAST (illustrated in Figure 1), a horizon-adaptive offline RL framework that equips value and policy learning with temporal adaptivity, while simultane-ously offering improved value learning stability and policy optimality. At its core, VAST integrates value optimization with a future-state- and horizon-conditioned auxiliary value function (referred to as horizon-based cumulative return , G-function) and a stitching policy (πstitch ) that adaptively selects optimal sub-goal states and corresponding stitching horizons. Specifically, the G-function estimates the expected discounted return between arbitrary reachable state pairs under a specified horizon, enabling direct evaluation of actionable sub-goals. This naturally gives rise to a new stitch-ing Bellman operator that, together with the stitching policy, identifies the optimal target state for horizon-adaptive value backup. For policy extraction, VAST decomposes return maximization into the aforementioned stitching policy πstitch , which selects horizon-aware sub-goals that best steer be-havior toward high-return futures, and an execute policy πexec , which is supervised trained directly on offline data and further optimized at test time via rejection sampling. The overall design en-ables both direct estimation and compositional stitching of returns anchored at actionable sub-goals, yielding supervision that is accurate, stable, and greedily exploitable for both value learning and low-level control. Across 50 OGBench [31] tasks under the offline RL settings, VAST performs the best or on par with n-step backup, Q-chunking methods, and generative-value-based baselines, with especially pronounced performance gains in complex long-horizon tasks. 
+
+## 2 Preliminaries 
+
+Problem formulation. We consider the RL problem in a Markov Decision Process (MDP) [6], defined by a tuple M := ( S, A, P, r, γ ), where S and A denote the state and action space, P :
+
+S × A → ∆( S) is the operator that represents the transition dynamics, r : S × A → R denotes the reward function, and γ ∈ (0 , 1) is the discount factor. The goal of the RL problem aims to find a policy π : S → ∆( A) that maximizes the expected return: Eπ
+
+P ∞ 
+
+> k=0
+
+γk · r(sk, a k). In this work, 2we focus on the offline RL setting, the goal of which is to learn a policy under the fixed dataset 
+
+D = {si, a i, r i, s i+1 }Ni=1 collected by a behavioral policy μ.
+
+Single-step and multi-step value backups. Approximate dynamic programming [32] is a cen-tral paradigm in RL, which maintains an action-value function Q(s, a ), or optionally a state-value function V (s) for policy π under a given reward function r : S → R, defined as Q(s, a ) := P 
+
+> t≥0
+
+γt · Eat∼π [r(st, a t)|s, a, π ] and V (s) := P 
+
+> t≥0
+
+γt · Eat∼π [r(st, a t)|s, π ] respectively, with a further definition of the advantage function as A(s, a ) = Q(s, a ) − V (s). In the offline RL setting, the value functions are typically learned with the following policy evaluation operator [33–36]: 
+
+(T π Q)( s, a ) := r(s, a ) + γ · EP(s′|s,a )Ea′∼π [Q(s′, a ′)] , (1) 
+
+(T π V )( s) := Ea∼π
+
+r(s, a ) + γ · EP(s′|s,a ) [V (s′)]  . (2) The Q and V -function are typically learned by the conventional single-step objectives min Q J(Q) =  
+
+> 12
+
+E(s,a )∼D 
+
+(T π Q − Q)( s, a )2 and min V J(V ) = 12 Es∼D 
+
+(T π V − V )( s)2, respectively. To mitigate error accumulation and improve learning stability, some early and recent works enforce stronger supervision by adopting the n-step backup [6, 37, 38, 14, 39, 13]: 
+
+(T π
+
+> n-step
+
+)Q(st, a t) := 
+
+> t+n−1
+
+X
+
+> t′=t
+
+h
+
+γt′−tr(st′ , a t′ )
+
+i
+
++ γn · Est+n∼P Eat+n∼π [Q(st+n, a t+n)] , (3) 
+
+(T π
+
+> n-step
+
+V )( st) := Eat∼π
+
+"t+n−1X
+
+> t′=t
+
+h
+
+γt′−tr(st′ , a t′ )
+
+i
+
++ γn · Est+n∼P [V (st+n)] 
+
+#
+
+. (4) 
+
+Chunked value function. Another series of methods tackles the value bootstrapping scheme with action chunking [15–18], which extends the value backup from the action space to the action se-quence level: 
+
+(T π
+
+> chunking
+
+Q)( st, a t:t+n) := 
+
+> t+n−1
+
+X
+
+> t′=t
+
+h
+
+γt′−tr(st′ , a t′ )
+
+i
+
++γn·Est+n∼P Eat+n:t+2 n∼π [Q(st+n, a t+n:t+2 n)] .
+
+(5) In comparison to the n-step backup, the chunked value is naturally suited for the popular action chunking design in imitation learning [40] and mitigates the off-policy bias in previous methods [17]. However, both paradigms still suffer from some deficiencies due to the fixed horizon length mod-eling. n-step backup is inherently conservative in value estimation (n-step return is estimated from the data collection policy rather than the optimal policy), whereas action chunking induces a greatly expanded action space, causing potential optimization challenges. 
+
+Option-value function. The option framework [23, 24] models a Markovian option ω ∈ Ω as a triple (Iω , π ω , β ω ), where Iω ⊆ S is the initiation set, πω : S × A → [0 , 1] is the intra-option policy over primitive actions, and βω : S → [0 , 1] is the termination function. Aug-menting an MDP with a fixed set of options Ω (by a policy over options πΩ(ω | s)) induces a semi-Markov decision process (SMDP) [23, 41], on which the option-value function is defined as 
+
+QΩ(st, ω ) := Eπω
+
+hPt+k−1 
+
+> t′=t
+
+γt′−t r(st′ , a t′ ) + γk VΩ(st+k) | st, ω 
+
+i
+
+, where we use k to denote the random duration at which ω terminates according to βω , and VΩ is the value of options at the call-and-return state st+k; the expectation is taken jointly over the action sequence and the termination event. While this formulation yields a principled treatment of temporally extended behavior, exist-ing option-based approaches remain architecturally heavy, which poses considerable challenges for practical control tasks [25, 26, 42, 27]. In this work, we borrow the insight from the option frame-work, but establish a more effective and simpler value learning framework with flexible horizon length modeling capability. More discussions of various value learning schemes and hierarchical RL frameworks are provided in Section 6. 
+
+## 3 Modeling Cumulative Return for Adaptive Horizon Length 
+
+The Bellman updates can accumulate substantial error through recursive bootstrapping on interme-diate predicted targets (Eq. (1)), especially in long-horizon tasks [10, 6, 12, 13, 17, 18]. As discussed 3in the previous section, multi-step value learning schemes such as n-step backups (Eq. (3)) and chun-ked value function (Eq. (5)) can strengthen supervision by extending the horizon of grounded reward signals, but are limited by fixed-step backups. In the following example, we illustrate the pitfalls of fixed-step value updates and then present a neat solution for horizon-adaptive value stitching. 3-Step Chunking 
+
+> Stitching for Optimal
+> Data
+> 3-Step Back -up
+
+Figure 2: 4x4 grid navigation. Toy example requiring navigation from the bottom-left to the top-right. The data include sub-optimal paths only ( green path and purple path ); the envi-ronment is specified by dark red ,    
+
+> light red , and skull blocks, indicat-ing high-, low-, and punitive-reward. The depth of blue in blocks indi-cates the value estimates from fixed-step/chunked value backups, and the optimal stitching value.
+
+The limitation of fixed-horizon modeling. Central to the identified problem of fixed-horizon value-learning is that, while it may yield more robust value estimates, it is poorly suited to extracting policies for real-time, stepwise execu-tion. When the backup sequence length is mismatched, crucial single-step signals can be washed out by sequence-level aver-aging, leading to the loss of precisely the information needed for accurate immediate decisions. This intuitive failure mode is readily illustrated by a simple toy example: the 4 × 4 grid navigation task in Figure 2. The agent starts at the bottom-left corner and aims to reach the goal at the top-right corner by moving only upward or rightward. Rewards for each reach are encoded by cell color shown in the data subgraph: dark red denotes high reward (e.g., 2), light red denotes lower re-ward (e.g., 1), green skull denotes penalty (e.g., -2), and blank cells have zero reward. The dataset contains only suboptimal trajectories (the green and purple paths). Under an improper fixed horizon (e.g., the 3-step horizon in this example), the agent fails to recover optimal behavior. The intensity of the blue shading indicates the learned value un-der each method, with darker regions corresponding to higher values. Chunked value updates favor the first three transitions along the green path, but fail to guide the agent to the destina-tion. In contrast, n-step backups suppress the transition from 
+
+(0 , 0) to (1 , 0) (the first purple transition in data) because it is contaminated by the later negative reward at (1 , 2) ; and notably, both fixed-step methods lead to a negative value on (1 , 0) with a discount factor γ ≈ 1, shown with a skull shading in Figure 2. However, the optimal solution requires stitching together favorable short segments from different trajectories (red path). Although deliberately simple, this toy example can be viewed as a local subproblem embedded within a much larger maze. It shows that while coupling value updates to a fixed horizon can better stabilize long-horizon learning scenarios, it simultaneously obscures crit-ical short-range decisions, thereby trapping learning in poor local optima. Stability should not be bought at the cost of erasing decisive short-term signals, motivating adaptive horizon modeling that preserves both robustness and flexibility. 
+
+Towards adaptive horizon composition. The failure of fixed-horizon methods raises a fundamen-tal question: how should the backup horizon be selected optimally? Addressing this issue requires moving beyond value estimates rigidly tied to transition sequences in the data buffer. Instead, we need a more general operator that can evaluate the cumulative return between any pair of states under a dynamically chosen horizon . This insight motivates the introduction of the following definition: 
+
+Definition 1 (Horizon-Conditioned Cumulative Return) . Let τ = ( s0, a 0, r 0, s 1, a 1, r 1, . . . ) be the trajectory induced by a policy π starting at state s0 = s. For a target state s+ reached exactly at step k (i.e., sk = s+), we define the horizon-conditioned cumulative return as: 
+
+G(s, s +, k ) := Eτ ∼π
+
+"k−1X
+
+> t=0
+
+γtr(st, a t) s0 = s, s k = s+
+
+#
+
+. (6) 
+
+Given |r(s, a )| ≤ Rmax and γ ∈ (0 , 1) , then G is strictly bounded as |G(s, s +, k )| < Rmax  
+
+> 1−γ
+
+.
+
+We refer to G(s, s +, k ) as the Horizon-Conditioned Cumulative Return Function . By conditioning on both the terminal state s+ and the exact horizon k, G defines a value mapping relationship between arbitrary k-step reachable state pairs and the policy-induced distribution. This formulation breaks the dependence of value targets on fixed local backup segments and further supports flexible 4temporal composition across extended sub-trajectory segments, as shown in Theorem 1, thereby forming the foundation for adaptive horizon selection in value learning. 
+
+Theorem 1 (Temporal Compositionality) . For any target state sk reachable from s at step k, and any intermediate state si visited at step i with 0 < i < k along a trajectory induced by policy π, the horizon-conditioned cumulative return admits the decomposition: 
+
+G(s, s k, k ) = Ei∼Unif {1,...,k −1}, s i∼π
+
+G(s, s i, i ) + γiG(si, s k, k − i) . (7) The proof is provided in Appendix B.1. Theorem 1 formalizes the key principle underlying temporal value composition. It shows that a long-horizon return can be decomposed into a sequence of shorter and composable return segments. This property is particularly important for a constructive function that learns value relationships across multiple temporal scales among reachable states. 
+
+Learning objective of G-function. To learn a parameterized G-function Gψ (s, s +, k ) from an offline dataset D, we optimize two complementary objectives: (i) a Monte-Carlo regression objective for direct supervision, and (ii) a temporal compositional objective induced by Theorem 1 to enforce multi-scale consistency: 
+
+LMC (ψ) = Eτ ∼D , k ∼Unif {1,...,K }
+
+  Gψ (s, s k, k ) −
+
+> k−1
+
+X
+
+> t=0
+
+γtr(st, a t)2, (8) 
+
+Lcomp (ψ) = Eτ ∼D , k ∼Unif {2,...,K }, i ∼Unif {1,...,k −1}
+
+h 
+
+Gψ (s, s k, k )
+
+−  Gψ (s, s i, i ) + γiGψ (si, s k, k − i)2i
+
+, (9) where trajectory τ is sampled uniformly from offline dataset D, k is sampled uniformly from 
+
+{1, . . . , K } with K denoting the maximum horizon, starting state s0 = s is randomly sampled from the τ , and i is sampled uniformly from {1, . . . , k − 1}. The overall objective is 
+
+LG(ψ) = LMC (ψ) + λLcomp (ψ). (10) The MC objective provides direct return supervision, while the compositional objective regularizes 
+
+Gψ to satisfy temporally consistent value composition, improving generalization across horizons. Once learned, Gψ is no longer restricted to fixed backup segments from the offline data buffer, thereby enabling adaptive, target-state-anchored value maximization. 
+
+## 4 Horizon Adaptive Offline Policy Learning 
+
+With the G-function established in Section 3, we now turn to its use in offline policy optimization. To this end, we propose VAST , which is built upon a novel horizon-adaptive stitching Bellman operator, as well as a hierarchical policy optimization scheme involving a stitching policy πstitch and an execution policy πexec . In the following, we describe the details of our algorithm design. 
+
+Stitching Bellman operator. Note that with the previously defined G-function, for a given policy 
+
+π, we can equivalently express the state-value function V π as (assuming sufficiently large K): 
+
+V π (s) = Ek∼Unif {1,...,K },s k ∼Γπ (s,k )
+
+G(s, s k, k ) + γk · V π (sk) . (11) where Γπ (s, k ) denotes the state distribution induced by rolling out with π starting from s for k
+
+steps. And in particular, when k = 1 , the above reduces to the special one-step horizon case, 
+
+V π (st) = Est+1 ∼P (·| st,a t),a t∼π [G(st, s t+1 , 1) + γ · V π (st+1 )] , (12) which recovers the standard Bellman equation with one-step anchoring (as Gπ (st, s t+1 , 1) =
+
+r(st, a t)). This observation naturally motivates us to introduce a new stitching Bellman operator: 
+
+(T π
+
+> stitching
+
+V )( s) = max    
+
+> k∈{ 1,...,K },s k∼Γπ(s,k )
+
+G(s, s k, k ) + γk · V (sk) (13) Repeatedly applying this operator on V will converge to a unique fixed point V ∗, as it can be proved to be a γ-contraction mapping: 5Theorem 2 (Contraction Mapping of the Stitching Bellman Operator) . For any two bounded value functions V1, V 2, there exists a horizon length ˜k ∼ { 1, · · · , K } such that the operator Tstitch is a 
+
+γ-contraction in the infinity norm: 
+
+∥T stitch V1 − T stitch V2∥∞ ≤ γ˜k∥V1 − V2∥∞ ≤ γ∥V1 − V2∥∞. (14) See Appendix B.2 for the proof. With the state-value function V estimated using the stitching Bellman operator, the action-value function Q can be learned via the standard Bellman backup: 
+
+(T π Q)( s, a ) := r(s, a ) + γ · Es′∼P (·| s) [V (s′)] , (15) 
+
+Value stitching via πstitch . The stitching Bellman operator offers a new way to bootstrap the value estimates based on the optimal horizon lengths and target states. However, practically achieving such horizon-adaptive value learning in the offline setting requires some additional designs. In this study, we introduce a stitching policy πstitch (·| s) : S → (Z+ 
+
+> ≤K
+
+, S) that simultaneously selects 1) the best horizon k for value stitching and 2) the reward-maximizing sub-goal state sk based on current state s. Based on Eq.(13), the offline learning objective for the V -function can be written as: 
+
+V = arg min 
+
+> V
+
+Es∼D 
+
+hh 
+
+max   
+
+> (k,s k)∼πstitch (·| s)
+
+G(s, s k, k ) + γkV (sk)
+
+| {z }
+
+> Vtarget
+
+i
+
+− V (s)
+
+i2
+
+(16) The above value objective adaptively regresses the value target based on the optimal horizon length specified by the G-function, thereby achieving horizon-adaptive value stitching . However, evalu-ating the max operator can be difficult for the continuous state space. Therefore, we leverage the expectile regression objective as introduced in IQL [35] to mitigate this difficulty: 
+
+LV = Es∼D ,(k,s k )∼πstitch (·| s) [Lτ 
+
+> 2
+
+(Vtarget − V (s))] , (17) where Lτ 
+
+> 2
+
+(u) = |τ − I(u < 0) |u2, with τ > 0.5 serving as the expectile parameter. With the value learning objective established, we also need a simple approach to optimize the stitch-ing policy πstitch while adhering to the data distribution. Specifically, we choose the advantage weighted regression (AWR) [43] to extract πstitch , which is widely adopted in many offline RL meth-ods [35, 44, 36, 45, 46]. It can be perceived as regressing the optimal solution of an RL objective that maximizes the advantage value with a reverse Kullback-Leibler (KL) divergence constraint on the data distribution [43, 36]. But in our case, we evaluate and maximize over a special state-advantage 
+
+conditioned on both horizon length and sub-goal state, i.e., 
+
+Lπstitch = E(s,s k )∼D [( β · exp ( Vtarget − V (s))) · log πstitch (k, s k|s)] , (18) Moreover, to further enhance the expressiveness and generalization capability of the stitching policy, as well as to improve the robustness of value backups, we parameterize πstitch as a diffusion/flow model [47–49]. Concretely, πstitch jointly predicts the optimal horizon k and sub-goal sk in the continuous space (R+, S). Let ϵstitch denote the neural network parameterizing the stitching policy, which is trained to predict the injected noise over the dataset samples. It has been shown and adopted in many diffusion-based RL studies [45, 50, 46, 51] that the following weighted diffusion loss can be used to optimize the above AWR-style objective: 
+
+Lϵstitch = Et∼U [0 ,1] ,ϵ ∼N (0,I),(s,s k )∼D 
+
+h
+
+(β · exp ( Vtarget − V (s))) · wwϵ − ϵstitch 
+
+ kt, s tk, s, t w w2i
+
+(19) where (kt, s tk) = αt(k, s k) + σtϵ with αt and σt being predefined noise schedules. Empowered by the stitching policy, VAST not only enables effective state-value learning directly from offline data with only state-dependent transitions, but also flexibly extracts globally relevant goal information for better potential downstream utilization. 
+
+Optimized action extraction via πexec . With the optimal sub-goal state predicted from the learned stitching policy πstitch , we can learn a lower-level execution policy πexec : S × S → A for control under its guidance. Due to the unique learning procedure of πstitch , it can provide both reachable and reward-maximizing sub-goals. This is akin to the human decision-making process that per-forms both coarse global-level planning as well as adaptive short-horizon adjustment. We learn 
+
+πexec (a|s, s +) as a flow policy in a simple goal-conditioned imitation learning manner that directly 6supervises it with offline data samples, conditioned on both current state s and randomly sampled future goal state s+ in the same data trajectory. This bypasses the out-of-distribution (OOD) issue during training while enjoying a stable learning process. To further improve the optimality of the output action, similar to previous methods [52, 53], we filter the sampled actions with test-time rejection sampling conditioned on the sub-goal sk ∼ πstitch (·| s):
+
+a⋆ ≜ arg max a∈{ a(1) ,...,a (Nrej )∼πexec (·| s,s k )}Q(s, a ), (20) where Nrej is the action number to be sampled. Q-function is learned by minimizing the standard Bellman error with Eq.(15). The above formulation performs implicit Q-value maximization by resampling the distribution learned by the expressive goal-conditioned BC flow policy, with instruc-tive and advantageous sub-goal information additionally injected. See Appendix D for additional implementation details. 
+
+## 5 Experiments 
+
+Briefly, VAST employs an auxiliary value function to improve (1) value-learning and further the (2) policy-execution optimality and robustness . Accordingly, we expect VAST to achieve strong perfor-mance on long-horizon complex planning tasks, outperforming strong value-scaling approaches. 
+
+Environmental setup. We evaluate VAST on the OGBench task suite [31]. OGBench is designed for goal-conditioned offline RL, with challenging robotic locomotion and manipulation tasks, in-cluding whole-body humanoid control, maze navigation, and object manipulation. Our experiments are conducted in the singletask variant for offline RL, covering 30 state-based tasks across 6 widely used domains, denoted as Basic , and 20 state-based tasks across 4 highly challenging do-mains that increase the planning complexity, denoted as Hard , with a total of 50 tasks on OGBench .See Appendix C.1 for environmental details. 
+
+Baselines. We select 8 baselines for comprehensive evaluation, which could be categorized into value learning methods with 1-step/multi-step TD, chunking, and generative value: • 1-step TD. We select 1) IQL [35]: a typical weighted regression offline RL method with Gaus-sian policy and expectile regression for value learning; 2) FQL [52]: a behavior-regularized actor-critic (AC) variant that uses flow policy distillation and shows strong performance on OGBench; 3) IFQL [52]: a variant of IQL that uses flow policy with rejection sampling during inference. • Multi-step TD. We select 1) FQL-n and 2) IFQL-n , the variants of FQL and IFQL with fixed-n-step value backups. Following Li et al. [17], we fix the horizon to 5. • Chunking. We select the most typical chunked value baseline QC [17]: Q-learning on a fixed-size action sequence space. • Generative value. To illustrate VAST ’s effectiveness on value learning and guidance, we further select the baselines that specifically focus on value scaling. This includes 1) VALUE-FLOWS [21]: a novel distributional RL method that estimates return variance using a flow-matching objective and learns a flow policy; 2) FLOQ [20]: it parameterizes the critic as a learned velocity field, estimates the Q-value through numerical integration, and learns a flow policy. See Appendix C.3 for additional baseline information. 
+
+Experimental results and ablations. We evaluate each method with a fixed number of offline updates (1M) and report the success rate. We average the scores across 8 random seeds, with ± in-dicating standard deviations in the tables. We analyze the experiments with the following questions: 
+
+How does VAST perform? Table 1 summarizes the aggregate results on OGbench. VAST achieves the best or near-best performance in both domain-wise averages and the overall score, with par-ticularly pronounced gains on manipulation domains such as scene , cube , and puzzle . No-tably, VAST is the strongest method across all Hard domains, achieving an overall score that is 
+
+2.5× higher than the best baseline. This demonstrates its ability to effectively exploit dataset tran-sitions and scale to long-horizon decision-making problems. Figure 3 presents the offline learn-ing curves. VAST consistently outperforms competing methods on most tasks, and its sustained 7Table 1: OGBench Results. We report the aggregate score on all single tasks for each category, averaging over 8 random seeds. VAST achieves the best or near-best performance against other baselines across 10 domains, 50 tasks in total. The IQL results are reported from Park et al. [52], thereby eliminating the ± sign.                                                                                                                          
+
+> 1-step TD n-step TD Chunking Generative Stitching
+> (5 tasks each) IQL FQL IFQL FQL-n IFQL-n QC VALUE-FLOWS FLOQ VAST
+> scene 28 57 ±746 ±12 42 ±832 ±260 ±160 ±557 ±560 ±1
+> cube-single 83 97 ±487 ±597 ±482 ±693 ±595 ±496 ±598 ±3
+> cube-double 730 ±812 ±54±34±367 ±761 ±11 49 ±16 73 ±5
+> puzzle-4x4 715 ±527 ±827 ±612 ±429 ±10 21 ±831 ±944 ±10
+> antmaze-large 53 82 ±732 ±17 80 ±927 ±76±548 ±15 93 ±679 ±7
+> antmaze-giant 411 ±16 0±237 ±16 0±00±03±329 ±25 19 ±9Overall ( Basic )30 49 ±934 ±10 48 ±926 ±443 ±648 ±959 ±13 62 ±7
+> cube-triple -1±41±10±00±04±513 ±10 4±536 ±8
+> cube-quadruple -0±00±00±00±00±00±00±02±4
+> puzzle-4x5 -15 ±316 ±718 ±114 ±420 ±012 ±413 ±321 ±2
+> puzzle-4x6 -4±50±04±93±54±43±63±35±10 Overall ( Hard )-5±44±46±54±37±37±65±316 ±7
+
+Figure 3: Learning curves. (Top ): cube-double-play . ( Middle ): puzzle-4x4-play . ( Bottom ): 
+
+cube-triple-play .
+
+upward trend in the Hard setting further highlights its scalability. To better understand its be-havior, we visualize the ground-truth trajectory together with the future states predicted by VAST 
+
+on cube-triple-play-task3 in Figure 4. The predicted horizon follows a plausible se-quence of phased atomic intentions, suggesting that the policy selects an effective intermediate target 
+
+k, s k ∼ πstitch and thereby progresses toward stable, value-maximizing actions. Full per-task results are provided in Appendix E.1. 
+
+Does the horizon-length limit affect VAST? Figure 5 ( left 1-2 ) compares the performance of VAST 
+
+under different horizon limits K in value learning (Eq. (8-9), Eq. (11)). Overall, performance im-proves as K increases from 5 to 10, indicating that longer horizons provide greater flexibility for selecting informative targets during learning. Intuitively, a larger K expands the candidate set of fu-ture targets and therefore increases the chance of identifying a high-value intermediate target (k, s k).In most manipulation domains, VAST achieves its best performance around [10 , 25] , strongly relying 8Figure 4: Visualization on cube-triple-play-task3 (pop_from_stuck). The solid robot arm shows the current pose, while the transparent arm shows the sub-goal. 5 10 25 50                
+
+> Max. Horizon
+> 60
+> 80
+> 100
+> Success Rate  CD 510 25 50
+> Max. Horizon
+> 0
+> 25
+> 50
+> Success Rate  P44 0.1 0.25 0.5 12
+> Comp. Factor
+> 80
+> 90
+> 100
+> Success Rate  CD 0.1 0.25 0.5 12
+> Comp. Factor
+> 20
+> 30
+> 40
+> Success Rate  P44 14816 32
+> Num. of Reject
+> 0
+> 50
+> 100
+> Success Rate  CD
+
+Figure 5: Ablations on important hyperparameter . We provide the horizon length ablation ( left 1-2 ), the compositional factor ablation ( left 3-4 ), and the rejection sampling strength ablation ( left 5 ) using default tasks on domain cube-double-play and puzzle-4x4-play .
+
+on the task setting. Further increasing K leads to a mild performance drop, suggesting that exces-sively long horizons may make target estimation more challenging and place higher demands on the expressivity of the G-function. 
+
+How important is the compositional objective? Figure 5 ( left 3-4 ) reports the performance of VAST 
+
+under different compositional weights λ (Eq. 10)). Performance improves as λ increases within an appropriate range, demonstrating its benefit. While the MC objective (Eq. (8)) provides direct super-vision from dataset transitions, the compositional objective further encourages temporal consistency of the learned G-function and improves its generalization beyond observed trajectories. As a result, it supplies more reliable value estimates for downstream policy optimization. When λ becomes too large, performance decreases, suggesting that the compositional term should be balanced with the MC objective; overly strong self-supervised regularization may dominate the learning signal and lead to less informative representations, such as degenerate fixed-point solutions. 
+
+Is two-level reward maximization necessary? We compare different rejection sampling strengths for πexec in Figure 5 ( left 5 ). When Nrej = 1 , the framework effectively relies on πstitch alone, where reward maximization is mainly achieved through goal selection and the goal-conditioned BC policy directly executes the selected goal. Increasing Nrej improves performance, indicating that additional reward-aware selection at the execution level is a useful complement coupled with high-level goal selection. These results validate the two-level reward-maximization design of VAST .
+
+## 6 Related Works 
+
+Offline RL. Offline RL aims to learn an optimal policy from the given dataset without environ-mental interaction. A central challenge is distributional shift, that value functions may assign overly optimistic estimates to out-of-distribution (OOD) actions, leading to poor policy improvement [54]. Early methods mainly address this issue from two perspectives. The first line constrains the learned policy to stay close to the behavior policy [55–60]. The second line directly regularizes the value function by penalizing overestimated OOD queries [34, 61–64]. More recent studies suggest that, beyond conservative value estimation, effective policy extraction is often the key factor that de-termines final performance [9]. This insight has motivated lightweight in-sample learning meth-ods [35, 36, 28, 65], which are stable, simple, and competitive in absolute performance. In parallel, generative models such as diffusion [66–68] and flow-based models [69] have been introduced to improve policy expressivity and generalization [70–73, 53, 45, 50, 46, 74–76]. Together, these de-velopments have made offline RL increasingly practical for real-world applications [77, 78]. 
+
+Value learning in RL. Value learning is central to RL, as it determines the performance ceiling of the learned policy; meanwhile, it remains a key bottleneck for scaling RL to complex and long-9horizon problems [13]. Existing efforts to improve value learning can be broadly grouped into three directions: (i) stabilizing and strengthening value estimation through multi-step reward propagation, which includes multi-step TD backups in the action space [14, 13], as well as methods that couple value estimates over fixed-length action or trajectory chunks [15–18]; (ii) distributional approaches model the full return distribution rather than only its expectation, either explicitly learn a discrete return distribution with projection operators [19, 79, 80], or implicitly represent return distributions using expressive generative models [20, 21], including diffusion [66–68] and flow matching [49, 69] models; (iii) scaling the parameterization of value functions with expressive architectures, such as Transformers and Mixtures of Experts (MoEs) [81–83]. 
+
+Hierarchical and option in RL. The option framework was introduced to improve the scala-bility of RL by abstracting temporal dynamics into reusable high-level behaviors [23–27]. In this framework, an option is typically defined by an initiation condition, a termination condi-tion, and an intra-option policy. This formulation enables agents to reason and act over ex-tended time scales, and has naturally led to a broad line of hierarchical RL (HRL) meth-ods [25, 26, 42, 27, 22, 84, 85, 42, 86, 29, 87, 88, 13, 28]. Despite this progress, HRL still faces a key optimization challenge lies in non-stationary learning, where the high-level policy must op-timize over goals or options whose effects keep changing as the low-level policy is updated [30]. 
+
+## 7 Conclusion and Future 
+
+In this work, we introduced VAST , a novel RL method that decouples value learning from fixed-step backups via an auxiliary value function that enables "stitching" operation. VAST defines a stitching Bellman operator and employs two-level policies to maximize reward. Its excellent perfor-mance on OGBench suggests a promising direction for scalable long-horizon decision-making with horizon-aware future identification. Looking forward, the core of VAST could be naturally combined with several diffusion/flow policy optimization methods, model-based methods, and representation learning methods, offering an exciting avenue for further improvement of horizon-adaptive RL. See Appendix F for more discussion on limitations and future work. 
+
+## Acknowledgment 
+
+This work was supported by the Wuxi Research Institute of Applied Technologies at Tsinghua Uni-versity under the Grant 20242001120, the Xiongan AI Institute, the University of Hong Kong Fac-ulty Interdisciplinary Fund, and the University of Hong Kong Urban Systems Institute (HKU-USI) Fellowship Grant. 
+
+## References 
+
+[1] Richard S Sutton. Learning to predict by the methods of temporal differences. Machine learning , 3(1):9–44, 1988. [2] Christopher JCH Watkins and Peter Dayan. Q-learning. Machine learning , 8(3):279–292, 1992. [3] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G Bellemare, Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al. Human-level control through deep reinforcement learning. nature , 518(7540):529–533, 2015. [4] David Silver, Aja Huang, Chris J Maddison, Arthur Guez, Laurent Sifre, George Van Den Driessche, Julian Schrittwieser, Ioannis Antonoglou, Veda Panneershelvam, Marc Lanc-tot, et al. Mastering the game of go with deep neural networks and tree search. nature , 529 (7587):484–489, 2016. [5] David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez, Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, et al. Mastering the game of go without human knowledge. nature , 550(7676):354–359, 2017. 10 [6] Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction. 1(1), 1998. [7] Eduardo Pignatelli, Johan Ferret, Matthieu Geist, Thomas Mesnard, Hado van Hasselt, and Laura Toni. A survey of temporal credit assignment in deep reinforcement learning. Transac-tions on Machine Learning Research , 2024. [8] Chia-Chun Hung, Timothy Lillicrap, Josh Abramson, Yan Wu, Mehdi Mirza, Federico Carnevale, Arun Ahuja, and Greg Wayne. Optimizing agent behavior over long time scales by transporting value. Nature communications , 10(1):5223, 2019. [9] Seohong Park, Kevin Frans, Sergey Levine, and Aviral Kumar. Is value learning really the main bottleneck in offline rl? In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [10] Tommi Jaakkola, Michael Jordan, and Satinder Singh. Convergence of stochastic iterative dynamic programming algorithms. Advances in neural information processing systems , 6, 1993. [11] John Tsitsiklis and Benjamin Van Roy. Analysis of temporal-diffference learning with function approximation. Advances in neural information processing systems , 9, 1996. [12] Kristopher De Asis, J Hernandez-Garcia, G Holland, and Richard Sutton. Multi-step rein-forcement learning: A unifying algorithm. In Proceedings of the AAAI conference on artificial intelligence , volume 32, 2018. [13] Seohong Park, Kevin Frans, Deepinder Mann, Benjamin Eysenbach, Aviral Kumar, and Sergey Levine. Horizon reduction makes rl scalable. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [14] George Konidaris, Scott Niekum, and Philip S Thomas. Td_gamma: Re-evaluating complex backups in temporal difference learning. Advances in Neural Information Processing Systems ,24, 2011. [15] Younggyo Seo and Pieter Abbeel. Coarse-to-fine q-network with action sequence for data-efficient reinforcement learning. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [16] Dong Tian, Onur Celik, and Gerhard Neumann. Chunking the critic: A transformer-based soft actor-critic with n-step returns. arXiv preprint arXiv:2503.03660 , 2025. [17] Qiyang Li, Zhiyuan Zhou, and Sergey Levine. Reinforcement learning with action chunking. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [18] Qiyang Li, Seohong Park, and Sergey Levine. Decoupled q-chunking, 2025. [19] Marc G Bellemare, Will Dabney, and Rémi Munos. A distributional perspective on reinforce-ment learning. In International conference on machine learning , pages 449–458. Pmlr, 2017. [20] Bhavya Kumar Agrawalla, Michal Nauman, Khush Agrawal, and Aviral Kumar. floq: Training critics via flow-matching for scaling compute in value-based RL. In NeurIPS 2025 Workshop: Second Workshop on Aligning Reinforcement Learning Experimentalists and Theorists , 2025. [21] Perry Dong, Chongyi Zheng, Chelsea Finn, Dorsa Sadigh, and Benjamin Eysenbach. Value flows. In International Conference on Learning Representations (ICLR) , 2026. [22] Marlos C Machado, Andre Barreto, Doina Precup, and Michael Bowling. Temporal abstrac-tion in reinforcement learning with the successor representation. Journal of machine learning research , 24(80):1–69, 2023. [23] Richard S. Sutton, Doina Precup, and Satinder Singh. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. Artificial Intelligence , 112(1): 181–211, 1999. ISSN 0004-3702. 11 [24] Doina Precup. Temporal abstraction in reinforcement learning . University of Massachusetts Amherst, 2000. [25] Martin Stolle and Doina Precup. Learning options in reinforcement learning. In International Symposium on abstraction, reformulation, and approximation , pages 212–223, 2002. [26] Pierre-Luc Bacon, Jean Harb, and Doina Precup. The option-critic architecture. In Proceedings of the AAAI Conference on Artificial Intelligence , 2017. [27] Matthew Riemer, Miao Liu, and Gerald Tesauro. Learning abstract options. In The Thirty-second Annual Conference on Neural Information Processing Systems , 2018. [28] Haoran Xu, Li Jiang, Jianxiong Li, and Xianyuan Zhan. A policy-guided imitation approach for offline reinforcement learning. In Advances in Neural Information Processing Systems ,2022. [29] Seohong Park, Dibya Ghosh, Benjamin Eysenbach, and Sergey Levine. Hiql: Offline goal-conditioned rl with latent states as actions, 2023. [30] Ofir Nachum, Shixiang Shane Gu, Honglak Lee, and Sergey Levine. Data-efficient hierarchical reinforcement learning. Advances in neural information processing systems , 31, 2018. [31] Seohong Park, Kevin Frans, Benjamin Eysenbach, and Sergey Levine. Ogbench: Bench-marking offline goal-conditioned rl. In International Conference on Learning Representations (ICLR) , 2025. [32] Warren B Powell. Approximate Dynamic Programming: Solving the curses of dimensionality ,volume 703. John Wiley & Sons, 2007. [33] Ofir Nachum, Mohammad Norouzi, Kelvin Xu, and Dale Schuurmans. Bridging the gap be-tween value and policy based reinforcement learning. In The Thirty-first Annual Conference on Neural Information Processing Systems , 2017. [34] Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for offline reinforcement learning. In Proceedings of the 34th International Conference on Neural Information Processing Systems , 2020. [35] Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit q-learning. In International Conference on Learning Representations , 2021. [36] Haoran Xu, Li Jiang, Jianxiong Li, Zhuoran Yang, Zhaoran Wang, Victor Chan, and Xianyuan Zhan. Offline rl with no ood actions: In-sample learning via implicit value regularization. In 
+
+International Conference on Learning Representations , 2023. [37] Christopher John Cornish Hellaby Watkins et al. Learning from delayed rewards, 1989. [38] Jing Peng and Ronald J Williams. Incremental multi-step q-learning. In Machine Learning Proceedings 1994 , pages 226–232. Elsevier, 1994. [39] Philip S Thomas, Scott Niekum, Georgios Theocharous, and George Konidaris. Policy evalu-ation using the ω-return. Advances in Neural Information Processing Systems , 28, 2015. [40] Tony Zhao, Vikash Kumar, Sergey Levine, and Chelsea Finn. Learning fine-grained bimanual manipulation with low-cost hardware. Robotics: Science and Systems , 2023. [41] Martin L Puterman. Markov decision processes: discrete stochastic dynamic programming .John Wiley & Sons, 2014. [42] Alexander Sasha Vezhnevets, Simon Osindero, Tom Schaul, Nicolas Heess, Max Jaderberg, David Silver, and Koray Kavukcuoglu. Feudal networks for hierarchical reinforcement learn-ing. In International conference on machine learning , pages 3540–3549. PMLR, 2017. [43] Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regres-sion: Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177 ,2019. 12 [44] Divyansh Garg, Joey Hejna, Matthieu Geist, and Stefano Ermon. Extreme q-learning: Maxent rl without entropy. In International Conference on Learning Representations (ICLR) , 2023. [45] Yinan Zheng, Jianxiong Li, Dongjie Yu, Yujie Yang, Shengbo Eben Li, Xianyuan Zhan, and Jingjing Liu. Safe offline reinforcement learning with feasibility-guided diffusion model. In 
+
+The Twelfth International Conference on Learning Representations , 2024. [46] Ruiming Liang, Yinan Zheng, Kexin Zheng, Tianyi Tan, Jianxiong Li, Liyuan Mao, Zhihao Wang, Guang Chen, Hangjun Ye, Jingjing Liu, Jinqiao Wang, and Xianyuan Zhan. Dichoto-mous diffusion policy optimization. In International Conference on Learning Representations ,2026. [47] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsuper-vised learning using nonequilibrium thermodynamics. In International conference on machine learning , pages 2256–2265. pmlr, 2015. [48] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Ad-vances in neural information processing systems , 33:6840–6851, 2020. [49] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le. Flow matching for generative modeling. In The Eleventh International Conference on Learning Representations , 2023. [50] Kexin Zheng, Lauriane Teyssier, Yinan Zheng, Yu Luo, and Xianyuan Zhan. Towards robust zero-shot reinforcement learning. In The Thirty-ninth Annual Conference on Neural Informa-tion Processing Systems , 2025. [51] Haitong Ma, Tianyi Chen, Kai Wang, Na Li, and Bo Dai. Efficient online reinforcement learning for diffusion policy. In International Conference on Machine Learning , pages 41837– 41853. PMLR, 2025. [52] Seohong Park, Qiyang Li, and Sergey Levine. Flow q-learning. In International Conference on Machine Learning (ICML) , 2025. [53] Liyuan Mao, Haoran Xu, Weinan Zhang, Xianyuan Zhan, and Amy Zhang. Diffusion-dice: In-sample diffusion guidance for offline reinforcement learning. In Advances in Neural Infor-mation Processing Systems , 2024. [54] Sergey Levine, Aviral Kumar, G. Tucker, and Justin Fu. Offline reinforcement learning: Tuto-rial, review, and perspectives on open problems. ArXiv , abs/2005.01643, 2020. [55] Scott Fujimoto, David Meger, and Doina Precup. Off-policy deep reinforcement learning without exploration. In International Conference on Machine Learning , 2018. [56] Aviral Kumar, Justin Fu, Matthew Soh, George Tucker, and Sergey Levine. Stabilizing off-policy q-learning via bootstrapping error reduction. In Advances in Neural Information Pro-cessing Systems , 2019. [57] Scott Fujimoto and Shixiang Shane Gu. A minimalist approach to offline reinforcement learn-ing. Advances in neural information processing systems , 34:20132–20145, 2021. [58] Jianxiong Li, Xiao Hu, Haoran Xu, Jingjing Liu, Xianyuan Zhan, and Ya-Qin Zhang. Proto: Iterative policy regularized offline-to-online reinforcement learning, 2023. [59] Jianxiong Li, Xianyuan Zhan, Haoran Xu, Xiangyu Zhu, Jingjing Liu, and Ya-Qin Zhang. When data geometry meets deep function: Generalizing offline reinforcement learning. In 
+
+International Conference on Learning Representations , 2023. [60] Peng Cheng, Xianyuan Zhan, Zhihao Wu, Wenjia Zhang, Shoucheng Song, Han Wang, Youfang Lin, and Li Jiang. Look beneath the surface: Exploiting fundamental symmetry for sample-efficient offline rl. In Advances in Neural Information Processing Systems , 2023. [61] Ilya Kostrikov, Jonathan Tompson, Rob Fergus, and Ofir Nachum. Offline reinforcement learn-ing with fisher divergence critic regularization. In Proceedings of the 39th International Con-ference on Machine Learning , Proceedings of Machine Learning Research, 2021. 13 [62] Haoyi Niu, Shubham Sharma, Yiwen Qiu, Ming Li, Guyue Zhou, Jianming HU, and Xianyuan Zhan. When to trust your simulator: Dynamics-aware hybrid offline-and-online reinforcement learning. In Advances in Neural Information Processing Systems , 2022. [63] Rui Yang, Chenjia Bai, Xiaoteng Ma, Zhaoran Wang, Chongjie Zhang, and Lei Han. Rorl: Robust offline reinforcement learning via conservative smoothing. In Advances in neural in-formation processing systems , 2022. [64] Haoran Xu, Xianyuan Zhan, and Xiangyu Zhu. Constraints penalized q-learning for safe offline reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence , 2022. [65] Xiangsen Wang, Haoran Xu, Yinan Zheng, and Xianyuan Zhan. Offline multi-agent rein-forcement learning with implicit global-to-local value regularization. In Advances in Neural Information Processing Systems , 2023. [66] Jascha Sohl-Dickstein, Eric A. Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep un-supervised learning using nonequilibrium thermodynamics. In Proceedings of the 32nd Inter-national Conference on International Conference on Machine Learning , 2015. [67] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In 
+
+Proceedings of the 34th International Conference on Neural Information Processing Systems ,2020. [68] Sungbin Lim, Eunbi Yoon, Taehyun Byun, Taewon Kang, Seungwoo Kim, Kyungjae Lee, and Sungjoon Choi. Score-based generative modeling through stochastic evolution equations in hilbert spaces. In Proceedings of the 37th International Conference on Neural Information Processing Systems , 2023. [69] Yaron Lipman, Marton Havasi, Peter Holderrieth, Neta Shaul, Matt Le, Brian Karrer, Ricky T. Q. Chen, David Lopez-Paz, Heli Ben-Hamu, and Itai Gat. Flow matching guide and code, 2024. [70] Zhendong Wang, Jonathan J. Hunt, and Mingyuan Zhou. Diffusion policies as an expressive policy class for offline reinforcement learning. In The Eleventh International Conference on Learning Representations , 2023. [71] Philippe Hansen-Estruch, Ilya Kostrikov, Michael Janner, Jakub Grudzien Kuba, and Sergey Levine. Idql: Implicit q-learning as an actor-critic method with diffusion policies, 2023. [72] Huayu Chen, Cheng Lu, Chengyang Ying, Hang Su, and Jun Zhu. Offline reinforcement learn-ing via high-fidelity generative behavior modeling. In The Eleventh International Conference on Learning Representations , 2023. [73] Cheng Lu, Huayu Chen, Jianfei Chen, Hang Su, Chongxuan Li, and Jun Zhu. Contrastive energy prediction for exact energy-guided diffusion sampling in offline reinforcement learning. In Proceedings of the 40th International Conference on Machine Learning . JMLR.org, 2023. [74] Kevin Frans, Seohong Park, Pieter Abbeel, and Sergey Levine. Diffusion guidance is a con-trollable policy improvement operator, 2025. [75] Nicolas Espinosa-Dice, Yiyi Zhang, Yiding Chen, Bradley Guo, Owen Oertell, Gokul Swamy, Kiante Brantley, and Wen Sun. Scaling offline rl via efficient and expressive shortcut models. 
+
+Neural Information Processing Symposium (NeurIPS) , 2025. [76] Qiyang Li and Sergey Levine. Q-learning with adjoint matching. arXiv preprint arXiv:2601.14234 , 2026. [77] Physical Intelligence, Ali Amin, Raichelle Aniceto, Ashwin Balakrishna, Kevin Black, Ken Conley, Grace Connors, James Darpinian, Karan Dhabalia, Jared DiCarlo, Danny Driess, Michael Equi, Adnan Esmail, Yunhao Fang, Chelsea Finn, Catherine Glossop, Thomas God-den, Ivan Goryachev, Lachy Groom, Hunter Hancock, Karol Hausman, Gashon Hussein, Brian Ichter, Szymon Jakubczak, Rowan Jen, Tim Jones, Ben Katz, Liyiming Ke, Chandra Kuchi, Marinda Lamb, Devin LeBlanc, Sergey Levine, Adrian Li-Bell, Yao Lu, Vishnu Mano, Mohith 14 Mothukuri, Suraj Nair, Karl Pertsch, Allen Z. Ren, Charvi Sharma, Lucy Xiaoyang Shi, Laura Smith, Jost Tobias Springenberg, Kyle Stachowicz, Will Stoeckle, Alex Swerdlow, James Tan-ner, Marcel Torne, Quan Vuong, Anna Walling, Haohuan Wang, Blake Williams, Sukwon Yoo, Lili Yu, Ury Zhilinsky, and Zhiyuan Zhou. π∗
+
+> 0.6
+
+: a vla that learns from experience, 2025. [78] Yinan Zheng, Tianyi Tan, Bin Huang, Enguang Liu, Ruiming Liang, Jianlin Zhang, Jianwei Cui, Guang Chen, Kun Ma, Hangjun Ye, Long Chen, Ya-Qin Zhang, Xianyuan Zhan, and Jingjing Liu. Unleashing the potential of diffusion models for end-to-end autonomous driving. 
+
+arXiv preprint , 2026. [79] Jesse Farebrother, Jordi Orbay, Quan Vuong, Adrien Ali Taiga, Yevgen Chebotar, Ted Xiao, Alex Irpan, Sergey Levine, Pablo Samuel Castro, Aleksandra Faust, Aviral Kumar, and Rishabh Agarwal. Stop regressing: Training value functions via classification for scalable deep RL. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 13049–13071. PMLR, 21–27 Jul 2024. [80] Xiaoteng Ma, Junyao Chen, Li Xia, Jun Yang, Qianchuan Zhao, and Zhengyuan Zhou. Dsac: Distributional soft actor-critic for risk-sensitive reinforcement learning. Journal of Artificial Intelligence Research , 83, 2025. [81] Yevgen Chebotar, Quan Vuong, Karol Hausman, Fei Xia, Yao Lu, Alex Irpan, Aviral Kumar, Tianhe Yu, Alexander Herzog, Karl Pertsch, et al. Q-transformer: Scalable offline reinforce-ment learning via autoregressive q-functions. In Conference on Robot Learning , pages 3909– 3928. PMLR, 2023. [82] Jost Tobias Springenberg, Abbas Abdolmaleki, Jingwei Zhang, Oliver Groth, Michael Bloesch, Thomas Lampe, Philemon Brakel, Sarah Maria Elisabeth Bechtle, Steven Kapturowski, Roland Hafner, Nicolas Heess, and Martin Riedmiller. Offline actor-critic reinforcement learn-ing scales to large models. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 46323–46350. PMLR, 21–27 Jul 2024. [83] Johan Samir Obando Ceron, Ghada Sokar, Timon Willi, Clare Lyle, Jesse Farebrother, Jakob Nicolaus Foerster, Gintare Karolina Dziugaite, Doina Precup, and Pablo Samuel Castro. Mixtures of experts unlock parameter scaling for deep RL. In Proceedings of the 41st Inter-national Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 38520–38540. PMLR, 21–27 Jul 2024. [84] Peter Dayan and Geoffrey E Hinton. Feudal reinforcement learning. Advances in neural information processing systems , 5, 1992. [85] Thomas G Dietterich. Hierarchical reinforcement learning with the maxq value function de-composition. Journal of artificial intelligence research , 13:227–303, 2000. [86] Alexander Vezhnevets, Volodymyr Mnih, Simon Osindero, Alex Graves, Oriol Vinyals, John Agapiou, et al. Strategic attentive writer for learning macro-actions. Advances in neural information processing systems , 29, 2016. [87] Shubham Pateria, Budhitama Subagdja, Ah-hwee Tan, and Chai Quek. Hierarchical reinforce-ment learning: A comprehensive survey. ACM Computing Surveys (CSUR) , 54(5):1–35, 2021. [88] Tejas D Kulkarni, Karthik Narasimhan, Ardavan Saeedi, and Josh Tenenbaum. Hierarchical deep reinforcement learning: Integrating temporal abstraction and intrinsic motivation. Ad-vances in neural information processing systems , 29, 2016. [89] Kevin Zakka, Yuval Tassa, and MuJoCo Menagerie Contributors. MuJoCo Menagerie: A collection of high-quality simulation models for MuJoCo, 2022. URL http://github. com/google-deepmind/mujoco_menagerie .[90] Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Hausman, Chelsea Finn, and Sergey Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforce-ment learning. In Conference on robot learning , pages 1094–1100. PMLR, 2020. 15 [91] Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control. In 2012 IEEE/RSJ international conference on intelligent robots and systems , pages 5026–5033. IEEE, 2012. [92] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Yash Katariya, Chris Leary, Dougal Maclaurin, George Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: composable transformations of Python+NumPy programs, 2018. URL http://github.com/jax-ml/jax .16 A LLM Usage 
+
+In this paper, we employed Large Language Models (LLMs) solely for polishing the writing. No parts of the technical content, experimental results, or conclusions were generated by LLMs. 
+
+## B Theoretical Proofs 
+
+B.1 Proof of Theorem 1 (Temporal Compositionality) Proof. By definition, G(s, s k, k ) = Eπ
+
+hPk−1 
+
+> t=0
+
+γtrt | s0 = s
+
+i
+
+, where k denotes the horizon between states s and s′ . For any intermediate state si reached at time i < k , we can partition the summation: 
+
+G(s, s k, k ) = Eπ
+
+"i−1X
+
+> t=0
+
+γtrt +
+
+> k−1
+
+X
+
+> t=i
+
+γtrt s0 = s, (sk, k )
+
+#
+
+(21) 
+
+= Ei∼Unif {1,...,k −1},s i∼π Eπ
+
+"i−1X
+
+> t=0
+
+γtrt s0 = s, (si, i )
+
+#
+
+(22) 
+
++ Eπ
+
+"
+
+γik−i−1X
+
+> t=0
+
+γtrt+i s0 = si, (sk, k − i)
+
+#! 
+
+(23) 
+
+= Ei∼Unif {1,...,k −1},s i∼π
+
+G(s, s i, i ) + γiG(si, s k, k − i) , (24) where π denotes the behavioral distribution. Under the function approximation ˆG, let the er-ror at each compositional step be bounded by ϵcomp . For a trajectory composed of M segments 
+
+(s0, s 1, . . . , s M ), the approximated return is equivalent to PM −1 
+
+> t=0
+
+γt ˆG(st, s t+1 , 1) , which implies the accumulated error is at most PM −1 
+
+> t=0
+
+γtϵcomp ≤ M ϵ comp , under a linear growth w.r.t segments. ■
+
+B.2 Proof of Theorem 2 (Contraction Mapping) Proof. We evaluate the supremum norm between the operator applied to two arbitrary bounded value functions V1 and V2:
+
+∥T stitch V1 − T stitch V2∥∞ = max  
+
+> s
+
+max 
+
+> k1∈{ 1,...,K }
+
+G(s, s k1 , k 1) + γk1 V1(sk1 )
+
+− max 
+
+> k2∈{ 1,...,K }
+
+G(s, s k2 , k 2) + γk2 V2(sk2 )
+
+≤ max  
+
+> s
+
+max 
+
+> k1∈{ 1,...,K }
+
+G(s, s k1 , k 1) + γk1 V1(sk1 ) −  G(s, s k1 , k 1) + γk1 V2(sk1 )
+
+≤ max  
+
+> s
+
+max 
+
+> k∈{ 1,...,K }
+
+ G(s, s k, k ) + γkV1(sk) −  G(s, s k, k ) + γkV2(sk)
+
+= max  
+
+> s
+
+max  
+
+> k∈{ 1,...,K }
+
+γk |V1(sk) − V2(sk)|≤ γ˜k∥V1 − V2∥∞
+
+≤ γ∥V1 − V2∥∞.
+
+(25) The last inequality holds as any valid temporal transition requires at least one environment step, 
+
+˜k ≥ 1, which implies γ˜k ≤ γ < 1, proving that Tstitch is a strict γ-contraction. By the Banach Fixed-Point Theorem, repeated application of Tstitch converges to a unique fixed point V ∗. ■
+
+17 Figure 6: OGBench Basic. We experiment on 6 majorly used domains on OGBench [31] in single-task variant, shown as (a)-(f). Each domain contains 5 tasks. 
+
+Figure 7: OGBench Hard. We experiment on 4 highly challenging domains on OGBench [31] in singletask variant, shown as (a)-(d). Each domain contains 5 tasks. 
+
+## C Experimental Setup 
+
+C.1 Environment 
+
+We evaluate VAST on the OGBench task suite [31]. OGBench is a benchmark for goal-conditioned offline RL, with challenging robotic locomotion and manipulation tasks, including whole-body humanoid control, maze navigation, and object manipulation. Our results cover 30 tasks across 6 widely used domains (scene-play, cube-single-play, cube-double-play, puzzle-4x4-play, antmaze-large-nevigate, antmaze-giant-nevigate ), denoted as Basic (refer to Figure 6), and 20 tasks across 4 highly challenging do-mains (cube-triple-play, cube-quadruple-play, puzzle-4x5-play, puzzle-4x6-play ), denoted as Hard (refer to Figure 7), for a total of 50 tasks on OG-Bench in singletask variant for offline RL. All tasks we evaluated are state-based; evaluation is performed on five pre-defined state-goal pairs. We introduce their settings in detail as follows: 
+
+Manipulation. Manipulation tasks are performed with the UR5e robot arm and Robotiq 2F-85 gripper models from MuJoCo Menagerie [89] and the drawer, window, and button box models from Meta-World [90]. We utilize play datasets for all domains, collected by open-loop, non-Markovian scripted policies defined by Park et al. [31]. • scene : Long-horizon manipulation involves interacting with multiple object types within one environment, including a cube block, a window, a drawer, and two button locks, where actions change object states and enable subsequent manipulation. 18 • cube : Pick-and-place manipulation of cube-shaped blocks to form specified target configura-tions. We use single to move one cube and double to arrange two cubes in the shared domain for common evaluation. We further select triple and quadruple , which place three and four cubes, respectively, as the challenge domains, thereby strongly increasing the combinatorial difficulty of assembling target configurations. • puzzle : Solving with a robot arm where pressing buttons induces deterministic state transitions according to the puzzle rule (e.g., toggling the pressed cell and its neighbors). This series of domains is designed to test the agent’s combinatorial generalization abilities. We use 4x4 
+
+(4 × 4 grid) for common evaluation. We further select hard settings with larger grid sizes, 4x5 
+
+(4 × 5 grid) and 4x6 (4 × 6 grid), as the challenging domains. 
+
+Navigation. Environments are adopted from Mujoco [91], and the success of this series of do-mains is determined by the achieved proximity to a specified goal location in the maze. We utilize 
+
+navigate datasets for all domains, collected by a noisy expert policy that navigates the maze by repeatedly reaching randomly sampled goals. • antmaze : Controlling a quadrupedal Ant agent with 8 degrees of freedom (DoF) to reach a specified goal location, with success evaluated by the achieved proximity to the goal in the maze. We select large maze and giant maze (twice the size of large ) in this work. 
+
+C.2 Evaluation 
+
+We evaluate all methods trained on standard datasets provided by OGBench, and report the success rate at 1M gradient steps for each task. The data specifications are shown in Table 2. Table 2: Data specifications. Reported from Park et al. [31]                                                        
+
+> Dataset Transitions Episodes Data Episode Length State Dim. Action Dim.
+> scene-play 1M 1000 1000 40 5
+> cube-single-play 1M 1000 1000 28 5
+> cube-double-play 1M 1000 1000 37 5
+> puzzle-4x4-play 1M 1000 1000 83 5
+> antmaze-large-navigate 1M 1000 1000 29 8
+> antmaze-giant-navigate 1M 500 2000 29 8
+> cube-triple-play 3M 3000 1000 46 5
+> cube-quadruple-play 5M 5000 1000 55 5
+> puzzle-4x5-play 3M 3000 1000 99 5
+> puzzle-4x6-play 5M 5000 1000 115 5
+
+C.3 Baselines 
+
+In this section, we provide the details of the baselines in this work. We select IQL , FQL , IFQL ,
+
+FQL-n , IFQL-n , QC , VALUE-FLOWS , and FLOQ , in total of 8 baselines for a comprehensive com-parison. Specifically, we report the performance of IQL from Park et al. [52] and use the open-source codebases for experiments on others, using the corresponding default hyperparameters. • IQL [35]. IQL is a strong and stable Gaussian-policy offline RL baseline. The key idea of IQL 
+
+is to learn a state value function via upper expectile regression over in-dataset action values, and then use this value estimate to bootstrap the Q-function. The policy is subsequently extracted via AWR -style [43] advantage-weighted behavioral cloning, thereby enabling policy improvement while remaining close to the data distribution. • FQL/FQL-n [52]. FQL is a strong flow-policy offline RL baseline built on a behavior-regularized actor-critic framework. The key idea of FQL is to train a behavior-cloned flow model for expres-sive action modeling, while learning a separate one-step policy that maximizes the critic under a distillation regularizer. Specifically, FQL avoids unstable backpropagation through time and eliminates costly iterative inference, while still retaining much of the expressivity of flow-based policies by decoupling value maximization from the iterative flow-generation process. FQL-n is the n-step backup variant of FQL .19 • IFQL/IFQL-n [52]. IFQL is a flow-based variant of IQL [35] that combines expectile-regression value learning with an imitation-trained flow policy and rejection sampling for policy extraction. 
+
+IFQL , therefore, is a traditional, strong, and stable in-sample baseline that benefits from expressive flow-based action modeling while avoiding direct optimization through the generative process. 
+
+IFQL-n is the n-step backup variant of IFQL .• QC [17]. QC is a strong baseline designed for long-horizon sparse-reward problems via action chunking. QC learns a flow-matching behavior policy over temporally extended action chunks and a chunk-level critic, and performs rejection sampling to choose the action sequence with the highest predicted value. This chunked formulation enables longer-horizon TD back-ups and more temporally coherent exploration, which substantially improves learning in tasks where single-step control is ineffective. It is a representative baseline that explicitly addresses long-horizon difficulty through temporal abstraction and chunk-level value learning. • VALUE-FLOWS [21]. VALUE-FLOWS is a strong distributional RL baseline that models the full return distribution using flow matching, rather than collapsing future outcomes into a single scalar Q-value. It learns a return vector field that satisfies the distributional Bellman equation and additionally uses estimated return variance to reweight training toward more uncertain transitions. 
+
+VALUE-FLOWS is particularly appealing for long-horizon tasks with multimodal or uncertain returns. • FLOQ [20]. FLOQ is a strong value-learning baseline that scales value estimation through it-erative computation. Specifically, FLOQ represents the Q-function as a flow-matching velocity field that transforms noise into a scalar Q-value through numerical integration, with dense super-vision applied across intermediate integration steps. In practice, FLOQ is instantiated on top of 
+
+FQL , preserving the expressive flow-policy framework while substantially improving critic capac-ity and enabling a form of test-time compute scaling through additional integration steps. It is a particularly strong baseline for evaluating improvements from value scaling. 
+
+## D Implementation 
+
+This section provides additional implementation information. See pseudo-code in Section D.3, im-plementation and structural details in Section D.1, and hyperparameters in Section D.2. 
+
+D.1 Implementation details 
+
+We implement VAST in JAX [92] on top of recent study by Park et al. [13]. 
+
+Architectures. We train 5 neural networks in parallel: 2 of flow policy networks (stitching policy 
+
+πstitch ; execute policy πexec ), and 3 of value networks (state value V ; state-action value Q; horizon-based cumulative return G). We leverage the multi-layer perceptron (MLP) for each network; the depth and width are held constant within each domain. 
+
+Value learning. In all experiments, we learn the optimal state-value function V using IQL-style expectile regression [35]. The sampled bootstrap target (k, s k) ∼ πstitch (· | s) could enable a greedier and policy-aware value update. To better align value learning with both the stitching and 
+
+execution policies, we approximate Vtarget in Eq. (17) as 
+
+Vtarget = G(s, s k, k ) + γkQ sk, π exec (ak | sk, s + 
+
+> k
+
+), (26) where (k+, s + 
+
+> k
+
+) ∼ πstitch (· | sk). Here, πexec is trained to produce actions within the data distribution. As a result, the second term provides a stable approximation to the continuation value at sk, while still reflecting the behavior induced by the combined stitching-and-execution policy. For learning the G-function, given a batch of states {st}, we first uniformly sample a future state 
+
+st+k from the same trajectory, where the horizon k is sampled from {2, . . . , K } and K denotes the maximum horizon. We then uniformly sample an intermediate state st+i between st and st+k, with 
+
+i ∼ { 1, . . . , k − 1}. The G-function is trained with the Monte Carlo objective in Eq. (8) and the compositional objective in Eq. (9), using a fixed balance weight of 0.5. The maximum horizon K
+
+controls the temporal range of MC supervision for the G-function. In practice, choosing K based on the domain helps balance the expressivity of the G-network against task complexity. Detailed domain-specific settings are provided in Table 4. 20 Policy extraction. We use weighted regression for the objective of stitching policy, which has been fully studied in previous works [45, 50, 46]. It starts with a regularized optimization problem: 
+
+max 
+
+> πstitch
+
+Es∼D 
+
+Eπstitch [Vtarget − V (s)] − 1
+
+β DKL (πstitch (·| s) ∥μ (·| s)) , (27) where μ denotes the data distribution. Following the deviation by Zheng et al. [45], we could have its closed-form solution as: 
+
+π⋆
+
+> stitch
+
+(k, s k | s) ∝ μ(k, s k | s) · exp ( β · (Vtarget − V (s))) . (28) The above form gives us the weighted objectives for the stitching flow networks as Eq. (19), follow the formulation by Zheng et al. [45]. Also, given the parameterized execute flow network ϵexecute ,the supervision objective is: 
+
+Lϵexecute = Et∼U [0 ,1] ,ϵ ∼N (0,I),(s,a,s goal )∼D 
+
+hwwϵ − ϵexecute 
+
+ at, s, s goal , t w w2i
+
+. (29) At inference time, we use rejection sampling to select the output of the execute policy πexec with 
+
+Nrej variants by tasks. See Section D.2 for detailed hyperparameters. 
+
+D.2 Hyperparameters 
+
+In this section, we provide the detailed hyperparameter setup in Table 3 for the general hyperparam-eters, and Table 4 for the domain-specific hyperparameters. Table 3: General hyperparameters .General Hyperparameter Value Optimizer Adam Policy learning rate 3e-4 Value learning rate 3e-4 Offline learning steps 1,000,000 Mini-batch 1024 ( cube-triple ), 512 (others) Soft update factor 0.005 Flow steps T 10 Gradient clip 1Expectile factor τ 0.9 Compositional factor λ 0.5 Clip Q false Subgoal sample probability 0.1 (current state), 0.8 (trajectory state), 0.1 (random state) Architecture Policy/value MLP hidden dimension [1024, 1024, 1024, 1024] ( cube-triple ), [512, 512, 512, 512] (others) Activation function tanh Layernorm true 
+
+D.3 Algorithm Pseudo-code 
+
+We provide pseudo-codes for VAST as Algorithm 1. 21 Table 4: Domain-specific hyperparameters.                                                
+
+> Domain Max. horizon KβRejection sampling Nrej Discount γ
+> scene-play 25 0.05 4 (task 1,2,4); 1 (others) 0.995
+> cube-single-play 25 0.05 40.99
+> cube-double-play 25 0.05 40.995
+> puzzle-4x4-play 10 0.05 (task 2); 0.01 (others) 8 (task 5); 16 (others) 0.995
+> antmaze-large-navigate 50 0.05 40.995
+> antmaze-giant-navigate 50 0.01 (task 1,2,4); 0.05 (task 3,5) 40.995
+> cube-triple-play 25 0.08 40.999
+> cube-quadruple-play 10 0.005 16 0.999
+> puzzle-4x5-play 10 0.005 32 0.995
+> puzzle-4x6-play 10 0.005 16 0.999
+
+Algorithm 1 VAST 
+
+// Train time: 
+
+Initialize G, V , Q, πstitch , πexec 
+
+while not converged do 
+
+Sample batch (st, a t, r t, s t+1 , s goal , s k, k, s i, i ) ∼ D from offline data // Policy Learning Update stitching policy πstitch (sk, k | s) with loss (Eq. (19)) Update execute policy πexec (a | s, s goal ) with loss (Eq. (29)) // Value Learning Update G with loss (Eq. (10)) Update V with loss (Eq. (17)) Update Q with loss (Eq. (15)) 
+
+end while // Test time: 
+
+Get initial state s
+
+while not done do 
+
+// Sub-goal prediction Sample sgoal from πstitch (·| s)
+
+// Execution Sample a1, a 2, ..., a N from πexec (·| s, s goal )
+
+Set a ← arg max a1,a 2,...,a N Q(s, a i)
+
+Update s
+
+end while 
+
+## E Additional Results 
+
+E.1 Full Results 
+
+In this section, we provide the full experimental results on OGBench (Table 5). Scores are aggre-gated over 8 random seeds, with ± indicating standard deviations. Best performances are highlighted with color. See Section C.2 for the evaluation portal. 22 Table 5: Results on OGBench. 
+
+1-step TD n-step TD Chunking Generative Stitching Task IQL FQL IFQL FQL-n IFQL-n QC VALUE-FLOWS FLOQ VAST 
+
+scene-play 
+
+1 94 100 ±0 99 ±1 100 ±0 99 ±1 100 ±0 100 ±1 100 ±0 100 ±02 12 81 ±14 55 ±26 26 ±15 0±0 99 ±2 99 ±1 82 ±11 99 ±23 32 97 ±3 76 ±9 85 ±11 59 ±4 99 ±1 95 ±6 98 ±2 97 ±14 0 9±7 0±0 0±0 0±1 1±2 5±8 4±4 3±25 0 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±1agg. 28 57 ±7 46 ±12 42 ±8 32 ±2 60 ±1 60 ±5 57 ±5 60 ±1
+
+cube-single-play 
+
+1 88 96 ±7 84 ±7 97 ±2 77 ±8 98 ±2 97 ±2 99 ±1 99 ±32 85 97 ±3 89 ±5 96 ±1 86 ±5 94 ±4 97 ±4 98 ±3 98 ±43 91 98 ±3 92 ±3 99 ±8 87 ±6 97 ±4 99 ±1 99 ±2 100 ±24 73 96 ±5 87 ±4 98 ±2 78 ±6 89 ±4 95 ±3 96 ±3 96 ±35 78 96 ±3 84 ±7 97 ±5 84 ±5 89 ±9 86 ±8 89 ±9 97 ±3agg. 83 97 ±4 87 ±5 97 ±4 82 ±6 93 ±5 95 ±4 96 ±5 98 ±3
+
+cube-double-play 
+
+1 27 67 ±9 32 ±6 16 ±6 9±4 85 ±6 96 ±5 64 ±17 91 ±32 1 38 ±10 11 ±4 1±1 7±5 78 ±6 66 ±11 61 ±22 88 ±53 0 23 ±6 4±3 1±1 4±3 74 ±5 63 ±15 57 ±12 88 ±44 0 5±2 1±2 0±0 0±0 26 ±9 20 ±11 12 ±9 18 ±45 4 17 ±9 10 ±6 2±1 2±2 72 ±9 61 ±9 52 ±15 81 ±6agg. 7 30 ±8 12 ±5 4±3 4±3 67 ±7 61 ±11 49 ±16 73 ±5
+
+puzzle-4x4-play 
+
+1 12 29 ±6 41 ±12 42 ±4 17 ±6 67 ±11 18 ±12 61 ±8 74 ±13 2 7 14 ±7 17 ±9 20 ±3 9±4 1±2 33 ±2 22 ±8 17 ±10 3 9 18 ±6 48 ±8 35 ±8 15 ±3 64 ±17 18 ±12 40 ±15 82 ±13 4 5 9±2 20 ±6 20 ±5 10 ±3 10 ±8 20 ±5 19 ±6 30 ±75 4 6±5 7±3 17 ±7 7±4 3±3 14 ±6 14 ±4 17 ±5agg. 7 15 ±5 27 ±8 27 ±6 12 ±4 29 ±10 21 ±8 31 ±9 44 ±10 
+
+antmaze-large-navigate 
+
+1 48 87 ±6 34 ±20 80 ±10 15 ±10 4±5 22 ±11 96 ±3 79 ±92 42 63 ±10 17 ±7 59 ±14 0±0 0±0 53 ±14 83 ±11 78 ±63 72 96 ±3 49 ±12 91 ±5 57 ±8 19 ±10 53 ±23 98 ±2 81 ±14 51 80 ±8 15 ±13 83 ±7 8±6 0±0 50 ±17 92 ±7 77 ±95 54 85 ±6 44 ±26 86 ±6 56 ±7 8±3 61 ±5 95 ±3 78 ±9agg. 53 82 ±7 32 ±17 80 ±9 27 ±7 6±5 48 ±15 93 ±6 79 ±7
+
+antmaze-giant-navigate 
+
+1 0 12 ±12 0±0 3±6 0±0 0±0 0±0 75 ±12 1±22 1 21 ±18 0±0 88 ±3 0±0 0±0 1±1 37 ±30 50 ±93 0 3±1 0±0 17 ±7 0±0 0±0 0±0 0±0 10 ±64 0 10 ±21 0±0 40 ±32 0±0 0±0 0±0 17 ±28 13 ±75 19 7±18 1±4 36 ±13 1±1 0±0 13 ±7 15 ±36 23 ±15 agg. 4 11 ±16 0±2 37 ±16 0±0 0±0 3±3 29 ±25 19 ±9
+
+cube-triple-play 
+
+1 - 6±8 3±2 1±1 1±1 19 ±11 53 ±22 17 ±10 82 ±82 - 0±0 0±0 0±0 0±0 2±2 0±0 0±0 40 ±13 3 - 0±0 0±0 0±0 0±0 1±1 8±5 1±2 45 ±94 - 0±0 0±0 0±0 0±0 0±0 1±2 0±0 7±55 - 0±0 0±0 0±0 0±0 0±0 1±1 0±0 7±4agg. - 1±4 1±1 0±0 0±0 4±5 13 ±10 4±5 36 ±8
+
+cube-quadruple-play 
+
+1 - 0±0 0±0 0±0 0±0 1±1 0±0 0±0 8±92 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±03 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±04 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±05 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±0agg. - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 2±4
+
+puzzle-4x5-play 
+
+1 - 75 ±7 78 ±15 92 ±3 69 ±9 100 ±0 59 ±9 67 ±7 99 ±22 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 7±53 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±04 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±05 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±0agg. - 15 ±3 16 ±7 18 ±1 14 ±4 20 ±0 12 ±4 13 ±3 21 ±2
+
+puzzle-4x6-play 
+
+1 - 20 ±12 0±0 18 ±19 15 ±12 21 ±10 17 ±13 12 ±6 26 ±23 2 - 0±1 0±0 0±0 1±1 0±0 0±0 1±1 0±03 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±04 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±05 - 0±0 0±0 0±0 0±0 0±0 0±0 0±0 0±0agg. - 4±5 0±0 4±9 3±5 4±4 3±6 3±3 5±10 
+
+23 F Limitations and Future Works 
+
+F.1 Computation Cost Comparison 
+
+The core components introduced by VAST include an auxiliary value function and two policies with distinct functional roles. Consequently, with the same network architecture, VAST has more parameters and incurs higher computational cost. We report the parameter comparison in Table 6 and the computation time in Table 7, evaluated under a fixed domain and network architecture using an NVIDIA A100 GPU. We consider this minor overhead a reasonable trade-off for the improved flexibility and optimality that VAST offers. Table 6: Total parameters required. Methods Parameter Count (M) VAST ≈ 6.9
+
+FQL ≈ 5.0
+
+QC ≈ 5.2
+
+VALUE-FLOWS ≈ 4.9
+
+FLOQ ≈ 4.5
+
+Table 7: Computation time per 1M steps. Methods Computation Time (H) VAST ≈ 2.5
+
+FQL ≈ 0.67 
+
+QC ≈ 2.25 
+
+VALUE-FLOWS ≈ 3.75 
+
+FLOQ ≈ 1.2
+
+F.2 Greedier Diffusion Policy Optimization 
+
+In this work, we employ a diffusion policy extraction method that is more stable, albeit conservative. Meanwhile, recent studies have proposed more aggressive optimization procedures for diffusion policies, including Liang et al. [46] and Li and Levine [76]. Future work will investigate enhanced policy learning strategies to improve robustness and controllability. 24

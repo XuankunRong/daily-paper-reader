@@ -1,0 +1,1673 @@
+Title: Safe and Generalizable Hierarchical Multi-Agent RL via Constraint Manifold Control
+
+URL Source: https://arxiv.org/pdf/2606.24010v1
+
+Published Time: Wed, 24 Jun 2026 00:19:35 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Safe and Generalizable Hierarchical Multi-Agent RL via Constraint Manifold Control 
+
+Zihao Guo 1∗ Jianing Zhao 1 Ling Li 1 Hao Liang 1 Giuseppe Loianno 2 Yali Du 1,3 ∗
+
+> 1
+
+King’s College London 2University of California, Berkeley 3The Alan Turing Institute 
+
+Abstract 
+
+Multi-agent systems are widely used in safety-critical applications that require coordinated behavior under strict safety constraints. Existing approaches face a fun-damental trade-off: learning-based methods achieve strong empirical performance but lack theoretical safety guarantees, while control-theoretic methods enforce safety but often lead to overly conservative and inefficient behaviors. We propose a hierarchical multi-agent reinforcement learning framework that enforces hard safety constraints under mild assumptions at low level via a constraint manifold, while enabling effective coordination through high-level policy learning. Our ap-proach provides theoretical safety guarantees in the multi-agent setting and yields stationary learning dynamics, thereby enabling stable and efficient training. Em-pirically, our method achieves competitive performance while maintaining nearly perfect safety rates, and generalizes effectively to varying numbers of agents and obstacles. 
+
+1 Introduction 
+
+Multi-agent systems (MAS) have seen significant development in real-world applications such as warehouse robotics (Kattepur et al., 2018), autonomous vehicles (Zhang et al., 2024), traffic routing (Wu et al., 2020), and drone swarm coordination (Batra et al., 2022). A common characteristic of these scenarios is that each agent must not only accomplish its own task but also collaborate efficiently with other agents while maintaining safety such as collision avoidance. To address these challenges, various methods have been explored, ranging from Lagrangian-based Constrained Markov Decision Processes (CMDPs) (Gu et al., 2023; Liu et al., 2021; Ding et al., 2023; Lu et al., 2021; Geng et al., 2023; Zhao et al., 2023) that penalize unsafe behaviors, to safety-filter methods such as Control Barrier Functions (CBFs) (Zhang et al., 2025b,a), traditional control-theoretic approaches like Model Predictive Control (MPC) (Goarin et al., 2025). Recent learning-based CBF approaches for multi-agent systems (Zhang et al., 2025b,a) have demon-strated strong empirical performance by integrating learning with implicit planning capabilities. This enables more effective and scalable cooperative policies in safety-critical tasks such as multi-agent navigation and collision avoidance. Compared to traditional model-based CBF methods with fixed analytical controllers, these approaches further improve adaptability and performance. However, similar to CMDP-based approaches, these methods rely on learned policies and therefore generally lack formal safety guarantees. In addition to learning-based methods, control-theoretic approaches (Goarin et al., 2025) are proposed to guarantee safety in MAS under hard constraints. However, in complex MAS with multiple obstacles, they often lead to poor coordination among agents and suboptimal path selection, which can result in deadlocks. To overcome this challenge, safe hierarchical MARL approaches (Ahmad et al., 2025) decompose control into a high-level policy that learns to select or switch between skills, and a low-level controller that executes each skill via a parameterized CBF-quadratic programming   
+
+> ∗Corresponding to Zihao Guo ⟨zihao.1.guo@kcl.ac.uk ⟩, Yali Du ⟨yali.du@kcl.ac.uk ⟩.Preprint.
+> arXiv:2606.24010v1 [cs.AI] 22 Jun 2026
+
+(QP) controller. In this framework, CBF parameters are learned, but the safety constraints retain a model-based analytical form. The need to solve a QP problem at every timestep introduces significant computational overhead, leading to reduced training efficiency and suboptimal performance. In the single-agent setting, constraint manifold approach (Liu et al., 2025) ensures safety via a safe action space, while avoiding QP solves and thus enabling efficient per-timestep computation. However, it is unclear whether this approach can be extended to multi-agent settings. Existing methods fail to simultaneously strong task performance, theoretical safety guarantees, and training efficiency. To bridge these gaps, we propose a novel framework Hierarchical Manifold Multi-Agent PPO ( HMM ), which decouples cooperation and safety across two levels: a learnable policy for coordination at high-level and a model-based controller for enforcing hard constraints at low-level. The high-level policy operates under the Centralized Training with Decentralized Execution (CTDE) fashion to sequentially generate subgoals for each agent, handling multi-agent coordination and path planning. At the low level, the controller guarantees safety by embedding hard constraints into a differentiable constraint manifold and restricting actions to its tangent space. Compared to CBF-based methods that require solving a QP at every timestep, our HMM only involves efficient tangent space projections, while still providing structural guarantees of constraint satisfaction at each environmental timestep under mild assumptions. Our main contributions are summarized as follows: • We propose HMM , a hierarchical MARL framework based on a constraint manifold formulation, enabling coordinated multi-agent control while providing formal safety guarantees at every timestep during both training and execution. • Our approach provides theoretical safety guarantees in the multi-agent setting, and induces a stationary learning process with stable convergence behavior. • Empirically, HMM outperforms other safety MARL baselines on Lidar benchmarks, achieving state-of-the-art performance. It also demonstrates strong generalization across task scales: policies trained with only 3 agents and 3 obstacles generalize effectively to scenarios involving up to 21 agents or obstacles, while maintaining almost perfect safety rates and high task success rates. 
+
+2 Related Work 
+
+Our method lies at the intersection of safe RL and MARL, hierarchical MARL, and constraint manifold based safe control. We review these areas below and highlight that no existing approach provides hard safety guarantees, avoids per step QP solves, and scales to multi agent hierarchical settings. This gap motivates our work. 
+
+Safe RL and MARL. In safe RL, CMDP serves as a classic framework (Zhao et al., 2023; Altman, 2021; Gu et al., 2023) for maximizing cumulative reward while satisfying safety constraints. Existing methods can be broadly categorized into primal approaches (Xu et al., 2021; Chow et al., 2018, 2019; Liu et al., 2020), which directly enforce constraints; primal-dual approaches (He et al., 2023; Borkar, 2005; Ding et al., 2020; Huang et al., 2023; Tessler et al., 2018) that introduce Lagrange multipliers; and trust-region-based approaches (Achiam et al., 2017; He et al., 2023). Among these, Lagrange-multiplier-based approaches (Gu et al., 2023; Liu et al., 2021; Ding et al., 2023; Lu et al., 2021; Geng et al., 2023; Zhao et al., 2023) have been particularly popular and have been extended to the multi-agent setting. However, these Lagrangian-based approaches, whether in single-agent or multi-agent settings, suffer from problems such as training instability, slow convergence, and sensitivity to hyperparameters (Zanon & Gros, 2020; He et al., 2023; So & Fan, 2023; Ganai et al., 2023). Recently, CBF have been integrated into the RL training process as a safety filter (Tearle et al., 2021; Hsu et al., 2023; Hailemichael et al., 2023). This approach has been explored in both single-agent (Cheng et al., 2019; Emam et al., 2022; Hailemichael et al., 2023) and multi-agent settings (Pereira et al., 2021, 2022; Zhang et al., 2025a). However, existing CBF-based methods either require solving a QP at each timestep, leading to high computational cost, or rely on learning a parameterized CBF, which fail to provide theoretical safety guarantees. 
+
+Hierarchical MARL. Hierarchical reinforcement learning (HRL) (Pertsch et al., 2021) addresses complex, long-horizon tasks by decomposing decision-making into multiple levels of temporal abstraction. HRL has been studied extensively in both single-agent (Parr & Russell, 1997; Dietterich, 2000; Sutton et al., 1999) and multi-agent settings (Xu et al., 2023; Ghavamzadeh et al., 2006; Son 2et al., 2019; Dietterich, 2000; Ahilan & Dayan, 2019; Tessler et al., 2017). However, these hierarchical frameworks generally lack explicit safety guarantees. To address this, HMARL-CBF (Ahmad et al., 2025) uses CBF-based low-level controllers for safety. However, it requires solving a QP at each timestep, leading to inefficiency and suboptimal performance compared to DGPPO (Zhang et al., 2025a) on the same benchmarks, as reported in Ahmad et al. (2025). 
+
+Constraint Manifold-Based Safe Control. Constraint manifold-based methods (Liu et al., 2022, 2025) offer an alternative approach to safety enforcement without requiring QP solvers in RL. This approach has been extended to dynamic high-dimensional robotic tasks (Liu et al., 2023), stochastic constraint manifolds (Gu et al., 2024), and long-term safety under unknown constraints (Günster et al., 2024). However, existing works are primarily focused on single-agent settings. In this work, we extend constraint manifolds to multi-agent settings within a hierarchical framework. This enables efficient and scalable safety enforcement while preserving formal guarantees in complex multi-agent environments. 
+
+3 Preliminaries and Problem Formulation 
+
+3.1 Constrained Semi-Markov Decision Process 
+
+We formulate the multi-agent safe control problem as a constrained semi-Markov decision process (CSMDP) (Makar et al., 2001), which allows temporally extended actions. In our setting, we consider the special case where each action is executed for a fixed duration τ . The CSMDP is defined by the tuple ⟨N , S, Z, O, P, r, H, γ ⟩, where N = {1, . . . , N } denotes the set of agents. The global state space is denoted by S. The global state at timestep t is st = {sti}i∈N , where sti ∈ RS denotes the state of agent i. The global state is not directly observable by individual agents; instead, each agent i
+
+receives a local observation oti ∈ O i. The joint action and observation spaces are Z = Z1 × · · · × Z N
+
+and O = O1 ×· · ·×O N , respectively. Each agent i ∈ N has L associated constraint functions defined on local observations, with the joint set defined as H := {h(ℓ) 
+
+> i
+
+: Oi → R | i ∈ N , ℓ = 1 , . . . , L }.We require hard constraint satisfaction at every timestep t:
+
+h(ℓ) 
+
+> i
+
+(oti) ≤ 0, ∀i ∈ N , ℓ = 1 , . . . , L, ∀t ≥ 0. (1) The multistep transition kernel P : S × Z → ∆( S), where P(s′ | s, z) denotes the probability of transitioning to s′ after τ timesteps under joint action z. The reward function r : S × Z → R denotes the cumulative reward collected over the τ timesteps induced by the joint action. We distinguish between timesteps and decision epochs: the system evolves at the finer timestep index t, while decisions are made at discrete decision epochs indexed by k. Each decision epoch k
+
+corresponds to the execution of a joint action zk, which is held fixed for τ consecutive timesteps, i.e., from t = kτ to t = ( k + 1) τ − 1. We use sk := skτ to denote the state at the start of epoch k. The objective is to find decentralized policies πi : Oi → Z i defined at decision epochs that maximize the expected discounted return while satisfying the safety constraints: 
+
+max 
+
+> π1,...,π N
+
+Eπ
+
+" ∞X
+
+> k=0
+
+γkτ r(sk, zk)
+
+#
+
+s.t. h(ℓ) 
+
+> i
+
+(oti) ≤ 0, ∀i ∈ N , ℓ = 1 , . . . , L, ∀t ≥ 0. (2) The value function under joint policy π in the CSMDP is defined as 
+
+V π (s) = Eπ
+
+" ∞X
+
+> k=0
+
+γkτ r(sk, zk) s0 = s
+
+#
+
+. (3) This yields an effective discount factor of γτ at the decision level. 
+
+3.2 Single Agent Safe Control on the Constraint Manifold 
+
+In this work, we consider a control-affine system that is locally Lipschitz continuous and defined as follow: 
+
+˙s = f (s) + G(s)us, (4) 3where s ∈ S ⊂ RS denotes the system state, u ∈ U ⊂ RU denotes the control input, and f : S → RS
+
+and G : S → RS×U are Lipschitz continuous mappings. We review the key concepts of manifold constraint method (Liu et al., 2022, 2025) for single agent, which forms the basis of our low-level safe controller. Additional details on manifolds are provided in Appendix B.2. 
+
+Constraint manifold. We consider that the safety of the single agent setting requirements is specified by a set of L inequality constraints h(s) ≤ 0 with h : S → RL. Given the inequality constraint definition, we define the safe set as the sublevel set C := {s ∈ S ⊂ RS : h(s) ≤ 0}. Slack variables 
+
+μ ∈ [0 , +∞)L are introduced to rewrite the inequality constraints as equality constraints: 
+
+c(s, μ) := h(s) + μ = 0. (5) The Jacobian of c(s, μ) is given by Jc(s, μ) = [ Jh(s) IL], where IL denotes the L-dimensional identity matrix. The equality constraint formulation defines the constraint manifold M := {(s, μ) ∈D : c(s, μ) = 0}, in the augmented state space D := S × [0 , +∞)L ⊂ RS+L. The safe set C is the projection of M onto the original state space: for any (s, μ) ∈ M , h(s) = −μ ≤ 0, so s ∈ C . More preliminaries of manifold are provided in Appendix B.1 
+
+Augmented dynamics. To make the slack variables controllable, a controlled system is introduced for each slack variable μℓ:
+
+˙μℓ = αℓ(μℓ) uμ,ℓ , ℓ = 1 , . . . , L, (6) where αl is a class-K2 function and uμ,ℓ is the virtual control input for the ℓ-th slack variable. Combining the original system dynamics (4) with the slack variable dynamics (6) , we obtain the augmented system:  ˙s
+
+˙μ
+
+
+
+=
+
+f (s)
+
+0
+
+
+
++
+
+G(s) 00 A(μ)
+
+  us
+
+uμ
+
+
+
+, (7) where A(μ) ∈ RL×L is a diagonal matrix with entries Aℓℓ = αℓ(μℓ), and uμ = [ uμ, 1, . . . , u μ,L ]⊤
+
+collects all virtual control inputs. 
+
+Safe controller. Then we can have a controller that keeps the augmented state (s, μ) on the constraint manifold M. Since any point on M projects to a safe state in the original state space, staying on M
+
+guarantees that the system remains within the safe set C.To keep the augmented state on M, its velocity must lie in the tangent space, which is equivalent to enforcing 
+
+˙c(s, μ) = Jc(s, μ)
+
+ ˙s
+
+˙μ
+
+
+
+= 0, (8) where Jc(s, μ) = [ Jh(s) IL] is the Jacobian of c. Substituting the augmented dynamics (7) into (8) yields the linear equation 
+
+ψ(s) + Ju(s, μ)
+
+us
+
+uμ
+
+
+
+= 0, (9) where Ju(s, μ) = [ Jh(s)G(s) A(μ)] is the control Jacobian and ψ(s) = Jh(s)f (s) is the constraint drift induced by the system drift f (s).Solving (9) gives the general form of the constraint manifold safe controller: 
+
+us
+
+uμ
+
+
+
+= −J†
+
+> u
+
+ψ
+
+| {z } 
+
+> drift compensation
+
+−λJ †
+
+> u
+
+c
+
+| {z } 
+
+> manifold contraction
+
++ Buu
+
+|{z} 
+
+> tangential action
+
+, (10) where J† 
+
+> u
+
+is the pseudoinverse of Ju, Bu is the tangent space basis satisfying JuBu = 0, λ > 0
+
+is a contraction gain, and u is an arbitrary task-level control signal. The three terms play distinct roles: the drift compensation term cancels the natural drift of the system, the manifold contraction 
+
+term retracts the augmented state back to M whenever numerical errors cause deviation, and the 
+
+tangential action term allows free exploration along the tangent space without violating constraints. Any task-level control signal u mapped through (10) produces a safe control input us, ensuring that the system state remains within the safe set at every timestep.           
+
+> 2A continuous function α: [0 ,∞)→[0 ,∞)is of class Kif it is strictly increasing and α(0) = 0 .
+
+44 Methodology 
+
+4.1 Overview 
+
+We propose a hierarchical framework for safe MARL, illustrated in Figure 1. The framework consists of a high-level cooperative planner with a low-level safe controller built on the constraint manifold. The high-level policy generates subgoals for each agent every τ timesteps to enable coordination. At the low level, each agent independently applies a constraint manifold safe controller that projects low level actions onto the tangent space of its constraint manifold, structurally guaranteeing safety at every timestep. As a result, our framework enables efficient multi-agent coordination while guaranteeing safety by construction at every timestep. Safe action 1:  𝒖 𝑠 , 1         
+
+> Safe action 2: 𝒖 𝑠 ,2
+> Safe action 𝑁 :𝒖 𝑠 ,𝑁
+> Constraint manifold
+> safe controller
+> High -level Policy
+> Agent 1: High -level
+> Subgoal policy 𝜋 1
+> ℎ𝑖𝑔ℎ
+> Agent 2: High -level
+> Subgoal policy 𝜋 2
+> ℎ𝑖𝑔ℎ
+> Agent 𝑁 : High -level
+> Subgoal policy 𝜋 𝑁
+> ℎ𝑖𝑔ℎ
+> Partial Observations
+> 𝒐 1
+> 𝒐 2
+> 𝒐 𝑁
+
+… …  
+
+> 𝒛 1
+> 𝑘
+> Agent 1 subgoal:
+> 𝒛 2
+> 𝑘
+> Agent 2 subgoal:
+> 𝒛 𝑁
+> 𝑘
+> Agent 𝑁 subgoal:
+
+…    
+
+> Nominal
+> policy 1
+> Nominal
+> policy 2
+> Nominal
+> policy 𝑁
+> 𝒖 ref ,1
+> Constraint manifold
+> safe controller
+> Constraint manifold
+> safe controller
+> 𝒖 ref ,𝑁
+> 𝒖 ref ,2
+
+… …
+
+> Low -level Policy
+> Partial Observations
+> subgoal
+> agent
+> Final target
+
+Figure 1: Overview of the hierarchical safe MARL framework during decentralized execution. Each agent’s high-level policy generates a subgoal zki , which is converted into a nominal action uref ,i and then projected onto the constraint manifold to produce a safe action us,i .
+
+4.2 High-Level Subgoal Policy Learning 
+
+The high-level planner is responsible for generating temporally extended subgoals that coordinate cooperative behavior across agents. At each decision epoch k, each agent i uses its high-level policy 
+
+πhigh i , conditioned on its observation oki , to generate a subgoal zki ∈ Rd. The subgoal represents a target position relative to agent i’s current state, where d is the spatial dimension of the environment. This subgoal serves as a short-horizon waypoint that the low-level safe controller drives the agent toward over the subsequent τ environment timesteps. We adopt a MARL framework under the centralized training with decentralized execution (CTDE) paradigm for high-level coordination. The high-level policy is based on MAPPO (Yu et al., 2022) and incorporates graph-based information aggregation inspired by InforMARL (Nayak et al., 2023). Each agent observes its own state, as well as the relative states of nearby agents and obstacles within its sensing radius, forming a local interaction graph. We parameterize the high-level policy πhigh i using a graph neural network (GNN) (Veliˇ ckovi´ c et al., 2017; Nayak et al., 2023; Zhang et al., 2025b,a) with attention-based message passing to aggregate information from neighboring agents and obstacles. This design ensures permutation invariance and allows the policy to generalize across varying agents and obstacles sizes. Following the CSMDP formulation with fixed epoch duration τ , the high-level objective is 
+
+J(πhigh ) = Eπhigh 
+
+" ∞X
+
+> k=0
+
+γkτ r(sk, zk)
+
+#
+
+. (11) The semi-MDP Bellman residual with effective per-epoch discount γτ is δk = r(sk, zk) + 
+
+γτ Vϕ(sk+1 ) − Vϕ(sk), and advantages are estimated via Generalized Advantage Estimation: 
+
+ˆAk = P∞
+
+> j=0
+
+(γτ λGAE )j δk+j , where Vϕ is the centralized value function and λGAE ∈ (0 , 1) is the GAE trace-decay parameter. 
+
+4.3 Low-Level Safe Controller 
+
+The low-level controller executes the subgoals generated by the high-level policy while strictly satisfying safety constraints at every timestep. Building on the constraint manifold method reviewed in Section 3.2, the safe controller is applied independently to each agent, exploiting the natural decoupling of control inputs across agents. Given a subgoal zki from the high-level policy, the 5low-level controller first computes a nominal reference action uref ,i = πref (si, zki ) that drives agent 
+
+i toward the subgoal. This nominal action does not account for safety constraints; the constraint manifold controller then projects uref ,i onto the tangent space of the local constraint manifold to produce a safe control input us,i for each agent i.
+
+Per-agent constraint formulation. For each agent i, pairwise collision-avoidance constraints are defined with the L nearest entities (agents and obstacles). Each such neighbor j instantiates a per-agent constraint h(ℓ) 
+
+> i
+
+from the CSMDP formulation (with ℓ ≡ j): 
+
+hij = ( rsafe  
+
+> ij
+
++ δij )2 − ∥ pi − pj ∥2 ≤ 0, (12) where pi, pj ∈ Rd are positions and rsafe  
+
+> ij
+
+is the safety radius. The velocity-dependent margin 
+
+δij = d0 + v2
+
+> approach
+
+/(2 aij ) accounts for braking distance, where vapproach is the closing speed along the collision axis and aij is the effective deceleration capacity. For agent-agent pairs, symmetry doubles the collision radius and braking capacity ( rij = 2 r, aij = 2 amax ); agent-obstacle pairs use single-agent values. 
+
+Safe control via tangent space projection. Each agent i independently projects its nominal action 
+
+uref ,i onto the tangent space of its local constraint manifold Mi, following the constraint manifold safe controller in (10): 
+
+us,i = −J†
+
+> u,i
+
+ψi
+
+| {z }
+
+> drift compensation
+
+−λJ †
+
+> u,i
+
+ci
+
+| {z }
+
+> manifold contraction
+
++ Bu,i uref ,i 
+
+| {z }
+
+> tangential tracking
+
+, (13) where Ju,i , ψi, ci, and Bu,i are computed locally from agent i’s state and the states of its neighbors. The resulting safe control us,i is guaranteed to keep agent i’s augmented state on Mi, ensuring constraint satisfaction at every timestep. 
+
+5 Theoretical Guarantees 
+
+5.1 Safety Guarantee Theorem 1 (Compositional Safety) . Consider N agents with decoupled control-affine dynamics 
+
+˙si = fi(si) + Gi(si)ui, each applying the constraint manifold controller (10) on its local constraint set hi(si, sNi ) ≤ 0, where Ni = Ei ∪ A i denotes neighboring obstacles and agents. Under the standard assumptions (Assumptions 1–4 in Appendix B.4), if all agents start on their local constraint manifolds, the joint trajectory remains in the global safe set for all time. Proof sketch (full proof in Appendix B.5). Each agent i defines a constraint residual ci =
+
+hi(si, sNi ) + μi and a Lyapunov function Vi = 12 ∥ci∥2. Expanding ˙ci via (8) and (9) gives 
+
+˙ci = ∂hi
+
+∂si
+
+˙si + X
+
+> e∈E i
+
+∂hi
+
+∂se
+
+˙se
+
+| {z }
+
+> obstacle motion
+
++ X
+
+> j∈A i
+
+∂hi
+
+∂sj
+
+˙sj
+
+| {z }
+
+> other agents
+
++ ˙ μi = ψi + Ju,i 
+
+us,i 
+
+uμ,i 
+
+
+
+, (14) where the drift ψi absorbs all terms not controlled by agent i: its autonomous dynamics, obstacles, and the states of other agents. In the single-agent setting, only the obstacle term remains and the multi-agent extension adds the inter-agent term, but crucially both enter only the drift ψi.Substituting (14) into ˙Vi = c⊤ 
+
+> i
+
+˙ci and expanding (see (35) ), the drift term c⊤ 
+
+> i
+
+(ψi − Ju,i J†
+
+> u,i
+
+ψi)
+
+vanishes since Assumption 4 implies Ju,i J† 
+
+> u,i
+
+= I. The null-space term c⊤ 
+
+> i
+
+Ju,i Bu,i uref ,i = 0 by construction. The remaining contraction term yields 
+
+˙Vi = −λ c⊤ 
+
+> i
+
+Ju,i J† 
+
+> u,i
+
+ci ≤ 0. (15) Since Vi(0) = 0 and ˙Vi ≤ 0, we have Vi(t) = 0 for all t, so every agent remains on its local constraint manifold and satisfies hi(t) ≤ 0 (Remark 1). Because every pairwise inter-agent constraint hij 
+
+is enforced by at least one agent’s local guarantee, intersecting all local safe sets recovers global safety. 65.2 Reduction to Stationary MARL 
+
+A well-known challenge in hierarchical RL is that the high-level transition kernel Phigh depends on the evolving low-level policy, causing non-stationarity (Sutton et al., 1999; Nachum et al., 2018). Consequently, the induced high-level process violates the stationarity assumption of Markov decision processes, resulting in non-stationary transition dynamics, biased value estimation, and lower training stability. In our framework, this problem does not arise due to the following property: 
+
+Proposition 1 (Stationarity by Construction) . Given that the low-level policy πlow contains no learnable parameters, the induced high-level transition kernel Phigh (s′ | s, z ) and reward function 
+
+r(s, z ) are time-invariant and uniquely determined by the environment dynamics. Proof. The high-level dynamics Phigh depend only on the environment dynamics P , the nominal policy πnom , and the constraint manifold projection ΠM. As all these components are stationary and independent of the high-level policy’s learning process, the transition kernel remains constant throughout training. Therefore, our framework effectively reduces the hierarchical safe MARL problem to solving an unconstrained and stationary high-level MDP. This reduction provides significant advantages for training stability. By offloading safety to a fixed lower level, we eliminate the non-stationarity and distributional shift typical of hierarchical RL. Consequently, the high-level policy interacts with a consistent environment, allowing standard MARL algorithms like MAPPO (Yu et al., 2022). These algorithms inherit their original convergence guarantees, ensuring stable optimization and stationary throughout the entire learning process. 
+
+6 Experiments 
+
+In this section, we provide a comprehensive evaluation and analysis of our HMM across four key dimensions: overall performance, safety throughout the training process, computational efficiency, and generalization capability. By comparing our approach with several baselines, we demonstrate its superior effectiveness in achieving better performance, strictly maintaining safety constraints even during the early stages of learning, and exhibiting stronger generalization capabilities compared to learning-based baselines. 
+
+6.1 Settings Environments. We evaluate our algorithm across a diverse set of tasks. Specifically, we conduct experiments in LiDAR-based environments (Keyumarsi et al., 2023; Zhang et al., 2025a,b), including both 2D environments (LidarSpread, LidarTarget, LidarLine, LidarBicycle) and 3D environments (LinearDrone, CrazyFlie) (See Figures 5). To comprehensively assess performance against baselines, we adopt two metrics: safety and success rate. The safety rate measures the ratio of agents that remain safe throughout the entire trajectory. The success rate is defined as the ratio of agents that both remain safe and reach their goals. 
+
+Baselines. We compare against DGPPO (Zhang et al., 2025a), InforMARL (Nayak et al., 2023), and MAPPO-Lagrangian (Gu et al., 2021, 2023). In InforMARL, constraint violations are incorporated via a penalty term β · max {0, max m h(m)} with varying penalty weights (denoted Penalty( β) in figures for β ∈ { 0.02 , 0.1, 0.5}), and a scheduled variant ( Schedule ) where β is gradually increased during training is also evaluated. For MAPPO-Lagrangian, a GNN backbone is used and different Lagrange multiplier learning rates are considered ( Lagr(1) , Lagr(5) for multiplier rates 1 and 5,and Lagr(lr) for increasing the learning rate to 0.1). Our method is denoted HMM in all figures. 
+
+6.2 Main Results Overall Performance and Stability. We evaluate the performance of different algorithms and visualize their results in terms of safety rate and success rate in a two-dimensional plot. For each method, we report both the mean and standard deviation (std) in the figure. As shown in Figure 2, our algorithm consistently outperforms all other baselines in both safety rate and success rate. Notably, our method achieves a highly stable safety rate across all environments, remaining close to 100% 70 20 40 60 80 100 
+
+Success rate (%) 
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(a) LidarSpread 0 20 40 60 80 100 
+
+Success rate (%)  
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(b) LidarTarget 0 20 40 60 80 100 
+
+Success rate (%)  
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(c) LidarLine 0 20 40 60 80 100 
+
+Success rate (%) 
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(d) LidarBicycle 0 20 40 60 80 100 
+
+Success rate (%)  
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(e) LinearDrone 0 20 40 60 80 100 
+
+Success rate (%)  
+
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(f) CrazyFlie DGPPO Penalty(0.02) Penalty(0.1) Penalty(0.5) Schedule Lagr(1) Lagr(5) Lagr(lr) HMM(ours) 
+
+Figure 2: Safe rate and success rate (mean ± std) across six environments. throughout. Moreover, the low std reported in Figure 2 indicates that our method exhibits consistently low variance across runs, demonstrating strong training stability. This suggests that our algorithm is not only effective but also robust during training. 
+
+Persistent Safety throughout Training. We present training curves of the safety rate during the learning process. As shown in Figure 3, other learning-based baselines are not able to guarantee safety at the early stage of training when the neural networks have not yet converged. In contrast, our HMM consistently maintains safety throughout the entire training process. The rare residual violations (<2%) stem from discrete-time integration, neighbor truncation, and partial observability, which fall outside our continuous-time guarantee (Theorem 1); see Appendix C for details. 0.0 0.5 1.0 1.5 2.0  
+
+> Step 1e5
+> 20
+> 40
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(a) LidarSpread 0.0 0.5 1.0 1.5 2.0   
+
+> Step 1e5
+> 20
+> 40
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(b) LidarTarget 0.0 0.5 1.0 1.5 2.0   
+
+> Step 1e5
+> 20
+> 40
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(c) LidarLine 0.0 0.5 1.0 1.5 2.0  
+
+> Step 1e5
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(d) LidarBicycle 0.0 0.5 1.0 1.5 2.0   
+
+> Step 1e5
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(e) LinearDrone 0.0 0.5 1.0 1.5 2.0   
+
+> Step 1e5
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(f) CrazyFlie DGPPO Penalty(0.02) Penalty(0.1) Penalty(0.5) Schedule Lagr(1) Lagr(5) Lagr(lr) HMM(ours) 
+
+Figure 3: Training safe rate curves across six environments. 8Computational Efficiency. We compare the training efficiency of our constraint manifold controller against the QP-based CBF baseline on a single NVIDIA H200 GPU. Benefiting from the closed-form pseudoinverse projection, our method achieves a significant speedup in training throughput. Specifically, based on the same training setting, while the CBF-QP baseline requires over 5 days to complete 200k steps, our HMM finishes the same training process within 8 to 10 hours. A detailed breakdown of the per-iteration cost and total training time is provided in Appendix D.1. 
+
+Ablation Study. To validate the contribution of each component in our framework, we compare three variants: (1) Nominal only, which uses a simple proportional controller to drive agents toward their goals without any safety mechanism; (2) Nominal + Manifold, which applies the constraint manifold safe controller on top of the nominal controller but without learned high-level subgoal planning; and (3) HMM (ours), the full framework with both learned high-level subgoals and the low-level manifold controller. As shown in Table 1, the nominal-only baseline achieves poor safety across all environments, confirming that naive goal-tracking is insufficient in multi-agent settings. Adding the manifold controller significantly improves safety (above 96% in all cases), but without high-level coordination, agents frequently get stuck or take suboptimal paths, resulting in limited success rates. Our HMM framework achieves the highest performance on both metrics, demonstrating that the learned high-level planner is essential for effective coordination while the low-level manifold controller provides the safety foundation. Notably, the addition of learned high-level coordination leads to dramatic improvements in success rate, boosting performance by over 35% points in LidarSpread and LidarLine, and by more than 50% points in LinearDrone. This highlights the importance of high-level planning for coordinating agents beyond merely satisfying safety constraints. Table 1: Comparison of nominal-only, nominal+manifold, and our HMM method across six environ-ments. All values are percentages (mean ± std across seeds, where applicable). Bold marks the best safe rate and success rate per environment. 
+
+Environment Method Safe rate (%) ↑ Success rate (%) ↑
+
+LidarSpread Nominal only 32.23 32.17 Nominal + Manifold 97.60 49.17 
+
+HMM (ours) 99.83 ± 0.06 87.29 ± 1.35 
+
+LidarTarget Nominal only 62.43 59.90 Nominal + Manifold 98.77 70.97 
+
+HMM (ours) 99.67 ± 0.05 71.93 ± 0.02 
+
+LidarLine Nominal only 33.30 33.13 Nominal + Manifold 96.87 48.20 
+
+HMM (ours) 99.73 ± 0.03 85.75 ± 1.15 
+
+LidarBicycle Nominal only 60.97 59.17 Nominal + Manifold 97.17 54.67 
+
+HMM (ours) 98.58 ± 0.31 64.67 ± 3.93 
+
+LinearDrone Nominal only 74.43 40.00 Nominal + Manifold 99.57 42.87 
+
+HMM (ours) 99.80 ± 0.14 93.67 ± 0.80 
+
+CrazyFlie Nominal only 74.20 74.20 Nominal + Manifold 98.63 94.93 
+
+HMM (ours) 99.87 ± 0.00 99.22 ± 0.44 6.3 Generalization 
+
+All our 2D environments are trained with 3 agents and 3 obstacles, while the 3D environments are trained with 3 agents and 6 obstacles. During evaluation, we increase the number of agents and obstacles while keeping the map size fixed. As shown in Figure 4, when the number of agents increases, all other baselines fail to maintain safety and often break down. This suggests that the other baselines struggle to generalize under distribution shifts, particularly as interaction complexity increases with larger numbers of agents and obstacles. In contrast, our HMM continues to guarantee 9safety even under increased numbers of agents or obstacles, and in most cases achieves an even higher success rate. Results for the remaining environments are provided in the appendix D.2. 3 6 9 12 15 18 21 
+
+> Number of agents
+> 20
+> 40
+> 60
+> 80
+> 100
+> Safe rate (%)
+
+(a) 3 6 9 12 15 18 21  
+
+> Number of obstacles
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(b) 3 6 9 12 15 18 21  
+
+> Number of agents
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success rate (%)
+
+(c) 3 6 9 12 15 18 21  
+
+> Number of obstacles
+> 0
+> 20
+> 40
+> 60
+> 80
+> Success rate (%)
+
+(d) 3 6 9 12 15 18 21 
+
+> Number of agents
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(e) 6 9 12 15 18 21  
+
+> Number of obstacles
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Safe rate (%)
+
+(f) 3 6 9 12 15 18 21  
+
+> Number of agents
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success rate (%)
+
+(g) 6 9 12 15 18 21  
+
+> Number of obstacles
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success rate (%)
+
+(h) DGPPO Penalty(0.02) Penalty(0.1) Penalty(0.5) Schedule Lagr(1) Lagr(5) Lagr(lr) HMM(ours) 
+
+Figure 4: Generalization results. LidarSpread (a–d) and CrazyFlie (e–h). Left two columns: safe rate; right two columns: success rate. Models trained with 3 agents and 3/6 obstacles are evaluated with varying numbers of agents and obstacles. 
+
+7 Conclusion 
+
+We propose a hierarchical safe multi-agent reinforcement learning framework. The high-level policy adopts a CTDE MARL architecture to generate subgoals, while a fixed low-level constraint-manifold controller projects these subgoals onto the safe action space. We provide theoretical guarantees on both safety and convergence of the proposed approach. Empirically, our method achieves near-perfect safety rates across multiple multi-agent navigation tasks, while maintaining higher task success rates compared to other baselines. Furthermore, it demonstrates strong generalization across varying numbers of agents and obstacles. Overall, our results highlight the effectiveness of integrating learning-based coordination with control-theoretic safety mechanisms, offering a promising direction for developing scalable and reliable multi-agent systems. 
+
+Limitation The low-level policy of our HMM is based on control-theoretic safety mechanisms, which makes it less suitable for tasks involving complex physical interactions, such as contact-rich manipulation or object transportation. In particular, extending our framework to scenarios where agents must interact with external objects while ensuring their safety remains challenging. 
+
+Acknowledgement 
+
+This work was supported by the Engineering and Physical Sciences Research Council [grant number EP/Y003187/1 and UKRI849]. 
+
+References 
+
+Achiam, J., Held, D., Tamar, A., and Abbeel, P. Constrained policy optimization. In International conference on machine learning , pp. 22–31. Pmlr, 2017. Ahilan, S. and Dayan, P. Feudal multi-agent hierarchies for cooperative reinforcement learning. arXiv preprint arXiv:1901.08492 , 2019. Ahmad, H. S., Sabouni, E., Wasilkoff, A., Budhraja, P., Guo, Z., Zhang, S., Fan, C., Cassandras, C., and Li, W. Hmarl-cbf–hierarchical multi-agent reinforcement learning with control barrier functions for safety-critical autonomous systems. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. 10 Altman, E. Constrained Markov decision processes . Routledge, 2021. Batra, S., Huang, Z., Petrenko, A., Kumar, T., Molchanov, A., and Sukhatme, G. S. Decentralized control of quadrotor swarms with end-to-end deep reinforcement learning. In Conference on robot learning , pp. 576–586. PMLR, 2022. Borkar, V. S. An actor-critic algorithm for constrained markov decision processes. Systems & control letters , 54(3):207–213, 2005. Boumal, N. An introduction to optimization on smooth manifolds . Cambridge University Press, 2023. Cheng, R., Orosz, G., Murray, R. M., and Burdick, J. W. End-to-end safe reinforcement learning through barrier functions for safety-critical continuous control tasks. In Proceedings of the AAAI conference on artificial intelligence , volume 33, pp. 3387–3395, 2019. Chow, Y., Nachum, O., Duenez-Guzman, E., and Ghavamzadeh, M. A lyapunov-based approach to safe reinforcement learning. Advances in neural information processing systems , 31, 2018. Chow, Y., Nachum, O., Faust, A., Duenez-Guzman, E., and Ghavamzadeh, M. Lyapunov-based safe policy optimization for continuous control. arXiv preprint arXiv:1901.10031 , 2019. Dietterich, T. G. Hierarchical reinforcement learning with the maxq value function decomposition. 
+
+Journal of artificial intelligence research , 13:227–303, 2000. Ding, D., Zhang, K., Basar, T., and Jovanovic, M. Natural policy gradient primal-dual method for constrained markov decision processes. Advances in Neural Information Processing Systems , 33: 8378–8390, 2020. Ding, D., Wei, X., Yang, Z., Wang, Z., and Jovanovic, M. Provably efficient generalized lagrangian policy optimization for safe multi-agent reinforcement learning. In Learning for dynamics and control conference , pp. 315–332. PMLR, 2023. Emam, Y., Notomista, G., Glotfelter, P., Kira, Z., and Egerstedt, M. Safe reinforcement learning using robust control barrier functions. IEEE Robotics and Automation Letters , 10(3):2886–2893, 2022. Ganai, M., Gong, Z., Yu, C., Herbert, S., and Gao, S. Iterative reachability estimation for safe reinforcement learning. Advances in Neural Information Processing Systems , 36:69764–69797, 2023. Geng, N., Bai, Q., Liu, C., Lan, T., Aggarwal, V., Yang, Y., and Xu, M. A reinforcement learning framework for vehicular network routing under peak and average constraints. IEEE Transactions on Vehicular Technology , 72(5):6753–6764, 2023. Ghavamzadeh, M., Mahadevan, S., and Makar, R. Hierarchical multi-agent reinforcement learning. 
+
+Autonomous Agents and Multi-Agent Systems , 13(2):197–229, 2006. Goarin, M., Li, G., Saviolo, A., and Loianno, G. Decentralized nonlinear model predictive control for safe collision avoidance in quadrotor teams with limited detection range. In 2025 IEEE International Conference on Robotics and Automation (ICRA) , pp. 5387–5393, 2025. doi: 10. 1109/ICRA55743.2025.11128389. Gu, S., Kuba, J. G., Wen, M., Chen, R., Wang, Z., Tian, Z., Wang, J., Knoll, A., and Yang, Y. Multi-agent constrained policy optimisation. arXiv preprint arXiv:2110.02793 , 2021. Gu, S., Kuba, J. G., Chen, Y., Du, Y., Yang, L., Knoll, A., and Yang, Y. Safe multi-agent reinforcement learning for multi-robot control. Artificial Intelligence , 319:103905, 2023. Gu, S., Liu, P., Kshirsagar, A., Chen, G., Peters, J., and Knoll, A. Roscom: Robust safe reinforcement learning on stochastic constraint manifolds. IEEE Transactions on Automation Science and Engineering , 22:5841–5851, 2024. Günster, J., Liu, P., Peters, J., and Tateo, D. Handling long-term safety and uncertainty in safe reinforcement learning. arXiv preprint arXiv:2409.12045 , 2024. 11 Hailemichael, H., Ayalew, B., and Ivanco, A. Optimal control barrier functions for rl based safe powertrain control. IFAC-PapersOnLine , 56(3):385–390, 2023. He, T., Zhao, W., and Liu, C. Autocost: Evolving intrinsic cost for zero-violation reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 37, pp. 14847– 14855, 2023. Hsu, K.-C., Hu, H., and Fisac, J. F. The safety filter: A unified view of safety-critical control in autonomous systems. Annual Review of Control, Robotics, and Autonomous Systems , 7, 2023. Huang, W., Ji, J., Xia, C., Zhang, B., and Yang, Y. Safedreamer: Safe reinforcement learning with world models. arXiv preprint arXiv:2307.07176 , 2023. Kattepur, A., Rath, H. K., Simha, A., and Mukherjee, A. Distributed optimization in multi-agent robotics for industry 4.0 warehouses. In Proceedings of the 33rd Annual ACM Symposium on Applied Computing , pp. 808–815, 2018. Keyumarsi, S., Atman, M. W. S., and Gusrialdi, A. Lidar-based online control barrier function synthesis for safe navigation in unknown environments. IEEE Robotics and Automation Letters , 9 (2):1043–1050, 2023. Lee, J. M. Smooth manifolds. In Introduction to smooth manifolds , pp. 1–29. Springer, 2003. Liu, C., Geng, N., Aggarwal, V., Lan, T., Yang, Y., and Xu, M. Cmix: Deep multi-agent reinforcement learning with peak and average constraints. In Joint european conference on machine learning and knowledge discovery in databases , pp. 157–173. Springer, 2021. Liu, P., Tateo, D., Ammar, H. B., and Peters, J. Robot reinforcement learning on the constraint manifold. In Conference on Robot Learning , pp. 1357–1366. PMLR, 2022. Liu, P., Zhang, K., Tateo, D., Jauhri, S., Hu, Z., Peters, J., and Chalvatzaki, G. Safe reinforcement learning of dynamic high-dimensional robotic tasks: navigation, manipulation, interaction. In 2023 IEEE International Conference on Robotics and Automation (ICRA) , pp. 9449–9456. IEEE, 2023. Liu, P., Bou-Ammar, H., Peters, J., and Tateo, D. Safe reinforcement learning on the constraint manifold: Theory and applications. IEEE Transactions on Robotics , 41:3442–3461, 2025. doi: 10.1109/TRO.2025.3567477. Liu, Y., Ding, J., and Liu, X. Ipo: Interior-point policy optimization under constraints. In Proceedings of the AAAI conference on artificial intelligence , volume 34, pp. 4940–4947, 2020. Lu, S., Zhang, K., Chen, T., Ba¸ sar, T., and Horesh, L. Decentralized policy gradient descent ascent for safe multi-agent reinforcement learning. In Proceedings of the AAAI conference on artificial intelligence , volume 35, pp. 8767–8775, 2021. Makar, R., Mahadevan, S., and Ghavamzadeh, M. Hierarchical multi-agent reinforcement learning. In Proceedings of the fifth international conference on Autonomous agents , pp. 246–253, 2001. Nachum, O., Gu, S. S., Lee, H., and Levine, S. Data-efficient hierarchical reinforcement learning. 
+
+Advances in neural information processing systems , 31, 2018. Nayak, S., Choi, K., Ding, W., Dolan, S., Gopalakrishnan, K., and Balakrishnan, H. Scalable multi-agent reinforcement learning through intelligent information aggregation. In International conference on machine learning , pp. 25817–25833. PMLR, 2023. Parr, R. and Russell, S. Reinforcement learning with hierarchies of machines. Advances in neural information processing systems , 10, 1997. Pereira, M., Wang, Z., Exarchos, I., and Theodorou, E. Safe optimal control using stochastic barrier functions and deep forward-backward sdes. In Conference on robot learning , pp. 1783–1801. PMLR, 2021. Pereira, M. A., Saravanos, A. D., So, O., and Theodorou, E. A. Decentralized safe multi-agent stochastic optimal control using deep fbsdes and admm. arXiv preprint arXiv:2202.10658 , 2022. 12 Pertsch, K., Lee, Y., and Lim, J. Accelerating reinforcement learning with learned skill priors. In 
+
+Conference on robot learning , pp. 188–204. PMLR, 2021. So, O. and Fan, C. Solving stabilize-avoid optimal control via epigraph form and deep reinforcement learning. arXiv preprint arXiv:2305.14154 , 2023. Son, K., Kim, D., Kang, W. J., Hostallero, D. E., and Yi, Y. Qtran: Learning to factorize with transformation for cooperative multi-agent reinforcement learning. In International conference on machine learning , pp. 5887–5896. PMLR, 2019. Sutton, R. S., Precup, D., and Singh, S. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. Artificial intelligence , 112(1-2):181–211, 1999. Tearle, B., Wabersich, K. P., Carron, A., and Zeilinger, M. N. A predictive safety filter for learning-based racing control. IEEE Robotics and Automation Letters , 6(4):7635–7642, 2021. Tessler, C., Givony, S., Zahavy, T., Mankowitz, D., and Mannor, S. A deep hierarchical approach to lifelong learning in minecraft. In Proceedings of the AAAI conference on artificial intelligence ,volume 31, 2017. Tessler, C., Mankowitz, D. J., and Mannor, S. Reward constrained policy optimization. arXiv preprint arXiv:1805.11074 , 2018. Veliˇ ckovi´ c, P., Cucurull, G., Casanova, A., Romero, A., Lio, P., and Bengio, Y. Graph attention networks. arXiv preprint arXiv:1710.10903 , 2017. Wu, T., Zhou, P., Liu, K., Yuan, Y., Wang, X., Huang, H., and Wu, D. O. Multi-agent deep reinforcement learning for urban traffic light control in vehicular networks. IEEE Transactions on Vehicular Technology , 69(8):8243–8256, 2020. Xu, T., Liang, Y., and Lan, G. Crpo: A new approach for safe reinforcement learning with convergence guarantee. In International Conference on Machine Learning , pp. 11480–11491. PMLR, 2021. Xu, Z., Bai, Y., Zhang, B., Li, D., and Fan, G. Haven: Hierarchical cooperative multi-agent reinforcement learning with dual coordination mechanism. In Proceedings of the AAAI conference on artificial intelligence , volume 37, pp. 11735–11743, 2023. Yu, C., Velu, A., Vinitsky, E., Gao, J., Wang, Y., Bayen, A., and Wu, Y. The surprising effectiveness of ppo in cooperative multi-agent games. Advances in neural information processing systems , 35: 24611–24624, 2022. Zanon, M. and Gros, S. Safe reinforcement learning using robust mpc. IEEE Transactions on Automatic Control , 66(8):3638–3652, 2020. Zhang, R., Hou, J., Walter, F., Gu, S., Guan, J., Röhrbein, F., Du, Y., Cai, P., Chen, G., and Knoll, A. Multi-agent reinforcement learning for autonomous driving: A survey. arXiv preprint arXiv:2408.09675 , 2024. Zhang, S., So, O., Black, M., and Fan, C. Discrete gcbf proximal policy optimization for multi-agent safe optimal control. arXiv preprint arXiv:2502.03640 , 2025a. Zhang, S., So, O., Garg, K., and Fan, C. Gcbf+: A neural graph control barrier function framework for distributed safe multiagent control. IEEE Transactions on Robotics , 41:1533–1552, 2025b. Zhao, Y., Yang, Y., Lu, Z., Zhou, W., and Li, H. Multi-agent first order constrained optimization in policy space. Advances in Neural Information Processing Systems , 36:39189–39211, 2023. 13 A Environment Descriptions 
+
+We evaluate our method on six multi-agent environments with LiDAR-based obstacle perception, covering a spectrum of dynamics ranging from simple 2D point-mass systems to higher-dimensional non-holonomic and quadrotor platforms. LidarSpread and LidarTarget adopt 2D double-integrator dynamics (state [x, y, ˙x, ˙y], action [ax, a y ]), differing in their goal-assignment semantics. In Li-darSpread, N agents are required to collectively cover N goal locations (any-to-any matching), whereas in LidarTarget each agent is assigned a fixed goal ( i ↔ i matching). LidarLine extends this setup by replacing discrete goal nodes with two landmarks, between which N goal positions are linearly interpolated, requiring agents to form an evenly spaced line. LidarBicycleTarget retains the target-based assignment but introduces non-holonomic kinematic bicycle dynamics (5D state including heading and forward velocity). LinearDrone models a 3D quadrotor with linear dynamics, using a 6D state [x, y, z, ˙x, ˙y, ˙z] and 3D acceleration control, with aerodynamic damping along each axis. CrazyFlie represents a more challenging setting with full nonlinear quadrotor dynamics and realistic physical parameters. Each agent has a 12D state including position, orientation, and velocities.     
+
+> (a) Spread (b) Target (c) Line
+> (d) Bicycle (e) LinearDrone (f) CrazyFlie
+
+Figure 5: Visualization of different LiDAR-based multi-agent environments. 
+
+B Safety Proofs 
+
+B.1 Manifold Preliminaries 
+
+We review relevant concepts from manifold theory here; see (Lee, 2003; Boumal, 2023) for details. 
+
+Manifold An n-dimensional manifold is a topological space that is locally homeomorphic to 
+
+Rn. Therefore, every point has a neighborhood that is homeomorphic to an open subset of Rn.A differentiable manifold(also called a smooth manifold) is a manifold equipped with an atlas of coordinate charts whose transition maps are all differentiable In this work, we consider differentiable manifolds. 
+
+Tangent Space Let M be an n-dimensional differentiable manifold and p ∈ M . The tangent space at p, denoted by TpM, is an n-dimensional vector space of all tangent vectors at p, providing a local 14 linear approximation of M near p. The tangent bundle TM = ⊔p∈M TpM is the disjoint union of all tangent spaces over M.
+
+Smooth Map and Rank Let M and N be smooth manifolds. A smooth map Φ : M → N induces, at each point p ∈ M , a linear map DΦ p : T pM → TΦ( p)N , called the differential of Φ at p. The 
+
+rank of Φ at p is defined as the rank of DΦ p.
+
+Embedded Submanifold An embedded submanifold is a subset S ⊆ M that itself forms a manifold, with the codimension given by dim M − dim S.
+
+Theorem 2 (Constant-Rank Level Set Theorem) . Let M and N be smooth manifolds, and let 
+
+Φ : M → N be a smooth map with constant rank r. Then every level set of Φ is a properly embedded submanifold of M with codimension r.
+
+As a consequence, consider a smooth function f : E → Rk, where E is a Euclidean space of dimension d > k equipped with an inner product ⟨· , ·⟩ and the induced norm ∥ · ∥ . If the differential 
+
+Df (x) has full rank k at every x in the level set 
+
+M = {x ∈ E : f (x) = 0}, (16) then M is a smooth embedded submanifold of E with dimension d − k. Its tangent space at any point 
+
+x ∈ M is characterized by 
+
+TxM = {v ∈ E : ⟨grad fi(x), v⟩ = 0 , i ∈ { 1, . . . , k }} , (17) which has dimension dim T xM = d − k. Intuitively, the tangent space consists of all directions orthogonal to every constraint gradient. 
+
+LaSalle’s Invariance Principle. Consider the autonomous system ˙x = f (x) with f : D → Rn
+
+locally Lipschitz on a domain D ⊆ Rn.
+
+B.2 Single Agent Constraint Manifold Construction Slack variable augmentation. Introduce slack variables μ ∈ [0 , +∞)K and rewrite the inequality constraints as equalities: 
+
+c(x, μ) := h(x) + μ = 0. (18) The augmented state is (x, μ) ∈ D := X × [0 , +∞)K ⊆ RN , where N = S + K.
+
+Definition 1 (Constraint Manifold) . The constraint manifold is defined as: 
+
+M := {(x, μ) ∈ D : c(x, μ) = 0}. (19) 
+
+Proposition 2 (Manifold Structure) . Under Assumption 2 below, M is an S-dimensional submanifold embedded in RN .Proof. The Jacobian of c is Jc(x, μ) = [ Jh(x) IK ], which has constant rank K due to the identity block. By Theorem 2, M is an embedded submanifold of codimension K, hence dimension 
+
+N − K = S.
+
+Remark 1 (Projection to safe set) . The safe set C is the projection of M onto the original state space: for any (x, μ) ∈ M , we have h(x) = −μ ≤ 0, hence x ∈ C .
+
+Tangent space. The tangent space of M at (x, μ) is: 
+
+T(x,μ)M = ker Jc(x, μ) = {v ∈ RN : Jc(x, μ) v = 0}. (20) A basis of this tangent space can be expressed in matrix form as B(x, μ) ∈ RN ×S , satisfying 
+
+Jc B = 0.15 B.3 Augmented Dynamics and Safe Control Law Slack variable dynamics. We endow each slack variable with controlled dynamics: 
+
+˙μc = αc(μc) uμ,c , c ∈ { 1, . . . , K }, (21) where αc : [0 , +∞) → [0 , +∞) is a class-K function (continuous, strictly increasing, αc(0) = 0 )that is locally Lipschitz, and uμ,c is a virtual control input. In practice, we use the exponential form 
+
+α(μ) = exp( βμ ) − 1.
+
+Lemma 1 (Positivity of Slack Variables) . Consider ˙μ = α(μ)uμ with α of class K and locally Lipschitz, uμ ∈ [u− 
+
+> μ
+
+, u + 
+
+> μ
+
+] with u− 
+
+> μ
+
+< 0 < u + 
+
+> μ
+
+. For every initial state μ(0) > 0, there exists ϵ > 0
+
+such that μ(t) ≥ ϵ for all t ≥ 0.Proof. Since α is L-Lipschitz with α(0) = 0 , we have |α(μ)| ≤ Lμ . For any uμ ∈ [u− 
+
+> μ
+
+, u + 
+
+> μ
+
+]:
+
+˙μ = α(μ)uμ ≥ α(μ)u− 
+
+> μ
+
+≥ Lu − 
+
+> μ
+
+μ, where the second inequality uses α(μ) > 0 and u− 
+
+> μ
+
+< 0. Setting 
+
+L′ = Lu − 
+
+> μ
+
+, the comparison principle gives μ(t) ≥ μ(0) eL′t > 0 for all t ≥ 0.
+
+Augmented system. Combining the original dynamics (4) with the slack dynamics (21): 
+
+ ˙x
+
+˙μ
+
+
+
+=
+
+f (x)
+
+0
+
+
+
++
+
+G(x) 00 A(μ)
+
+  uuμ
+
+
+
+, (22) where A(μ) = diag( α1(μ1), . . . , α K (μK )) .
+
+Deriving the safe control law. To ensure the augmented state remains on M, we require ˙c = 0:
+
+˙c = Jc
+
+ ˙x
+
+˙μ
+
+
+
+= Jh(x)f (x)
+
+| {z }
+
+> ψ(x)
+
++ [ Jh(x)G(x) A(μ)] 
+
+| {z }
+
+> Ju(x,μ)
+
+ uuμ
+
+
+
+= 0. (23) Here ψ(x) = Jh(x)f (x) is the constraint drift induced by the system drift. The general solution is: 
+
+ uuμ
+
+
+
+= −J†
+
+> u
+
+ψ + Buuref , (24) where J† 
+
+> u
+
+is the Moore–Penrose pseudoinverse, Bu is a basis of ker Ju (i.e., JuBu = 0), and uref is an arbitrary reference input (from the task policy or subgoal tracking controller). Adding a contraction term to ensure convergence to the manifold from nearby states, the control law is: us
+
+uμ
+
+
+
+= −J†
+
+> u
+
+ψ
+
+| {z } 
+
+> drift compensation
+
+−λJ †
+
+> u
+
+c
+
+| {z } 
+
+> contraction
+
++ Buuref 
+
+| {z } 
+
+> tangential
+
+, (25) where λ > 0 is the contraction gain. The first term compensates for the constraint drift, the second drives the state toward M when c̸ = 0, and the third enables task-directed motion along the manifold. 
+
+B.4 Single Agent Safety Guarantees 
+
+This section establishes the main safety result: under mild assumptions, the constraint manifold con-troller (25) renders the constraint manifold M attractive, so that every trajectory starting sufficiently close to M converges to it and, once on M, remains there indefinitely. Since M projects onto the safe set C (Remark 1), this guarantees constraint satisfaction h(x(t)) ≤ 0 for all t ≥ 0.
+
+Proof strategy. The argument has three ingredients: 1. A Lyapunov-like function V (x, μ) = 12 c⊤c that measures the distance from M: V = 0 if and only if (x, μ) ∈ M .2. A direct computation showing that the constraint manifold controller yields ˙V ≤ 0, so V is non-increasing along trajectories. 3. An application of LaSalle’s Invariance Principle (Theorem B.1) to conclude that trajectories actually converge to M, not just to some lower level set of V .16 We first state the assumptions needed to make this argument rigorous, then define the region over which convergence is guaranteed, and finally present the theorem and its proof. 
+
+Assumption 1 (Compact State Space) . The state space X is compact and positively invariant with respect to (4) .
+
+Assumption 2 (Smooth Constraints) . The constraint function h is of class C1.
+
+Assumption 3 (Non-empty Safe Set) . The constraint manifold M defined in (19) is non-empty. 
+
+Assumption 4 (Constraint Qualification) . For all (x, μ) ∈ ∂M, the submatrix (Jh(x)G(x)) [ιh=0 ,:] 
+
+has rank |ιh=0 (x)|, where ιh=0 (x) = {c : hc(x) = 0 } is the index set of active constraints. 
+
+Assumptions 1–3 are standard. Assumption 4 is the key constraint qualification: it ensures that Ju
+
+has full row rank on M, which in turn guarantees that the linear system (23) is solvable and that 
+
+JuJ† 
+
+> u
+
+= IK .
+
+Remark 2. Assumption 4 implies that the number of simultaneously active constraints cannot exceed the control dimension: |ιh=0 (x)| ≤ U . For the 2D navigation agents with U = 2 , at most two constraints can be simultaneously active at the boundary. 
+
+Region of contraction. LaSalle’s Invariance Principle requires a compact positively invariant set on which to apply the analysis. We construct such a set using sublevel sets of the Lyapunov function, but must first exclude a pathological set where the contraction mechanism can fail. 
+
+Definition 2 (Singular Set) . The singular set is 
+
+Y := {(x, μ) ∈ D : J⊤ 
+
+> u
+
+c = 0, ∥μ∥ = 0 , ∥c∦ = 0 }.
+
+At points in Y, the contraction term −λJ †
+
+> u
+
+c vanishes even though c̸ = 0, so the controller cannot drive the state back toward M. Crucially, when Y is non-empty, it is disjoint from M with positive distance: dist( M, Y) > 0.Define the Lyapunov-like function 
+
+V (x, μ) = 12 c⊤c, (26) and choose η such that 0 < η < inf {V (x, μ) : ( x, μ) ∈ Y} (or η arbitrarily large if Y = ∅). The 
+
+region of contraction 
+
+Ωη := {(x, μ) ∈ D : V (x, μ) ≤ η} (27) is compact, contains M (since V = 0 on M), and is disjoint from Y by construction. 
+
+Main safety theorem. The proof of the main theorem relies on the following elementary lemma about pseudoinverses, which allows us to identify the set where ˙V vanishes. 
+
+Lemma 2 (Pseudoinverse Kernel) . Let X ∈ Rm×n with rank( X) ≤ m ≤ n, and let x ∈ Rm. If 
+
+x⊤XX †x = 0 , then X⊤x = 0.Proof. Let X = U1Σ1V ⊤ 
+
+> 1
+
+be the compact SVD, where Σ1 contains the positive singular values. The pseudoinverse is X† = V1Σ−11 U ⊤ 
+
+> 1
+
+, so XX † = U1U ⊤ 
+
+> 1
+
+is the orthogonal projector onto the column space of X. The assumption x⊤U1U ⊤ 
+
+> 1
+
+x = ∥U ⊤ 
+
+> 1
+
+x∥2 = 0 gives U ⊤ 
+
+> 1
+
+x = 0. Since X⊤ = V1Σ1U ⊤ 
+
+> 1
+
+,we conclude X⊤x = V1Σ1(U ⊤ 
+
+> 1
+
+x) = 0.
+
+Theorem 3 (Per-Agent Safety (Liu et al., 2025)) . Consider the augmented system (22) equipped with the constraint manifold controller (25) . Under Assumptions 1–4, and provided a feasible control 
+
+us ∈ U satisfying (23) exists throughout Ωη , the following hold: 1. (Attractivity) Every trajectory starting in Ωη approaches the constraint manifold M as 
+
+t → +∞.2. (Forward invariance) If (x(0) , μ(0)) ∈ M , then (x(t), μ(t)) ∈ M for all t ≥ 0, and consequently h(x(t)) ≤ 0 for all t ≥ 0.Proof. We apply LaSalle’s Invariance Principle on the compact set Ωη .17 Step 1: Lyapunov decrease. Define the Lyapunov-like function V (s, μ) = 12 ∥c∥2, where c =
+
+h(s) + μ. Its time derivative is 
+
+˙V = c⊤ ˙c = c⊤h
+
+ψ + Ju
+
+us
+
+uμ
+
+ i
+
+. (28) Substituting the constraint manifold control law (25): 
+
+˙V = c⊤h
+
+ψ + Ju
+
+  − J†
+
+> u
+
+ψ − λ J †
+
+> u
+
+c + Bu uref 
+
+i
+
+= c⊤  ψ − JuJ†
+
+> u
+
+ψ
+
+| {z }
+
+> (a)
+
+−λ J uJ†
+
+> u
+
+c
+
+| {z }
+
+> (b)
+
++ JuBu uref 
+
+| {z }
+
+> (c)
+
+. (29) Term (a) vanishes when the tangency condition (23) holds, i.e., ψ − JuJ†
+
+> u
+
+ψ = 0. Term (c) vanishes since JuBu = 0 by construction of the null-space basis. The remaining term gives 
+
+˙V = −λ c⊤JuJ† 
+
+> u
+
+c ≤ 0, (30) since JuJ† 
+
+> u
+
+is positive semidefinite and λ > 0.
+
+Step 2: Positive invariance of Ωη . Since ˙V ≤ 0 throughout Ωη and Ωη = {(s, μ) ∈ D : V (s, μ) ≤
+
+η} is compact (Assumption 1), the sublevel set Ωη is positively invariant. 
+
+Step 3: Attractivity via LaSalle. By LaSalle’s Invariance Principle, every trajectory starting in Ωη
+
+converges to the largest invariant set contained in 
+
+E := {(s, μ) ∈ Ωη : ˙V = 0 } = {(s, μ) ∈ Ωη : c⊤JuJ† 
+
+> u
+
+c = 0 }. (31) By Lemma 2, c⊤JuJ† 
+
+> u
+
+c = 0 implies J⊤ 
+
+> u
+
+c = 0. Under Assumption 4, Ju has full row rank on M,so J⊤ 
+
+> u
+
+c = 0 with c ∈ row( Ju) forces c = 0. Therefore E ∩ { μ ≥ 0} = M, and M is the largest invariant set in E. This establishes attractivity. 
+
+Step 4: Forward invariance of M. If (s(0) , μ(0)) ∈ M , then c(0) = 0 and V (0) = 0 . Since 
+
+V ≥ 0 and ˙V ≤ 0:
+
+0 ≤ V (t) = V (0) + 
+
+Z t
+
+> 0
+
+˙V (τ ) dτ =
+
+Z t
+
+> 0
+
+˙V (τ )
+
+| {z }  
+
+> ≤0
+
+dτ ≤ 0. (32) Hence V (t) = 0 for all t ≥ 0, which implies c(t) = 0. By the projection property (Remark 1), 
+
+h(s(t)) = −μ(t) ≤ 0 for all t ≥ 0.
+
+B.5 Multi-agent Safety Guarantees Setup. Consider N agents with decoupled control-affine dynamics ˙si = fi(si) + Gi(si)ui. Each agent i maintains a local constraint hi(si, sNi ) ≤ 0, where Ni = Ei ∪ A i comprises obstacles Ei
+
+and neighboring agents Ai. The constraint vector stacks pairwise collision terms with all entities in 
+
+Ni, and each agent applies the constraint manifold safe controller (10) independently on its local constraint manifold Mi. The global safe set is Cglobal := T 
+
+> i∈N
+
+Ci, where Ci = {S : hi ≤ 0}.
+
+Assumptions. Our analysis requires four conditions, all naturally satisfied by MAS with distance-based collision constraints: (i) The single-agent safety assumptions (Assumptions 1–4) hold for each agent’s local system. (ii) Decoupled control: each ui affects only agent i’s dynamics. (iii) Symmetric inter-agent constraints: hij = hji for every agent pair (i, j ) with j ∈ A i.(iv) Local observability: each agent observes the positions and velocities of all entities in Ni.
+
+Theorem 4 (Compositional Safety) . Under assumptions (i)–(iv), if every agent starts on its local constraint manifold, i.e., (si(0) , sNi (0) , μi(0)) ∈ M i for all i ∈ N , then every agent remains on its local manifold for all t ≥ 0, and the joint trajectory satisfies S(t) ∈ C global for all t ≥ 0.Proof. The proof extends the single-agent safety result (Theorem 3) to the multi-agent setting via a per-agent Lyapunov argument. 18 Step 1: Multi-agent constraint dynamics. Each agent i defines a constraint residual ci =
+
+hi(si, sNi ) + μi and a local Lyapunov function Vi = 12 ∥ci∥2. Differentiating ci with respect to time: 
+
+˙ci = ∂hi
+
+∂si
+
+˙si + X
+
+> e∈E i
+
+∂hi
+
+∂se
+
+˙se
+
+| {z }
+
+> obstacle motion
+
++ X
+
+> j∈A i
+
+∂hi
+
+∂sj
+
+˙sj
+
+| {z }
+
+> other agents
+
++ ˙ μi = ψi + Ju,i 
+
+us,i 
+
+uμ,i 
+
+
+
+, (33) where the drift and control Jacobian are 
+
+ψi = ∂hi
+
+∂si
+
+fi(si) + X
+
+> e∈E i
+
+∂hi
+
+∂se
+
+˙se + X
+
+> j∈A i
+
+∂hi
+
+∂sj
+
+˙sj , Ju,i =
+
+ ∂hi
+
+∂si
+
+Gi(si) I
+
+
+
+. (34) Since control is decoupled, Ju,i involves only agent i’s own control input ui and slack rate ˙μi. The drift ψi absorbs all terms not controlled by agent i: its autonomous dynamics, obstacle motions (˙se = 0 for static obstacles, or known trajectories for dynamic ones), and the velocities of other agents produced by their own policies. In the single-agent setting Ai = ∅ and only the obstacle term remains; the multi-agent extension adds the inter-agent term, but crucially both enter only the drift. Agent i can evaluate ψi at each instant via local observation (Assumption (iv)). 
+
+Step 2: Per-agent Lyapunov decrease. Substituting the constraint manifold control law (10) into 
+
+˙Vi = c⊤ 
+
+> i
+
+˙ci:
+
+˙Vi = c⊤
+
+> i
+
+
+
+ψi + Ju,i 
+
+
+
+− J†
+
+> u,i
+
+ψi − λ J †
+
+> u,i
+
+ci + Bu,i uref ,i 
+
+
+
+. (35) Expanding yields three terms: (a) the drift residual c⊤ 
+
+> i
+
+(ψi − Ju,i J†
+
+> u,i
+
+ψi) vanishes because Assump-tion 4 ensures Ju,i has full row rank, so Ju,i J† 
+
+> u,i
+
+= I and the drift is cancelled exactly—independently of the obstacle and inter-agent velocity terms in ψi; (b) the tangential term c⊤ 
+
+> i
+
+Ju,i Bu,i uref ,i = 0 
+
+since Bu,i spans the null space of Ju,i ; (c) the remaining contraction term gives 
+
+˙Vi = −λ c⊤ 
+
+> i
+
+Ju,i J† 
+
+> u,i
+
+ci ≤ 0, (36) since Ju,i J† 
+
+> u,i
+
+is positive semidefinite and λ > 0.
+
+Step 3: Forward invariance. Each agent starts on its local constraint manifold, so ci(0) = 0 and 
+
+Vi(0) = 0 . Combined with Vi ≥ 0 and ˙Vi ≤ 0:
+
+0 ≤ Vi(t) = Vi(0) + 
+
+Z t
+
+> 0
+
+˙Vi(τ ) dτ =
+
+Z t
+
+> 0
+
+˙Vi(τ )
+
+| {z }  
+
+> ≤0
+
+dτ ≤ 0. (37) Hence Vi(t) = 0 for all t ≥ 0, which implies ci(t) = 0 and, by the projection property (Remark 1), 
+
+hi(t) = −μi(t) ≤ 0 for every agent i.
+
+Step 4: Global safety via symmetry. For any agent pair (i, j ) with j ∈ A i, the collision constraint 
+
+hij appears in agent i’s local constraint set hi, and hji = hij appears in agent j’s set hj . Since every agent satisfies its local constraints (Step 3), every pairwise collision constraint is enforced, yielding 
+
+S(t) ∈ T 
+
+> i
+
+Ci = Cglobal for all t ≥ 0.
+
+C Analysis of Residual Safety Violations 
+
+Our compositional safety guarantee (Theorem 1) is established in continuous time, under a fixed constraint set and on-manifold initialization. Several implementation factors cause mild deviations from these conditions, accounting for the small ( < 2% ) violations observed in practice. 
+
+(1) Discrete-time integration. The control law guarantees ˙V ≤ 0 in continuous time, but each discrete integration step induces a drift in the residual c on the order of the step size, momentarily violating h; the magnitude shrinks as the step size decreases. 
+
+(2) Neighbor truncation (top-k). Each agent constrains only its k nearest entities. Entities beyond k
+
+are excluded from hi and receive no guarantee, and the top-k set switches as agents move, so newly activated constraints need not satisfy c = 0 at the switching instant. 19 (3) Degeneracy of Assumption 4. When the number of active constraints exceeds the control dimension U , Ju loses full row rank and the projection yields a least-squares rather than an exact drift cancellation, leaving a small residual drift. 
+
+(4) Partial observability. Neighbor states are estimated from local observations, and the estimation error enters the drift ψi, making the tangent-space projection slightly inexact. 
+
+D Additional Experiments 
+
+D.1 Computational efficiency 
+
+We compare the per-iteration training cost of the QP-based CBF controller and the constraint manifold controller on a single NVIDIA H200 GPU, with all training hyperparameters held constant. As shown in Table 2, the constraint manifold controller achieves approximately 14 .4× higher throughput than the CBF baseline. This speedup arises because the manifold controller computes safety corrections via a closed-form pseudoinverse projection, whereas the CBF controller requires solving a quadratic program (QP) at every timestep. Over the full 200k training iterations, this translates to an estimated training time of ∼9.4 hours for the manifold controller versus ∼136 .8 hours for the CBF controller. Table 2: Per-iteration training speed comparison between the QP-based CBF controller and the con-straint manifold controller on a single NVIDIA H200 GPU with identical training hyperparameters. 
+
+Method Speed Est. Total (200k iters) 
+
+QP-based CBF ∼0.4 it/s ∼136 .8 hours Constraint Manifold ∼5.9 it/s ∼9.4 hours 
+
+Speedup 14 .4×
+
+D.2 Additional generalization results 
+
+We evaluate generalization across all environments. As shown in Figure 6, HMM achieves the best generalization in safety rate: it maintains near-100% safety even with a large number of agents or obstacles, whereas other baselines degrade significantly. In terms of success rate, HMM also performs best in most environments. 
+
+E Hyperparameters 
+
+We summarize the key hyperparameters used in our experiments. Table 3 lists the training hyper-parameters for all environments, including PPO settings, subgoal configuration, and environment specifications. Table 4 lists the constraint manifold controller hyperparameters. All values are fixed across environments unless otherwise noted. 20 3 6 9 12 15 18 21 
+
+Number of agents 
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Safe rate (%)
+
+(a) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Safe rate (%)
+
+(b) 3 6 9 12 15 18 21 
+
+Number of agents 
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60  
+
+> Success rate (%)
+
+(c) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60  
+
+> Success rate (%)
+
+(d) 3 6
+
+Number of agents 
+
+75 
+
+80 
+
+85 
+
+90 
+
+95 
+
+100 
+
+> Safe rate (%)
+
+(e) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+70 
+
+75 
+
+80 
+
+85 
+
+90 
+
+95 
+
+100  
+
+> Safe rate (%)
+
+(f) 3 6
+
+Number of agents 
+
+0
+
+20 
+
+40 
+
+60 
+
+80  
+
+> Success rate (%)
+
+(g) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+0
+
+20 
+
+40 
+
+60 
+
+80  
+
+> Success rate (%)
+
+(h) 3 6 9 12 15 18 21 
+
+Number of agents 
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Safe rate (%)
+
+(i) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Safe rate (%)
+
+(j) 3 6 9 12 15 18 21 
+
+Number of agents 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60  
+
+> Success rate (%)
+
+(k) 3 6 9 12 15 18 21 
+
+Number of obstacles 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60  
+
+> Success rate (%)
+
+(l) 3 6 9 12 15 18 21 
+
+Number of agents 
+
+30 
+
+40 
+
+50 
+
+60 
+
+70 
+
+80 
+
+90 
+
+100 
+
+> Safe rate (%)
+
+(m) 6 9 12 15 18 21 
+
+Number of obstacles 
+
+50 
+
+60 
+
+70 
+
+80 
+
+90 
+
+100  
+
+> Safe rate (%)
+
+(n) 3 6 9 12 15 18 21 
+
+Number of agents 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Success rate (%)
+
+(o) 6 9 12 15 18 21 
+
+Number of obstacles 
+
+0
+
+20 
+
+40 
+
+60 
+
+80  
+
+> Success rate (%)
+
+(p) DGPPO Penalty(0.02) Penalty(0.1) Penalty(0.5) Schedule Lagr(1) Lagr(5) Lagr(lr) HMM(ours) 
+
+Figure 6: Generalization results for remaining environments. LidarBicycleTarget (a–d), LidarLine (e–h), LidarTarget (i–l), and LinearDrone (m–p). Left two columns: safe rate; right two columns: success rate. Table 3: Training hyperparameters. 
+
+Parameter Value 
+
+Discount γ 0.99 GAE λ 0.95 PPO clip ϵ 0.25 Entropy coefficient 1 × 10 −2
+
+Actor learning rate 3 × 10 −4
+
+Critic learning rate 1 × 10 −3
+
+Total environment steps 2 × 10 5
+
+Subgoal interval τ 8Relative subgoal max ∆ 0.2 Episode length T 128 (3D env: 256) Number of agents 3Number of obstacles 3 (3D env: 6) 21 Table 4: Constraint manifold controller hyperparameters. 
+
+Parameter Symbol Value 
+
+Top-k nearest neighbors k 3Viability gain K 0.5 Error correction gain Kc 30.0 Null-space control bound αmax 3.0 Constraint activation threshold gact 0.02 Safety margin – 0.02 Slack weight ws 10.0 Slack lower bound smin 0.1 Configuration-space dimension dq 2 (drones: 3) 22

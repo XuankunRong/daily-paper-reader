@@ -1,0 +1,536 @@
+Title: AI Alignment From Social Choice Perspectives
+
+URL Source: https://arxiv.org/pdf/2606.21550v1
+
+Published Time: Tue, 23 Jun 2026 01:17:01 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# AI Alignment From Social Choice Perspectives 
+
+DANIEL HALPERN Google Research EVI MICHA University of Southern California ARIEL D. PROCACCIA Harvard University BENJAMIN SCHIFFER Harvard University ITAI SHAPIRA Harvard University and SHIRLEY ZHANG Harvard University 
+
+Alignment from human feedback uses human judgments about model outputs to steer the behavior of language models after pretraining. When those judgments reflect conflicting views of desirable behavior, the learned objective becomes an aggregate determination of what the model should prefer. We survey recent work that has studied this aggregation problem through the lens of social choice theory. We illustrate how the social choice perspective helps identify failure modes in the feedback aggregation layer and reveals a broader design space for handling disagreement in explicit and principled ways. 
+
+1. INTRODUCTION 
+
+AI alignment is the problem of ensuring that artificial intelligence systems act in ways consistent with human intentions, preferences, and normative constraints [ 1 –4 ]. Achieving alignment requires identifying which outputs and behavioral patterns are desirable or unacceptable, and using those judgments to control and steer the system [5–7]. For open-ended language models, operationalizing these goals presents a difficult challenge. The full range of desirable behaviors cannot be explicitly specified [ 8]; the underlying human judgments rely on tacit knowledge and subtle tradeoffs between objectives, making them virtually impossible to capture in formal terms [1, 9]. Fortunately, humans are far better at recognizing acceptable behavior than they are at formally articulating it [ 10 , 11 ], an asymmetry that motivates a shift from explicit specification to learned evaluation [ 12 ]. In methods for alignment from human feedback , most notably reinforcement learning from human feedback (RLHF) [ 12 – 16 ], 
+
+Authors are listed alphabetically. Correspondence to Itai Shapira (itaishapira@g.harvard.edu).  
+
+> arXiv:2606.21550v1 [cs.AI] 19 Jun 2026 2
+
+# · Daniel Halpern et al. 
+
+human annotators evaluate concrete model outputs, and a scoring function trained on this feedback is then used to align the model. 1 Typically, annotators express preferences via pairwise comparisons, selecting the better of two responses to a given prompt. Aggregated across users and contexts, the annotations are distilled into a learned reward model: a parametric scoring function trained to predict the desirability of a given output. This reward model is expected to generalize beyond the labeled training data, capturing implicit norms and tradeoffs among competing objectives [20]. The foregoing methods compress human preferences about model behavior into a single, universally applicable scalar reward signal that ostensibly represents human judgment. This approach implicitly assumes a shared, underlying human intuition that can be statistically recovered by querying human evaluators [ 21 – 23 ]. Under this view, annotators are interchangeable. Conflicting preferences are treated as noisy observations of a common ground truth, rather than evidence of value pluralism worth reflecting in the system [ 22 , 24 ]. While such methods have proven empirically successful on tasks where evaluators largely agree [ 13 , 15 , 25 ], in many contexts, interpretations of “correct” behavior diverge across backgrounds and cultures [ 26 –31]. When annotators inherently disagree, reward modeling goes beyond statistical estimation; it becomes a form of preference aggregation. It collapses conflicting individual judgments into a single collective preference, implicitly fixing tradeoffs among competing values while obscuring the mechanism used to resolve them [ 32 ]. Evaluating this choice requires examining the assumed model structure and the aggregation method itself. These questions cannot be resolved within the training objective alone. Instead, they fall squarely within the domain of social choice theory [ 33 – 42 ], the mathematical study of how heterogeneous individual preferences are aggregated into collective decisions. Viewed through this lens, alignment can be analyzed as a formal aggregation pipeline: from elicited judgments to learned objectives to optimized policies. Social choice provides the precise language to express desired properties explicitly, making the normative assumptions embedded in aggregation procedures more transparent and open to mathematical comparison. In this paper, we survey three related types of contributions the social choice perspective has brought to recent alignment research. First, this framing identifies the aggregation rules embedded in widely used methods such as RLHF and DPO [ 16 ], showing which assumptions and normative priorities these methods build into their objectives. Second, social choice axioms expose structural failure modes of such rules, identifying conditions under which alignment methods provably violate desirable aggregation properties. Third, social choice provides a broad toolbox of well-studied aggregation methods, informing new approaches that encode different normative objectives through various choices of feedback elicitation, aggregation, and policy optimization.   
+
+> 1Constitutional AI [ 17 ] and its variants inherit the same framing one level up, as the “constitution” is itself the product of preference aggregation over normative principles [18], and discretion must still be exercised in resolving their conflicts [19]. AI Alignment From Social Choice Perspectives
+
+# · 3
+
+Yet thinking of alignment from human feedback purely in terms of classical social choice misses two distinctive aspects of alignment that shape much of the research surveyed below. The first is generalization . Because the candidate-response space is generated and effectively unbounded, the feedback data cover only a sparse set of comparisons over prompt-response pairs, provided by a small subset of evaluators. The learned preference model must then generalize in three directions: from evaluated responses to unseen responses, from curated prompts to unseen prompts, and from sampled annotators to a broader population of users [43]. The second feature is that alignment is ultimately evaluated on the downstream policy [ 44 , 45 ]. The intermediate learned reward model matters only insofar as optimizing against it produces a policy aligned with human judgments. A reward model that satisfies desirable aggregation properties need not induce a policy that does the same. The goal, then, is to adapt what social choice has long understood about collective decision-making into the practical machinery of model training. AI alignment, in this light, is not merely the problem of steering AI to follow human values, but rather of establishing fair principles for incorporating the diversity of values people actually hold [3, 46, 47]. The sections that follow trace this adaptation. 
+
+Survey Roadmap. After Section 2 introduces the notation used throughout this paper, Section 3 identifies the aggregation rule implicit in unconstrained Bradley– Terry reward learning, showing that it behaves like the classic Borda rule .The next two sections examine failure modes that surface when this aggregation rule is placed under the distinctive constraints of alignment. Section 4 explores clone robustness, an inherited social-choice pathology that is especially natural in language-model settings, where generated candidate sets may contain many nearby strings expressing the same substantive answer, making the learned reward sensitive to how that answer is represented in the sample. Section 5 turns to failures that arise from the way the reward function is learned from data, in particular from restricting the reward to a limited reward class. The following sections move from aggregation to the information and policy-level limits of alignment from feedback. Section 6 studies what sparse feedback can reveal about the underlying population preference distribution and how welfare can be lost when policies are optimized from limited preference information. Section 7 then considers policy-level methods that avoid first compressing pairwise preferences into a scalar reward. It explains how Nash learning from human feedback optimizes directly against pairwise preferences and achieves optimal welfare guarantees. We conclude in Section 8 by discussing related directions at the boundary between social choice and alignment. 
+
+2. RLHF PRIMER AND NOTATION 
+
+This section fixes the notation used throughout the paper and reviews the standard RLHF pipeline at the level needed for our analysis. We first define prompts, responses, annotators, policies, and reward models, then describe how pairwise preference data are aggregated into a scalar reward via random utility models and 4 · Daniel Halpern et al. 
+
+the Bradley–Terry loss, and finally recall the KL-regularized policy objective used to optimize a language model against the learned reward. 
+
+Setup and Notation. Let X and Y denote the prompt and response spaces, respectively. A prompt x may encode either a single query or the dialogue history of a multi-turn interaction. Let A denote the target population of annotators, and let 
+
+i ∼ A denote a randomly sampled annotator. A stochastic policy π assigns to each prompt x ∈ X a distribution π(· | x) ∈ ∆( Y) over responses. We let πbase denote a fixed reference policy, typically a pretrained model that has undergone supervised fine-tuning. A reward model is a function r : X × Y → R assigning a real-valued score to each prompt-response pair. When considering a parameterized family of reward models, we write rθ for the model indexed by θ ∈ Θ. When the prompt x
+
+is fixed or clear from context, we write r(y) as shorthand for r(x, y ) , and similarly write rθ (y) for rθ (x, y ) . For analyses restricted to a fixed prompt x, let Yx ⊆ Y 
+
+denote the set of candidate responses considered for that prompt. Finally, let D
+
+denote the distribution over prompts used for post-training and policy evaluation. 
+
+Preference Data and Reward Learning. Alignment from human feedback can use several forms of supervision, including demonstrations, scalar ratings, critiques, natural-language feedback, and comparisons [ 48 ]. In the reward-modeling stage of standard RLHF pipelines, the data are typically comparison labels: for a prompt 
+
+x and two candidate responses y, y ′ ∈ Y , an annotator indicates which response they prefer [ 13 , 15 ]. Rankings over a slate of responses are often converted into induced pairwise comparison labels [ 13 , 49 ]. We treat these labels as samples from a population preference relation and write 
+
+Px(y ≻ y′) := Pr 
+
+> i∼A
+
+[y ≻i y′] ∈ [0 , 1] .
+
+That is, Px(y ≻ y′) is the population probability that a randomly drawn annotator prefers y to y′ on prompt x. Most methods considered in this survey take only this pairwise preference object as input. 2 At times, we view a sampled annotator i ∼ A 
+
+as having an unobserved implicit reward function ri(x, ·) over responses, which induces the preference relation ≻i.Reward learning fits a scalar function rθ whose induced pairwise probabilities approximate these population probabilities. In standard alignment pipelines [ 12 – 15 ], this is done by fitting a parametric reward model via maximum likelihood under a random utility model (RUM) , in which observed preferences arise from latent per-response rewards. Specifically, 
+
+Px(y ≻ y′) = F (r(x, y ) − r(x, y ′)) ,
+
+where F : R → (0 , 1) is an increasing link function satisfying F (t) = 1 − F (−t)and encoding the comparison noise [ 51 – 54 ]. Different noise structures, i.e., different choices of F , lead to different objective functions [ 55 ]. The widely used Bradley– Terry (BT) model [ 56 ] takes F to be the sigmoid σ(t) := (1 + e−t)−1, corresponding to Gumbel-distributed noise [57, 58].    
+
+> 2In social choice theory, such rules are called C2 rules [50]. AI Alignment From Social Choice Perspectives
+
+# · 5
+
+Concretely, let D be a dataset of pairwise comparisons, where each triple ( x, y +, y −) ∈D has x ∈ X , y+, y − ∈ Y , and records that an annotator preferred y+ to y− on prompt x. For a parametric reward model rθ , BT training minimizes the following logistic loss: 
+
+LBT (θ) = X
+
+> (x,y +,y −)∈D
+
+log 
+
+
+
+1 + exp   − (rθ
+
+ x, y + − rθ
+
+ x, y −)
+
+. (1) This loss function is the negative log-likelihood of the observed preference data under the assumption that preferences satisfy Px(y+ ≻ y−) = σ (r(y+) − r(y−)) .
+
+When this holds, we say that the BT model is correctly specified .
+
+KL-Regularized RLHF. During post-training, the learned reward function pro-vides scalar feedback to the language model to optimize against. In the classical formulation [14], the policy objective is given by: max  
+
+> π
+
+Ex∼D
+
+Ey∼π(·| x)
+
+r(x, y )  − β−1KL  π(· | x) ∥ πbase (· | x) . (2) We abbreviate KL D (π ∥ πbase ) := Ex∼D
+
+KL  π(· | x) ∥ πbase (· | x) .
+
+The second term keeps the new policy from drifting too far from the reference policy, and we treat β, the tilt strength (inverse temperature), as a control parameter for this drift. Larger β pushes π(· | x) more aggressively toward high-reward responses and further from πbase (· | x). Even a small gap between two responses can then shift a large amount of probability mass when β is large, so aggregation errors that look minor at the reward-learning stage can be magnified by downstream policy optimization. 
+
+3. REWARD LEARNING AS IMPLICIT AGGREGATION 
+
+When human feedback is heterogeneous, different annotators can give conflicting preference labels for the same prompt. Fitting a single reward then requires the objective to reconcile these judgments into one score per response. BT reward learning is usually read as statistical estimation of latent utilities from noisy pairwise comparisons. However, this framing obscures the reconciliation process, treating it as a technical detail rather than a choice of aggregation rule with inherent normative tradeoffs. This section asks what rule BT reward learning implicitly applies, and shows it to be closely connected to a classical voting rule. The Borda rule , also known as Borda count, is named after Jean-Charles de Borda, who (re)introduced it in the 18th century [ 59 , 60 ]. In our setting, fix a prompt x and let Dx be the distribution over responses used to generate comparison candidates. Let each annotator induce a preference relation ≻i over responses in the support of Dx. The Borda score of a response y is the population probability that y is 6 · Daniel Halpern et al. 
+
+preferred to a randomly drawn comparison candidate: 3
+
+Borda( y) := Ey′∼Dx
+
+Px(y ≻ y′). (3) That is, Borda favors responses that maximize their expected pairwise advantage against a randomly drawn candidate. In practice, the underlying aggregation rule of BT reward learning is obscured by two structural constraints: the learner observes only a sparse, finite sample of comparisons, and it must fit a parametric reward function to generalize across distinct prompts and responses. To isolate the aggregation step, we remove these constraints and consider an idealized setting. Assume the true population pairwise preference probabilities are known for all pairs in the candidate set Yx, and allow each response y ∈ Y x to receive an independent, arbitrary scalar reward. The BT objective reduces to the prompt-level population loss 
+
+Lx(r) := − Ey,y ′∼Dx
+
+ Px(y ≻ y′) log σ r(y) − r(y′) , (4) minimized over all r : supp (Dx) → R. This represents the asymptotic limit of empirical BT learning given infinite comparisons and a fully expressive reward class. Under these conditions, the BT objective has a clean social-choice characterization: its optimizer ranks responses exactly by their Borda scores. 
+
+Theorem 1 [61]. Fix a prompt x, and let Dx be the distribution over responses used to generate comparison candidates. Let r⋆ be a finite-valued minimizer of Equation 4. Then, for any y, y ′ ∈ supp( Dx),
+
+Borda( y) > Borda( y′) ⇐⇒ r⋆(y) > r ⋆(y′) .
+
+Proof of Theorem 1. For any y with Dx(y) > 0, differentiating the BT ob-jective with respect to r(y) gives 
+
+∂Lx
+
+∂r (y) (r) = Dx(y)Ez∼Dx
+
+h
+
+σ(r(y) − r(z)) − Px(y ≻ z)
+
+i
+
+.
+
+Thus first-order optimality at r⋆, together with Dx(y) > 0, gives Borda( y) = Ez∼Dx
+
+h
+
+σ(r⋆(y) − r⋆(z)) 
+
+i
+
+. (5) Let f (t) = Ez∼Dx [σ(t − r⋆(z))] . By Equation 5, Borda (y) = f (r⋆(y)) for every y
+
+with Dx(y) > 0. Since σ(t − r⋆(z)) is strictly increasing in t for every z, the function 
+
+f is strictly increasing. Hence, for all y, y ′ with Dx(y), D x(y′) > 0, Borda( y) > Borda( y′) ⇐⇒ f (r⋆(y)) > f (r⋆(y′)) ⇐⇒ r⋆(y) > r ⋆(y′) .
+
+The lineage of this result is long and somewhat fragmented. The identity in Equa-tion 5 appears already in the work of Zermelo [ 62 ], was independently rediscovered by Bradley and Terry [ 56 ] and Ford [ 63 ], and was restated by Daniels [ 64 ] and Jech [ 65 ], all assuming that the pairwise preference probabilities are generated                 
+
+> 3If ties are allowed, one can replace Px(y≻y′) by Px(y≻y′) + 12Px(y∼y′). If Dxassigns positive probability to y′=y, this convention also treats self-comparisons as ties. AI Alignment From Social Choice Perspectives
+
+# · 7
+
+by a BT model. Anderson et al. [ 61 ] state the result in the form closest to ours. Siththaranjan et al. [66] restate it in the RLHF setting. Theorem 1 clarifies what kind of disagreement BT reward learning preserves when it approximates Borda-style aggregation. Intuitively, Borda favors breadth of acceptability rather than depth of support or pairwise dominance [ 60 ]. A response can receive a high score because it is consistently acceptable against many candidate responses, even when another response has stronger support in a particular direct comparison. In this sense, Borda selects the consensus or compromise response, the one no annotator subgroup strongly objects to, over a response backed by a narrower majority, and it downranks polarizing responses [ 67 , 68 ]. The classic critique is that broad mid-strength acceptability can systematically advantage bland responses over distinctive ones that elicit both strong support and strong opposition in the annotator population [69]. After the reward model is learned, post-training converts this score into a change in the model’s response distribution, shifting probability mass toward responses with higher Borda scores. How strongly any particular response is upweighted depends on both the Borda score learned from annotators and the base policy πbase . To make this concrete, we return to the idealized setting and assume that fine-tuning attains the unparameterized optimum, where the decision variable for each prompt x is the conditional distribution π(· | x) itself. The maximizer then has the closed-form Boltzmann/Gibbs expression [70, 71] 
+
+π⋆(y | x) ∝ πbase (y | x) exp  β r (y),
+
+from which it follows [57, 72] that: Borda( y) > Borda( y′) ⇐⇒ π⋆(y | x)
+
+πbase (y | x) > π⋆(y′ | x)
+
+πbase (y′ | x) .
+
+This implies that the post-training density ratio against the base policy is, up to a monotone transformation, the πbase -weighted Borda score of y.In practice, many prominent alignment deployments intentionally flatten Px into binary preference labels by taking the majority vote, disregarding the soft-label information as noise [ 15 , 17 , 73 – 78 ]. Applied before BT fitting, this preprocessing induces the Copeland rule [79 ], which ranks responses by the number of pairwise majority contests they win [80, 81]. 
+
+4. CLONE ROBUSTNESS 
+
+Section 3 identified BT reward learning as a Borda-like aggregation rule on a fixed candidate set. This connection suggests that BT reward learning may inherit some of Borda’s pathologies. A particularly relevant one for language-model reward learning is sensitivity to near-duplicate candidates. In voting theory, this means that adding candidates nearly identical to an existing candidate can change the rule’s outcome [ 82 ]. Since Borda is well known to be sensitive to such near-duplicate candidates, robustness to approximate clones becomes a natural first benchmark for BT reward learning. 8 · Daniel Halpern et al. 
+
+Approximate clones arise structurally in generated language [ 35 , 83 ]. For a fixed prompt, candidate responses are sampled from a generative model whose probability mass often concentrates around a small number of semantic and stylistic modes. A single substantive answer can therefore appear in many forms, with differences that are largely surface-level, such as paraphrasing, reordered explanations, or changes in verbosity. The candidate set Yx is only a sampled discretization of this broader response space, and the often arbitrary number of variants associated with a given substantive answer reflects the sampling and filtering process as much as human preference. Exact copies can often be extracted and merged before training, but the harder case involves near-duplicates: responses that differ slightly while occupying the same semantic region and expressing the same underlying answer. Within a near-clone cluster, pairwise comparisons among variants provide little new signal. Annotators may exhibit minor idiosyncratic preferences among them, but these differences are usually not the underlying quality the reward model is meant to capture. A clone-sensitive BT model can nevertheless treat the number of variants in the cluster as meaningful, so adding near-duplicates can change the rewards assigned to individual candidates and the total policy probability assigned to the cluster as a whole. The learned reward, and by extension the policy it induces, can then depend on arbitrary sampling artifacts, such as how densely different answers are represented in Yx, rather than on human preference [ 84 ]. As models generate more fluent paraphrases and subtle stylistic variants of the same substantive answer, this representational multiplicity can become a larger source of reward variation. The corresponding formal requirement is robustness to approximate clones : the learned reward should be stable under the addition of near-duplicates. Adding a response that is nearly identical to an existing one should make the two responses receive nearly the same reward, and should not substantially change the rewards assigned to unrelated responses. Procaccia et al. [ 85 ] formalize this requirement using a metric on responses. Let ρ be a metric on Y, where smaller values indicate greater similarity. Fix a prompt x and a finite candidate set Yx ⊆ Y . Let rYx
+
+denote the reward learned from comparisons over Yx, for example by minimizing the unrestricted prompt-level population analogue of Equation 1. 
+
+Definition 2. A reward-learning procedure is robust to approximate clones if for every δ > 0 there exists ε > 0 such that the following holds. For any finite candidate set Yx ⊆ Y , any y ∈ Y x, and any new response y′ satisfying ρ(y, y ′) ≤ ε,the rewards learned before and after adding y′ satisfy 
+
+rYx∪{ y′}(y) − rYx∪{ y′}(y′) ≤ δ
+
+and 
+
+rYx∪{ y′}(z) − rYx (z) ≤ δ ∀z ∈ Y x.
+
+The first condition says that the original response and its approximate clone should receive nearly the same reward once both are present. The second says that adding the clone should not substantially change the rewards assigned to the pre-existing responses. Together, the two conditions require the reward-learning rule to treat near-duplicates as redundant representations of the same local region. AI Alignment From Social Choice Perspectives · 9
+
+Using the connection to Borda, Procaccia et al. [ 85 ] show that standard BT reward learning is not robust to approximate clones. They then propose a weighted version of the population BT objective that addresses this problem. The idea is to assign each response a uniqueness weight w(y), measuring the normalized mass of points in the response space for which y is the nearest candidate. Responses in crowded regions receive smaller weight, while responses representing larger regions receive larger weight. Applying these weights to pairwise comparisons yields the weighted BT objective in the following theorem. 
+
+Theorem 3 [85]. Let S ⊆ Rd be a compact response space with finite positive volume. Fix a prompt x, a finite candidate set Yx ⊆ S , and λ > 0. Draw a point 
+
+s uniformly at random from S, and assign it to one of the nearest candidates in 
+
+Yx, breaking ties uniformly at random; let wYx (y) denote the resulting weight of candidate y. Define the weighted BT loss 
+
+Lwλ (r) := − X 
+
+> y,y ′∈Y x
+> y̸=y′
+
+wYx (y)wYx (y′)Px(y ≻ y′) log σ(r(y) − r(y′)) + λ
+
+2
+
+X
+
+> y∈Y x
+
+wYx (y)r(y)2 .
+
+If Px(y ≻ y′) is Lipschitz continuous in the responses, then the reward-learning algorithm that minimizes Lwλ (r) is robust to approximate clones under the ℓ2 metric. 
+
+Theorem 3 should be read as a representation-invariance guarantee for the prompt-level aggregation step. Once an embedding and a metric are fixed, near-duplicate responses are treated as surface representatives of the same region, so adding another does not substantially change the learned rewards. The guarantee reduces the need for exact deduplication. What it does not remove is the dependence on the embedding, metric, and reference space S that fix the weights. In this sense, the invariance holds relative to a fixed geometry, shifting the design burden from detecting duplicates to specifying when responses count as close [86]. 
+
+5. PARAMETRIC REWARD LEARNING AND UNANIMITY 
+
+Sections 3 and 4 studied BT reward learning under an unconstrained reward class, where each prompt-response pair has its own free scalar score. In that setting, BT reproduces the Borda score and inherits both its guarantees and its pathologies. In practice, the reward must be implemented by a shared parametric function, so the score assigned to one response is tied to the scores assigned to others through the same hypothesis class. This coupling creates a new source of failures beyond the aggregation effects already discussed. Formally, the learner chooses parameters θ from a parameter space Θ, which induce a reward function rθ : X × Y → R. The possible rewards are therefore restricted to the hypothesis class RΘ = {rθ : θ ∈ Θ}. In the standard BT pipeline, θ is fitted on the comparison dataset D by minimizing the logistic loss in Equation 1, or equivalently by maximizing the BT likelihood. The simplest failure is a violation of unanimity , also known as Pareto efficiency .If every annotator strictly prefers response y+ to response y−, the learned reward should assign y+ a higher score. This property is worth studying not because perfect 10 · Daniel Halpern et al. 
+
+unanimity is likely to occur in practice, but because violating it means ignoring the strongest possible consensus signal, falling below the baseline set by every standard voting rule in the classical setting. 
+
+Definition 4. A reward-learning procedure satisfies unanimity if, for any pair of responses y+, y − ∈ Y x, whenever every annotator prefers y+ to y−, the learned reward satisfies rθ (y+) > r θ (y−). Ge et al. [ 38 ] established this failure for a linear hypothesis class; Hollender and Kraiczy [ 87 ] showed that it extends to richer parametric reward classes. We follow the linear setting of Ge et al., which admits the cleanest analysis. In the linear model, each response y ∈ Y x is associated with a known feature vector 
+
+ϕ(y) ∈ Rd, where d is the embedding dimension, and the reward is linear in those features, rθ (y) : = ⟨θ, ϕ (y)⟩ with θ ∈ Rd. The learner holds ϕ fixed and fits only 
+
+θ. This corresponds to one way of building a reward model, in which ϕ is the embedding obtained by removing the final layer of a pretrained language model and the reward is a linear head trained on preference data on top of it. In many settings, the embedding ϕ is itself parameterized and trained alongside the last layer rather than held fixed. The linear model described here is best read as an analytically convenient special case of the restricted reward class RΘ.Throughout this section, we fix a prompt x ∈ X and a candidate set Yx ⊆ Y .We assume that the learner observes the complete pairwise preferences of a set of annotators A. That is, for every annotator i ∈ A and every pair of distinct responses 
+
+y, y ′ ∈ Y x, the learner observes which of the two responses i prefers. We further assume that the learner fits a loss function to these observed pairwise preferences. Specifically, the analysis in this section concerns the broader family of loss-based reward-learning rules, of which BT is one member. Given any loss function ℓ : R → R, define 
+
+L(θ; ℓ) := X 
+
+> y+,y −∈Y x
+> y+̸=y−
+
+ny+≻y− · ℓ  rθ
+
+ y− − rθ
+
+ y+ ,
+
+where ny+≻y− denotes the number of annotators who prefer y+ to y−. When 
+
+ℓ(z) = log (1 + exp (z)), this is the fixed-prompt version of the BT logistic loss in Equation 1; the corresponding population objective replaces the empirical counts 
+
+ny+≻y− by the pairwise preference probabilities Px(y+ ≻ y−). Hinge loss gives another instance, and more generally the larger the gap rθ (y−) − rθ (y+) on a comparison the rule disagrees with, the larger the penalty. This class of rules is a natural family that contains BT and matches the loss-minimization framing of modern training pipelines. In the unrestricted setting of Section 3, BT satisfies unanimity as a consequence of its equivalence with Borda. This makes unanimity appear to be a natural property of BT. Yet, the theorem below shows that this guarantee need not survive once the reward is required to generalize through a restricted reward class RΘ.
+
+Theorem 5 [38]. Let ℓ : R → R be a loss function satisfying inf z ℓ(z) < ℓ (0) , and AI Alignment From Social Choice Perspectives · 11 
+
+suppose that ℓ is either nondecreasing and weakly convex, or strictly convex. Then there exist a dimension d, a finite candidate set Yx, feature vectors ϕ(y) ∈ Rd, and a population for which the induced loss-based linear reward rule fails unanimity. In particular, there are responses y+, y − ∈ Y x such that every annotator prefers y+ to 
+
+y−, but the learned reward rθ⋆ ranks them in the opposite order: rθ⋆ (y−) > r θ⋆ (y+).
+
+At a high level, the loss must find a single set of parameters that applies to all pairwise comparisons at once. Each comparison places two demands on the fit: assigning the preferred response the higher score, and increasing confidence through a larger margin r(y+) − r(y−). In the unrestricted setting, these demands can be satisfied independently, since the relevant reward differences can be adjusted without forcing a change in unrelated comparisons. Under a restricted hypothesis class, they interact because all margins are induced by the same trainable parameters. The loss then chooses a global fit across all observed comparisons, allocating score separation across comparison directions. Some directions matter more for this fit than others, either because many comparisons point along them or because their feature differences have a larger effect on the loss. A unanimous comparison can still be associated with a weak direction in this global problem. The learned model can then fit the dominant comparison directions while assigning the wrong ordering to the unanimous pair. The same parametric restriction that lets the reward generalize beyond observed comparisons can also break the guarantees of the underlying aggregation rule. In this case, the rule and its learned approximation come apart even on a property as basic as unanimity. 
+
+6. WELFARE LOSS AND SPARSE ELICITATION 
+
+One can view alignment from human feedback as a limited-information approxima-tion procedure. For each prompt, the pipeline aims to induce the model behavior that is best for a population of annotators, while observing only a partial descrip-tion of their preferences. The true objective, however, may depend on unobserved information, such as the preference intensities represented by cardinal values. Here, we examine the loss incurred due to this lack of information, starting with whether there is, in fact, a loss. 
+
+Identifiability. Fix a prompt x and a candidate set Yx ⊆ Y . Suppose an annotator 
+
+i ∼ A has a reward function ri(·) over these responses. A standard goal is to maximize utilitarian welfare , defined as the expected reward across annotators. Formally, given a reward profile r = ( ri)i∈A , the welfare of a response y is 
+
+W r 
+
+> x
+
+(y) := Ei∼A [ri(y)] .
+
+For a policy π(· | x) ∈ ∆( Yx), we can similarly define its expected welfare as 
+
+W r 
+
+> x
+
+(π) := Ey∼π(·| x)
+
+W r 
+
+> x
+
+(y).
+
+Access to these cardinal utilities would make welfare maximization immediate: we could compute the welfare of each response and train the policy accordingly. In 12 · Daniel Halpern et al. 
+
+practice, we observe only comparisons, so the question is whether they identify enough cardinal information to choose a high-welfare response. Assuming annotators respond according to a link function F , we learn only the aggregate win probabilities: 
+
+Px(y ≻ y′) = Ei∼A [F (ri(y) − ri(y′))] .
+
+This formulation captures BT responses, where choices are made with probabilities proportional to exp (ri(y)), as well as deterministic responses, where annotators simply select the higher-reward option. Unfortunately, unless F is linear, it is impossible to reliably identify welfare-maximizing candidates from these probabilities alone, even for a single prompt x with just two responses, y and y′. Because a non-linear link function F distorts the magnitude of reward differences, one can construct two distinct reward profiles, r and r′, that yield identical expected win probabilities but differ in aggregate welfare. Specifically, there exist r and r′ such that: 
+
+Ei∼A [F (ri(y) − ri(y′))] = Ei∼A [F (r′
+
+> i
+
+(y) − r′
+
+> i
+
+(y′))] yet 
+
+Ei∼A [ri(y) − ri(y′)] ̸ = Ei∼A [r′
+
+> i
+
+(y) − r′
+
+> i
+
+(y′)] .
+
+Consequently, identical pairwise observation data can arise from populations with fundamentally different preferences in terms of welfare. 
+
+Distortion. While exact identification of welfare-maximizing candidates is impos-sible, a learned policy may still achieve approximately high welfare using only the observed comparisons. This guarantee is formalized in social choice through the concept of distortion [88 , 89 ]. Recent work applies this lens to quantify how much welfare can be lost when a policy is learned from observed comparisons [90–92]. Assume reward functions are nonnegative and normalized with 0 ≤ ri(y) ≤ 1 for each annotator i and response y. Let Rx(Px) denote the set of normalized reward profiles consistent with the pairwise preference object Px at prompt x. For a policy 
+
+π(· | x) ∈ ∆( Yx), its utilitarian distortion [88, 93] at x is: Dist x(π; Px) := sup 
+
+> r∈R x(Px)
+
+max π′∈∆( Yx) W r 
+
+> x
+
+(π′)
+
+W r 
+
+> x
+
+(π) .
+
+Conditional on Px, this quantity measures the worst-case welfare loss that π can incur over normalized reward profiles that could have induced Px,4 where the welfare loss is defined by the ratio above. Since compatibility is defined by the elicited feedback, while the chosen policy is determined by the aggregation rule and policy class, the distortion reflects all three components of the decision-making process together. 
+
+Theorem 6 [90]. Fix a prompt x and a finite response set Yx with |Y x| ≥ 3.Suppose annotator comparisons are well-specified by a BT model with inverse-     
+
+> 4When Wr
+> x(π) = 0, the corresponding ratio is interpreted as ∞.AI Alignment From Social Choice Perspectives
+
+# · 13 
+
+temperature parameter η, so that for each annotator i ∈ A ,
+
+Pr[ y ≻i y′ | x] = σ (η · (ri(y) − ri(y′))) .
+
+In other words, the link function is F (t) := σ (η · t). For each pairwise preference object Px, let π0(Px) be the policy that BT reward learning returns once the KL penalty is removed; by Theorem 1, it places all mass on the Borda winner under Px.Then 
+
+(1 − o(1)) η ≤ sup 
+
+> Px
+
+Dist x (π0(Px); Px) ≤ O(η2),
+
+where Px ranges over pairwise preference objects generated by a normalized reward profile r and a comparison-pair sampling distribution. The upper bound holds for every such Px; the lower bound is the rate as η → ∞ .
+
+The lower bound should be read against the minimax lower bound for the same information model. G¨ olz et al. [ 90 ] show that, when each annotator contributes a single comparison, every rule mapping the comparisons to a policy incurs distortion at least   12 + o(1) η on some reward profile. Strikingly, this lower bound is achieved by a framework known as Nash learning from human feedback, which we define and analyze in Section 7 (see Theorem 7). 
+
+Richer Elicitation. Theorem 6 demonstrates that approximating welfare is possi-ble, though imperfect, at least under BT responses. However, utilitarian welfare is not the only valid objective in social choice. Consider two hypothetical responses y
+
+and y′: y provides a utility of 2 to all annotators, while y′ provides a utility of 3 to half the annotators and 1 to the other half. Utilitarian welfare treats these outcomes as equivalent. By contrast, more egalitarian choices, such as Nash welfare — the product of utilities — would strictly prefer y, favoring broad approval over polarizing outcomes that benefit one group at the expense of another. How, then, can we optimize for these alternative choices? Chidambaram et al. [ 94 ] and Ge et al. [ 95 ] consider linear social choice models (similar to the one described in Section 5) where responses follow BT and deterministic link functions, respectively. Both show that even in these restricted settings, a single pairwise comparison per annotator cannot reveal which of the two responses a more egalitarian objective should prefer. Without preference intensities, a single comparison cannot separate a universally indifferent population from one that is evenly split between strong opposing preferences; in both, each candidate is preferred equally often across the population. Thus, there is no hope of optimizing more egalitarian welfare functions that would strictly prefer broad-appeal candidates. On the other hand, under mild structural conditions, eliciting two comparisons per annotator yields enough information to completely identify the voter type distribution. This identification enables direct optimization for any desired social welfare function. Similarly, Cherapanamjeri et al. [ 96 ] demonstrate in a latent-utility model that moving from pairwise choices to best-of-three queries provides essentially complete identifiability under appropriate structural conditions. Richer information can also come from passively recorded signals. For example, the 14 · Daniel Halpern et al. 
+
+time taken to provide a comparison label can carry information about preference intensities that binary labels discard [97, 98]. While these models rely on different structural assumptions, each points to the same fact that slightly richer elicitation can, in principle, make far more welfare objectives optimizable than pairwise comparison allows. 
+
+7. DIRECT ALIGNMENT FROM PAIRWISE PREFERENCES 
+
+Earlier sections studied alignment rules that infer a scalar reward from pairwise preference data and then optimize a policy against that reward. This scalar reward projects pairwise comparisons among responses onto one ordered axis, which forces the aggregate relation into a transitive ranking. This section asks what is lost when the aggregate relation is instead intransitive, and how alignment objectives can keep the pairwise structure directly. Such intransitivity can arise even when every annotator is internally consistent. Averaging their preferences may produce a Condorcet cycle , where ya is majority-preferred to yb, yb to yc, and yet yc to ya [60 ]. In such cases there is no Condorcet winner , meaning no response defeats every other response by majority comparison. Any deterministic target must therefore break the cycle somewhere, motivating objectives that reason over the pairwise relation itself. 
+
+Maximal Lotteries. One way to avoid arbitrarily breaking cycles is to select a dis-tribution over responses rather than a single response. This shifts the question from which response should win to which randomized target should be chosen. Maximal lotteries answer this by comparing each candidate distribution against alternatives using the population majority margin: draw one response from each distribution and measure which the population prefers on average. This solution concept was introduced by Kreweras [ 99 ], developed systematically by Fishburn [ 100 ], 5 and later applied in many settings, including AI evaluation [103, 104]. Fix a prompt x and a finite candidate set Yx ⊆ Y . Let 
+
+Mx(y, y ′) := Px(y ≻ y′) − Px(y′ ≻ y)denote the majority margin — the net pairwise preference for y over y′ in the population. A maximal lottery is a distribution p⋆ ∈ ∆( Yx) whose expected margin against every response distribution q ∈ ∆( Yx) is nonnegative: 
+
+Ey∼p⋆,y ′∼q [Mx(y, y ′)] ≥ 0.
+
+Since Mx is skew-symmetric, the maximal lotteries are exactly the maximin strategies of the zero-sum game with payoff matrix Mx:6
+
+p⋆ ∈ arg max  
+
+> p∈∆( Yx)
+
+min  
+
+> q∈∆( Yx)
+
+p⊤Mxq = arg max  
+
+> p∈∆( Yx)
+
+min  
+
+> q∈∆( Yx)
+
+Ey∼p, y ′∼q [Mx(y, y ′)] .  
+
+> 5The same solution has been rediscovered independently under other names, including the “game theory method” in voting [ 101 ] and the von Neumann winner in contextual dueling bandits [ 102 ].
+> 6Existence follows from von Neumann’s minimax theorem [ 105 ]. For a generic majority-margin matrix, the maximal lottery is unique, although degenerate ties can yield multiple maximal lotteries. AI Alignment From Social Choice Perspectives
+
+# · 15 
+
+When the majority relation is cyclic, the maximal lottery spreads mass across several responses that compete in the cycle, so the target itself records the unresolved disagreement. When a strict Condorcet winner exists, no mixing is needed and the unique maximal lottery places all mass on that response. Maximal lotteries also satisfy other desirable axiomatic properties [ 106 ]. In particular, they are invariant to exact clones (duplicate responses). However, the introduction of approximate 
+
+clones — as defined in Section 4 — can affect the lottery, even if the approximation is arbitrarily precise. 
+
+Nash Learning from Human Feedback. Nash Learning from Human Feedback (NLHF) [40 , 107 ] applies the same maximin idea directly at the level of policies. Instead of compressing pairwise comparisons into a scalar reward, NLHF uses the pairwise preference model as the payoff of a two-player game between policies and trains toward the equilibrium of that game. The population preference Px induces a preference between two policies by comparing the responses they generate, 
+
+Px(π ≻ π′) := Ey∼π(·| x), y ′∼π′(·| x)[Px(y ≻ y′)] .
+
+Thus, Px(π ≻ π′) is the probability that π produces a response preferred to one produced by π′, at prompt x. We write 
+
+P (π ≻ π′) := Ex∼D [Px(π ≻ π′)] for the corresponding comparison after averaging over prompts drawn from D. This induces a preference relation over policies 
+
+π ≻ π′ ⇐⇒ P (π ≻ π′) > 12 .
+
+NLHF chooses a policy with the best worst-case comparison probability against alternative policies: 
+
+π⋆ ∈ arg max  
+
+> π
+
+min  
+
+> π′
+
+P (π ≻ π′).
+
+For a fixed prompt with finite candidate support and no regularization, π⋆ coincides with the maximal lottery of that prompt’s margin game. In this setting, the maximal lottery can be computed by the linear program for the row player’s maximin strategy. In the open-ended parametric setting, NLHF instead approaches the corresponding policy-level equilibrium through self-play, optimizing a policy against opponents generated from its own iterates. This equilibrium-seeking template underlies several recent preference-optimization methods [108–113]. 
+
+Welfare Interpretation. The welfare-loss perspective of Section 6 gives a precise sense in which maximal lotteries are optimal. The following result bounds their worst-case utilitarian distortion under anonymous pairwise feedback. 
+
+Theorem 7 [90]. Suppose annotator comparisons are generated from normalized rewards by the BT model in Theorem 6, with inverse-temperature η. Let πNLHF  
+
+> x
+
+(Px)16 · Daniel Halpern et al. 
+
+be any maximal lottery of the margin game Mx. Then 
+
+sup 
+
+> Px
+
+Dist x
+
+ πNLHF  
+
+> x
+
+(Px); Px
+
+ ≤
+
+ 12 + o(1) 
+
+
+
+η, 
+
+where Px ranges over pairwise preference objects generated by normalized reward profiles and comparison-pair sampling distributions, and the o(1) term is as η → ∞ .
+
+Together with the minimax lower bound of Section 6, Theorem 7 shows that the maximal lottery attains the smallest possible worst-case distortion, up to lower-order terms, among rules observing anonymous BT pairwise feedback. 
+
+Regularization. As with RLHF, deployed NLHF regularizes the learned policy toward a reference policy πbase with a KL penalty. The regularized preference between policies is 
+
+Pτ (π ≻ π′) := P (π ≻ π′) − τ KL D (π ∥ πbase ) + τ KL D (π′ ∥ πbase ),
+
+where the KL terms penalize each policy for diverging from πbase , symmetrically across the two players. 7 The training target remains the Nash equilibrium of this modified game, which exists and is unique [107]. Theorem 7’s optimality extends to this KL-regularized objective. Since the penalty keeps the learned policy near πbase , the relevant comparison is with policies that are allowed to move the same distance from the reference. That is, the regularized equilibrium is compared with the highest welfare policy whose KL divergence from πbase is no larger than its own. Against this benchmark, NLHF retains the same optimal distortion guarantee, for any reference policy and any regularization strength [90]. 
+
+8. DISCUSSION 
+
+Taken together, the sections above give a social-choice account of alignment from human feedback as a sequence of design choices. Human judgments must be elicited, aggregated into a model, generalized beyond the observed data, and translated into policy behavior. We conclude by discussing several related research threads that extend this pipeline view beyond the formal results surveyed earlier. 
+
+Preference Collapse. Fine-tuning a base policy toward a learned reward signal can narrow the policy’s behavior even when the reward itself supports a broader range of responses. With stronger optimization, probability mass can concentrate around a small set of reward-favored outputs, producing preference collapse [114 ], where majority views are further amplified [ 115 , 116 ] and response diversity is reduced [ 117 –119 ]. This is one way in which the downstream policy can sharpen the aggregation choices made by the learned reward: biases in the preference data, once encoded in the reward signal, may be amplified by subsequent optimization [ 120 , 121 ]. As a result,                
+
+> 7Viewing each player’s payoff separately, a policy receives its preference payoff minus a KL penalty for its own divergence from πbase :R(π;π′) = P(π≻π′)−τKL D(π∥πbase ), with the symmetric expression for π′.AI Alignment From Social Choice Perspectives
+
+# · 17 
+
+the learned policy may fail to represent the full range of normative considerations expressed across populations, domains, and interaction contexts [122, 123]. 
+
+Multiple Policies. A growing number of proposals advocate for pluralistic align-ment : modeling multiple perspectives in parallel so as to better capture the breadth of human judgments [ 21 , 30 , 124 , 125 ]. Work in this direction differs in where it relaxes the standard single-reward pipeline. Some approaches retain a single learned reward while limiting how aggressively the policy optimizes against it, reducing the policy-level amplification of the aggregate objective [ 121 , 126 ]. Others enrich the reward model so that it can encode preference heterogeneity more directly [ 127 – 129 ]. A more direct approach represents divergent preferences by training multiple reward models, each matched to a distinct segment of the population [ 124 , 130 – 132 ]. The typical approach clusters annotators, by demographics or inferred preference patterns, and fits a group-specific reward to each cluster. Halpern et al. [ 22 ] avoid this intermediate clustering step by fitting a compact reward ensemble whose aggregate pairwise choices match the observed preference Px, so each component induces a coherent policy while the mixture preserves disagreement. Once such an ensemble is learned, its components can be deployed in several ways to serve pluralistic goals [ 21 ]. For example, the system can present multiple outputs as an Overton-style slate [ 133 ], distill them into a consensus statement [ 134 –136 ], select the policy best matched to a user’s stated preference, or sample from the policy mixture. Over repeated use, mixture sampling preserves population-level diversity and counters the tendency of aligned models to recycle a small set of high-reward responses [116, 118, 137], which can be particularly valuable in creative workflows. 
+
+Personalization. At a finer level of granularity, the alignment objective can be personalized to individual annotators, treating each user as carrying a unique reward function [ 138 ]. Since fitting a separate model per user is infeasible under sparse per-user data, these methods place each user’s reward in a shared low-dimensional space, recovering a per-user latent variable [ 139 ] or a weighting over common reward components [ 140 , 141 ] from a handful of preferences. Lightweight user embeddings or low-rank adapters then specialize a shared model to the individual. Even so, personalizing to each user risks narrowing their information diet and reinforcing prior views, prompting calls to bound how far personalization should extend [123, 142]. 
+
+AI for Social Choice and Democracy. The work surveyed in this paper is primarily social choice for AI : it uses social choice theory to diagnose how alignment pipelines aggregate heterogeneous feedback, and to design learned rewards or policies that handle disagreement more explicitly. A complementary agenda runs in the reverse direction, asking how AI systems can support collective decision-making, deliberation, and democratic representation. One direction uses AI to help groups deliberate and converge on shared positions, through generative social choice [135 ,136 ], deliberation mediators such as the Habermas machine [ 143 ], formal accounts of common ground [ 134 , 144 ], and platforms for large-scale opinion aggregation [ 145 ]. More broadly, progress in social choice for AI and AI for social choice may prove mutually reinforcing, as advances in one direction generate both the concepts and the tools needed to advance the other. 18 · Daniel Halpern et al. 
+
+> REFERENCES
+
+[1] Jan Leike, David Krueger, Tom Everitt, Miljan Martic, Vishal Maini, and Shane Legg. Scalable Agent Alignment via Reward Modeling: A Research Direction, 2018. arXiv:1811.07871. 1 [2] Jiaming Ji, Tianyi Qiu, Boyuan Chen, Jiayi Zhou, Borong Zhang, Donghai Hong, Hantao Lou, Kaile Wang, Yawen Duan, Zhonghao He, Lukas Vierling, Zhaowei Zhang, Fanzhi Zeng, Juntao Dai, Xuehai Pan, Hua Xu, Aidan O’Gara, Kwan Ng, Brian Tse, Jie Fu, Stephen McAleer, Yanfeng Wang, Mingchuan Yang, Yunhuai Liu, Yizhou Wang, Song-Chun Zhu, Yike Guo, Yaodong Yang, and Wen Gao. AI Alignment: A Contemporary Survey. ACM Computing Surveys , 58(5):132:1–132:38, 2025. 1 [3] Iason Gabriel. Artificial Intelligence, Values, and Alignment. Minds and Machines , 30(3):411–437, 2020. 1, 3 [4] Stuart J. Russell. Human Compatible: Artificial Intelligence and the Problem of Control . Allen Lane, 2019. 1 [5] Jessica Taylor, Eliezer Yudkowsky, Patrick LaVictoire, and Andrew Critch. Alignment for Advanced Machine Learning Systems. In S. Matthew Liao, editor, Ethics of Artificial Intelligence , pages 342–382. Oxford University Press, 2020. 1 [6] Zachary Kenton, Tom Everitt, Laura Weidinger, Iason Gabriel, Vladimir Mikulik, and Geoffrey Irving. Alignment of Language Agents, 2021. arXiv:2103.14659. 1 [7] Iason Gabriel and Geoff Keeling. A Matter of Principle? AI Alignment as the Fair Treatment of Claims. Philosophical Studies , 182(7):1951–1973, 2025. 1 [8] Dan Hendrycks, Nicholas Carlini, John Schulman, and Jacob Steinhardt. Unsolved Problems in ML Safety, 2021. arXiv:2109.13916. 1 [9] Stephen Casper, Xander Davies, Claudia Shi, Thomas Krendl Gilbert, J´ er´ emy Scheurer, Javier Rando, Rachel Freedman, Tomek Korbak, David Lindner, Pedro Freire, Tony Tong Wang, Samuel Marks, Charbel-Raphael Segerie, Micah Carroll, Andi Peng, Phillip J. K. Christoffersen, Mehul Damani, Stewart Slocum, Usman Anwar, Anand Siththaranjan, Max Nadeau, Eric J. Michaud, Jacob Pfau, Dmitrii Krasheninnikov, Xin Chen, Lauro Langosco, Peter Hase, Erdem Biyik, Anca Dragan, David Krueger, Dorsa Sadigh, and Dylan Hadfield-Menell. Open Problems and Fundamental Limitations of Reinforcement Learning from Human Feedback. Transactions on Machine Learning Research ,2023. 1 [10] Andrew P. Clark, Kate L. Howard, Andy T. Woods, Ian S. Penton-Voak, and Christof Neumann. Why Rate When You Could Compare? Using the “EloChoice” Package to Assess Pairwise Comparisons of Perceived Physical Strength. PLOS ONE , 13(1):e0190393, 2018. 1 [11] Yisong Yue, Josef Broder, Robert Kleinberg, and Thorsten Joachims. The 
+
+k -Armed Dueling Bandits Problem. Journal of Computer and System Sciences ,78(5):1538–1556, 2012. 1 [12] Paul F. Christiano, Jan Leike, Tom B. Brown, Miljan Martic, Shane Legg, and Dario Amodei. Deep Reinforcement Learning from Human Preferences. In AI Alignment From Social Choice Perspectives · 19 
+
+The Thirty-first Annual Conference on Neural Information Processing Systems ,2017. 1, 4 [13] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. Training Language Models to Follow Instructions with Human Feedback. In The Thirty-sixth Annual Conference on Neural Information Processing Systems , 2022. 1, 2, 4 [14] Daniel M. Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B. Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving. Fine-Tuning Language Models from Human Preferences, 2020. arXiv:1909.08593. 1, 4, 5 [15] Nisan Stiennon, Long Ouyang, Jeff Wu, Daniel M. Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul Christiano. Learning to Sum-marize with Human Feedback. In The Thirty-fourth Annual Conference on Neural Information Processing Systems , 2020. 1, 2, 4, 7 [16] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D. Manning, Stefano Ermon, and Chelsea Finn. Direct Preference Optimization: Your Language Model Is Secretly a Reward Model. In The Thirty-seventh Annual Conference on Neural Information Processing Systems , 2023. 1, 2 [17] Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson, Christopher Olah, Danny Hernan-dez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamile Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemi Mercado, Nova DasSarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham, Timothy Telleen-Lawton, Tom Conerly, Tom Henighan, Tristan Hume, Samuel R. Bowman, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan. Constitutional AI: Harmlessness from AI Feedback, 2022. arXiv:2212.08073. 2, 7 [18] Saffron Huang, Divya Siddarth, Liane Lovitt, Thomas I. Liao, Esin Durmus, Alex Tamkin, and Deep Ganguli. Collective Constitutional AI: Aligning a Language Model with Public Input. In Proceedings of the 2024 ACM Conference on Fairness, Accountability, and Transparency , 2024. 2 [19] Maarten Buyl, Hadi Khalaf, Claudio Mayrink Verdun, Lucas Monteiro Paes, Caio Cesar Vieira Machado, and Flavio du Pin Calmon. AI Alignment at Your Discretion. In Proceedings of the 2025 ACM Conference on Fairness, Accountability, and Transparency , 2025. 2 [20] Abigail Z. Jacobs and Hanna Wallach. Measurement and Fairness. In Pro-ceedings of the 2021 ACM Conference on Fairness, Accountability, and Trans-parency , 2021. 2 20 · Daniel Halpern et al. 
+
+[21] Taylor Sorensen, Jared Moore, Jillian Fisher, Mitchell Gordon, Niloofar Mireshghallah, Christopher Michael Rytting, Andre Ye, Liwei Jiang, Ximing Lu, Nouha Dziri, Tim Althoff, and Yejin Choi. Position: A Roadmap to Pluralistic Alignment. In Proceedings of the 41st International Conference on Machine Learning , 2024. 2, 17 [22] Daniel Halpern, Evi Micha, Ariel D. Procaccia, and Itai Shapira. Pairwise Calibrated Rewards for Pluralistic Alignment. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. 2, 17 [23] Tan Zhi-Xuan, Micah Carroll, Matija Franklin, and Hal Ashton. Beyond Preferences in AI Alignment. Philosophical Studies , 182(7):1813–1863, 2025. 2 [24] Taylor Sorensen, Liwei Jiang, Jena D. Hwang, Sydney Levine, Valentina Py-atkin, Peter West, Nouha Dziri, Ximing Lu, Kavel Rao, Chandra Bhagavatula, Maarten Sap, John Tasioulas, and Yejin Choi. Value Kaleidoscope: Engaging AI with Pluralistic Human Values, Rights, and Duties. In Proceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth Symposium on Educational Advances in Artificial Intelligence , 2024. 2 [25] Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, Nicholas Joseph, Saurav Kadavath, Jackson Kernion, Tom Conerly, Sheer El-Showk, Nelson Elhage, Zac Hatfield-Dodds, Danny Hernandez, Tristan Hume, Scott Johnston, Shauna Kravec, Liane Lovitt, Neel Nanda, Catherine Olsson, Dario Amodei, Tom Brown, Jack Clark, Sam McCandlish, Chris Olah, Ben Mann, and Jared Kaplan. Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback, 2022. arXiv:2204.05862. 2[26] Jiahao Yuan, Zixiang Di, Shangzixin Zhao, Zhiqing Cui, Hanqing Wang, Guisong Yang, and Usman Naseem. Cultural Palette: Pluralising Culture Alignment via Multi-Agent Palette, 2024. arXiv:2412.11167. 2 [27] Vinodkumar Prabhakaran, Rida Qadri, and Ben Hutchinson. Cultural Incon-gruencies in Artificial Intelligence. In First Workshop on Cultures in AI/AI in Culture, NeurIPS 2022 , 2022. 2 [28] Usman Anwar, Abulhair Saparov, Javier Rando, Daniel Paleka, Miles Turpin, Peter Hase, Ekdeep Singh Lubana, Erik Jenner, Stephen Casper, Oliver Sourbut, Benjamin L. Edelman, Zhaowei Zhang, Mario G¨ unther, Anton Korinek, Jose Hernandez-Orallo, Lewis Hammond, Eric J. Bigelow, Alexander Pan, Lauro Langosco, Tomasz Korbak, Heidi Chenyu Zhang, Ruiqi Zhong, Se´ an ´O h ´Eigeartaigh, Gabriel Recchia, Giulio Corsi, Alan Chan, Markus Anderljung, Lilian Edwards, Aleksandar Petrov, Christian Schroeder de Witt, Sumeet Ramesh Motwani, Yoshua Bengio, Danqi Chen, Philip Torr, Samuel Albanie, Tegan Maharaj, Jakob Nicolaus Foerster, Florian Tram` er, He He, Atoosa Kasirzadeh, Yejin Choi, and David Krueger. Foundational Challenges in Assuring Alignment and Safety of Large Language Models. Transactions on Machine Learning Research , 2024. 2 [29] Hannah Rose Kirk, Alexander Whitefield, Paul R¨ ottger, Andrew Michael AI Alignment From Social Choice Perspectives · 21 
+
+Bean, Katerina Margatina, Rafael Mosquera, Juan Manuel Ciro, Max Bartolo, Adina Williams, He He, Bertie Vidgen, and Scott A. Hale. The PRISM Alignment Dataset: What Participatory, Representative and Individualised Human Feedback Reveals About the Subjective and Multicultural Alignment of Large Language Models. In The Thirty-eighth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2024. 2 [30] Shangbin Feng, Taylor Sorensen, Yuhan Liu, Jillian Fisher, Chan Young Park, Yejin Choi, and Yulia Tsvetkov. Modular Pluralism: Pluralistic Alignment via Multi-LLM Collaboration. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024. 2, 17 [31] Michael J.Q. Zhang, Zhilin Wang, Jena D. Hwang, Yi Dong, Olivier Delalleau, Yejin Choi, Eunsol Choi, Xiang Ren, and Valentina Pyatkin. Diverging Preferences: When Do Annotators Disagree and Do Models Know? In 
+
+Proceedings of the 42nd International Conference on Machine Learning , 2025. 2[32] Kanad Shrikar Pardeshi, Itai Shapira, Ariel D. Procaccia, and Aarti Singh. Learning Social Welfare Functions. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 2 [33] Amartya Sen. The Possibility of Social Choice. American Economic Review ,89(3):349–378, 1999. 2 [34] Amartya Sen. Social Choice Theory. In Kenneth J. Arrow and Michael D. Intriligator, editors, Handbook of Mathematical Economics , volume 3, pages 1073–1181. Elsevier, 1986. 2 [35] Vincent Conitzer, Rachel Freedman, Jobst Heitzig, Wesley H. Holliday, Bob M. Jacobs, Nathan Lambert, Milan Moss´ e, Eric Pacuit, Stuart Russell, Hailey Schoelkopf, Emanuel Tewolde, and William S. Zwicker. Position: Social Choice Should Guide AI Alignment in Dealing with Diverse Human Feedback. In 
+
+Proceedings of the 41st International Conference on Machine Learning , 2024. 2, 8 [36] Jessica Dai and Eve Fleisig. Mapping Social Choice Theory to RLHF. In 
+
+ICLR 2024 Workshop on Reliable and Responsible Foundation Models , 2024. 2 [37] Abhilash Mishra. AI Alignment and Social Choice: Fundamental Limitations and Policy Implications, 2023. arXiv:2310.16048. 2 [38] Luise Ge, Daniel Halpern, Evi Micha, Ariel D. Procaccia, Itai Shapira, Yev-geniy Vorobeychik, and Junlin Wu. Axioms for AI Alignment from Human Feedback. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 2, 10 [39] Parand A. Alamdari, Soroush Ebadian, and Ariel D. Procaccia. Policy Ag-gregation. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 2 [40] Roberto-Rafael Maura-Rivero, Marc Lanctot, Francesco Visin, and Kate Larson. Jackpot! Alignment as a Maximal Lottery, 2025. arXiv:2501.19266. 2, 15 22 · Daniel Halpern et al. 
+
+[41] Vincent Conitzer, Walter Sinnott-Armstrong, Jana Schaich Borg, Yuan Deng, and Max Kramer. Moral Decision Making Frameworks for Artificial Intelligence. 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , 31(1), 2017. 2 [42] Mahendra Prasad. Social Choice and the Value Alignment Problem. In 
+
+Artificial Intelligence Safety and Security . Chapman and Hall/CRC, 2018. 2 [43] Leo Gao, John Schulman, and Jacob Hilton. Scaling Laws for Reward Model Overoptimization. In Proceedings of the 40th International Conference on Machine Learning , 2023. 3 [44] Xueru Wen, Jie Lou, Yaojie Lu, Hongyu Lin, Xing Yu, Xinyu Lu, Ben He, Xianpei Han, Debing Zhang, and Le Sun. Rethinking Reward Model Evalua-tion: Are We Barking Up the Wrong Tree? In The Thirteenth International Conference on Learning Representations , 2025. 3 [45] Evan Frick, Tianle Li, Connor Chen, Wei-Lin Chiang, Anastasios Nikolas Angelopoulos, Jiantao Jiao, Banghua Zhu, Joseph E. Gonzalez, and Ion Stoica. How to Evaluate Reward Models for RLHF. In The Thirteenth International Conference on Learning Representations , 2025. 3 [46] Iason Gabriel and Vafa Ghazavi. The Challenge of Value Alignment: From Fairer Algorithms to AI Safety. In Carissa V´ eliz, editor, Oxford Handbook of Digital Ethics , pages 336–355. Oxford University Press, 2023. 3 [47] Seth D. Baum. Social Choice Ethics in Artificial Intelligence. AI & Society ,35(1):165–176, 2020. 3 [48] Timo Kaufmann, Paul Weng, Viktor Bengs, and Eyke H¨ ullermeier. A Survey of Reinforcement Learning from Human Feedback. Transactions on Machine Learning Research , 2025. 4 [49] Banghua Zhu, Michael Jordan, and Jiantao Jiao. Principled Reinforcement Learning with Human Feedback from Pairwise or K-Wise Comparisons. In 
+
+Proceedings of the 40th International Conference on Machine Learning , 2023. 4[50] Peter C. Fishburn. Condorcet Social Choice Functions. SIAM Journal on Applied Mathematics , 33(3):469–489, 1977. 4 [51] Louis L. Thurstone. A Law of Comparative Judgment. Psychological Review ,34(4):273–286, 1927. 4 [52] R. Duncan Luce. Individual Choice Behavior . John Wiley, Oxford, England, 1959. 4 [53] Daniel McFadden. Conditional Logit Analysis of Qualitative Choice Behavior. In Frontiers in Econometrics , pages 105–142. Academic Press, New York, 1974. 4 [54] Ritesh Noothigattu, Dominik Peters, and Ariel D. Procaccia. Axioms for Learning from Pairwise Comparisons. In The Thirty-fourth Annual Conference on Neural Information Processing Systems , 2020. 4 [55] W. Bradley Knox, Stephane Hatgis-Kessell, Serena Booth, Scott Niekum, Peter Stone, and Alessandro G. Allievi. Models of Human Preference for Learning Reward Functions. Transactions on Machine Learning Research ,2023. 4 AI Alignment From Social Choice Perspectives · 23 
+
+[56] Ralph Allan Bradley and Milton E. Terry. Rank Analysis of Incomplete Block Designs: I. The Method of Paired Comparisons. Biometrika , 39(3/4):324–345, 1952. 4, 6 [57] Sang T. Truong, Andreas Haupt, and Sanmi Koyejo. Machine Learning from Human Preferences . Stanford University, 2025. 4, 7 [58] John I. Yellott. The Relationship Between Luce’s Choice Axiom, Thurstone’s Theory of Comparative Judgment, and the Double Exponential Distribution. 
+
+Journal of Mathematical Psychology , 15(2):109–144, 1977. 4 [59] Jean-Charles de Borda. M´ emoire sur les ´ elections au scrutin. In M´ emoires de l’Acad´ emie Royale des Sciences ann´ ee 1781 , pages 657–665. l’Imprimerie Royale, Paris, 1784. 5 [60] Felix Brandt, Vincent Conitzer, Ulle Endriss, J´ erˆ ome Lang, and Ariel D. Procaccia. Handbook of Computational Social Choice . Cambridge University Press, 2016. 5, 7, 14 [61] Lowell Bruce Anderson, Helena Dandurova, James E. Falk, and Lana Yeganova. Relationships Between Borda Voting and Zermelo Ranking. Social Choice and Welfare , 32(3):355–365, 2009. 6, 7 [62] Ernst Zermelo. Die Berechnung der Turnier-Ergebnisse als ein Maximumprob-lem der Wahrscheinlichkeitsrechnung. Mathematische Zeitschrift , 29:436–460, 1929. 6 [63] Lester R. Ford. Solution of a Ranking Problem from Binary Comparisons. 
+
+The American Mathematical Monthly , 64(8):28–33, 1957. 6 [64] Henry E. Daniels. Round-Robin Tournament Scores. Biometrika , 56(2): 295–299, 1969. 6 [65] Thomas Jech. The Ranking of Incomplete Tournaments: A Mathematician’s Guide to Popular Sports. The American Mathematical Monthly , 90(4):246–266, 1983. 6 [66] Anand Siththaranjan, Cassidy Laidlaw, and Dylan Hadfield-Menell. Distri-butional Preference Learning: Understanding and Accounting for Hidden Context in RLHF. In The Twelfth International Conference on Learning Representations , 2024. 7 [67] Eric Maskin. Borda’s Rule and Arrow’s Independence Condition. Journal of Political Economy , 133(2):385–420, 2025. 7 [68] Benjamin Reilly. Social Choice in the South Seas: Electoral Innovation and the Borda Count in the Pacific Island Countries. International Political Science Review , 23(4):355–372, 2002. 7 [69] Michel L. Balinski and Rida Laraki. Majority Judgment: Measuring, Ranking, and Electing . MIT Press, 2010. 7 [70] Emanuel Todorov. Linearly-Solvable Markov Decision Problems. In The Twentieth Annual Conference on Neural Information Processing Systems ,2006. 7 [71] Jan Peters, Katharina M¨ ulling, and Yasemin Altun. Relative Entropy Policy Search. Proceedings of the AAAI Conference on Artificial Intelligence , 24(1): 1607–1612, 2010. 7 24 · Daniel Halpern et al. 
+
+[72] Ali Shirali, Arash Nasr-Esfahany, Abdullah Omar Alomar, Parsa Mirtaheri, Rediet Abebe, and Ariel D. Procaccia. Direct Alignment with Heterogeneous Preferences. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. 7 [73] Hannah Rose Kirk, Andrew M. Bean, Bertie Vidgen, Paul R¨ ottger, and Scott A. Hale. The Past, Present and Better Future of Feedback Learning in Large Language Models for Subjective Human Preferences and Values. In 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023. 7 [74] Angelica Chen, Sadhika Malladi, Lily H. Zhang, Xinyi Chen, Qiuyi Zhang, Rajesh Ranganath, and Kyunghyun Cho. Preference Learning Algorithms Do Not Learn Preference Rankings. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 7 [75] Kyuyoung Kim, Ah Jeong Seo, Hao Liu, Jinwoo Shin, and Kimin Lee. Margin Matching Preference Optimization: Enhanced Model Alignment with Granular Feedback. In Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024. 7 [76] Nathan Lambert, Thomas Krendl Gilbert, and Tom Zick. The History and Risks of Reinforcement Learning and Human Feedback, 2023. arXiv:2310.13595. 7[77] Vinodkumar Prabhakaran, Aida Mostafazadeh Davani, and Mark Diaz. On Releasing Annotator-Level Labels and Information in Datasets. In Proceedings of the Joint 15th Linguistic Annotation Workshop (LAW) and 3rd Designing Meaning Representations (DMR) Workshop , 2021. 7 [78] Deep Ganguli, Liane Lovitt, Jackson Kernion, Amanda Askell, Yuntao Bai, Saurav Kadavath, Ben Mann, Ethan Perez, Nicholas Schiefer, Kamal Ndousse, Andy Jones, Sam Bowman, Anna Chen, Tom Conerly, Nova DasSarma, Dawn Drain, Nelson Elhage, Sheer El-Showk, Stanislav Fort, Zac Hatfield-Dodds, Tom Henighan, Danny Hernandez, Tristan Hume, Josh Jacobson, Scott Johnston, Shauna Kravec, Catherine Olsson, Sam Ringer, Eli Tran-Johnson, Dario Amodei, Tom Brown, Nicholas Joseph, Sam McCandlish, Chris Olah, Jared Kaplan, and Jack Clark. Red Teaming Language Models to Reduce Harms: Methods, Scaling Behaviors, and Lessons Learned, 2022. arXiv:2209.07858. 7 [79] Arthur H. Copeland. A Reasonable Social Welfare Function. Mimeographed notes from the Seminar on Applications of Mathematics to the Social Sciences, University of Michigan, Ann Arbor, 1951. 7 [80] Jiancong Xiao, Zhekun Shi, Kaizhao Liu, Qi Long, and Weijie J. Su. Theoret-ical Tensions in RLHF: Reconciling Empirical Success with Inconsistencies in Social Choice Theory, 2025. arXiv:2506.12350. 7 [81] Zhiyu An, Duaa Nakshbandi, and Wan Du. Differential Voting: Loss Functions for Axiomatically Diverse Aggregation of Heterogeneous Preferences, 2026. arXiv:2601.18824. 7 [82] T. Nicolaus Tideman. Independence of Clones as a Criterion for Voting Rules. 
+
+Social Choice and Welfare , 4(3):185–206, 1987. 7 AI Alignment From Social Choice Perspectives · 25 
+
+[83] Ratip Emin Berker, S´ ılvia Casacuberta Puig, Isaac Robinson, and Christopher Ong. Obvious Independence of Clones. In Artificial Intelligence for Research and Democracy , 2024. 8 [84] Damien Berriaud and Roger Wattenhofer. Clone-Robust Weights in Metric Spaces: Handling Redundancy Bias for Benchmark Aggregation. In Proceedings of the 25th International Conference on Autonomous Agents and Multiagent Systems , 2026. 8 [85] Ariel D. Procaccia, Benjamin Schiffer, and Shirley Zhang. Clone-Robust AI Alignment. In Proceedings of the 42nd International Conference on Machine Learning , 2025. 8, 9 [86] Ameet Deshpande, Carlos Jimenez, Howard Chen, Vishvak Murahari, Vic-toria Graf, Tanmay Rajpurohit, Ashwin Kalyan, Danqi Chen, and Karthik Narasimhan. C-STS: Conditional Semantic Textual Similarity. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,2023. 9 [87] Alexandros Hollender and Sonja Kraiczy. Enforcing Axioms for AI Alignment Under Loss-Based Rules. In The Fourteenth International Conference on Learning Representations , 2026. 10 [88] Ariel D. Procaccia and Jeffrey S. Rosenschein. The Distortion of Cardinal Preferences in Voting. In Cooperative Information Agents X , 2006. 12 [89] Craig Boutilier, Ioannis Caragiannis, Simi Haber, Tyler Lu, Ariel D. Procaccia, and Or Sheffet. Optimal Social Choice Functions: A Utilitarian View. In 
+
+Proceedings of the 13th ACM Conference on Electronic Commerce , 2012. 12 [90] Paul G¨ olz, Nika Haghtalab, and Kunhe Yang. Distortion of AI Alignment: Does Preference Optimization Optimize for Preferences? In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. 12, 13, 15, 16 [91] Kazusato Oko, Annie S. Ulichney, Nika Haghtalab, and Han Bao. Distortion of AI Alignment Revisited: RLHF Is a Decent Utilitarian Aligner. In Algorithmic Fairness Across Alignment Procedures and Agentic Systems , 2026. 12 [92] Luise Ge, Gregory Kehne, and Yevgeniy Vorobeychik. Optimized Distortion in Linear Social Choice. Proceedings of the AAAI Conference on Artificial Intelligence , 40(20):16930–16937, 2026. 12 [93] Elliot Anshelevich, Aris Filos-Ratsikas, Nisarg Shah, and Alexandros A. Voudouris. Distortion in Social Choice Problems: The First 15 Years and Beyond. In Proceedings of the Thirtieth International Joint Conference on Artificial Intelligence, IJCAI-21 , 2021. 12 [94] Keertana Chidambaram, Karthik Vinay Seetharaman, and Vasilis Syrgkanis. Direct Preference Optimization with Unobserved Preference Heterogeneity: The Necessity of Ternary Preferences. In The 29th International Conference on Artificial Intelligence and Statistics , 2026. 13 [95] Luise Ge, Daniel Halpern, Gregory Kehne, and Yevgeniy Vorobeychik. Lin-ear Social Choice with Few Queries: A Moment-Based Approach, 2026. arXiv:2603.19510. 13 26 · Daniel Halpern et al. 
+
+[96] Yeshwanth Cherapanamjeri, Constantinos Daskalakis, Gabriele Farina, and Sobhan Mohammadpour. Learning Correlated Reward Models: Statistical Barriers and Opportunities. In The Fourteenth International Conference on Learning Representations , 2026. 13 [97] Federico Echenique, Alireza Fallah, and Michael I. Jordan. A General Frame-work for Estimating Preferences Using Response Time Data. In Proceedings of the 27th ACM Conference on Economics and Computation , 2026. 14 [98] Federico Echenique, Alireza Fallah, Baihe Huang, and Michael I. Jordan. Response Time Enhances Alignment with Heterogeneous Preferences, 2026. arXiv:2605.06987. 14 [99] Germain Kreweras. Aggregation of Preference Orderings. In Mathematics and Social Sciences I: Proceedings of the Seminars of Menthon-Saint-Bernard ,1965. 14 [100] Peter C. Fishburn. Probabilistic Social Choice Based on Simple Voting Comparisons. The Review of Economic Studies , 51(4):683–692, 1984. 14 [101] Ronald L. Rivest and Emily Shen. An Optimal Single-Winner Preferential Voting System Based on Game Theory. In Proceedings of the Third Inter-national Workshop on Computational Social Choice (COMSOC-2010) , 2010. 14 [102] Miroslav Dud´ ık, Katja Hofmann, Robert E. Schapire, Aleksandrs Slivkins, and Masrour Zoghi. Contextual Dueling Bandits. In Proceedings of The 28th Conference on Learning Theory , 2015. 14 [103] Marc Lanctot, Kate Larson, Yoram Bachrach, Luke Marris, Zun Li, Avishkar Bhoopchand, Thomas Anthony, Brian Tanner, and Anna Koop. Evaluating Agents Using Social Choice Theory, 2025. arXiv:2312.03121. 14 [104] Hadi Khalaf, Flavio Calmon, Daniel Halpern, Ariel D. Procaccia, Itai Shapira, and Serena Lutong Wang. Robust AI Evaluation Through Maximal Lotteries. In Proceedings of the 43rd International Conference on Machine Learning ,2026. 14 [105] John von Neumann. Zur Theorie der Gesellschaftsspiele. Mathematische Annalen , 100(1):295–320, 1928. 14 [106] Florian Brandl, Felix Brandt, and Hans Georg Seedig. Consistent Probabilistic Social Choice. Econometrica , 84(5):1839–1880, 2016. 15 [107] Remi Munos, Michal Valko, Daniele Calandriello, Mohammad Gheshlaghi Azar, Mark Rowland, Zhaohan Daniel Guo, Yunhao Tang, Matthieu Geist, Thomas Mesnard, Cˆ ome Fiegel, Andrea Michi, Marco Selvi, Sertan Girgin, Nikola Momchev, Olivier Bachem, Daniel J. Mankowitz, Doina Precup, and Bilal Piot. Nash Learning from Human Feedback. In Proceedings of the 41st International Conference on Machine Learning , 2024. 15, 16 [108] Gokul Swamy, Christoph Dann, Rahul Kidambi, Zhiwei Steven Wu, and Alekh Agarwal. A Minimaximalist Approach to Reinforcement Learning from Human Feedback. In Proceedings of the 41st International Conference on Machine Learning , 2024. 15 [109] Yue Wu, Zhiqing Sun, Huizhuo Yuan, Kaixuan Ji, Yiming Yang, and Quanquan Gu. Self-Play Preference Optimization for Language Model Alignment. In AI Alignment From Social Choice Perspectives · 27 
+
+The Thirteenth International Conference on Learning Representations , 2025. 15 [110] Daniele Calandriello, Zhaohan Daniel Guo, Remi Munos, Mark Rowland, Yunhao Tang, Bernardo Avila Pires, Pierre Harvey Richemond, Charline Le Lan, Michal Valko, Tianqi Liu, Rishabh Joshi, Zeyu Zheng, and Bilal Piot. Human Alignment of Large Language Models Through Online Preference Optimisation. In Proceedings of the 41st International Conference on Machine Learning , 2024. 15 [111] Corby Rosset, Ching-An Cheng, Arindam Mitra, Michael Santacroce, Ahmed Awadallah, and Tengyang Xie. Direct Nash Optimization: Teaching Language Models to Self-Improve with General Preferences, 2024. arXiv:2404.03715. 15 [112] Daniil Tiapkin, Daniele Calandriello, Denis Belomestny, Eric Moulines, Alexey Naumov, Kashif Rasul, Michal Valko, and Pierre Menard. Proximal Point Nash Learning from Human Feedback, 2025. arXiv:2505.19731. 15 [113] Benjamin Heymann. Adaptive Preference Aggregation, 2025. arXiv:2503.10215. 15 [114] Jiancong Xiao, Ziniu Li, Xingyu Xie, Emily Getzen, Cong Fang, Qi Long, and Weijie J. Su. On the Algorithmic Bias of Aligning Large Language Models with RLHF: Preference Collapse and Matching Regularization. Journal of the American Statistical Association , 120(552):2154–2164, 2025. 16 [115] Alexander Shypula, Shuo Li, Botong Zhang, Vishakh Padmakumar, Kayo Yin, and Osbert Bastani. Evaluating the Diversity and Quality of LLM Generated Content. In Second Conference on Language Modeling , 2025. 16 [116] Robert Kirk, Ishita Mediratta, Christoforos Nalmpantis, Jelena Luketina, Eric Hambro, Edward Grefenstette, and Roberta Raileanu. Understanding the Effects of RLHF on LLM Generalisation and Diversity. In The Twelfth International Conference on Learning Representations , 2024. 16, 17 [117] Thom Lake, Eunsol Choi, and Greg Durrett. From Distributional to Overton Pluralism: Investigating Large Language Model Alignment. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , 2025. 16 [118] Muhammad Khalifa, Hady Elsahar, and Marc Dymetman. A Distributional Approach to Controlled Text Generation. In The Ninth International Confer-ence on Learning Representations , 2021. 16, 17 [119] Ganqu Cui, Yuchen Zhang, Jiacheng Chen, Lifan Yuan, Zhi Wang, Yuxin Zuo, Haozhan Li, Yuchen Fan, Huayu Chen, Weize Chen, Zhiyuan Liu, Hao Peng, Lei Bai, Wanli Ouyang, Yu Cheng, Bowen Zhou, and Ning Ding. The Entropy Mechanism of Reinforcement Learning for Reasoning Language Models, 2025. arXiv:2505.22617. 16 [120] Itai Shapira, Gerdus Benade, and Ariel D. Procaccia. How RLHF Amplifies Sycophancy. In Proceedings of the 43rd International Conference on Machine Learning , 2026. 16 28 · Daniel Halpern et al. 
+
+[121] Stewart Slocum, Asher Parker-Sartori, and Dylan Hadfield-Menell. Diverse Preference Learning for Capabilities and Alignment. In The Thirteenth Inter-national Conference on Learning Representations , 2025. 16, 17 [122] Shibani Santurkar, Esin Durmus, Faisal Ladhak, Cinoo Lee, Percy Liang, and Tatsunori Hashimoto. Whose Opinions Do Language Models Reflect? In 
+
+Proceedings of the 40th International Conference on Machine Learning , 2023. 17 [123] Hannah Rose Kirk, Bertie Vidgen, Paul R¨ ottger, and Scott A. Hale. Per-sonalisation within Bounds: A Risk Taxonomy and Policy Framework for the Alignment of Large Language Models with Personalised Feedback, 2023. arXiv:2303.05453. 17 [124] Souradip Chakraborty, Jiahao Qiu, Hui Yuan, Alec Koppel, Dinesh Manocha, Furong Huang, Amrit Bedi, and Mengdi Wang. MaxMin-RLHF: Alignment with Diverse Human Preferences. In Proceedings of the 41st International Conference on Machine Learning , 2024. 17 [125] Kihyun Kim, Jiawei Zhang, Asuman E. Ozdaglar, and Pablo A. Parrilo. Beyond RLHF and NLHF: Population-Proportional Alignment Under an Ax-iomatic Framework. In The Fourteenth International Conference on Learning Representations , 2026. 17 [126] Anthony GX-Chen, Jatin Prakash, Jeff Guo, Rob Fergus, and Rajesh Ran-ganath. KL-Regularized Reinforcement Learning for Generative Modelling Is Designed to Mode Collapse. In The Fourteenth International Conference on Learning Representations , 2026. 17 [127] Ilgee Hong, Zichong Li, Alexander Bukharin, Yixiao Li, Haoming Jiang, Tianbao Yang, and Tuo Zhao. Adaptive Preference Scaling for Reinforcement Learning with Human Feedback. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 17 [128] Jiashuo Wang, Haozhao Wang, Shichao Sun, and Wenjie Li. Aligning Language Models with Human Preferences via a Bayesian Approach. In The Thirty-seventh Annual Conference on Neural Information Processing Systems , 2023. 17 [129] Nuoya Xiong and Aarti Singh. Projection Optimization: A General Framework for Multi-Objective and Multi-Group RLHF. In Proceedings of the 42nd International Conference on Machine Learning , 2025. 17 [130] Chanwoo Park, Mingyang Liu, Dingwen Kong, Kaiqing Zhang, and Asuman E. Ozdaglar. RLHF from Heterogeneous Feedback via Personalization and Preference Aggregation. In ICML 2024 Workshop on Theoretical Foundations of Foundation Models , 2024. 17 [131] Daiwei Chen, Yi Chen, Aniket Rege, Zhi Wang, and Ramya Korlakai Vinayak. PAL: Sample-Efficient Personalized Reward Modeling for Pluralistic Alignment. In The Thirteenth International Conference on Learning Representations , 2025. 17 [132] Taylor Sorensen, Pushkar Mishra, Roma Patel, Michael Henry Tessler, Michiel A. Bakker, Georgina Evans, Iason Gabriel, Noah Goodman, and Verena Rieser. Value Profiles for Encoding Human Variation. In Proceedings AI Alignment From Social Choice Perspectives · 29 
+
+of the 2025 Conference on Empirical Methods in Natural Language Processing ,2025. 17 [133] Elinor Poole-Dayan, Jiayi Wu, Taylor Sorensen, Jiaxin Pei, and Michiel A. Bakker. Benchmarking Overton Pluralism in LLMs. In The Fourteenth International Conference on Learning Representations , 2026. 17 [134] Michiel A. Bakker, Martin J. Chadwick, Hannah R. Sheahan, Michael Henry Tessler, Lucy Campbell-Gillingham, Jan Balaguer, Nat McAleese, Amelia Glaese, John Aslanides, Matthew M. Botvinick, and Christopher Summer-field. Fine-Tuning Language Models to Find Agreement Among Humans with Diverse Preferences. In The Thirty-sixth Annual Conference on Neural Information Processing Systems , 2022. 17 [135] Sara Fish, Paul G¨ olz, David Parkes, Ariel Procaccia, Gili Rusak, Itai Shapira, and Manuel Wuthrich. Generative Social Choice. Journal of the ACM , 73(2): 11:1–11:52, 2026. 17 [136] Niclas Boehmer, Sara Fish, and Ariel D. Procaccia. Generative Social Choice: The Next Generation. In Proceedings of the 42nd International Conference on Machine Learning , 2025. 17 [137] Ethan Perez, Saffron Huang, Francis Song, Trevor Cai, Roman Ring, John Aslanides, Amelia Glaese, Nat McAleese, and Geoffrey Irving. Red Team-ing Language Models with Language Models. In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , 2022. 17 [138] Sriyash Poddar, Yanming Wan, Hamish Ivison, Abhishek Gupta, and Natasha Jaques. Personalizing Reinforcement Learning from Human Feedback with Variational Preference Learning. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. 17 [139] Gihoon Kim and Euntai Kim. Swap-Guided Preference Learning for Person-alized Reinforcement Learning from Human Feedback. In The Fourteenth International Conference on Learning Representations , 2026. 17 [140] Andre Barreto, Vincent Dumoulin, Yiran Mao, Mark Rowland, Nicolas Perez-Nieves, Bobak Shahriari, Yann Dauphin, Doina Precup, and Hugo Larochelle. Capturing Individual Human Preferences with Reward Features. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2025. 17 [141] Avinandan Bose, Zhihan Xiong, Yuejie Chi, Simon Shaolei Du, Lin Xiao, and Maryam Fazel. LoRe: Personalizing LLMs via Low-Rank Reward Modeling. In Second Conference on Language Modeling , 2025. 17 [142] Hannah Rose Kirk, Liu Leqi, Fanzhi Zeng, Henry Davidson, Bertie Vid-gen, Christopher Summerfield, and Scott A. Hale. PRISM-X: Experi-ments on Personalised Fine-Tuning with Human and Simulated Users, 2026. arXiv:2605.13307. 17 [143] Michael Henry Tessler, Michiel A. Bakker, Daniel Jarrett, Hannah Shea-han, Martin J. Chadwick, Raphael Koster, Georgina Evans, Lucy Campbell-Gillingham, Tantum Collins, David C. Parkes, Matthew Botvinick, and Christo-pher Summerfield. AI Can Help Humans Find Common Ground in Democratic Deliberation. Science , 386(6719):eadq2852, 2024. 17 30 · Daniel Halpern et al. 
+
+[144] Jay Chooi, Paul G¨ olz, Ariel D. Procaccia, Benjamin Schiffer, and Shirley Zhang. Finding Common Ground in a Sea of Alternatives, 2026. arXiv:2603.16751. 17 [145] Aviv Ovadya. Generative CI Through Collective Response Systems, 2023. arXiv:2302.00672. 17

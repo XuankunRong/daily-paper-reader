@@ -1,0 +1,1562 @@
+Title: CRAX: Fast Safe Reinforcement Learning Benchmarking
+
+URL Source: https://arxiv.org/pdf/2606.20376v2
+
+Published Time: Tue, 23 Jun 2026 01:22:02 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# CRAX: Fast Safe Reinforcement Learning Benchmarking 
+
+Tristan Tomilin ∗ Mourad Boustani Mickey Beurskens Thiago D. Simão 
+
+Eindhoven University of Technology 
+
+## Abstract 
+
+Safety is a core concern for deploying reinforcement learning (RL) agents in real-world domains such as robotics and autonomous driving. While benchmarks have been central to progress in RL, existing safety benchmarks with high-fidelity 3D physics remain computationally slow, limiting large-scale experimentation and rapid prototyping. To address this gap, we propose CRAX (Constrained RL
+
+Accelerated with JA X). Built on top of the MuJoCo XLA (MJX) physics engine with realistic 3D dynamics, CRAX leverages vectorized operations and hardware acceleration, yielding up to ∼100x speedups over comparable CPU-based safety benchmarks. The benchmark features six environment suites and three agent-specific tasks, each spanning three difficulty levels. Evaluating six popular safe RL methods shows that no single approach dominates across all tasks, and reveals the trade-offs between performance and safety. We find that curriculum learning across difficulty levels and safety transfer can improve performance over direct training in harder settings. 
+
+## 1 Introduction 
+
+Although the progress in reinforcement learning [RL; 37 ] has been sped up by the use of hardware acceleration, this progress has not yet translated to the research in safe RL [SafeRL; 13 ]. Benchmarks are a catalyst driving innovation in research; for instance, ImageNet [ 10 ] motivated the introduc-tion of CNNs [ 18 ], and the Arcade Learning Environment [ 2 ] supported the development of deep Q-networks [ 24 ]. In a similar trend, accelerated hardware brought a new wave of benchmarks that fa-cilitate research in multiple areas of RL, including goal-conditioned [ 7], multi-agent [ 33 ], offline [ 15 ], and open-ended [ 22 ] reinforcement learning. Within the SafeRL literature, safety gym [ 31 ] and, more recently, safety gymnasium [ 16 ] have established a set of common tasks that facilitate compar-isons between SafeRL algorithms. Nevertheless, SafeRL research still relies mostly on CPU-based simulations and does not leverage GPU computation. Effective research in RL, particularly in high-dimensional problems, requires fast data collection, as training RL typically requires a large number of environment interactions. This demand can compromise the research development phase, where we retrain such agents numerous times from scratch, while performing: hyperparameter tuning to ensure a fair comparison, tests in multiple environments to evaluate generalization, repeated runs for statistical significance, and ablation studies to assess individual components of an algorithm. Together, these requirements form a bottleneck for the development of new algorithms. Fast simulation is therefore essential to support research on RL. By leveraging high-fidelity simulators with hardware acceleration, RL is increasingly closing the gap to real-world applications such as robotics. Simulation platforms such as BRAX [12] and Isaac Lab [ 23 ] run on accelerated hardware, allowing researchers to leverage substantial speedups from parallel computing architectures. Such platforms enable large-scale policy training in simulation and,  
+
+> ∗Corresponding author: t.tomilin@tue.nl
+> Preprint.
+> arXiv:2606.20376v2 [cs.LG] 19 Jun 2026
+
+Table 1: Key characteristics of popular Reinforcement Learning benchmarks. CRAX uniquely combines a focus on safety with hardware acceleration and 3D physics-based tasks.       
+
+> Benchmark Safety GPU 3D Phys. Type Reference
+> OpenAI Gym
+
+× × × Classic control [8] Procgen Benchmark × × × Procedural generation [25] Atari (ALE) × × × Arcade games [3] Meta-World × × × Robotic manipulation [43] Gymnax × √ × Classic control / MinAtar [19] JaxMARL × √ × Multi-agent [33] Craftax × √ × Open-ended / gridworld [22] Jumanji × √ × Combinatorial optimization [6] XLand-MiniGrid × √ × Meta-RL [28] VMAS × √ × Multi Agent 2D Physics in PyTorch [5] DeepMind Control Suite (DMC) × × √ 3D physics [38] Brax × √ √ 3D physics [12] Isaac Lab × √ √ 3D physics [23] Safety Gym (OpenAI) √ × × Safe navigation [31] Bullet-Safety-Gym √ × × Safe navigation [14] Safe-Control-Gym √ × × Safe control [44] HASARD √ × × FPS game [41] SafeOR-Gym √ √ × Operations research [30] Safety-Gymnasium √ ▲ √ Safe navigation / locomotion [16] CRAX(Ours) √ √ √ Safe navigation / locomotion  
+
+> ▲A subset of two robotic manipulation suits are GPU accelerated through "Safe Isaac Gym", which is part of Safety Gymnasium.
+
+in some cases, transfer to physical robots [ 45 ]. Nevertheless, this approach still relies closely on reward engineering to specify the behavior desired from the agent. However, in many situations, ex-pressing such behaviors is easier through constraints [ 32 ], particularly in safety-critical scenarios [ 31 ]. Therefore, we focus on fast RL benchmarks with explicit constraints. We introduce CRAX 2 (Constrained RL Accelerated with JA X), a novel hardware-accelerated SafeRL benchmark leveraging MuJoCo, a general-purpose 3D physics engine. The design principles of CRAX are inspired by BRAX [ 12 ] and Safety Gymnasium [ 16 ]. CRAXprovides a set of simulated tasks, robots, and algorithm baselines for evaluating SafeRL leveraging parallel computing, resulting in higher simulation speeds than CPU-based setups, enabling more rigorous testing and faster algorithm development for the SafeRL community. Each task defines reward and cost signals, inducing a trade-off between performance and safety: achieving high reward typically requires incurring higher cost, while satisfying safety constraints necessitates sacrificing some reward. Constrained RL techniques naturally lend themselves to the treatment of safety tasks as cost-reward tradeoffs. Among numerous types of constraints, we focus on algorithms that bound the expected cumulative discounted cost, as this is the most widely-adopted approach in SafeRL literature. Ac-cordingly, CRAXincludes a number of baseline algorithms for constrained RL, such as PPO La-grangian [PPO-Lag 31 ], as well the non-constrained algorithm PPO [ 34 ] as a reference. These implementations will facilitate comparisons between new algorithms and relevant prior work. The core contributions of our work are as follows: 1. We propose CRAX, a hardware-accelerated SafeRL benchmark, enabling orders-of-magnitude faster simulation than traditional CPU-based setups. CRAX tailors safety con-straints to a variety of agent morphologies, and exposes explicit cost signals alongside rewards, necessitating a trade-off between performance and safety. 2. We reimplement six popular SafeRL algorithms in JAX and evaluate them across tasks and difficulty levels, identifying their strengths and limitations. 3. We study performance-safety trade-offs by varying cost thresholds, assess the utility of curriculum learning and safety transfer, and demonstrate how CRAX enables superior throughput and scaling. 
+
+> 2The code and environments are accessible on GitHub.
+
+22 Related Work 
+
+Safe Reinforcement Learning. In SafeRL, besides achieving high-performance, agents also need to adhere to established safety requirements during learning and deployment [ 13 ]. While safety can be encouraged indirectly through reward shaping, this approach places the burden of balancing performance and safety on the system designer. To reduce this burden, we can model safety require-ments explicitly as constraints [ 32 , 17 ], allowing the agent itself to autonomously find a trade-off between reward maximization and constraint satisfaction. A wide range of safety formulations have been studied, including chance constraints, almost-sure constraints, and per-step constraints [ 42 ]. In practical work, the most common experimental settings bound the expected sum of discounted costs over time [ 44 , 16 , 30 ]. While CRAX is agnostic to the specific safety formulation, our empirical evaluation adopts this setting due to its popularity. 
+
+SafeRL Benchmarks. Initially, safe RL research was predominantly studied in low-dimensional 2D settings, such as gridworlds in AI Safety Gridworlds [ 20 ] and MiniGrid [ 9] tasks adapted for safety. More recent benchmarks have shifted toward environments for embodied, pixel-based learning [ 11 , 21 , 41 ] and physics-based continuous control [ 44 , 16 ]. These benchmarks are typically built on existing simulation platforms rather than developing physics engines from scratch. For example, HASARD [ 41 ] is built on ViZDoom, while Safety-Gymnasium [ 16 ] extends MuJoCo tasks, adding safety constraints. CRAX follows this design principle by building on MJX [ 26 ], the JAX-based accelerated backend of MuJoCo [40]. 
+
+Accelerated Benchmarking. RL experiments are typically data-intensive, as meaningful evaluation requires repeated environment interactions for hyperparameter tuning, statistical significance analysis, and testing across different tasks. While GPUs are routinely used to accelerate neural network training, online RL remains constrained when environment rollouts are executed on the CPU, making simulation throughput the main bottleneck. This has motivated moving both simulation and learning onto parallel hardware to accelerate the full training loop. Brax [ 12 ] provides hardware-accelerated continuous-control environments in JAX. VMAS [ 5] and JaxMARL [ 33 ] focus on scalable multi-agent RL. The former creates 2D physics environments implemented in PyTorch, and the latter creates JAX-native variants of many popular multi-agent environments. Craftax [ 22 ] explores procedurally generated grid-based worlds optimized for large-scale parallel training. Table 1 summarizes a number of such widely used RL benchmarks. CRAXexpands the available selection of GPU accelerated safety focused 3D physics based environments significantly. 
+
+## 3 Constrained Reinforcement Learning 
+
+A constrained Markov decision process [CMDP; 1 ] is an MDP [ 29 ] with constraints, characterized by a tuple M = ⟨S, A, P, r, c, d, γ ⟩, where S is a continuous state space, A a continuous action space, 
+
+P a transition function P : S×A → Distr (S), r a reward function r : S×A → R+, c a cost function 
+
+c : S×A → R+, d ∈ R+ a cost thresholds, and γ ∈ [0 , 1) a discount factor. An RL agent interacting with a CMDP follows a stochastic policy π : S → Distr (A). The value func-tion V π (s) represents the expected cumulative discounted reward when following policy π starting from state s over a (potentially infinite) horizon T : V π (s) = Eπ
+
+hPTt=0 γtr(st, a t) | s0 = s
+
+i
+
+,
+
+where the expectation Eπ is taken over the trajectory distribution induced by policy π, with actions at ∼ π(·| st) and successor states st+1 ∼ P (·| st, a t). Similarly, the cost function 
+
+Cπ (s) captures the expected cumulative discounted cost under policy π starting from state s:
+
+Cπ (s) = Eπ
+
+hPTt=0 γtc(st, a t) | s0 = s
+
+i
+
+.
+
+The objective in the CMDP framework is to find an optimal policy π∗ ∈ Π that maximizes the expected cumulative reward while ensuring the expected cumulative cost remains below the threshold 
+
+d for all states s ∈ S. This constrained optimization problem is formulated as: 
+
+max  
+
+> π∈Π
+
+V π (s) subject to Cπ (s) ≤ d, ∀s ∈ S (1) The constraint Cπ (s) ≤ d enforces safety by requiring that the policy maintains cost levels below the specified threshold regardless of the initial state. This formulation, known as the expected cumulative cost constraint [ 42 ], distinguishes CMDPs from standard MDPs, where the agent would simply maximize the reward without regard for cost constraints. 3Safe Goal 
+
+> Reach the goal without colliding with the hazards
+
+Safe Push 
+
+> Push the block to the goal while avoiding obstacles
+
+Safe Circle 
+
+> Move along a circular trajectory while avoiding hazards and walls
+
+Safe Reacher 
+
+> Reach the target while avoiding hazards
+
+Safe Spider 
+
+> Move forward while keeping designated legs airborne
+
+Safe Pathway 
+
+> Traverse the path without stepping on the hazards
+
+Safe Velocity 
+
+> Move fast while staying under a velocity limit
+
+Safe Height 
+
+> Walk while keeping the torso below the height bound
+
+Figure 1: Overview of the CRAX benchmark environment suites. Table 2: Overview of the available suites in the benchmark (rows), and which agents are compatible with them (columns). The Safe Navigation suite includes the Goal, Button, Circle, and Push tasks. Starred entries ( ⋆) have been selected for evaluation in Section 5.           
+
+> Task 3D 2D Fixed Point Ant Humanoid Spider Half Cheetah Walker2D Hopper Reacher
+> Safe Navigation √
+
+⋆ √ √ √ × × × ×   
+
+> Safe Velocity √√√
+
+⋆ √ √ √ √ × 
+
+> Safe Pathway
+
+× × × × √ √⋆ √ × 
+
+> Safe Reach
+
+× × × × × × × √⋆ 
+
+> Safe Height
+
+× × √⋆ × × × × × 
+
+> Safe Spider
+
+× × × √⋆ × × × ×
+
+## 4 CRAX 
+
+This section covers the design choices behind CRAX. The benchmark has been inspired by the GPU-accelerated RL environments in BRAX [ 12 ] and the safety environments of Safety Gymnasium [ 16 ]. It is intended as a research and benchmarking platform for SafeRL, and facilitates this by providing (i) ready-to-use environment suites, agent morphologies and utility tooling to design SafeRL experi-ments, and (ii) a set of pre-configured tasks of increasing difficulty in diverse environments. Both of these elements have been designed with the following principles in mind: (i) Support the development and assessment of constrained RL approaches. Each task includes a cost signal in addition to a reward signal. (ii) The benchmark should not be immediately solvable by state-of-the-art approaches, nor should it be too difficult to make at least some progress. Therefore, CRAX features a set of tasks with difficulty progression. (iii) Provide tools to assess the safety properties of the algorithms being evaluated. (iv) Each environment and task in the benchmark should be easily accessible for RL training. (v) All of the above steps can be run on the GPU through the JAX library in order to increase simulation speeds compared to CPU-based benchmarks. 4Figure 2: Higher difficulty levels of Safe Goal (1 to 3, from left to right) decrease the size of the goals, and increase the number and variety of hazards. 
+
+4.1 Environment Suites And Tasks 
+
+Environment suites define families of configurable tasks in simulated 3D environments. In each suite, an agent seeks to maximize reward while adhering to a predefined cost threshold. Figure 1 summarizes the objectives associated with each suite. Beyond suite-specific parameters, such as the number of obstacles in Safe Goal , every suite specifies its own reward and cost signals. An instantiation of a suite’s parameters constitutes a task . Appendix A provides a detailed description of all suites. 
+
+4.2 Agents 
+
+Agents are the acting bodies in the environment. Each agent has a unique morphology and lidar sensors to detect its surroundings. The movement of some agents is constricted in one or more dimensions. Some suites are compatible with multiple agent types, while some of the suites allow for only a single agent type. Table 2 provides an overview of the agent types and their compatibility with the suites. Appendix B provides further details about the agents. 
+
+4.3 Rewards, Costs and Constraint Types 
+
+Each environment comes with a distinct default reward signal. Cost signals are constructed using a variety of constraints. Refer to Appendix A for an overview of the reward and cost signal for each environment. The benchmark employs five key constraint formulations across the environment suites. (1) Hazard proximity/contact costs incur when agents contact hazards or violate keep-out zones around obstacles (2) Velocity threshold constraints originate from exceeding velocity limits on locomotion tasks, with binary or hinge-style penalties. (3) Height constraints occur when height falls below minimum requirements, with hinge penalties for violations (4) Contact-restriction constraints act as binary costs from restricted feet making ground contact (5) Goal-oriented safety 
+
+defines quadratic proximity costs while pushing blocks toward moving goals through hazard fields. As established in Equation 1, staying within the safety budget does not preclude further gains: higher returns can be achieved with more refined strategies while remaining safe. Moreover, the safety bound is adjustable, allowing one to impose stricter or more permissive requirements, and thereby modulate the difficulty of the task. 
+
+4.4 Difficulty Levels 
+
+A useful benchmark ought to serve two complementary purposes. First, it should have a lenient evaluation setting that allows for comparing and analyzing existing methods. Second, it should pose a significant challenge to remain relevant for more advanced future methods. To this end, we create each CRAX suite in three difficulty levels. The lowest level tasks are designed such that most existing methods are capable of learning a reasonable policy and achieving meaningful performance, while the highest levels leave substantial room for improvement. The difficulty increase between levels depends on the nature of the environment. For example, in Safe Goal , higher levels introduce a greater number and variety of hazards that the agent must avoid (Figure 2). In Safe Spider , each successive level requires the Spider agent to keep one additional leg off the ground to avoid costs. Appendix A provides the exact parameter settings defining each difficulty level, and Figure 9 visually depicts the difficulty levels of the tasks. 50           
+
+> 10
+> 20
+> 30
+> Reward
+> 0
+> 20
+> 40
+> 60
+> Cost
+> 99
+> 94
+> 0
+> 100
+> 200
+> Reward
+> 0
+> 20
+> 40
+> Cost
+> 0.0
+> 0.5
+> 1.0
+> Reward
+> 1e4
+> 0
+> 10
+> 20
+> Cost
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> Reward
+> 1e3
+> 0
+> 20
+> 40
+> 60
+> Cost
+> 980
+> 481
+> 0
+> 10
+> 20
+> Reward
+> 0
+> 20
+> 40
+> 60
+> Cost
+> 67
+> 0
+> 25
+> 50
+> 75
+> Reward
+> 0
+> 20
+> 40
+> 60
+> Cost
+> 287
+> 269
+> 244
+> 0
+> 50
+> 100
+> Reward
+> 0
+> 20
+> 40
+> Cost
+> 0
+> 2
+> 4
+> 6
+> Reward
+> 1e3
+> 0
+> 10
+> 20
+> Cost
+> Safe Goal Safe Reacher
+> Safe Pathway Safe Velocity
+> Safe Spider Safe Push
+> Safe Circle Safe Height
+> PPO PPOCost PPOLag PPOPID PPOSaute P3O FOCOPS Threshold
+
+Figure 3: Rewards and costs of baseline methods on Level 1 tasks after 500M environment steps used for training. Error bars denote 95% confidence intervals across five seeds. Table 3: Algorithm summary results across 8 CRAX environments. Wins : number of environments where the algorithm achieved the highest reward while being safe (cost < 25 ). Safe% : percentage of environments where the algorithm was safe. Total : sum of wins and average safety percentage across levels. Green indicates 100% safe. Level 1 Level 2 Level 3 Total Algorithm Wins ↑ Safe% ↑ Wins ↑ Safe% ↑ Wins ↑ Safe% ↑ Wins ↑ Safe% ↑
+
+PPO 0 25 1 12 0 0 1 12 PPOCost 1 50 1 38 1 25 3 38 PPOLag 1 62 0 100 0 100 1 88 PPOPID 2 88 0 50 1 88 3 75 PPOSaute 1 38 0 25 0 12 1 25 P3O 2 62 3 75 3 75 8 71 FOCOPS 1 62 3 88 3 88 7 79 
+
+## 5 Empirical Evaluation 
+
+To assess CRAX, we evaluate several popular SafeRL baselines and one unconstrained RL baseline. (1) We include PPO [ 34 ] to serve as an unconstrained reference point, ignoring costs entirely. (2) PPOCost [41 ] extends PPO by treating costs as negative rewards. (3) PPOLag [31 ], a primal–dual approach that updates both the policy and a learned Lagrange multiplier to balance return and safety. (4) PPOPID [36 ] refines PPOLag ’s strategy by updating the Lagrange multiplier with a proportional–integral–derivative controller, allowing the reward–safety trade-off to adjust more responsively during training. (5) PPOSauté [ 35 ] augments the observed state with a safety budget, treating the constraint as part of the dynamics. (6) P3O [46 ] progressively increases a cost penalty coefficient when constraints are violated, encouraging the policy to adapt toward feasibility without explicit dual updates. (7) Finally, FOCOPS [ 47 ] enforces safety by constraining policy updates through a trust-region formulation, optimizing reward while explicitly bounding expected cost. 6Normal       
+
+> Curriculum
+> Transfer
+> 0
+> 20
+> 40
+> 60
+> Reward
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 20
+> 40
+> Cost
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 50
+> 100
+> 150
+> Reward
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 25
+> 50
+> 75
+> Cost
+> Normal
+> Curriculum
+> Transfer
+> 0.0
+> 0.5
+> 1.0
+> Reward
+> 1e4
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 10
+> 20
+> Cost
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 2
+> 4
+> Reward
+> 1e3
+> Normal
+> Curriculum
+> Transfer
+> 0
+> 5
+> 10
+> Cost
+> Safe Goal Safe Reacher
+> Safe Pathway Safe Height
+> PPOLag PPOPID P3O FOCOPS Threshold
+
+Figure 4: Curriculum learning and safety transfer in CRAX environments. We compare direct training ( Normal ), curriculum learning across difficulty levels ( Curriculum ), and transfer from an unconstrained PPO policy ( Transfer ) on Level 3 tasks. 
+
+Experimental Setup. We run each experiment for 500 million environment steps, repeated over 5 seeds. All experiments are conducted on a dedicated compute node with a 72-core 3.2 GHz AMD EPYC 7F72 CPU and a single NVIDIA H100 GPU. Appendix C provides the exact hyperparameters. 
+
+5.1 Baseline Algorithm Analysis 
+
+Figure 3 shows the performance of baseline algorithms. PPO focuses entirely on maximizing rewards, providing a rough sense of the return achievable when safety is ignored. PPOCost simply subtracts costs from the reward, settling into a compromise, but offers no guarantee of adhering to the constraint. Some methods show distinct affinities for constraint types. PPOSauté satisfies the cost bound in Reacher and Pathway but otherwise behaves close to unconstrained PPO. FOCOPS performs best on navigation tasks ( Goal , Push ) and Reacher , but worst on forward-locomotion tasks ( Spider , Height , Pathway ). Table 3 provides a summary of the evaluations. P3O and FOCOPS are the strongest baselines on CRAX. PPOLag achieves the highest safety percentage, being the only baseline to satisfy all cost bounds on Levels 2 and 3. However, it fails to reach high rewards. PPOPID is less conservative, trading stricter safety adherence for slightly higher performance. Appendix E provides more detailed baseline results and training curves. 
+
+5.2 Curriculum Learning and Safety Transfer 
+
+As seen in Figure 3, when trained directly on the hardest difficulty level, agents often struggle to discover a good policy, as exploration becomes dominated by constraint violations and sparse progress. Training RL agents on progressively more complex settings has been shown to substantially improve learning efficiency, a paradigm commonly referred to as curriculum learning [ 4, 27 ]. In parallel, transfer learning aims to reuse knowledge acquired in one environment to accelerate learning in a related setting [39, 48]. We investigate whether curriculum and transfer learning can improve performance on the most difficult tasks in CRAX. In the curriculum setting, agents are trained sequentially on increasing difficulty levels, carrying over parameters between stages, with the data budget split equally across levels. This exposes the agent to simpler dynamics before confronting denser hazards. In the transfer setting, we first train an unconstrained PPO policy directly on Level 3 and subsequently use its parameters to initialize a safe RL algorithm, which is then trained with the remaining half of the allowed timesteps. 71 2 4 8
+
+> 16
+> 32
+> 64
+> 128
+> 256
+> 512
+> 1024
+> 2048
+> 4096
+> 8192
+
+Number of Parallel Environments 
+
+> 10 3
+> 10 4
+> 10 5
+> Steps per Second (SPS)  CRAX (Ours)
+> Safety-Gymnasium
+> 1 2 4 8
+> 16
+> 32
+> 64
+> 128
+> 256
+> 512
+> 1024
+> 2048
+> 4096
+> 8192
+
+Number of Parallel Environments 
+
+> 21
+> 23
+> 25
+> 27
+> 29
+> 211
+> 213
+> Speedup Factor
+> CRAX (Ours)
+> Safety-Gymnasium
+> Ideal Scaling
+
+Figure 5: Throughput comparison between CRAX and Safety-Gymnasium. Left : CRAXachieves up to ∼300K steps per second and roughly two orders of magnitude higher throughput than Safety-Gymnasium. Right : CRAX closely follows ideal scaling up to hundreds of environments, while Safety-Gymnasium plateaus early due to CPU and memory bottlenecks. As shown in Figure 4, the impact of curriculum learning and transfer is strongly environment- and algorithm-dependent. In Safe Goal , neither curriculum nor transfer improves over direct training. In Safe Reacher , curriculum learning boosts performance for all methods except PPOPID. Transfer proves ineffective, as all methods except FOCOPS violate the threshold after transfer, suggesting that unconstrained policies struggle to adapt for safety in this environment. Curriculum learning improves performance In Safe Pathway and Safe Height , where as safe transfer yield benefits only in Safe Pathway . Here, direct training yields overly conservative policies that underutilize the available safety budget, while safety-transferred agents make better use of it. Interestingly, this is the opposite in Safe Goal . Overall, these results indicate that curriculum learning and transfer can be beneficial in some circumstances for learning challenging safety-constrained tasks. 
+
+5.3 Computational Efficiency: A Case Study 
+
+As discussed in Section 1, simulation throughput is a core bottleneck in SafeRL. To assess the extent to which this manifests in practice, we conduct a case study on scalability. Safety-Gymnasium (SG) is currently the most widely used benchmark for continuous-control SafeRL, and thus serves as a natural point of comparison. In particular, we evaluate how simulation throughput scales with the number of parallel environments, measuring steps per second (SPS) under identical hardware using CRAX Safe Point Goal Level 1 and SG SafetyPointGoal1-v0 . Figure 5 shows that CRAX scales far beyond Safety-Gymnasium, reaching ∼ 300 K steps per second (SPS) at around 8192 parallel environments, while Safety-Gymnasium saturates at low concurrency and fails to scale further, reaching only 
+
+∼ 3K SPS. Attempts to scale beyond 256 environments were unsuccessful, as the process exhausted available CPU memory. This early saturation and low SPS reflects the inherent limitations of CPU-bound physics simulation. The two-order-of-magnitude gap in achievable throughput between CRAX and Safety-Gymnasium demonstrates the importance of hardware-accelerated simulation for large-scale safe RL experimentation. To put this in concrete terms, our full evaluation suite (algorithms × environments × difficulty levels × seeds) amounts to hundreds of training runs and trillions of environment steps. On a single H100 GPU, CRAX completes this in 2 weeks. The equivalent run on Safety-Gymnasium would take close to a year. 
+
+5.4 Varying Safety Bounds 
+
+Safety requirements in real-world applications can vary substantially across use cases and are often accompanied by trade-offs with performance. For instance, autonomous vehicle navigation must contend with unpredictable pedestrian behavior and sensor limitations, making perfect safety unattainable in certain circumstances. The objective instead becomes to minimize unsafe behavior. In contrast, domains such as nuclear reactor control require absolute precision and tolerate no margin 80.0 0.5 1.0                           
+
+> Steps 1e8
+> 0
+> 20
+> Reward
+> 0.0 0.5 1.0
+> Steps 1e8
+> 25
+> 50
+> Cost
+> 024
+> Steps 1e8
+> 0
+> 100
+> 200
+> Reward
+> 024
+> Steps 1e8
+> 20
+> 40
+> Cost
+> 024
+> Steps 1e8
+> 0
+> 50
+> Reward
+> 024
+> Steps 1e8
+> 50
+> 100
+> Cost
+> 024
+> Steps 1e8
+> 50
+> 100
+> Reward
+> 024
+> Steps 1e8
+> 50
+> 100
+> Cost
+> Safe Point Goal Safe Reacher
+> Safe Block Push Safe Point Circle
+> Bound 15 Bound 25 Bound 35
+
+Figure 6: PPOLag increasingly sacrifices rewards to adhere to tighter safety bounds in all tasks. for error. To support such requirements, CRAX environments expose an adjustable safety bound. We examine how varying this constraint induces safety–performance trade-offs by evaluating PPOLag under stricter and more lenient cost budgets d ∈ { 15 , 25 ( default ), 35 }. As shown in Figure 6, PPOLag reliably adapts to the varied bounds across all environments, with a non-linear trade-off in performance. Tightening the bound leads to a substantially larger drop in score than the gains obtained by increasing it by the same amount. Moreover, some safe RL methods [ 42 ] are explicitly designed to enforce strict safety guarantees rather than negotiate trade-offs, and can therefore also be evaluated under the most stringent safety bounds. 
+
+## 6 Conclusions 
+
+We introduced CRAX, a hardware-accelerated benchmark for SafeRL built on high-fidelity 3D physics simulation, enabling large-scale experimentation that is infeasible with existing CPU-bound benchmarks. Its diverse environment suites with difficulty progression allow evaluation of safety–performance trade-offs across agent morphologies. We empirically demonstrate the compu-tational advantages of CRAX, the strengths and limitations of popular SafeRL algorithms, and the potential for curriculum learning and safety transfer to improve performance in challenging settings. We hope CRAX serves as a vital tool for developing, analyzing, and benchmarking future safe RL methods. 
+
+## 7 Limitations and Future Work 
+
+As of the time of writing, MJX does not yet support all features available in the CPU-based MuJoCo, such as certain rigid-body collision types. This restricts the range of scenarios that can currently be expressed within CRAX. In addition, our evaluation focuses exclusively on on-policy methods. Exploring off-policy and model-based safe RL approaches within CRAX remains an important direction for future work. In the scope of this work, we evaluate safety exclusively through expected cumulative cost constraints, leaving other safety formulations unexplored. Finally, our experiments only consider state-based observations and single-agent settings. Future work could investigate learning solely from pixel observations from an embodied perspective and extend CRAX to multi-agent safety scenarios. 9References 
+
+[1] Eitan Altman. Constrained Markov Decision Processes . Routledge, 1st edition, 1999. doi: 10.1201/9781315140223. [2] Marc G. Bellemare, Yavar Naddaf, Joel Veness, and Michael Bowling. The arcade learning environment: An evaluation platform for general agents. J. Artif. Intell. Res. , 47:253–279, 2013. [3] Marc G. Bellemare, Yavar Naddaf, Joel Veness, and Michael Bowling. The arcade learning environment: An evaluation platform for general agents (extended abstract). In IJCAI , pages 4148–4152. AAAI Press, 2015. [4] Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. Curriculum learning. In ICML , pages 41–48, 2009. [5] Matteo Bettini, Ryan Kortvelesy, Jan Blumenkamp, and Amanda Prorok. VMAS: A vectorized multi-agent simulator for collective robot learning. In DARS , pages 42–56, 2022. [6] Clément Bonnet, Daniel Luo, Donal Byrne, Shikha Surana, Sasha Abramowitz, Paul Duckworth, Vincent Coyette, Laurence Illing Midgley, Elshadai Tegegn, Tristan Kalloniatis, Omayma Mahjoub, Matthew Macfarlane, Andries P. Smit, Nathan Grinsztajn, Raphaël Boige, Cemlyn N. Waters, Mohamed A. Mimouni, Ulrich A. Mbou Sob, Ruan de Kock, Siddarth Singh, Daniel Furelos-Blanco, Victor Le, Arnu Pretorius, and Alexandre Laterre. Jumanji: a diverse suite of scalable reinforcement learning environments in JAX. In ICLR , 2024. [7] Michal Bortkiewicz, Wladyslaw Palucki, Vivek Myers, Tadeusz Dziarmaga, Tomasz Arczewski, Lukasz Kucinski, and Benjamin Eysenbach. Accelerating goal-conditioned reinforcement learning algorithms and research. In ICLR , 2025. [8] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang, and Wojciech Zaremba. OpenAI Gym. arXiv preprint arXiv:1606.01540, 2016. [9] Maxime Chevalier-Boisvert, Bolun Dai, Mark Towers, Rodrigo Perez-Vicente, Lucas Willems, Salem Lahlou, Suman Pal, Pablo Samuel Castro, and Jordan K. Terry. Minigrid & Miniworld: Modular & customizable reinforcement learning environments for goal-oriented tasks. In 
+
+NeurIPS , 2023. [10] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. In CVPR , pages 248–255, 2009. [11] Alexey Dosovitskiy, German Ros, Felipe Codevilla, Antonio Lopez, and Vladlen Koltun. CARLA: An open urban driving simulator. In CoRL , pages 1–16, 2017. [12] C. Daniel Freeman, Erik Frey, Anton Raichuk, Sertan Girgin, Igor Mordatch, and Olivier Bachem. Brax - A differentiable physics engine for large scale rigid body simulation. In 
+
+NeurIPS Datasets and Benchmarks , 2021. [13] Javier García and Fernando Fernández. A comprehensive survey on safe reinforcement learning. 
+
+J. Mach. Learn. Res. , 16:1437–1480, 2015. [14] Sven Gronauer. Bullet-Safety-Gym: A framework for constrained reinforcement learning. Technical report, mediaTUM, 2022. [15] Matthew Thomas Jackson, Uljad Berdica, Jarek Luca Liesen, Shimon Whiteson, and Jakob Nico-laus Foerster. A clean slate for offline reinforcement learning. In NeurIPS , 2025. [16] Jiaming Ji, Borong Zhang, Jiayi Zhou, Xuehai Pan, Weidong Huang, Ruiyang Sun, Yiran Geng, Yifan Zhong, Josef Dai, and Yaodong Yang. Safety gymnasium: A unified safe reinforcement learning benchmark. In NeurIPS , 2023. [17] Danial Kamran, Thiago D Simão, Qisong Yang, Canmanie T Ponnambalam, Johannes Fischer, Matthijs TJ Spaan, and Martin Lauer. A modern perspective on safe automated driving for different traffic dynamics using constrained reinforcement learning. In ITSC , pages 4017–4023, 2022. 10 [18] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E. Hinton. ImageNet classification with deep convolutional neural networks. In NIPS , pages 1106–1114, 2012. [19] Robert Tjarko Lange. gymnax: A JAX-based reinforcement learning environment library, 2022. URL http://github.com/RobertTLange/gymnax .[20] Jan Leike, Miljan Martic, Victoria Krakovna, Pedro A Ortega, Tom Everitt, Andrew Lefrancq, Laurent Orseau, and Shane Legg. AI safety gridworlds. arXiv preprint arXiv:1711.09883 , 2017. [21] Quanyi Li, Zhenghao Peng, Lan Feng, Qihang Zhang, Zhenghai Xue, and Bolei Zhou. MetaDrive: Composing diverse driving scenarios for generalizable reinforcement learning. 
+
+IEEE Trans. Pattern Anal. Mach. Intell. , 45(3):3461–3475, 2022. [22] Michael T. Matthews, Michael Beukman, Benjamin Ellis, Mikayel Samvelyan, Matthew Thomas Jackson, Samuel Coward, and Jakob Nicolaus Foerster. Craftax: A lightning-fast benchmark for open-ended reinforcement learning. In ICML , 2024. [23] Mayank Mittal, Pascal Roth, James Tigue, Antoine Richard, Octi Zhang, Peter Du, Antonio Serrano-Muñoz, Xinjie Yao, René Zurbrügg, Nikita Rudin, Lukasz Wawrzyniak, Milad Rakhsha, Alain Denzler, Eric Heiden, Ales Borovicka, Ossama Ahmed, Iretiayo Akinola, Abrar Anwar, Mark T. Carlson, Ji Yuan Feng, Animesh Garg, Renato Gasoto, Lionel Gulich, Yijie Guo, M. Gussert, Alex Hansen, Mihir Kulkarni, Chenran Li, Wei Liu, Viktor Makoviychuk, Grzegorz Malczyk, Hammad Mazhar, Masoud Moghani, Adithyavairavan Murali, Michael Nosewor-thy, Alexander Poddubny, Nathan Ratliff, Welf Rehberg, Clemens Schwarke, Ritvik Singh, James Latham Smith, Bingjie Tang, Ruchik Thaker, Matthew Trepte, Karl Van Wyk, Fangzhou Yu, Alex Millane, Vikram Ramasamy, Remo Steiner, Sangeeta Subramanian, Clemens Volk, CY Chen, Neel Jawale, Ashwin Varghese Kuruttukulam, Michael A. Lin, Ajay Mandlekar, Karsten Patzwaldt, John Welsh, Huihua Zhao, Fatima Anes, Jean-Francois Lafleche, Nicolas Moënne-Loccoz, Soowan Park, Rob Stepinski, Dirk Van Gelder, Chris Amevor, Jan Carius, Jumyung Chang, Anka He Chen, Pablo de Heras Ciechomski, Gilles Daviet, Mohammad Moha-jerani, Julia von Muralt, Viktor Reutskyy, Michael Sauter, Simon Schirm, Eric L. Shi, Pierre Terdiman, Kenny Vilella, Tobias Widmer, Gordon Yeoman, Tiffany Chen, Sergey Grizan, Cathy Li, Lotus Li, Connor Smith, Rafael Wiltz, Kostas Alexis, Yan Chang, David Chu, Linxi "Jim" Fan, Farbod Farshidian, Ankur Handa, Spencer Huang, Marco Hutter, Yashraj Narang, Soha Pouya, Shiwei Sheng, Yuke Zhu, Miles Macklin, Adam Moravanszky, Philipp Reist, Yunrong Guo, David Hoeller, and Gavriel State. Isaac Lab: A GPU-accelerated simulation framework for multi-modal robot learning. arXiv preprint arXiv:2511.04831, 2025. [24] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A. Rusu, Joel Veness, Marc G. Bellemare, Alex Graves, Martin A. Riedmiller, Andreas Fidjeland, Georg Ostrovski, Stig Pe-tersen, Charles Beattie, Amir Sadik, Ioannis Antonoglou, Helen King, Dharshan Kumaran, Daan Wierstra, Shane Legg, and Demis Hassabis. Human-level control through deep reinforcement learning. Nat. , 518(7540):529–533, 2015. [25] Sharada P. Mohanty, Jyotish Poonganam, Adrien Gaidon, Andrey Kolobov, Blake Wulfe, Di-pam Chakraborty, Grazvydas Semetulskis, João Schapke, Jonas Kubilius, Jurgis Pasukonis, Linas Klimas, Matthew J. Hausknecht, Patrick MacAlpine, Quang Nhat Tran, Thomas Tumiel, Xiaocheng Tang, Xinwei Chen, Christopher Hesse, Jacob Hilton, William Hebgen Guss, Sahika Genc, John Schulman, and Karl Cobbe. Measuring sample efficiency and generalization in rein-forcement learning benchmarks: NeurIPS 2020 Procgen benchmark. In NeurIPS (Competition and Demos) , pages 361–395, 2020. [26] MuJoCo XLA Authors. MuJoCo XLA (MJX) - MuJoCo documentation. https://mujoco. readthedocs.io/en/stable/mjx.html , 2023. [Accessed 28-01-2026]. [27] Sanmit Narvekar, Bei Peng, Matteo Leonetti, Jivko Sinapov, Matthew E Taylor, and Peter Stone. Curriculum learning for reinforcement learning domains: A framework and survey. J. Mach. Learn. Res. , 21(181):1–50, 2020. [28] Alexander Nikulin, Vladislav Kurenkov, Ilya Zisman, Artem Agarkov, Viacheslav Sinii, and Sergey Kolesnikov. XLand-MiniGrid: Scalable meta-reinforcement learning environments in JAX. In NeurIPS , 2024. 11 [29] Martin L Puterman. Markov Decision Processes: Discrete Stochastic Dynamic Programming .John Wiley & Sons, Inc., 1 edition, 1994. [30] Asha Ramanujam, Adam Elyoumi, Hao Chen, Sai Madhukiran Kompalli, Akshdeep Singh Ahluwalia, Shraman Pal, Dimitri J. Papageorgiou, and Can Li. SafeOR-Gym: A benchmark suite for safe reinforcement learning algorithms on practical operations research problems. arXiv preprint arXiv:2506.02255, 2025. [31] Alex Ray, Joshua Achiam, and Dario Amodei. Benchmarking safe exploration in deep rein-forcement learning. arXiv preprint arXiv:1910.01708, 2019. [32] Julien Roy, Roger Girgis, Joshua Romoff, Pierre-Luc Bacon, and Christopher J. Pal. Direct behavior specification via constrained reinforcement learning. In ICML , pages 18828–18843, 2022. [33] Alexander Rutherford, Benjamin Ellis, Matteo Gallici, Jonathan Cook, Andrei Lupu, Garðar Ingvarsson, Timon Willi, Ravi Hammond, Akbir Khan, Christian Schröder de Witt, Alexandra Souly, Saptarashmi Bandyopadhyay, Mikayel Samvelyan, Minqi Jiang, Robert T. Lange, Shimon Whiteson, Bruno Lacerda, Nick Hawes, Tim Rocktäschel, Chris Lu, and Jakob N. Foerster. JaxMARL: Multi-agent RL environments and algorithms in JAX. In NeurIPS , 2024. [34] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347, 2017. [35] Aivar Sootla, Alexander I. Cowen-Rivers, Taher Jafferjee, Ziyan Wang, David Henry Mguni, Jun Wang, and Haitham Ammar. Saute RL: almost surely safe reinforcement learning using state augmentation. In ICML , pages 20423–20443, 2022. [36] Adam Stooke, Joshua Achiam, and Pieter Abbeel. Responsive safety in reinforcement learning by PID Lagrangian methods. In ICML , pages 9133–9143, 2020. [37] Richard S. Sutton and Andrew G. Barto. Reinforcement learning - an introduction, 2nd Edition .MIT Press, 2018. [38] Yuval Tassa, Yotam Doron, Alistair Muldal, Tom Erez, Yazhe Li, Diego de Las Casas, David Budden, Abbas Abdolmaleki, Josh Merel, Andrew Lefrancq, Timothy P. Lillicrap, and Martin A. Riedmiller. DeepMind control suite. arXiv preprint arXiv:1801.00690, 2018. [39] Matthew E. Taylor and Peter Stone. Transfer learning for reinforcement learning domains: A survey. J. Mach. Learn. Res. , 10:1633–1685, 2009. [40] Emanuel Todorov, Tom Erez, and Yuval Tassa. MuJoCo: A physics engine for model-based control. In IROS , pages 5026–5033, 2012. [41] Tristan Tomilin, Meng Fang, and Mykola Pechenizkiy. HASARD: A benchmark for vision-based safe reinforcement learning in embodied agents. In ICLR , 2025. [42] Akifumi Wachi, Xun Shen, and Yanan Sui. A survey of constraint formulations in safe reinforcement learning. In IJCAI , pages 8262–8271, 2024. [43] Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Hausman, Chelsea Finn, and Sergey Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning. In CoRL , volume 100 of Proceedings of Machine Learning Research , pages 1094– 1100. PMLR, 2019. [44] Zhaocong Yuan, Adam W. Hall, Siqi Zhou, Lukas Brunke, Melissa Greeff, Jacopo Panerati, and Angela P. Schoellig. Safe-control-gym: A unified benchmark suite for safe learning-based control and reinforcement learning in robotics. IEEE Robotics Autom. Lett. , 7(4):11142–11149, 2022. [45] Kevin Zakka, Baruch Tabanpour, Qiayuan Liao, Mustafa Haiderbhai, Samuel Holt, Jing Yuan Luo, Arthur Allshire, Erik Frey, Koushil Sreenath, Lueder A Kahrs, et al. MuJoCo playground. arXiv preprint arXiv:2502.08844, 2025. 12 [46] Linrui Zhang, Li Shen, Long Yang, Shixiang Chen, Bo Yuan, Xueqian Wang, and Dacheng Tao. Penalized proximal policy optimization for safe reinforcement learning. arXiv preprint arXiv:2205.11814, 2022. [47] Yiming Zhang, Quan Vuong, and Keith Ross. First order constrained optimization in policy space. In NeurIPS , pages 15338–15349, 2020. [48] Markel Zubia, Thiago D Simão, and Nils Jansen. Robust transfer of safety-constrained rein-forcement learning agents. In ICLR , 2025. 13 A Environment Descriptions 
+
+A.1 Overview Task Compatible Agents Constraint Type Cost Mechanism Levels 
+
+Goal Point, Ant, Humanoid, Spider Spatial avoidance Contact / Proximity 3Button Point, Ant, Humanoid, Spider Spatial + Selection Contact + Wrong button 3Circle Point, Ant, Humanoid, Spider Spatial + Boundary Proximity + Boundary 3Push Point, Ant, Humanoid, Spider Spatial avoidance Contact / Proximity 3Velocity All locomotion agents Speed limit Binary / Hinge 3Height Humanoid Posture Soft hinge 3Pathway Walker2d, HalfCheetah, Hopper Foot placement Quadratic penetration 3Reach Reacher Spatial avoidance Binary intersection 3SpiderLegs Spider Gait constraint Binary contact 3
+
+A.2 Task Descriptions A.2.1 Navigation Suite Goal. Agents: Point, Ant, Humanoid, Spider 
+
+Navigate to goal regions while avoiding hazards scattered throughout an arena. When the agent reaches a goal, it respawns at a new random location. Hazards may be collidable (blocking, with contact-based cost) or non-collidable (pass-through, with proximity-based cost). This is a continuous task with no terminal success state. Difficulty levels increase the number of hazards and introduce mixed hazard types (cylinders and cubes). 
+
+Button. Agents: Point, Ant, Humanoid, Spider 
+
+Navigate to press the correct “active” button among multiple buttons while avoiding hazards and optional moving gremlins. The active button is visually indicated and observable through a compass sensor. Pressing a wrong button can optionally incur a cost. In continual mode, a new button becomes active after each success. Level 1 has 4 hazards and 4 gremlins in a arena. Level 2 increases to 8 hazards and 6 gremlins in a larger arena. Level 3 has 12 hazards and 8 faster gremlins in a smaller arena, making navigation more challenging. 
+
+Circle. Agents: Point, Ant, Humanoid, Spider 
+
+Maintain a circular orbit at a target radius around a fixed center point. The agent is rewarded for tangential velocity (moving along the circle) and penalized for deviating from the target radius. Difficulty levels progressively add boundary constraints and hazards: Level 1 has x-boundaries only with no hazards. Level 2 adds a square boundary with 1 cylinder hazard. Level 3 has a smaller boundary with 2 cylinder hazards. 
+
+Push. Agents: Point, Ant, Humanoid, Spider 
+
+Push a movable block into goal regions while avoiding hazards. Unlike Goal, the block (not the agent) must reach the goal. The agent must coordinate approaching the block and pushing it in the correct direction. Only agent-hazard interactions incur cost; the block passes through hazards freely. Difficulty levels increase goal movement speed: Level 1 is stationary, Level 2 moves slowly, and Level 3 moves fast. 
+
+A.2.2 Other Suites Velocity. Agents: Ant, HalfCheetah, Hopper, Humanoid, Walker2d 
+
+Standard locomotion with an added velocity constraint. The agent must maximize forward progress while keeping its speed below a threshold. Three difficulty levels progressively tighten the speed limit (100%, 75%, 50% of baseline). 
+
+Height. Agents: Humanoid 
+
+The humanoid must move forward while staying below a maximum height threshold, simulating a 14 Figure 7: In levels 2 and 3 of Push , the goal that the agent must push the block into moves at a fixed velocity. To succeed, the agent ought to anticipate the goal’s trajectory while avoiding hazard zones. 
+
+Figure 8: The Pathway agent incurs a per-step cost when its foot contacts a hazard, scaled by the penetration depth into the hazard region. low ceiling constraint. Cost increases smoothly as height exceeds the threshold, encouraging the agent to crouch. Based on the HumanoidStandup environment with added forward locomotion reward. Difficulty levels lower the maximum height requirement. 
+
+Pathway. Agents: Walker2d, HalfCheetah, Hopper 
+
+A bipedal or hopping agent traverses a path with non-collidable hazard zones placed along its route. Cost is incurred when feet step inside hazard regions, with deeper penetration causing higher cost. Hazards are randomly placed with varying gaps and lateral offsets, requiring the agent to time its steps carefully. Falling incurs a terminal cost. Difficulty levels decrease the maximum gap between hazards. 
+
+Reach. Agents: Reacher (2-link arm) 
+
+A planar 2-link robotic arm must reach a randomly placed target while avoiding flat hazards scattered on the workspace. Cost is incurred when any part of the arm intersects a hazard. The arm is sampled at discrete points along both links to detect collisions. Reward emphasizes proximity to the target with a bonus for reaching it. Difficulty levels increase the number of hazards: Level 1 (4), Level 2 (7), Level 3 (10). 
+
+SpiderLegs. Agents: Spider (6-legged) 
+
+A hexapod spider must walk forward while keeping specified legs off the ground, forcing unusual gaits. Level 1 restricts 2 diagonal legs, Level 2 restricts 3 legs (tripod pattern), and Level 3 restricts 4 legs (only center legs may touch). Cost is incurred each timestep a restricted foot contacts the floor. 
+
+A.3 Technical Reference A.3.1 Notation 
+
+rt reward at timestep tct cost at timestep td(a, b) Euclidean distance 
+
+1[·] indicator function 15 A.3.2 Reward and Cost Components 
+
+Across all environments, CRAX constructs the per-timestep reward Rt and cost Ct from a small set of common components. Each environment instantiates a subset of these terms with environment-specific weights. 
+
+Reward Components. 
+
+• Forward progress: rforward = ( xt − xt−1)/∆t, where xt denotes the agent’s position along the forward axis at timestep t, and ∆t is the control timestep. • Survival bonus: A constant rhealthy while the agent remains in a valid state (e.g., not fallen). • Goal reward: A sparse reward rgoal for reaching goal locations, plus an optional dense distance-shaping term rdist = dt−1 − dt.• Control penalty: rctrl = −wctrl 
+
+P 
+
+> i
+
+a2 
+
+> i
+
+, where a ∈ Rm is the action vector. 
+
+Cost Components. Let pt ∈ R2 denote the agent’s position in the horizontal plane, H the set of hazards, and h ∈ H an individual hazard. • Hazard proximity/contact (Goal, Push, Button, Circle, Reach): Binary penalty upon collision with collidable hazards, or continuous penalty when inside non-collidable keep-out zones scaling with penetration depth. • Velocity threshold (Velocity): Costs for exceeding speed limits, with binary penalties 
+
+1[v > τ ] or hinge-style penalties max(0 , v − τ ) that increase with violation magnitude. • Height/posture (Height): Soft hinge costs when the agent’s center of mass exceeds amaximum height threshold, encouraging crouching. Penalty scales smoothly with violation degree. • Gait restriction (SpiderLegs): Binary costs when restricted feet make ground contact, forcing constrained locomotion patterns. • Foot placement (Pathway): Quadratic penetration costs when feet step inside hazard regions, with deeper penetration causing higher cost. Includes a terminal penalty for falling. 
+
+A.3.3 Reward Functions Task Reward Formula 
+
+Goal rt = αdist (dt−1 − dt) + αgoal · nreached 
+
+Button rt = αdist (dt−1 − dt) + αgoal · 1[pressed active ]
+
+Circle rt = vtan · (1 + |ractual − rtarget |)−1 · α
+
+Push rt = αbg (dbg  
+
+> t−1
+
+− dbg  
+
+> t
+
+) + αgoal · 1[reached ] + αab (dab  
+
+> t−1
+
+− dab  
+
+> t
+
+)
+
+Velocity rt = α · rbase 
+
+Height rt = vforward + 1 .0 − 0.01 ∥a∥2
+
+Pathway rt = α(vforward + rhealthy )
+
+Reach rt = α(1 − dt/d max )γ + rb · 1[dt < ϵ ]
+
+SpiderLegs rt = vforward + rhealthy − 0.5∥a∥2
+
+16 A.3.4 Cost Functions Task Type Cost Formula 
+
+Goal, Push Contact ct = P 
+
+> i
+
+ccol · 1[contact (a, h i)] 
+
+Proximity (cyl) ct = P 
+
+> i
+
+cprox · max(0 , 1 − di/r i)
+
+Proximity (cube) ct = P 
+
+> i
+
+cprox · 1[|dx i| ≤ s ∧ | dy i| ≤ s]
+
+Button Hazard + Wrong ct = chazard + cwrong · 1[wrong pressed ]
+
+Circle Prox + Boundary ct = chazard + cb · 1[outside boundary ]
+
+Velocity Binary ct = w · 1[vt > τ ]
+
+Hinge ct = w · max(0 , v t − τ )
+
+Height Soft hinge ct = w · max(0 , h t − hmax )/δ 
+
+Pathway Quadratic ct = β P 
+
+> i
+
+max f [max(0 , 1 − d(i) 
+
+> f
+
+/r i)] 2 + cterm · 1[fell ]
+
+Reach Binary ct = β P 
+
+> i
+
+1[arm ∩ hi]
+
+SpiderLegs Binary ct = β P  
+
+> f∈F restr
+
+1[contact (f, floor )] 
+
+A.3.5 Default Parameters Task Parameter Default Description 
+
+Goal reward_goal 1.0 Reward per goal reached 
+
+cost_scale 2.0 Proximity cost multiplier 
+
+collision_cost 3.0 Contact cost per hazard Button button_count 4 Number of buttons 
+
+wrong_button_cost 1.0 Cost for wrong press Circle circle_radius 1.5 Target orbit radius 
+
+boundary_cost 1.0 Cost for boundary violation Push goal_velocity 0.0 Goal movement speed 
+
+agent_block_scale 0.1 Agent-to-block reward weight Velocity level 1 Difficulty (1, 2, or 3) 
+
+cost_mode binary Cost type (binary/hinge) 
+
+reward_scaler 0.01 Reward scaling Height max_height 1.15 Maximum CoM height 
+
+hinge_margin 0.08 Soft hinge width Pathway num_hazards 100 Hazards along path 
+
+hazard_radius 0.25 Cylinder radius 
+
+terminal_cost 5.0 Cost for falling Reach num_hazards 10 Hazards in workspace 
+
+samples_per_link 5 Collision check density SpiderLegs restricted_feet (varies) Legs that must stay up 
+
+cost_scale 1.0 Cost per violation 
+
+A.4 Difficulty Levels 
+
+Figure 9 provides a visual overview of how environments change across difficulty levels. 17 Level 1 Level 2 Level 3 
+
+> Goal Reach Pathway SpiderLegs Circle Height
+
+Figure 9: Visual comparison of difficulty levels across environments. Increasing difficulty generally adds more hazards, tightens constraints, or reduces margins for error. 18 A.4.1 Velocity Thresholds by Level Agent Level 1 (1.0 ×) Level 2 (0.75 ×) Level 3 (0.5 ×)Ant 2.62 1.97 1.31 HalfCheetah 3.21 2.41 1.60 Hopper 0.74 0.56 0.37 Humanoid 1.41 1.06 0.71 Walker2d 2.34 1.76 1.17 
+
+A.4.2 SpiderLegs Difficulty Levels Level Restricted Feet Gait Pattern 
+
+1 front-left, back-right Diagonal constraint 2 front-left, mid-right, back-left Alternating tripod 3 front-left, front-right, back-left, back-right Center legs only 
+
+A.4.3 Goal Difficulty Levels Level Hazard Configuration Proximity Collidable 
+
+1 12 cylinders 12 02 8 + 8 cylinders 8 83 6 cubes + 6 cylinders (prox) + 4 cubes + 4 cylinders (col) 12 8
+
+A.4.4 Circle Difficulty Levels Level X Boundary Y Boundary Hazards 
+
+1 ±1.125 None 02 ±1.05 ±1.05 13 ±0.975 ±0.975 2
+
+A.4.5 Push Difficulty Levels Level Goal Velocity Description 
+
+1 0.0 Stationary goal 2 0.3 Slow moving goal 3 0.6 Fast moving goal 
+
+A.4.6 Button Difficulty Levels Level Hazards Gremlins Arena Extents Gremlin Travel 
+
+1 4 4 ±1.5 0.35 2 8 6 ±1.8 0.35 3 12 8 ±1.2 0.45 
+
+A.4.7 Pathway Difficulty Levels Level Max Gap (m) Description 
+
+1 6.0 Wide gaps 2 4.0 Medium gaps 3 2.0 Narrow gaps 19 A.4.8 Reach Difficulty Levels Level Number of Hazards 
+
+1 42 73 10 
+
+A.4.9 Height Difficulty Levels Level Max Height (m) Description 
+
+1 1.30 Slight crouch 2 1.15 Medium crouch 3 1.00 Deep crouch 
+
+## B Agent Descriptions 
+
+B.1 Overview Agent Type Actions Observations DoF 
+
+Point Holonomic sphere 2 62 3Ant 3D quadruped 8 27 15 Humanoid 3D bipedal 17 376 23 Spider 3D hexapod 12 35 19 HalfCheetah 2D planar runner 6 18 9Walker2d 2D bipedal 6 17 9Hopper 2D one-legged 3 11 6Reacher 2-link arm 2 11 4
+
+B.2 Agent Descriptions B.2.1 3D Navigation Agents Point. Actions: 2 Observations: 62 
+
+A simple holonomic sphere that can move in any direction on a 2D plane. Controlled via forward thrust and angular velocity. Includes accelerometer, velocimeter, gyro, and magnetometer sensors plus configurable lidar and compass observations. Used in Goal, Button, Circle, and Push tasks. 
+
+Ant. Actions: 8 Observations: 27 
+
+A four-legged 3D robot with torque-controlled joints. Each leg has two actuated joints (hip and ankle), totaling 8 actuators. Observations include joint positions and velocities plus contact forces. Compatible with navigation tasks and velocity constraints. 
+
+Humanoid. Actions: 17 Observations: 376 
+
+A complex 3D bipedal robot with 17 actuated joints spanning the legs, arms, and torso. The large observation space includes body inertia, velocity, and actuator forces. Used in navigation tasks, velocity constraints, and the Height constraint task. 
+
+Spider. Actions: 12 Observations: 35 
+
+A six-legged 3D hexapod robot. Each leg has a hip joint and ankle joint, totaling 12 actuators. Observations include joint angles (excluding root position) and joint velocities. Compatible with navigation tasks and the SpiderLegs gait constraint task. 
+
+B.2.2 2D Planar Locomotion Agents HalfCheetah. Actions: 6 Observations: 18 
+
+A fast planar running robot with two legs optimized for forward velocity. Each leg has three joints 20 (hip, knee, ankle), totaling 6 actuators. Observations include joint angles and angular velocities. Used in Velocity and SkipHop tasks. 
+
+Walker2d. Actions: 6 Observations: 17 
+
+A 2D bipedal walker that must balance while moving forward. Each leg has three joints (hip, knee, ankle), totaling 6 actuators. Used in Velocity and SkipHop tasks. 
+
+Hopper. Actions: 3 Observations: 11 
+
+A single-legged hopping robot in 2D. Three actuators control the hip, knee, and ankle joints. Must hop forward while maintaining balance. Used in Velocity and SkipHop tasks. 
+
+B.2.3 Static Base Agents Reacher. Actions: 2 Observations: 11 
+
+A 2-link planar robotic arm with a fixed base. Two rotational joints control the shoulder and elbow. Observations include joint angles, angular velocities, fingertip position, and target location. Used exclusively in the Reach task with spatial hazard avoidance. 
+
+B.3 Technical Reference B.3.1 Healthy Bounds and Termination Agent Healthy Height Range Healthy Angle Range Terminates 
+
+Point 0.05–0.3 – Yes Ant 0.2–1.0 – Yes Humanoid 1.0–2.0 – Yes Spider 0.2–1.0 – Yes HalfCheetah – – No Walker2d 0.8–2.0 |θ| < 1.0 rad Yes Hopper 0.7– ∞ |θ| < 0.2 rad Yes Reacher – – No 
+
+B.3.2 Action Spaces Agent Dim Actuator Description 
+
+Point 2 Forward thrust (x-axis motor), angular velocity (z-axis) Ant 8 Hip and ankle torques for 4 legs Humanoid 17 Torques for legs (6), arms (6), abdomen (3), pelvis (2) Spider 12 Hip and ankle torques for 6 legs HalfCheetah 6 Back hip, back knee, back ankle, front hip, front knee, front ankle Walker2d 6 Right hip, right knee, right ankle, left hip, left knee, left ankle Hopper 3 Hip, knee, ankle torques Reacher 2 Shoulder and elbow torques 21 B.3.3 Observation Spaces Agent Dim Observation Components 
+
+Point 62 Sensors (12), goal lidar (16), hazard lidar (16), goal compass (2), hazard compasses (16) Ant 27 qpos (13), qvel (14), excluding root x,y Humanoid 376 qpos, qvel, cinert (body inertias), cvel (body velocities), qfrc_actuator Spider 35 qpos (17, excluding x,y), qvel (18) HalfCheetah 18 qpos (8, excluding root x), qvel (9), root z Walker2d 17 qpos (8, excluding root x), qvel (9) Hopper 11 qpos (5, excluding root x), qvel (6) Reacher 11 cos( θ), sin( θ) for joints, target position, fingertip-target dis-tance, angular velocities 
+
+B.3.4 Physical Properties Agent Total DoF Bodies Control Timestep 
+
+Point 3 (x, y, θ) 1 0.008s Ant 15 (free root + 8 joints) 13 0.05s Humanoid 23 (free root + 17 joints) 13 0.015s Spider 19 (free root + 12 joints) 13 0.05s HalfCheetah 9 (root + 6 joints) 8 0.05s Walker2d 9 (root + 6 joints) 7 0.008s Hopper 6 (root + 3 joints) 4 0.008s Reacher 4 (2 joints + target) 3 0.02s 
+
+## C Hyperparameters 
+
+Table 4 lists the configuration we use for our experiments. 
+
+## D Use of Large Language Models 
+
+LLM-based coding assistants were used during development to help implement the CRAX environ-ments and the JAX reimplementations of the safe RL baselines. All generated code was reviewed, tested, and validated by the authors against reference implementations and the reported empirical results. LLMs were not used as part of any agent, policy, reward model, or evaluation procedure in this work. 
+
+## E Extended Results 
+
+In this section, we provide additional experimental results that complement the main findings and offer deeper insight into the behavior of the evaluated methods. 
+
+E.1 Detailed Baseline Performance 
+
+Table 5 provides a comprehensive overview of the baseline results across all difficulty levels and tasks. 
+
+E.2 Training curves 
+
+Figures 10–12 show training curves for all baseline methods across difficulty levels, illustrating differences in learning dynamics and convergence behavior. 22 Table 4: Fixed hyper-parameters used for all experiments in this paper unless stated otherwise. 
+
+Parameter Value 
+
+Optimization / PPO core 
+
+Optimizer Adam (Optax) Learning rate η 5 × 10 −4
+
+Entropy coef. αent 5 × 10 −3
+
+Discount γ 0.99 
+
+Reward scaling 0.1
+
+GAE λ 0.95 
+
+PPO clip ϵ 0.3
+
+Network architecture 
+
+Actor network 4-layer MLP (32 ×4) Value network 5-layer MLP (256 ×5) Activation function Swish Observation normalization Running mean/variance Layer/Spectral normalization False Total parameters ∼2–3 ×10 5
+
+Training scale / rollout 
+
+Total env. steps N 10 8
+
+Episode length 2000 steps Parallel envs 2048 
+
+Unroll length 8
+
+Batch size 1024 
+
+Minibatches per update 32 
+
+SGD updates per batch 6
+
+Eval passes during training 5
+
+Eval parallel envs 128 
+
+Safety bound (episodic cost) 25 .0
+
+Logging interval 10 6 env. steps 
+
+PPO-Cost 
+
+Cost weight 1.0
+
+PPO-Lagrange 
+
+Lagrangian LR coef. 3.0
+
+Initial λlagr 0.0
+
+PPO-PID 
+
+PID gains (Kp, K i, K d) (10 .0, 0.01 , 0.01) 
+
+PID integral clip 1.0
+
+PID λ clip 10 6
+
+PID derivative EMA β 0.95 
+
+PPO-Saute 
+
+Budget discount factor 0.99 (same as γ)Terminal violation penalty −1.0
+
+Normalize budget observation True 
+
+P3O 
+
+Initial cost penalty κ 0.01 
+
+κ increase factor 1.1
+
+Max κ 50 .0
+
+FOCOPS 
+
+Initial ν 0.1
+
+ν learning rate 1.0
+
+Max ν 100 .0
+
+KL penalty coef. λfocops 1.5
+
+Advantage norm. temp. ηfocops 0.02 
+
+23 Table 5: Detailed algorithm comparison across environments and difficulty levels. R: Reward ( ↑
+
+higher is better), C: Cost ( ↓ lower is better). Green indicates safe (cost < 25 ). Bold indicates best safe result. Safe Goal Safe Reacher Level 1 Level 2 Level 3 Level 1 Level 2 Level 3 Algorithm R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓
+
+PPO 36.9 99.3 30.0 97.3 25.7 192.7 206.7 41.5 203.6 74.1 206.2 105.6 PPOCost 32.5 27.5 23.5 50.2 14.8 87.5 188.2 32.3 144.9 51.4 78.6 36.4 PPOLag 34.8 25.1 16.7 7.3 7.0 18.8 197.2 25.3 66.6 24.9 18.5 23.1 PPOPID 34.5 24.6 25.6 25.3 8.6 26.0 168.1 21.4 129.9 26.1 42.7 23.6 PPOSaute 33.9 94.0 61.3 126.9 52.7 191.0 176.6 6.2 104.2 13.1 21.8 11.6 P3O 34.1 26.0 64.1 23.4 56.0 23.5 196.2 24.4 139.3 24.7 47.5 20.8 FOCOPS 37.2 25.4 73.3 24.6 63.6 26.6 204.7 25.5 177.5 24.6 125.4 24.2 
+
+Safe Pathway Safe Velocity Level 1 Level 2 Level 3 Level 1 Level 2 Level 3 Algorithm R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓
+
+PPO 9015.7 14.9 10433.8 21.8 11024.5 36.7 4682.5 979.7 5966.2 1244.7 2583.0 606.5 PPOCost 8456.9 8.6 5128.9 7.8 4311.7 8.9 1988.9 0.9 1542.8 0.4 888.8 1.5 PPOLag 8960.2 16.3 6823.0 20.0 2076.2 14.8 2563.7 9.9 1594.2 13.9 844.1 14.5 PPOPID 4504.1 12.3 4186.2 13.3 1147.7 10.4 2821.7 16.7 1258.6 9.0 902.5 4.2 
+
+PPOSaute9095.2 17.7 6978.6 19.5 9304.0 35.1 2866.5 480.5 1372.0 267.3 972.3 220.5 P3O 9352.9 14.3 7460.7 19.2 2098.4 13.3 1205.4 15.1 1785.6 18.1 856.4 19.7 FOCOPS 830.0 6.1 856.3 6.8 769.1 6.3 188.7 3.0 119.8 3.3 79.1 4.5 Safe Spider Safe Push Level 1 Level 2 Level 3 Level 1 Level 2 Level 3 Algorithm R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓
+
+PPO 17.1 67.3 17.0 59.1 15.6 135.9 65.2 287.4 54.6 368.1 49.5 461.3 PPOCost 16.9 45.9 16.3 56.7 17.5 115.8 51.1 268.7 40.1 333.0 39.5 418.0 PPOLag 18.3 11.0 4.9 8.8 0.0 1.4 11.4 10.5 10.9 24.4 5.8 24.9 PPOPID 16.2 11.9 10.2 14.7 -0.1 1.6 1.7 15.0 7.4 25.2 5.9 24.5 PPOSaute 11.7 49.8 13.0 76.1 17.0 107.2 41.7 244.3 34.1 279.7 25.0 293.6 P3O 16.2 13.4 13.6 14.5 0.1 1.4 41.0 27.9 14.1 26.3 13.9 25.6 FOCOPS 0.4 1.5 0.1 1.0 0.0 1.3 57.2 24.7 40.5 24.6 40.8 24.3 
+
+Safe Circle Safe Height Level 1 Level 2 Level 3 Level 1 Level 2 Level 3 Algorithm R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓ R ↑ C ↓
+
+PPO 129.5 45.8 127.2 98.8 127.5 99.4 4709.3 22.8 3532.3 52.1 3868.4 53.8 PPOCost 107.0 10.9 82.8 9.3 80.8 38.1 4229.0 18.6 3691.0 33.8 3811.3 57.5 PPOLag 86.7 25.9 64.5 24.2 53.5 18.7 2978.8 7.3 1703.3 5.5 1983.7 6.2 PPOPID 102.2 25.0 68.9 26.5 39.9 21.6 4392.2 7.0 1087.3 5.4 2657.9 6.0 PPOSaute120.2 46.0 128.6 97.3 123.1 96.8 4847.5 17.3 5652.4 60.9 5910.1 35.7 P3O 94.7 30.8 60.1 28.3 61.3 27.5 2293.2 6.4 2310.9 4.5 2753.3 5.4 
+
+FOCOPS 98.5 30.8 62.2 25.1 57.7 24.0 2528.7 6.0 1244.1 6.9 376.4 7.7 24 0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+20 
+
+40 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+300 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+200 
+
+400 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+2
+
+4
+
+6
+
+> Reward
+
+1e3 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+10 
+
+20 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+1
+
+2
+
+> Cost
+
+1e3 
+
+Safe Reacher Safe Goal 
+
+Safe Push Safe Spider 
+
+Safe Circle Safe Height 
+
+Safe Pathway Safe Velocity 
+
+PPO PPOCost PPOLag PPOPID PPOSaute P3O FOCOPS Threshold Figure 10: Level 1 training curves. 25 0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+200 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+300 
+
+400 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+200 
+
+400 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+10 
+
+20 
+
+30 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+1
+
+2
+
+> Cost
+
+1e3 
+
+Safe Reacher Safe Goal 
+
+Safe Push Safe Spider 
+
+Safe Circle Safe Height 
+
+Safe Pathway Safe Velocity 
+
+PPO PPOCost PPOLag PPOPID PPOSaute P3O FOCOPS Threshold Figure 11: Level 2 training curves. 26 0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+200 
+
+400 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+200 
+
+400 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+1
+
+2
+
+> Reward
+
+1e6 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+100 
+
+200 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+50 
+
+100 
+
+150 
+
+> Reward
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+> Reward
+
+1e3 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+25 
+
+50 
+
+75 
+
+100 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+20 
+
+40 
+
+60 
+
+> Cost
+
+0 2 4
+
+Steps 1e8 
+
+0.0 
+
+0.5 
+
+1.0 
+
+> Reward
+
+1e4 
+
+0 2 4
+
+Steps 1e8 
+
+0
+
+1
+
+2
+
+> Cost
+
+1e3 
+
+Safe Reacher Safe Goal 
+
+Safe Push Safe Spider 
+
+Safe Circle Safe Height 
+
+Safe Pathway Safe Velocity 
+
+PPO PPOCost PPOLag PPOPID PPOSaute P3O FOCOPS Threshold Figure 12: Level 3 training curves. 27

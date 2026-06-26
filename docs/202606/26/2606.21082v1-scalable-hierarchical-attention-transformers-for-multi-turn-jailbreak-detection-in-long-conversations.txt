@@ -1,0 +1,345 @@
+Title: Scalable Hierarchical Attention Transformers for Multi-Turn Jailbreak Detection in Long Conversations
+
+URL Source: https://arxiv.org/pdf/2606.21082v1
+
+Published Time: Tue, 23 Jun 2026 00:36:26 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Scalable Hierarchical Attention Transformers for Multi-Turn Jailbreak Detection in Long Conversations 
+
+Chenhui Hu 
+
+Zscaler, Inc. 
+
+Muhammed Salih 
+
+Zscaler, Inc. 
+
+Sudipto Guha 
+
+Zscaler, Inc. 
+
+Subramanian Srinivasan 
+
+Zscaler, Inc. 
+
+# Abstract 
+
+Multi-turn jailbreaks can evade turn-level moderation by spreading unsafe intent across a dialogue through gradual escalation, reframing, and role manipulation. We address multi-turn jailbreak detection as a conversation-level classification problem and introduce an efficient hierarchical detector that avoids expensive long-context concatenation while retaining cross-turn reasoning. The model encodes individual turns to form compact turn representations and applies a lightweight conversation module that captures dialogue dynamics and selectively attends to fine-grained evidence when needed. On a challenging evaluation benchmark of 14 ,038 conversations, our approach achieves an F1 of 0.9394 , outperforming Claude Opus 4.7, the strongest competing baseline, by 0.07 while halving its false-positive rate. Ablation studies confirm that each architectural component contributes meaningfully, with combining cross-attention and self-attention in the conversation module yielding a 2.26 percentage point reduction in false-positive rate over the self-attention-only variant. 
+
+# 1 Introduction 
+
+Large language models (LLMs) deployed in interactive settings are increasingly exposed to multi-turn jailbreak attempts, where an adversary does not issue a single overtly malicious prompt, but instead incrementally steers the conversation toward disallowed behavior. In these attacks, unsafe intent can be distributed across turns via gradual escalation, topic drift, role manipulation, and reframing of earlier instructions. As a result, effective defense requires conversation-level reasoning rather than isolated, turn-by-turn filtering. A straightforward solution is to concatenate the entire dialogue history into a single sequence and apply a Transformer encoder to classify the conversation as safe or jailbreak. However, this approach scales poorly with conversation length. For a typical setting of 16 turns with 256 tokens per turn, concatenation yields a 4,096-token sequence, and the quadratic cost of self-attention makes both training and deployment expensive. Moreover, long-context concatenation forces the model to spend computation uniformly across all tokens, even though the signals for a jailbreak may be localized to a few turns or phrases. We propose an efficient two-level hierarchical architecture for multi-turn jailbreak detection that preserves rich cross-turn reasoning while avoiding the computational bottleneck of full-sequence attention. At the first level, a TurnEncoder processes each turn independently using a pre-trained multilingual encoder ( intfloat/multilingual-e5-base ). Each turn is formatted with explicit speaker markers (two added special tokens, [USER] and [ASST] ) and is padded/truncated to a fixed 256-token budget. The TurnEncoder produces (i) a compact turn summary embedding via the CLS representation and (ii) token-level embeddings for the full turn. Crucially, turns are encoded independently with no cross-turn token sharing at this stage, enabling efficient batched encoding across turns and conversations (with gradient checkpointing used during training to manage memory). 
+
+> Preprint.
+> arXiv:2606.21082v1 [cs.CL] 19 Jun 2026
+
+At the second level, a lightweight ConvTransformer reasons over the sequence of turn summaries to capture conversation dynamics that are characteristic of multi-turn jailbreaks. A learnable 
+
+[CONV_CLS] token is prepended to aggregate global information, and learned position embed-dings (turn order) and role embeddings (user/assistant/CLS) allow the model to differentiate early vs. late turns and speaker identity. The ConvTransformer applies bidirectional self-attention over turn summaries to model cross-turn patterns (e.g., escalation and returns to previously refused topics). In addition, each layer performs cross-attention over the token-level embeddings produced by the TurnEncoder, allowing the model to “zoom in” on specific words or phrases within any turn when fine-grained cues are needed. Finally, an attentive pooling mechanism complements the [CONV_CLS] 
+
+representation by learning to weight turns by importance—useful, for example, when later turns carry stronger jailbreak signals than early benign setup turns. This hierarchical design yields an attractive efficiency–accuracy trade-off: per-turn encoding remains bounded by a short context window, while the conversation-level module operates on a small sequence of turn summaries, yet retains access to token-level details through cross-attention. In experiments on a challenging 14,038-sample dataset, the proposed model achieves strong performance (95.90% precision, 92.10% recall, and 0.9394 F1), indicating that efficient conversation-level modeling can be highly effective for multi-turn jailbreak detection. This paper makes the following contributions: • We formulate multi-turn jailbreak detection as a conversation-level classification problem that demands cross-turn reasoning under realistic length constraints. • We introduce a hierarchical TurnEncoder–ConvTransformer architecture that avoids quadratic scaling from naive concatenation while preserving access to fine-grained token evidence via cross-attention. • We demonstrate strong empirical performance on a multi-turn jailbreak dataset, showing that our approach outperforms state-of-the-art guardrails such as Claude Opus 4.7. • We validate the importance of the cross-turn encoder via an ablation study, showing that replacing it with mean pooling significantly degrades jailbreak detection performance. 
+
+# 2 Related Work 
+
+2.1 Jailbreak / Prompt-Injection Detection and Moderation Classifiers 
+
+Safety moderation for LLM systems is often implemented using supervised classifiers trained to detect toxic or policy-violating content, including widely used toxicity benchmarks and models (e.g., Jigsaw/Conversation AI datasets; [Borkan et al., 2019] and Detoxify; [Hanu and team, 2020]). While such classifiers are effective for overtly harmful content, jailbreaks frequently rely on instruction-following failures rather than explicit toxicity, motivating research on adversarial prompting and “guard” models that predict policy-violation risk. A complementary line of work studies attack methods that generate jailbreak prompts through optimization or search. Universal adversarial suffix attacks such as GCG [Zou et al., 2023] show that iterative optimization can yield transferable jailbreak triggers across prompts and models. AutoDAN [Liu et al., 2023] similarly generates stealthy jailbreak prompts via iterative optimization/evolution strategies. These approaches are important baselines and threat models for detection because they can produce non-obvious, non-toxic surface forms that nonetheless induce unsafe behavior. 
+
+2.2 Multi-Turn Safety / Dialogue Risk Detection 
+
+Multi-turn jailbreaks introduce temporal structure: an adversary can begin benignly and gradually move the model toward disallowed behavior through escalation, reframing, or role manipulation [Russinovich et al., 2024, Chao et al., 2023, Mehrotra et al., 2023]. Several recent attacks explicitly operationalize this multi-step structure. Crescendo [Russinovich et al., 2024] demonstrates a benign-to-malicious escalation strategy that unfolds across turns and can evade turn-local defenses. PAIR [Chao et al., 2023] jailbreaks black-box LLMs through iterative attacker–target refinement, using feedback from previous responses to craft subsequent queries. Tree of Attacks (TAP) [Mehrotra et al., 2023] extends iterative refinement into a tree search, branching attack trajectories and selecting promising continuations. 2Long-context multi-turn threats also appear in many-shot jailbreaking [Anil et al., 2024], where a long conversation history (often with many demonstrations) biases the model toward compliance. Defense-oriented follow-ups such as Mitigating Many-Shot Jailbreaking [Ackerman and Panickssery, 2025] are relevant when positioning detection in the broader mitigation landscape (detectors, training-time alignment, inference-time policies). On the benchmarking side, multi-turn evaluation suites such as MTJ-Bench / Multi-Turn Jailbreak Benchmark [Yang et al., 2025] reflect growing recognition that single-turn benchmarks underestimate real-world risk, and they provide more realistic settings for measuring conversation-level detection and early-warning capabilities. Finally, newer work continues to push adaptive multi-turn attack automation at scale, including HarmNet [Narula et al., 2025], Automating Deception [Kumarappan and Mujoo, 2025], and Echo Chamber [Alobaid et al., 2026]. Collectively, these works strengthen the case that robust defenses must (i) model evolving attacker intent across turns and (ii) remain effective under adaptive adversaries [Narula et al., 2025, Kumarappan and Mujoo, 2025, Alobaid et al., 2026]. 
+
+2.3 Indirect Prompt Injection and Tool-/Agent-Integrated Settings 
+
+Beyond direct user prompting, indirect prompt injection arises when models ingest untrusted retrieved or tool-provided content that contains adversarial instructions [Greshake et al., 2023, Zhan et al., 2024]. Not What You’ve Signed Up For [Greshake et al., 2023] highlights real-world compromise vectors in LLM-integrated applications via malicious content embedded in retrieved documents or other inputs, often manifesting as multi-step interactions in agentic or retrieval-augmented pipelines. More recently, InjecAgent [Zhan et al., 2024] proposes threat models and benchmarking for indirect prompt injections in tool-integrated LLM agents. These settings reinforce the importance of multi-turn and multi-source context modeling: the effective “conversation” may include tool outputs, retrieved passages, and intermediate reasoning steps, all of which can participate in a gradual jailbreak [Greshake et al., 2023, Zhan et al., 2024]. 
+
+2.4 Hierarchical Modeling for Long Documents and Dialogue 
+
+Hierarchical architectures are a standard approach for modeling structured long inputs by separating local encoding from global aggregation. Classic examples include Hierarchical Attention Networks [Yang et al., 2016], which encode tokens into sentence representations and then apply higher-level attention over sentences for document classification. Related hierarchical dialogue modeling traditions similarly encode utterances/turns independently and then model the sequence of turns to capture conversational dynamics. This perspective aligns closely with multi-turn jailbreak detection: the salient signal is often how turns relate (escalation, contradiction, instruction manipulation), rather than token-level interactions uniformly across a flattened sequence. Our approach fits this family by combining turn-wise representations with conversation-level attention, while still retaining access to token-level evidence through cross-attention. 
+
+2.5 Efficient Transformers and Long-Context Modeling (Not Just “Long Context”) 
+
+A separate body of work aims to scale Transformers to long sequences by reducing attention cost or adding memory mechanisms, including sparse attention (Longformer [Beltagy et al., 2020], BigBird [Zaheer et al., 2020]), hashing or approximation methods (Reformer [Kitaev et al., 2020], Linformer [Wang et al., 2020], Performer [Choromanski et al., 2021]), and recurrence/memory (Transformer-XL [Dai et al., 2019], Compressive Transformer [Rae et al., 2020]). These methods primarily treat the input as a single long token stream. In contrast, many jailbreak settings are naturally structured by turns (and sometimes by tool calls / retrieved documents). Multi-turn attacks such as Crescendo [Russinovich et al., 2024], PAIR [Chao et al., 2023], TAP [Mehrotra et al., 2023], and many-shot jailbreaking [Anil et al., 2024] exploit exactly this conversational structure—e.g., building a benign prefix, iteratively refining instructions, or using long interaction histories. This motivates architectures that allocate computation to turn-level attention while selectively revisiting token-level detail, rather than relying solely on generic long-context Transformers. 33 Problem Formulation 
+
+3.1 Conversation and Turn Notation 
+
+We model a conversation as a sequence of discrete turns: 
+
+C = ( x1, x 2, . . . , x T ), (1) where T is the number of turns and each turn xt is a role-annotated message 
+
+xt = ( rt, u t), (2) with role rt ∈ { user , assistant } and textual content ut. When role tags are not needed, we refer to the content-only sequence (u1, u 2, . . . , u T ). We denote the prefix of the conversation up to turn t as 
+
+C≤t = ( x1, x 2, . . . , x t). (3) 
+
+3.2 Labels and Tasks 
+
+We use a binary conversation-level label y ∈ { 0, 1}, where y = 0 indicates a safe conversation and y = 1 denotes a jailbreak conversation. Note that datasets differ in whether y = 1 reflects jailbreak attempts (malicious user intent is present at some point) or only successful jailbreaks (the assistant produces disallowed content); we follow the definition specified by each dataset used in our experiments (Section 6). 
+
+Conversation-level classification. Given the full conversation C, the primary task is to estimate the posterior 
+
+p(C) = Pr( y = 1 | C ), (4) and produce a hard decision by thresholding, 
+
+ˆy = 1{ p(C) ≥ τ }, (5) where τ ∈ [0 , 1] is an operating threshold and 1{·} denotes the indicator function (equal to 1 if its argument is true and 0 otherwise). 
+
+Optional per-turn risk scoring. In a streaming setting, the detector produces a per-turn risk score at each turn t:
+
+pt := p(C≤t) = Pr( y = 1 | C ≤t), t = 1 , . . . , T. (6) 
+
+Optional early detection. For early warning, we trigger an alert as soon as the risk exceeds the threshold τ : ˆt = min {t ∈ { 1, . . . , T } : pt ≥ τ }, (7) with the convention that ˆt = ∞ if the threshold is never crossed. A detector is better if it achieves high accuracy while minimizing ˆt on jailbreak conversations. 
+
+3.3 Threat Model 
+
+We assume an adversarial user who controls the user turns and can adaptively choose messages based on prior assistant outputs. The attacker is described by an adaptive policy π such that, for each user-role turn, 
+
+ut ∼ π(· | C ≤t−1). (8) Assistant-role turns are produced by the target model (or an environment/tool wrapper) and are treated as exogenous to the defender. The defender observes the streaming conversation and, at each turn t, produces a per-turn risk score 
+
+g(C≤t) = pt, (9) from which a hard per-turn decision ˆyt = 1{pt ≥ τ } and, in particular, the conversation-level decision ˆy = ˆ yT are derived. The defender does not control the attacker and must remain robust to multi-turn escalation strategies and other adaptive behaviors expressed across turns. 44 Method 
+
+4.1 Baseline and Complexity Motivation Naive concatenation baseline. A straightforward approach concatenates all turns into a single long token sequence and runs a Transformer encoder over the full conversation. Let turn t contain nt
+
+tokens. The total concatenated length is 
+
+N =
+
+> T
+
+X
+
+> t=1
+
+nt. (10) For standard Transformer self-attention, the dominant cost scales quadratically with sequence length: cost = O(N 2) (up to constant factors and hidden-size terms ). (11) 
+
+Concrete example ( 24 × 256 → 6144 tokens). With up to T = 24 turns and a per-turn cap of 
+
+nt ≤ 256 tokens, 
+
+N = 24 · 256 = 6144 , (12) and attention scales as 
+
+N 2 = 6144 2 = 37 ,748 ,736 (13) pairwise interactions per layer (up to constant factors and number of heads). This quadratic scaling motivates an architecture that avoids attention over the full concatenated context while preserving cross-turn reasoning. 
+
+4.2 Level 1: TurnEncoder Overview. As shown in Figure 1, Level 1 encodes each turn independently using a pre-trained language model, producing (i) a compact summary embedding for cross-turn reasoning and (ii) token-level embeddings for optional fine-grained retrieval by Level 2. Encoding turns independently keeps computation roughly linear in the number of turns and enables efficient batching. 
+
+Backbone and role markers. The TurnEncoder wraps the pretrained multilingual E5-base model (intfloat/multilingual-e5-base ), a 12-layer Transformer with hidden size d = 768 . We add two special tokens to the vocabulary, [USER] and [ASST] , which act as role markers. Each turn is tokenized independently as 
+
+˜xt = [ ROLE (rt)] ∥ ut, (14) where ∥ denotes token-sequence concatenation, then padded or truncated to a fixed maximum length 
+
+L = 256 tokens. 
+
+Outputs. For each turn t, the encoder outputs: • Turn summary embedding (CLS embedding): 
+
+st ∈ Rd, st = h(Lenc ) 
+
+> t, 1
+
+, (15) defined as the first token’s output (CLS) from the last encoder layer ( Lenc = 12 ). • Token-level embeddings (last-layer hidden states): 
+
+Ht ∈ RL×d, Ht = h(Lenc ) 
+
+> t, 1
+
+, . . . , h(Lenc )
+
+> t,L
+
+⊤. (16) The summaries {st}Tt=1 feed Level 2 self-attention, while {Ht}Tt=1 serve as a cross-attention memory for “zooming in” on salient phrases. 
+
+Independence across turns. There is no cross-turn token sharing at Level 1; all cross-turn reasoning (e.g., recognizing escalation from turn 3 to turn 5) is deferred to Level 2. This independence also enables encoding all turns in a batch in one batched forward pass. 
+
+Memory optimization. Gradient checkpointing is enabled during training to reduce memory usage, which is important when processing up to 24 turns per conversation per GPU. Table 1 summarizes the TurnEncoder configuration. 5Figure 1: Multi-turn jailbreak detection based on a hierarchical conversation embedding architecture. Table 1: TurnEncoder configuration. 
+
+Parameter Value 
+
+Base model intfloat/multilingual-e5-base (12 layers, 768-dim) Special tokens [USER] , [ASST] 
+
+Max tokens per turn 256 Dropout 0.2 Gradient checkpointing Enabled 
+
+4.3 Level 2: ConvTransformer Overview. Level 2 performs conversation-level reasoning over the sequence of turn summaries and optionally retrieves token-level details through cross-attention. This captures multi-turn patterns such as gradual escalation, topic shifts, instruction hierarchy manipulation, and role changes. 
+
+4.3.1 Input sequence construction 
+
+Given turn summaries {st}Tt=1 , we prepend a learnable conversation-level token s0 corresponding to 
+
+[CONV_CLS] :
+
+S(0) = [ s0, s1, . . . , sT ] ∈ R(T +1) ×d. (17) The final representation of [CONV_CLS] serves as the primary conversation embedding. 
+
+4.3.2 Position and role embeddings 
+
+Each element in the input sequence is augmented with learned position and role embeddings: 
+
+˜si = si + pi + eρi , i = 0 , . . . , T, (18) where pi is a learned position embedding and eρi is a learned role embedding. We use learned position embeddings for 25 positions (position 0 for [CONV_CLS] , positions 1–24 for turns), and learned role embeddings for 3 roles (user, assistant, and a CLS placeholder role). 6Table 2: ConvTransformer configuration. 
+
+Parameter Value 
+
+Decoder layers 3Attention heads 8FFN hidden dim 2,048 Normalization Pre-LN Position embeddings Learned, 25 positions Role embeddings Learned, 3 roles Dropout 0.2 
+
+4.3.3 Self-attention over turn summaries 
+
+The ConvTransformer is a 4-layer Transformer decoder (pre-layer normalization, 8 heads, Feed-Forward Network (FFN) hidden size 2048, dropout 0.2). It applies bidirectional self-attention (no causal mask) over the augmented summary sequence 
+
+˜S(0) = [˜ s0, ˜s1, . . . , ˜sT ], (19) because the classifier can observe the full conversation at inference time in the current setting. This supports detecting global multi-turn structures (e.g., returning to a previously refused topic several turns later). 
+
+4.3.4 Cross-attention to token-level memory 
+
+In addition to self-attention over summaries, each decoder layer performs cross-attention over token-level embeddings from Level 1. We flatten all per-turn token embeddings into one memory: 
+
+M = [ H1; H2; . . . ; HT ] ∈ R(T ·L)×d, (20) where L = 256 and thus |M| = T · L tokens (with T ≤ 24 ). Tokens in M are augmented with turn-aware positional signals (reusing the same turn position table) so attention heads can infer which turn each token belongs to. This mechanism allows Level 2 to “zoom in” on specific words or phrases that may carry jailbreak signal. 
+
+4.3.5 Attentive pooling 
+
+After the decoder layers, we compute an additional conversation summary via attentive pooling: a learned query attends over all turn outputs to produce a weighted combination, which is then added to the [CONV_CLS] output via a residual connection. This lets the model weight turns differently depending on their importance (e.g., later turns in an escalation attack). We list the conversation module configuration in Table 2. 
+
+4.3.6 Classification heads 
+
+The final 768-dimensional conversation embedding is passed through dropout and a linear projection to produce two logits (safe vs. jailbreak): 
+
+ℓ = W z + b ∈ R2, (21) where z ∈ R768 is the final conversation embedding. At inference, softmax yields the jailbreak probability 
+
+p(C) = softmax( ℓ)1. (22) A secondary turn-level classification head projects each turn’s output embedding to two logits to support an auxiliary per-turn loss (multiple-instance learning). In the described experiment, the auxiliary loss weight is set to zero, so this head has no effect on training or inference (though logits may still be computed). 74.4 Training Objective and Inference 4.4.1 Input constraints 
+
+We cap conversation length by truncating at both the turn and conversation levels: we limit each turn to at most 256 tokens, and we limit each conversation to at most 24 turns (keeping only the most recent 24 turns when a conversation is longer). 
+
+4.4.2 Training objective 
+
+Let y ∈ { 0, 1} denote the conversation label (0=safe, 1=jailbreak). We compute a predicted jailbreak probability p(C) and optimize binary cross-entropy: 
+
+Lconv = − y log p(C) − (1 − y) log  1 − p(C). (23) When turn-level labels are available, an auxiliary per-turn cross-entropy loss can be added to provide finer-grained supervision, though we do not activate it in the experiments presented herein. 
+
+4.4.3 Inference 
+
+At inference time, we encode each turn independently with the TurnEncoder to obtain turn summaries and (optionally) token-level embeddings, then run the Level 2 conversation module over the resulting sequence. Following common moderation practice, we drop the final assistant turn at inference so the decision is conditioned only on the conversation history up to the last user turn. The classifier outputs a jailbreak probability via softmax, and we predict jailbreak if the probability exceeds a threshold τ
+
+(set on a validation set); turn-level logits are optional and are not used for the final decision. 
+
+# 5 Datasets 
+
+5.1 Training Set 
+
+We train all models on a curated dataset of 98 ,626 multi-turn conversations, approximately balanced between jailbreak ( 49% ) and safe ( 51% ) examples. A conversation is labeled jailbreak (y = 1 ) if any assistant turn contains harmful content elicited through adversarial manipulation, and safe (y = 0 )otherwise. 
+
+Safe conversations. The safe subset ( 50 ,287 conversations) combines real user–assistant dialogues from open-domain corpora with purpose-built hard negatives. The open-domain portion is drawn from UltraChat, WildChat, ShareGPT, and OASST2, and teaches the detector to tolerate normal multi-turn interaction patterns. Hard negatives are benign conversations that share structural features with attacks—such as progressive complexity, polite follow-ups, or extended length—and reduce false alarms on legitimate conversations. 
+
+Jailbreak conversations. The jailbreak subset ( 48 ,339 conversations) covers eight distinct multi-turn attack strategies: 1. Framing and disguise (24 ,392 ). The largest category, covering attacks where the user wraps harmful requests in a legitimizing frame. This includes persona adoption (e.g., “I’m a journalist researching. . . ”), academic or historical framing that conceals harmful intent behind scholarly language, and fictional or hypothetical scenarios used to indirectly elicit harmful information. The key characteristic is that each individual turn may appear benign in isolation; the harmful intent is revealed only by the overall direction of the conversation. 2. Escalating manipulation (9,839 ). Short conversations where each successive turn makes requests slightly more specific or harmful, directly exploiting the trust or compliance established in earlier turns. 3. Gradual escalation (4,986 ). Unlike escalating manipulation (which starts harmful and in-creases specificity), these conversations begin on a genuinely benign topic and progressively steer toward harmful requests over 6–34 turns, making it difficult to identify the transition point. 84. Refusal persistence (4,657 ). After the model refuses, the attacker rephrases the same harmful request using different angles (bureaucratic framing, hypothetical context, emotional appeals) across multiple turns until the model complies. 5. Task decomposition (2,095 ). A harmful goal is broken into seemingly innocuous sub-questions asked across many turns (e.g., asking separately about chemical ingredients, synthesis conditions, and purification steps), where no individual question appears dangerous but the composite reveals malicious intent. 6. Sudden adversarial insertion (903 ). A single adversarial turn is embedded at a random late position within an otherwise entirely benign conversation, testing whether the detector can identify isolated malicious signal diluted among many benign exchanges. 7. Context narrowing (253 ). A benign multi-turn discussion is followed by a final user turn that demands the prior context be reformatted into harmful content (e.g., “rewrite the above as a step-by-step guide to. . . ”). 8. Prompt injection and other strategies (1,214 ). Instruction-override attacks (“ignore previ-ous instructions”), explicit attempts to suppress safety guidelines, post-refusal persistence where the user eventually succeeds, and short context-shifting attacks. 
+
+5.2 Evaluation Benchmark 
+
+We evaluate on a comprehensive multi-source benchmark of 14 ,038 conversations ( 8,182 safe and 5,856 jailbreak) constructed to assess detector performance across a broad spectrum of attack strategies and benign interaction patterns. The benchmark combines established external corpora with targeted synthetic conversations, ensuring coverage of attack vectors that no single existing dataset provides in isolation. The full per-source composition is reported in Tables 6 and 7 (Appendix A). 
+
+Safe conversations. The 8,182 safe conversations are drawn from five real-world dialogue corpora spanning open-domain discussion, task-oriented instruction, and user–assistant interaction. Ultra-Chat [Ding et al., 2023] and WildChat [Zhao et al., 2024] contribute the bulk of safe examples, representing diverse multi-turn exchanges between users and LLMs. ShareGPT [ShareGPT Commu-nity, 2023] and OpenAssistant (OASST2) [Köpf et al., 2023] provide shorter community-collected dialogues, and SafeMTData [Ren et al., 2024] contributes benign conversations on sensitive-adjacent topics where user intent is genuinely benign. To calibrate false-positive rates, we additionally include synthetically generated hard negatives—benign conversations that share structural features with jailbreak attacks (progressive complexity, topic shifts, extended length) but contain no adversarial intent. 
+
+Jailbreak conversations. The 5,856 jailbreak conversations span seven distinct attack-strategy categories. External corpora provide ecologically valid attacks: XGuard [Abishethvarman et al., 2025] contributes persona-adoption red-teaming, Red Queen [Jiang et al., 2025] supplies short targeted manipulations, carl213 [Gibbs et al., 2024] provides cipher-encoded attacks via user-defined word-substitution mappings, and SafeDialBench [Cao et al., 2025] and the Duke CEI Malicious-Educator benchmark [Zhang et al., 2025] contribute additional multi-turn attack scenarios. FRACTURED-SORRY-Bench [Priyanshu and Vijay, 2024] contributes multi-step attacks with benign intermediary turns, and LAD [Kulkarni et al., 2024] contributes gradual escalation in technical domains (SCADA systems, autonomous vehicles, network security). To cover attack vectors underrepresented in existing corpora, we additionally include synthetic conversations implementing gradual escalation (progressive steering across 9–32 turns), sudden adversarial insertion (a single malicious turn embedded within an otherwise benign conversation), and context narrowing (benign prefixes reframed toward harmful requests via the final user turn). Prompt-injection attacks ( 2–12 turns) test robustness to single-shot instruction-override attempts within a multi-turn context. 
+
+Deduplication. To prevent train–test leakage, the benchmark is filtered against the training set using a strict five-rule protocol: (1) exact whole-conversation match; (2) any prefix of ≥ 2 turns matching; (3) any suffix of ≥ 2 turns matching; (4) first user-turn hash match; and (5) final user-turn hash match. This eliminates both verbatim repetition and template-level overlap that arises when synthetic generators draw from shared seed pools. 9Rationale for combining external and synthetic data. No single jailbreak corpus covers the full range of known multi-turn attack strategies. External datasets provide ecological validity—these are attacks that were actually attempted against deployed systems—but they cluster around specific tactics (e.g., XGuard is predominantly persona-based; Red Queen is uniformly five turns). Synthetic augmentation addresses three gaps: (i) controlled variation of conversation length and escalation speed, enabling fine-grained evaluation of detector sensitivity; (ii) coverage of structurally distinct attack types (sudden insertion, context narrowing) that are rare in existing corpora; and (iii) hard negatives that share surface-level features with attacks, which are critical for measuring false-positive robustness, since naturally occurring safe conversations rarely resemble jailbreaks in structure. 
+
+Summary statistics. The benchmark comprises 14 ,038 conversations ( 58 .3% safe, 41 .7% jail-break), with turn counts ranging from 2 to 102 (mean 9.3, median 8) and approximately 1,962 
+
+tokens per conversation on average. The 24 distinct source identifiers are grouped into eight attack-strategy categories and three safe-conversation categories, drawing on published external datasets and synthetic conversations. 
+
+# 6 Experiments 
+
+6.1 Experimental Setup Model configuration. Our primary model uses Multilingual E5-base [Wang et al., 2022] (278M parameters) as the TurnEncoder with a 4-layer ( L = 4 ) ConvTransformer decoder. Each turn is tokenized to a maximum of 256 tokens, and conversations are truncated to 24 turns (retaining the most recent turns when a conversation exceeds this limit). The ConvTransformer uses 8 attention heads with a feed-forward dimension of 2,048 .
+
+Training procedure. Training proceeds in two stages. In the first stage, we train the ConvTrans-former with a frozen TurnEncoder for 2 epochs (learning rate 1 × 10 −4). In the second stage, we jointly fine-tune both components for 4 additional epochs, using a reduced learning rate of 5 × 10 −6
+
+for the TurnEncoder and 1 × 10 −4 for the ConvTransformer. Joint fine-tuning enables the Tur-nEncoder and ConvTransformer to adapt to each other, improving overall end-to-end performance compared to keeping the encoder frozen. 
+
+Baselines. We compare against the following baselines: • Mean Pool. Uses the same Multilingual E5-base TurnEncoder [Wang et al., 2022] but replaces the ConvTransformer with simple mean pooling over turn embeddings, followed by a linear classifier. This ablation isolates the contribution of the attention-based conversation-level aggregation. • Concatenation. A Llama 3.3 70B model [Dubey et al., 2024] that concatenates the most recent turns up to a fixed window size of 4, then classifies the resulting truncated context. • ToT OR / ToT Majority. Tree-of-Thought baselines built on the same Llama 3.3 70B model [Dubey et al., 2024]. The full conversation is examined from three complementary analytical lenses: (i) user intent —inferring the user’s true goal and whether it is manipulative; (ii) potential harm —assessing worst-case misuse and safety impact; and (iii) jailbreak patterns —detecting known tactics such as roleplay framing, hypotheticals, authority claims, or gradual escalation. Each lens produces an independent binary decision. ToT OR predicts jailbreak if any 
+
+of the three lenses is positive; ToT Majority predicts jailbreak if at least two of the three are positive. • Claude Sonnet 4 / Sonnet 4.5 / Opus 4.7 [Anthropic, 2026]. State-of-the-art proprietary models from Anthropic. Claude Opus 4.7 is Anthropic’s flagship Opus-tier model. These represent strong, widely deployed safety-tuned baselines; outperforming them provides compelling evidence for the effectiveness of our approach. 
+
+6.2 Main Results 
+
+Table 3 reports performance on the full evaluation benchmark ( ∼14 ,k conversations). Our model significantly outperforms all baselines across every metric. 10 Table 3: Performance comparison on the full evaluation benchmark ( ∼14 ,k conversations). τ denotes the classification threshold. Best results in bold .                                 
+
+> Model Recall Precision F1 FPR
+> Concatenation 36.20% 88.50% 0.5136 3.40% ToT OR 47.10% 85.30% 0.6072 5.80% ToT Majority 37.00% 89.10% 0.5226 3.20% Claude Sonnet 4 59.10% 91.70% 0.7189 3.80% Claude Sonnet 4.5 66.10% 91.70% 0.7682 4.30% Claude Opus 4.7 78.30% 90.60% 0.8691 5.80% Our Model ( τ= 0 .50 )92.10% 95.90% 0.9394 2.80%
+
+Compared to Claude Opus 4.7—the strongest competing system—our model improves recall by 
+
++13 .8 points ( 92 .10% vs. 78 .30% ), precision by +5 .3 points ( 95 .90% vs. 90 .60% ), and F1 by +0 .070 
+
+(0.9394 vs. 0.8691 ), while simultaneously reducing the false-positive rate from 5.80% to 2.80% .The advantage over the Llama 3.3 70B–based baselines (Concatenation, ToT OR, ToT Majority) is even more pronounced: our model improves F1 by 0.33 –0.42 absolute and substantially lowers FPR. Notably, the ToT OR variant trades a higher false-positive rate ( 5.80% ) for moderate recall (47 .10% ), yet still falls short of our model by over 45 recall points—indicating that simply expanding the decision surface of a turn-level classifier cannot compensate for the lack of conversation-level reasoning. These results demonstrate that our hierarchical ConvTransformer not only generalizes well to out-of-distribution conversations but also scales effectively to harder adversarial scenarios, outperforming even the most capable proprietary models while maintaining the lowest false-positive rate among all systems evaluated. 
+
+6.3 Attention Pattern Analysis 
+
+To understand how the model distinguishes jailbreak from safe conversations, we extract attention weights from the L=4 ConvTransformer decoder. We instrument all decoder layers to capture both self-attention and cross-attention weights during inference on 1,000 conversations (500 jailbreak, 500 safe, each with ≥ 4 turns) from the held-out test set. We focus on the attention distribution of the [CONV_CLS] token, which aggregates conversation-level evidence for the final classification decision. 
+
+Self-attention patterns. As shown in Figure 2a, safe conversations concentrate [CONV_CLS] self-attention heavily on early turns—T1–T3 receive approximately 40% of total weight—reflecting predictable topic-setting and cooperative exchange patterns. Jailbreak conversations distribute self-attention more evenly across all turn positions, with later turns (T5–T24) receiving proportionally more weight. Figure 2b quantifies this shift: the JB/Safe self-attention ratio rises from 0.67 × at T2 to a peak of 2.7× at T14, consistent with the model recognizing gradual escalation patterns that span the full conversation rather than relying on any single suspicious turn. 
+
+Cross-attention patterns. The difference is even more pronounced in cross-attention (right panels of Figures 2a and 2b). Safe conversations exhibit a dominant spike at T4 ( 0.30 weight, nearly 3×
+
+any other position), suggesting the model anchors on early assistant responses to confirm benign intent. Jailbreak conversations show more uniform cross-attention with moderate peaks distributed across later turns, corresponding to adversarial payload delivery points. The cross-attention JB/Safe ratio reaches 6× at T9, 11 × at T15, and 16 × at T21 (Figure 2b, right), with the highest ratios falling consistently on odd-numbered positions (user turns), indicating the model learns to direct token-level scrutiny toward later user turns where harmful requests are most likely to appear in multi-turn escalation attacks. 
+
+Architectural implications. This attention asymmetry explains the architectural advantage of the hierarchical ConvTransformer: its cross-attention mechanism allows the [CONV_CLS] token to 11 (a) Aggregate [CONV_CLS] attention weights by turn position. Safe conversations (green) concentrate attention on early turns (T1–T3), while jailbreak conversations (orange) distribute weight more uniformly across later positions up to T24.             
+
+> (b) JB/Safe attention ratio by turn position. Green bars indicate safe-dominant positions (ratio <1); red bars indicate jailbreak-dominant positions (ratio >1). Self-attention ratio peaks at ∼2.7×at T14; cross-attention ratio reaches ∼6×at T9, ∼11 ×at T15, and ∼16 ×at T21, with the largest ratios concentrated on odd-numbered (user) turns.
+
+Figure 2: Attention analysis of the ConvTransformer decoder ( L=4 , n=500+500 conversations). Left panels show self-attention; right panels show cross-attention. (a) Raw attention weights reveal that jailbreak conversations shift [CONV_CLS] focus toward later turns (up to T24). (b) The JB/Safe ratio quantifies this shift, growing across turn positions and reaching extreme values in cross-attention at late, odd-numbered (user) turns—confirming that the model learns to scrutinize positions where adversarial payloads typically appear. directly query any turn’s encoded representation, enabling detection of late-conversation attacks that fixed-window approaches inherently miss. The increasing JB/Safe ratio—together with its concentration on odd-numbered user turns—further suggests that the model has learned an implicit “escalation detector” that up-weights evidence from later user turns proportional to their positional risk, a capability that emerges naturally from training without explicit positional supervision. 
+
+6.4 Ablation Study ConvTransformer Depth Ablation We vary the number of ConvTransformer decoder layers from 
+
+L = 1 to L = 5 to study the effect of model depth on performance. All variants use the same Multilingual E5-base TurnEncoder and training procedure. As shown in Table 4, increasing depth from L = 1 to L = 4 yields the best overall performance, while deeper models provide diminishing returns. 
+
+L = 4 achieves the best performance across all primary metrics: highest AUC-ROC (98.66%), highest accuracy (95.04%), and highest jailbreak recall (92.06%). The advantage over L = 1 is meaningful: +1.7pp JB recall and +0.8pp accuracy, demonstrating that deeper models better capture the multi-step reasoning required for detecting subtle escalation patterns. 12 Table 4: ConvTransformer depth ablation on the test set (14,038 conversations). All models were trained on 98.6k data. Values are percentages ( τ = 0 .5). 
+
+Layers AUC-ROC Acc F1 Macro JB Rec JB Prec FPR 
+
+L = 1 97.67 94.23 94.02 90.33 95.59 2.98 
+
+L = 2 98.63 94.76 94.57 91.27 95.96 2.75 
+
+L = 3 98.15 94.26 94.04 89.81 96.18 2.55 
+
+L = 4 98.66 95.04 94.87 92.06 95.89 2.82 
+
+L = 5 98.42 94.73 94.54 91.46 95.71 2.93        
+
+> (a) ROC curves by ConvTransformer depth ( L= 1 to
+> L= 5 ).
+> (b) AUC-ROC and JB Recall by ConvTransformer depth ( L= 1 to L= 5 ).
+
+Figure 3: Performance trends across ConvTransformer depths. 
+
+L = 3 shows a slight dip relative to L = 2 (89.81% vs. 91.27% recall), suggesting an intermediate-depth instability. L = 5 marginally underperforms L = 4 , indicating diminishing returns beyond 4 layers for this task and dataset size. All depths maintain FPR between 2.55% and 2.98%. The deeper models’ recall gains do not come at the cost of additional false positives. Figure 3 visualizes the impact of model depth on classification quality. Figure 3a shows that all ConvTransformer variants achieve strong ROC performance, with the deeper models generally tracing curves closer to the upper-left corner, indicating better discrimination. Figure 3b further highlights the depth-performance trade-off: performance improves from L = 1 to L = 4 , where both AUC-ROC and jailbreak recall reach their strongest values, while L = 5 shows a slight decline, suggesting diminishing returns beyond four layers. 
+
+Attention Component Ablation We ablate the attention components of the L = 4 ConvTrans-former by selectively disabling self-attention or cross-attention. This reveals the distinct contributions of each mechanism at the chosen model depth. Quantitative results are shown in Table 5, and ROC comparisons are shown in Figure 4. At L = 4 depth, the attention components show strongly differentiated roles. As shown in Table 5, self-attention captures inter-turn dynamics and achieves competitive recall (90.76%) but at nearly double the false positive rate (5.08%). It detects multi-turn escalation patterns by modeling how turns relate to each other, but this sensitivity to structural patterns also triggers on benign instructional conversations. Cross-attention alone degrades dramatically, reaching 78.30% recall, a drop of 13.8 percentage points relative to the full model in Table 5. Without self-attention to provide conversation-level context, cross-attention’s token-level content matching cannot recover the distributed signal of gradual escalation attacks. However, it maintains a low FPR (2.96%), suggesting that its errors are primarily missed detections rather than false alarms. The full model achieves a synergy that neither component matches alone. Relative to self-attention only, it improves recall by 1.3 percentage points while substantially reducing FPR (2.82% vs. 5.08%). 13 Table 5: Attention component ablation on the test set. L = 4 ConvTransformer, trained on 98.6k data. Values are percentages ( τ = 0 .5).                          
+
+> Variant AUC-ROC Acc JB Rec JB Prec FPR
+> Full (SA+CA) 98.66 95.04 92.06 95.89 2.82 Self-Attn Only 98.02 93.18 90.76 92.74 5.08 Cross-Attn Only 96.70 89.22 78.30 94.99 2.96 Mean Pool 96.02 87.11 75.56 92.13 4.62
+
+Figure 4: ROC comparison across attention component ablation variants. Relative to cross-attention only, it improves recall by 13.8 percentage points. We also observe that this synergy is substantially stronger at L = 4 than at L = 1 , where the two components perform more similarly, suggesting that deeper architectures enable richer interactions between the self-attention and cross-attention pathways. To further isolate the contribution of attention-based conversation-level aggregation, we additionally compare against a non-attentive baseline in which the ConvTransformer cross-turn encoder is replaced with simple mean pooling over turn embeddings, followed by a linear classifier. Both variants share the same Multilingual E5-base TurnEncoder, so any performance difference is attributable to the aggregation mechanism rather than to the turn-level representation. As shown in Table 5, the full model substantially outperforms this Mean Pool baseline across all metrics, improving AUC-ROC by 2.64 percentage points (98.66% vs. 96.02%), accuracy by 7.93 points (95.04% vs. 87.11%), and jailbreak recall by 16.50 points (92.06% vs. 75.56%), while simultaneously reducing FPR from 4.62% to 2.82%. The large recall gap is particularly informative: mean pooling treats all turns equally and dilutes localized adversarial signals, whereas the attention-based ConvTransformer can selectively emphasize the turns and tokens most indicative of escalation. These results indicate that attention-based aggregation, rather than turn-level encoding alone, is the primary driver of the hierarchical model’s effectiveness on multi-turn jailbreak detection. 
+
+# 7 Conclusion 
+
+We introduced a conversation-level jailbreak detector that assigns each dialogue a jailbreak likelihood and enables straightforward deployment via a single decision threshold. Across a challenging out-of-distribution evaluation, our approach consistently outperformed a broad set of baselines, including Claude Opus 4.7, demonstrating strong generalization under domain shift. The proposed hierarchical design avoids expensive long-context concatenation by encoding turns independently and performing lightweight conversation-level reasoning. It also supports selectively attending to fine-grained token evidence when needed, improving detection of multi-turn escalation and reframing behaviors. 14 Future work will focus on improving robustness to adaptive jailbreak strategies, refining calibration and threshold selection across domains, and further reducing false positives without sacrificing detection coverage. 
+
+# References 
+
+Vigneswar Abishethvarman, Usman Naseem, et al. XGUARD: A graded benchmark for evaluating safety failures of large language models on extremist content. arXiv preprint arXiv:2506.00973 ,2025. Christopher M. Ackerman and Nina Panickssery. Mitigating many-shot jailbreaking, 2025. arXiv preprint. Ahmad Alobaid, Martí Jordà Roca, Carlos Castillo, and Joan Vendrell. The echo chamber multi-turn LLM jailbreak, 2026. arXiv preprint. Cem Anil, Esin Durmus, Nina Panickssery, Mrinank Sharma, et al. Many-shot jailbreaking. In 
+
+Advances in Neural Information Processing Systems , 2024. Anthropic. Claude: Model card and evaluations. https://docs.anthropic.com/en/docs/ about-claude/models , 2026. Claude Sonnet 4, Sonnet 4.5, and Opus 4.7 model family. Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer, 2020. arXiv preprint. Daniel Borkan, Lucas Dixon, Jeffrey Sorensen, Nithum Thain, and Lucy Vasserman. Nuanced metrics for measuring unintended bias with real data for text classification. In Proceedings of the World Wide Web Conference (WWW) , 2019. Hongyu Cao, Yuyang Wang, Shuo Jing, et al. SafeDialBench: A fine-grained safety evaluation benchmark for large language models in multi-turn dialogues with diverse jailbreak attacks. arXiv preprint arXiv:2502.11090 , 2025. Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J. Pappas, and Eric Wong. Jailbreaking black box large language models in twenty queries. In Advances in Neural Information Processing Systems , 2023. Krzysztof Choromanski et al. Rethinking attention with performers. In International Conference on Learning Representations , 2021. Zihang Dai, Zhilin Yang, Yiming Yang, Jaime Carbonell, Quoc V. Le, and Ruslan Salakhutdinov. Transformer-XL: Attentive language models beyond a fixed-length context. In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics , 2019. Ning Ding, Yulin Chen, Bokai Xu, Yujia Qin, Zhi Zheng, Shengding Hu, Zhiyuan Liu, Maosong Sun, and Bowen Zhou. Enhancing chat language models by scaling high-quality instructional conversations. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2023. Abhimanyu Dubey, Akhil Jauhri, Abhinav Pandey, Abhishek Kadian, et al. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Tom Gibbs, Ethan Kosak-Hine, George Ingebretsen, Jason Zhang, Julius Broomfield, Sara Pieri, Reza Iranmanesh, Reihaneh Rabbany, and Kellin Pelrine. Emerging vulnerabilities in frontier models: Multi-turn jailbreak attacks. arXiv preprint arXiv:2409.00137 , 2024. Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. Not what you’ve signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection. In ACM Workshop on Artificial Intelligence and Security (AISec) , 2023. Laura Hanu and Unitary team. Detoxify. Software (GitHub repository), 2020. 15 Yifan Jiang, Kriti Aggarwal, Tanusree Laud, Kashif Munir, Jay Pujara, and Subhabrata Mukher-jee. Red queen: Exposing latent multi-turn risks in large language models. In Findings of the Association for Computational Linguistics (ACL) , 2025. Also available as arXiv:2409.17458. Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer. In 
+
+International Conference on Learning Representations , 2020. Andreas Köpf, Yannic Kilcher, Dimitri von Rütte, Sotiris Anagnostidis, Zhi Rui Tam, Keith Stevens, Abdullah Barhoum, Nguyen Minh Duc, Oliver Stanley, Richárd Nagyfi, ES Shahul, Sameer Suri, David Glushkov, Arnav Varma Dantuluri, Andrew Maguire, Christoph Schuhmann, Huu Nguyen, and Alexander Mattick. OpenAssistant conversations – democratizing large language model alignment. In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track , 2023. Aashish Kulkarni et al. Gradual escalation: A multi-turn jailbreak attack on large language models. 
+
+arXiv preprint arXiv:2410.10700 , 2024. Layered Adversarial Dialogue (LAD) framework. Adarsh Kumarappan and Ananya Mujoo. Automating deception: Scalable multi-turn LLM jailbreaks, 2025. arXiv preprint. Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. AutoDAN: Generating stealthy jailbreak prompts on aligned large language models, 2023. arXiv preprint. Anay Mehrotra et al. Tree of attacks: Jailbreaking black-box LLMs automatically, 2023. arXiv preprint. Sidhant Narula, Javad Rafiei Asl, Mohammad Ghasemigol, Eduardo Blanco, and Daniel Takabi. HarmNet: A framework for adaptive multi-turn jailbreak attacks on large language models, 2025. arXiv preprint. Aman Priyanshu and Supriti Vijay. FRACTURED-SORRY-Bench: Framework for revealing attacks in conversational turns undermining refusal efficacy and defenses over SORRY-Bench. arXiv preprint arXiv:2408.16163 , 2024. Jack W. Rae et al. Compressive transformers for long-range sequence modelling. In International Conference on Learning Representations , 2020. Qibing Ren, Hao Li, Dongrui Liu, Zhanxu Xie, Xiaoya Lu, Yu Qiao, Lei Sha, Junchi Yan, Lizhuang Ma, and Jing Shao. Derail yourself: Multi-turn LLM jailbreak attack through self-discovered clues. 
+
+arXiv preprint arXiv:2410.10700 , 2024. Mark Russinovich, Ahmed Salem, and Ronen Eldan. Great, now write an article about that: The crescendo multi-turn LLM jailbreak attack, 2024. arXiv preprint. ShareGPT Community. ShareGPT: Shared ChatGPT conversations dataset. https://sharegpt. com , 2023. Community-collected dataset. Liang Wang, Nan Yang, Xiaolong Huang, Binxing Jiao, Linjun Yang, Daxin Jiang, Rangan Majumder, and Furu Wei. Text embeddings by weakly-supervised contrastive pre-training. arXiv preprint arXiv:2212.03533 , 2022. Sinong Wang, Belinda Z. Li, Madian Khabsa, Han Fang, and Hao Ma. Linformer: Self-attention with linear complexity, 2020. arXiv preprint. Xianjun Yang, Liqiang Xiao, Shiyang Li, Faisal Ladhak, Hyokun Yun, Linda Ruth Petzold, Yi Xu, and William Yang Wang. Many-turn jailbreaking, 2025. arXiv preprint. Zichao Yang, Diyi Yang, Chris Dyer, Xiaodong He, Alex Smola, and Eduard Hovy. Hierarchical attention networks for document classification. In Proceedings of NAACL-HLT , 2016. Manzil Zaheer et al. Big bird: Transformers for longer sequences. In Advances in Neural Information Processing Systems , 2020. Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. InjecAgent: Benchmarking indirect prompt injections in tool-integrated large language model agents. In Findings of ACL 2024 , 2024. 16 Jiahao Zhang, Michael Kuo, Yuheng Chen, and Hai Li. Malicious-educator: A benchmark for stress-testing AI safety protocols. arXiv preprint arXiv:2502.12836 , 2025. Duke Center for Computational Evolutionary Intelligence. Wenting Zhao, Xiang Ren, Jack Hessel, Claire Cardie, Yejin Choi, and Yuntian Deng. WildChat: 1M ChatGPT interaction logs in the wild. In Proceedings of the International Conference on Learning Representations (ICLR) , 2024. Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. Universal and transferable adversarial attacks on aligned language models. In Advances in Neural Information Processing Systems , 2023. 
+
+# Appendix A Evaluation Benchmark Composition 
+
+Tables 6 and 7 provide a complete per-source breakdown of the 14,038-conversation evaluation benchmark introduced in Section 5. Table 6: Safe conversations in the evaluation benchmark (label = 0 ): 8,182 total. 
+
+Source N Turns Description Reference 
+
+UltraChat 2,937 4–14 Synthetic open-domain dialogues on science, daily life, technology, and creative topics. [Ding et al., 2023] WildChat 2,800 4–86 Real user–ChatGPT interactions with follow-up questions, clarifications, and diverse intents. [Zhao et al., 2024] ShareGPT 666 4–72 Community-shared ChatGPT conversations spanning coding help, writing, and general Q&A. [ShareGPT Community, 2023] OASST2 262 4–6 Crowd-sourced assistant dialogues covering factual questions and task completion. [Köpf et al., 2023] Synthetic hard neg. 388 4–58 LLM-generated benign conversations that structurally resemble attacks but contain no adversarial intent. Generated Long hard neg. 278 4–102 Extended ( 20+ -turn) benign conversations; controls for length bias in the detector. Generated Benign follow-ups 390 4 Short benign conversations with polite user follow-ups; targets gratitude patterns con-fused with post-refusal jailbreak turns. Generated SafeMTData (safe) 192 4–12 Multi-turn conversations on sensitive-adjacent topics (e.g., DNS, cybersecurity) with genuinely benign intent. [Ren et al., 2024] Security discussions 190 4–30 Benign conversations on penetration testing and red-teaming methodology. Generated Other 79 4–5 Empathetic dialogues and safe adversarial-ML research conversations. Mixed 
+
+17 Table 7: Jailbreak conversations in the evaluation benchmark (label = 1 ): 5,856 total. 
+
+Source N Turns Description Reference 
+
+XGuard 1,003 4–14 Red-team attacks using persona adoption and role-play framing. [Abishethvarman et al., 2025] Red Queen 802 5–7 Short targeted manipulation exploiting trust or authority claims. [Jiang et al., 2025] SafeDialBench 408 6–16 Multi-turn safety dialogues testing gradual boundary-pushing across harm categories. [Cao et al., 2025] carl213 111 4–26 Cipher-encoded attacks using user-defined word-substitution mappings. [Gibbs et al., 2024] Duke Safety 75 5 Short gradual-escalation attacks across 37 harm categories. [Zhang et al., 2025] Long escalation 828 4–32 Extended ( 15+ -turn) conversations incre-mentally steered toward harmful requests. Generated Synth. escalation 465 9–20 LLM-generated gradual-escalation attacks with controlled escalation speed. Generated FRACTURED-SORRY 94 7–15 Multi-step attacks with benign intermediary turns fragmenting harmful intent. [Priyanshu and Vijay, 2024] Synth. sudden 461 9–21 Benign conversations with a single adversar-ial turn inserted at a random late position. Generated Long sudden 268 19–31 Long benign conversations with adversarial insertion; tests detection under signal dilu-tion. Generated Ctx. narrowing 469 7–15 Benign multi-turn prefix followed by a final user turn demanding harmful reformatting of the context. Generated Prompt injection 318 2–12 Short instruction-override attacks (“ignore previous instructions”, system-prompt ex-traction, hypothetical framing). Generated LAD 152 4–18 Gradual escalation in technical domains (SCADA, AVs, network security) from be-nign inquiry to exploit requests. [Kulkarni et al., 2024] Gradual technical 402 4–30 Benign technical questions (cybersecu-rity, programming) escalating into explicit exploit/attack-code requests. Generated 
+
+18

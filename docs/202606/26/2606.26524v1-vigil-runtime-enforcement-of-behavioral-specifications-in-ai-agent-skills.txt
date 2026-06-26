@@ -1,0 +1,842 @@
+Title: VIGIL: Runtime Enforcement of Behavioral Specifications in AI Agent Skills
+
+URL Source: https://arxiv.org/pdf/2606.26524v1
+
+Published Time: Fri, 26 Jun 2026 00:23:26 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# VIGIL : Runtime Enforcement of Behavioral Specifications in AI Agent Skills 
+
+Ying Li ∗, Yanju Chen †, Hongbo Wen ‡, Bosi Zhang §, Hanzhi Liu ‡, Peiran Wang ∗, Yu Feng ‡, Yuan Tian ∗∗University of California, Los Angeles †University of California, San Diego 
+
+> ‡
+
+University of California, Santa Barbara §Riema Labs 
+
+Abstract —Agentic systems increasingly act through third-party skills, allowing model-generated decisions to affect files, com-munication channels, and cyber-physical devices. These skills often include natural-language specifications that define ac-cess permissions, disclosure limits, execution privileges, and required preconditions. Although such specifications describe the intended boundaries of skill behavior, they do not by them-selves provide executable runtime enforcement. Enforcing them raises a contextual granularity challenge: even when a policy is written for a particular task context, a monitor must still decide which events to observe, what state to retain, how far across the execution to reason, and where to intervene. Choosing the wrong granularity can either block benign executions or miss violations that emerge only across multiple actions. Most existing enforcement mechanisms, however, assume a fixed event model or enforcement point. In this work, we present V IGIL , an end-to-end runtime enforcement framework for agentic systems. VIGIL checks an agent’s actual execution trace against behavioral policies from skill specifications, operator-defined constraints, and global rules spanning multiple skills. To make such policies executable, VIGIL introduces a policy language that cap-tures context-specific enforcement requirements over agent-tool events, including temporal dependencies, argument constraints, and value-flow conditions. The language is paired with sym-bolic evaluation rules that translate policies into SMT con-straints over finite traces, allowing V IGIL to detect violations that depend on event order, argument relationships, or cross-call value flow rather than relying on fixed single-call filters. When a violation is detected, V IGIL localizes the responsible invocation and its relevant trace context. On real LLM-agent runs spanning office-document, operational, and engineering tasks, V IGIL detects policy violations with over 95% recall and a false-positive rate below 10%. V IGIL also uncovers real-world skill-specification defects in deployed skill ecosystems, which we reported through responsible disclosure and received acknowledgments from affected vendors, including NVIDIA. 
+
+## 1. Introduction 
+
+Large-language-model (LLM) agents are rapidly transition-ing from conversational assistants to autonomous operators that read private documents, modify repositories, and or-chestrate physical workflows. The capabilities behind this reach are increasingly packaged as skills : reusable bundles of instructions, scripts, and tool interfaces that major ven-dors now ship across assistant [1], developer [2], cloud [3, 4], and enterprise [5] platforms. Each skill carries a strict behavioral specification, stated in natural language: destruc-tive actions demand confirmation, sensitive data must not leak, intermediate artifacts must be validated before release. Yet today’s deployments rest on a dangerous disconnect: these rules are documented, but the runtime merely trusts 
+
+the agent to honor them. Nothing enforces the specification; the agent is left to police itself. This blind trust is already failing in production. Zero-click prompt injections have exfiltrated corporate data from assistants such as Microsoft 365 Copilot [6] and Salesforce Agentforce [7], and an autonomous agent recently ran amok over a researcher’s inbox [8]. These incidents are instances of a broader class of specification violations : executions that use a skill in ways its declared contract forbids [9]. The stealthiest among them are not malformed commands that a syntax check would catch; they hide in the spaces between actions. An agent can execute a sequence of individually authorized, schema-valid tool calls that collectively break the specification. Consider a multi-step perception pipeline, a standard architecture in autonomous driving systems [10], where pol-icy dictates that any intermediate motion estimate must be validated before a downstream skill consumes it. An agent can produce a motion estimate M , skip the validation step, and pass the unvalidated M directly into a mask generator. In isolation, every tool call appears benign, and the final mask conforms to every schema check. Yet it is built on an artifact nobody verified, and it silently misleads the planner that decides how the vehicle moves. The violation is not a single bad action; it is an illicit data flow woven through the execution history. The example is grounded in a real SkillsBench execution [11]: the recorded run is benign-looking at the tool level, but violates the skill’s stated specification when checked as a trace. We return to it as our running example in Section 3. This temporal stealth exposes a structural blind spot in existing defenses. Sandboxes, resource boundaries, and governance layers confine files, credentials, processes, and network access [12, 13], but are blind to artifact-level obligations. Action-level monitors such as AgentSpec [14], Progent [15], Conseca [16], and PCAS [17] gate individual calls, yet lack the memory to enforce rules that span earlier events, value flows, or the identity of artifacts produced steps ago. Information-flow defenses confine what untrusted content may influence, but track taint rather than behavioral 
+
+> arXiv:2606.26524v1 [cs.CR] 25 Jun 2026
+
+obligations [18, 19]. And LLM judges and trajectory analyz-ers [20, 21] see the whole run, but operate offline, without a deterministic verdict that can block a pending invocation in real time. If a violation spans time and artifact identity, no single-call filter can see it. A defense must judge the observed trace in its entirety. Because the agent is untrusted, the specification’s meaning must be grounded independently of the agent’s own reasoning. And because hand-writing stateful monitors for a fast-growing skill ecosystem does not scale, natural-language specifications must be compiled into executable policies rather than encoded by hand. These requirements yield V IGIL , a runtime reference monitor that enforces behavioral specifications over the live execution with no per-skill enforcement code. VIGIL targets finite observed traces and enforces finite-trace safety patterns such as precedence, response, absence, and artifact-binding obligations. It abstracts the agent’s raw tool calls into a finite trace of typed events with named arguments, outputs, and statuses. Crucially, VIGIL does not map arbitrary temporal logic to a solver: its poli-cies are finite-trace safety properties, and once grounded against the observed execution they unfold into quantifier-free satisfiability-modulo-theories (SMT) [22] constraints over trace facts. Each enforcement decision thus reduces to a single SMT query. On an inconsistency, the solver’s unsatisfiable core yields the offending invocation as a con-crete witness (on the perception run above, the step that consumes the unvalidated estimate); V IGIL blocks that in-vocation before its effects land, and the deployment can roll back, replan, or escalate to the user. We evaluate V IGIL on labeled real agent executions and on deployed real-world skill bundles. On 152 labeled runs drawn from SkillsBench [11] and Skill-Inject [23], VIGIL detects the multi-step violations that bypass state-of-the-art action-boundary defenses such as AgentSpec [14] and Progent [15], leading the strongest baseline by 15.8 F1 points (95.8% recall at 89.6% precision); on the pub-lic AgentDojo [24] and SafeAgentBench [25] benchmarks it transfers with no per-benchmark tuning and ranks first on both. On 216 real-world skill-bundle executions from vendors including NVIDIA [5], Databricks [26], and Trail of Bits [27], V IGIL surfaces 34 confirmed policy-violating runs, among them a composition-level specification defect in NVIDIA’s skill ecosystem that we disclosed and the maintainer acknowledged. 
+
+Contributions. We make the following contributions:  
+
+> •
+
+A behavioral policy language with finite-trace tem-poral semantics. The language keeps the shape of an access-control rule but judges the whole execution, with temporal forms for the ordering and history conditions that per-request policies cannot state; its formal seman-tics fixes exactly when a run breaks a policy.  
+
+> •
+
+The V IGIL system: behavioral enforcement by SMT solving. An end-to-end runtime monitor grounds each policy in the run’s typed-event trace and reduces every enforcement decision to one SMT query, whose unsatis-fiable core recovers the offending invocation whenever a policy is broken.  
+
+> •
+
+Empirical evaluation on real agent runs. On 152 labeled runs [11, 23] and 216 real-world skill-bundle executions from NVIDIA [5], Anthropic [28], Trail of Bits [27], and others, V IGIL reaches 95.8% recall at 89.6% precision and surfaces 34 confirmed violations, including an NVIDIA specification defect the maintainer has acknowledged. 
+
+## 2. Background 
+
+VIGIL builds on three established areas: the agent-skill ex-ecution model, reference-monitor theory, and the reduction of finite-trace temporal properties to SMT. We briefly recall each. 
+
+Agent skills. An LLM agent achieves operational reach by invoking skills [1] : packaged capabilities (e.g., file operations, cloud interactions, web access) that expose tools via standardized protocols such as MCP [29]. These skills typically ship with natural-language documentation defining tool schemas, permission boundaries, and usage constraints. These documents constitute the skill’s behavioral specifi-cation : the contract detailing what the agent is allowed to do and what preconditions must hold before sensitive effects occur. At runtime, the agent sequentially selects tools, supplies arguments, and consumes results, producing a finite sequence of tool calls known as the execution . Cru-cially, while the hosting environment can passively observe this execution, neither the agent driving the calls nor the unstructured inputs steering it can be trusted to adhere to the specification faithfully. 
+
+Reference monitors. The principled mechanism to con-strain untrusted operations is a reference monitor : a trusted, unbypassable component that mediates security-relevant events and aborts any that violate a policy. Schneider’s seminal characterization establishes the theoretical limits of what such a monitor can enforce: specifically, safety properties recognizable by a security automaton observ-ing the execution stream [30]. Later runtime-enforcement paradigms extend this response beyond mere halting [31]. VIGIL instantiates a reference monitor in this lineage, lifted from individual actions to whole-trace temporal policies. 
+
+Temporal properties and SMT. The behavioral constraints dictated by skill specifications naturally manifest as tem-poral safety properties over the execution: an action is permitted only if preceded by a specific guard, an obli-gation must be satisfied before an artifact’s release, and forbidden data flows must never occur. These map directly to the precedence , response , and absence patterns well-established in finite-state verification [32], interpreted over finite traces [33]. Such properties can be decided by re-duction to Satisfiability Modulo Theories (SMT) [34]: while arbitrary temporal logic over infinite paths cannot be directly resolved by a solver, on a finite recorded trace a safety property unfolds into a quantifier-free ground formula. Any violation then manifests as an inconsistency with the trace’s Requirement Formalization R0 The execution must use the task-specified sampling rate, fps = 6 . φR0 ≜ □ (sampleRate (v) ⇒ v = 6) 
+
+R1 JSON and CSR artifacts must pass output validation before hand-off. φR1 ≜ □ (handoff ⇒ ♢−validOutput )
+
+R2 Dynamic masks must be produced only after global motion compensation. φR2 ≜ □ (mask ⇒ ♢−globalAlign )
+
+R3 A validation-required artifact must be validated before downstream consumption. φR3 ≜ □ (reqVal (x) ∧ consume (x) ⇒ ♢−valid (x)) 
+
+(a) Requirements and their formalization as temporal safety properties Input video /    
+
+> dashcam frames
+> S1: sampling -and -indexing
+> 1
+> 2
+> 3
+> Read video metadata
+> Sample at fps = 6
+> Emit aligned frame pairs
+> S2: egomotion -estimation
+> 1
+> 2
+> 3
+> Extract features
+> Estimate optical flow
+> Fit transform M with RANSAC
+> M
+> Camera -motion
+> transform M
+> S3: dyn -object -masks
+> 1
+> 2
+> 3
+> Warp previous frame using M
+> Compute absdiff
+> Threshold + Morphology
+> 4Emit CSR mask
+> S4: output -validation
+> 1
+> 2
+> 3
+> Check instruction
+> Check CSR format
+> Release artifact
+> CSR mask
+> Semantically invalid mask
+> Mask produced from
+> unchecked transform M Released Artifact
+
+(b) Skill interaction [e1 ] load_video (input.mp4)            
+
+> [e2 ]emit_pairs(prev, curr, fps=6)
+> [e3] estimate_M(M, inlier=0.11, det=0.99)
+> [e4 ]consume(M)
+> [e5 ]warp (prev_frame, M)
+> [e6 ]emit_mask(cov=0.994)
+> [e7 ]validate_output (mask)
+> S1: sampling -and -indexing
+> S2 :egomotion -estimation
+> S3 :dyn -object -masks
+> S4 :output -validation
+
+𝑅 ! satisfied 
+
+𝑅 # satisfied 
+
+𝑅 $ satisfied 
+
+𝑅 % unsatisfied    
+
+> [e8 ]release_artifact (mask)
+
+(c) Violating trajectory 
+
+Figure 1. Autonomous-driving perception example: (a) the requirements and their formalization, (b) skill interaction, and (c) a violating trajectory. In (a), □ reads “always” and ≜ “defined as”; ♢− (“at some earlier point”) and ♢+ (“at some later point”) are our past- and future-directed shorthands for the standard eventually operator ♢ over finite traces. facts, and the solver’s unsatisfiable core yields a precise, localized witness naming the events at fault [35]. This reduction underlies V IGIL ’s decision procedure. 
+
+## 3. Overview 
+
+This section walks through a concrete run to show how a trace-level violation arises and how V IGIL catches it at runtime. 
+
+3.1. Motivating Example 
+
+We ground the problem in a single execution in which every step looks correct and the outcome is unsafe. 
+
+The scenario. Consider a critical autonomous-driving per-ception pipeline that processes dashcam video to generate moving-object masks. This is a highly safety-relevant work-flow: the masks feed directly into the vehicle’s planning stack, and any pedestrian or vehicle they mislabel as static background is an obstacle the planner will fail to avoid. Because the camera itself moves with the vehicle, the agent must first estimate the camera’s own motion (egomotion) and compensate for it; the motion that remains reveals the independently moving objects. Figure 1 illustrates this scenario: the behavioral require-ments (a), the four perception skills coordinating over shared artifacts (b), and an execution trajectory whose individually benign actions hide a trace-level violation (c). The agent first invokes sampling-and-indexing at 
+
+fps = 6 , satisfying the task’s sampling rate invariant (R0). Next, it invokes egomotion-estimation , which tracks vi-sual features and emits an intermediate camera-motion trans-form artifact, M. The downstream dyn-object-masks skill consumes M to warp the previous frame, isolate dynamic differences, and output the final mask; because the mask is computed only after this motion compensation, the order-ing requirement (R2) is met. Finally, output-validation 
+
+runs a schema checker on the generated mask before hand-off, fulfilling the requirement to validate outputs before release (R1). However, the pipeline harbors a fatal flaw involving R3. The global composition policy demands that any intermedi-ate artifact requiring validation must be explicitly validated 
+
+before a downstream skill consumes it. In the violating trajectory (Figure 1c), the upstream skill produces M, and the downstream skill consumes that exact same M. Yet, no event validates M in between. The consequence is insidious: the final mask satisfies every JSON schema check, so the system accepts the output as a success. But because it is built upon an unchecked motion estimate M, the mask is semantically wrong, and the planner inherits the error. The violation leaves no trace in any single command. It is woven into the negative space of VIGIL           
+
+> agent t1t2pending t3· · ·
+> 1. Abstract Trace
+> 2. Ground Policy
+> 3. SMT Check
+> spec D
+> Safe →Execute
+> Unsafe →Block (+ witness)
+> agent workflow (untrusted trace prefix)
+> Intervention: Rollback/Replan/Halt
+
+Figure 2. V IGIL ’s end-to-end lifecycle: each pending invo-cation is checked against the trace prefix; an unsafe verdict blocks it and returns a localized witness. the execution history: a critical validation event that simply never happened. 
+
+The challenges. This temporal stealth exposes why tra-ditional, single-call defenses fail: the violation exists in the semantic gap between an abstract human rule and the messy reality of an agent’s execution trace. Bridging this gap introduces three fundamental challenges. 
+
+C1: Contextual specification. The requirement “validate an artifact before consumption” (R3) does not dictate a fixed API call: in this run the artifact happens to be M, the producer is egomotion-estimation , and the consumer is dyn-object-masks ; in another run all three differ. A stateless monitor cannot enforce a rule that must reshape itself around what the agent did three steps ago. 
+
+C2: Policy semantics from raw execution. Even with the policy contextualized, raw execution logs are semantically opaque. A command writing a matrix to disk is raw data; the monitor must elevate it to the policy-level fact that M was 
+
+produced , and must recognize that the final CSR schema checker validates the mask, not the intermediate M. Chaotic tool calls must become a typed, factual history. 
+
+C3: Agent-independent enforcement. An agent focused on finishing the task can conflate the final CSR validation with the validation M requires, convincing itself that R3 is satisfied. The agent is also the very entity under attack (e.g., via prompt injection), so its interpretation of the rules is untrusted: the runtime needs an independent authority that evaluates the trace deterministically. 
+
+3.2. V IGIL : Trace-Grounded Enforcement 
+
+VIGIL resolves these challenges by operating as an end-to-end runtime reference monitor. The key insight driving its design, and the thread connecting the solutions to C1, C2, and C3, is the strict separation of a behavioral specifica-tion’s generic meaning from its run-specific instantiation. VIGIL achieves this by grounding abstract specification terms to concrete artifacts, preserving cross-call identity through value bindings, and checking finite-trace temporal obligations before allowing any pending action to proceed. Figure 2 illustrates this architecture. When the untrusted agent initiates a pending tool invocation (e.g., the mask generation step), the runtime intercepts it and performs a deterministic, four-step verification lifecycle: 
+
+1. Trace Abstraction: A trusted collector provides the 
+
+trace prefix (the sequence of all actions taken so far). VIGIL parses these raw tool calls into strongly typed events, recovering the data flow and artifact identities (e.g., tracking the specific transform M). 
+
+2. Policy Grounding: The abstract, natural-language be-havioral specification is instantiated against these con-crete trace facts. The contextual rule “validate before consumption” dynamically becomes an exact, executable constraint over the artifact M.
+
+3. SMT Check: VIGIL formulates the pending invoca-tion and the grounded policy as a Satisfiability Modulo Theories (SMT) query, deciding whether allowing the pending action would break the execution’s temporal contract. 
+
+4. Intervention: If the solver’s verdict is safe , the action executes. If unsafe , V IGIL blocks the invocation. The solver’s unsatisfiable core extracts a localized witness 
+
+(here, that M was consumed without validation), allowing the deployment environment to trigger a rollback, replan the workflow, or escalate to a human. The following sections formalize this lifecycle. Section 4 details how raw executions are abstracted into trace facts (C2). Section 5 then defines the behavioral policy language (C1) and the agent-independent SMT reduction with witness localization (C3). 
+
+3.3. Threat Model 
+
+VIGIL defends a user who delegates work to an agent that invokes third-party skills, each expected to stay within its declared specification. The adversary controls skill content and any document the agent reads, and plants a prompt injection that steers an otherwise-benign skill outside that scope, to exfiltrate data, delete files, or escalate privilege. The agent and the skill code it runs are therefore untrusted: the agent is the very component the attacker subverts. VIGIL sits outside this boundary. It observes the exe-cution through a trusted collector that records the agent’s tool calls in a sandbox, and decides policies with a trusted SMT solver over an operator-authored specification. The collector is assumed complete: behavior that never surfaces as a tool call, such as computation inside an opaque script, lies outside the recorded trace and outside V IGIL ’s view. 
+
+3.4. Problem Statement 
+
+With the trust boundary fixed, the problem V IGIL decides can be stated. An agent run is given as a finite trace τ of its tool-call events, in the order they occurred; the behavioral requirements of its skill specification are given as a policy 
+
+P over that trace. The trace records what the run did, and the policy states what it must do, with rules on the order of events and on the values that flow between them. ABSTRACT        
+
+> VERIFY
+> COMPILE
+> execution Lspecification D
+> safe
+> unsafe
+> offending event(s)
+> facts JτK
+> signature Σ
+> policy P
+> VIGIL
+
+Figure 3. The V IGIL framework: an execution L and spec-ification D become a verdict, safe (τ |= P ) or unsafe with the offending statements and events. A policy P = {φ1, . . . , φ m} is a finite set of statements ,and the trace must obey every one. We write τ |= φ when the trace satisfies a statement, and τ |= P when it satisfies them all. The checking problem is to decide, given a trace 
+
+τ and a policy P , whether τ |= P . Deployed online, V IGIL 
+
+poses this problem over the trace recorded so far: a failed prohibition or precondition blocks the pending call, and an obligation that waits on a later step is judged when the run ends (Section 6). 
+
+## 4. The V IGIL Framework 
+
+The problem is now fixed: decide whether a trace τ satisfies a policy P . Neither input arrives in that form: an execution is a stream of tool calls of many shapes, and its requirements begin as natural language naming different objects and steps from one execution to the next. V IGIL closes both gaps with a single idea: read everything the check needs off the run itself. Figure 3 lays out the three stages over two inputs: the agent’s execution L and the specification D. A BSTRACT 
+
+reads the execution once and produces the two objects the later stages share: the fact base Jτ K records what the run did, and the signature Σ collects the actions, argument names, and values the run exhibited. C OMPILE then turns the spec-ification into a policy P phrased in that same vocabulary, so every requirement is anchored to symbols the run actually produced. Finally, V ERIFY tests each statement of P against 
+
+Jτ K and reports the run safe when all hold, or unsafe with the offending events. The framework thus rests on two components: an ab-straction that makes the behavior checkable, and a policy language in which requirements are stated and decided. Section 4.1 states the procedure; the rest of this section develops the abstraction, and Section 5 the language. 
+
+4.1. Algorithm Overview 
+
+Algorithm 1 makes the procedure precise: two preprocessing stages, then a loop that puts the compiled policy through the solver one statement at a time. Reading it line by line fixes 
+
+Algorithm 1 VIGIL : trace-grounded decision of τ |= P .                                                                     
+
+> 1: procedure VIGIL (L, D )
+> 2: input: execution L, specification D
+> 3: output: safe , or unsafe with witnesses W
+> 4: (Σ ,JτK)←ABSTRACT (L)
+> 5: P←COMPILE (D, Σ) ▷policy over Σ
+> 6: W←∅
+> 7: for each φ∈Pdo
+> 8: Rφ←encode (φ, Σ) ▷to SMT formula
+> 9: if unsat (JτK∧ R φ)then ▷ τ ̸|=φ
+> 10: W←W∪ { (φ, loc( φ)) }▷localize
+> 11: if W=∅then return (safe ,∅)▷ τ |=P
+> 12: else return (unsafe ,W)▷ τ ̸|=P
+
+what each stage must deliver; the sections that follow fill in the details. Lines 4–5 are the two preprocessing stages of Figure 3: ABSTRACT (line 4) yields the signature Σ and the fact base 
+
+Jτ K, and C OMPILE (line 5) phrases the policy P in Σ.Lines 6–10 verify the policy one statement at a time; line 6 starts from an empty witness set W . For each statement φ, line 8 encodes it into its requirement Rφ:the formula that holds exactly when the trace complies. Line 9 then puts a single question to the solver: do the facts refute the requirement? If unsat (Jτ K ∧ R φ), the recorded run breaks φ; otherwise it meets it. On a violation, line 10 localizes the offending events as loc( φ), read from the solver’s unsatisfiable core, and records the pair (φ, loc( φ)) ;because statements are checked independently, every witness is tied to the one statement that failed. Lines 11–12 return the verdict, and with it the answer to the checking problem: safe when W is empty (every statement held, τ |= P ), and unsafe otherwise. W reports both the broken statements and where they broke. 
+
+4.2. From Calls to Checkable Facts 
+
+We now develop the framework’s first component: the ab-straction computed by A BSTRACT . A run arrives as nothing more than a stream of tool calls. The abstraction turns it into the object the check needs: a typed, ordered trace of what the run did, and a closed-world account of what a policy may say about it. Both are read off the run itself, so they are fixed by the execution rather than declared in advance. 
+
+Typed events. A run’s calls come in many shapes: the same file read may arrive as a shell command, as a dedicated tool call, or as one field of a larger request, and each spells its arguments differently. A policy should turn on none of this, since it speaks of reading a file , not of any one syntax for it. ABSTRACT therefore collapses every call to a single typed 
+
+event , the record of the four things a policy can name, 
+
+e = a(e), e[·], s(e), o(e) :
+
+its action a(e), a partial map e[·] sending each argument name k ∈ dom( e) to its value e[k], a status s(e) ∈ {⊤ , ⊥} 
+
+(success or error), and a bounded observation o(e) of the output. Two choices in this record matter for policies. First, arguments are keyed by name rather than position, so a policy can name the file a step reads without knowing how the call was written. Second, the output is kept only as a bounded observation; that suffices to test o(e) ≈ p against a pattern p without asking the solver to reason over unbounded data. Because the same typed events describe every skill, one decision procedure checks them all, with no per-skill code. 
+
+The ordered trace. The violations we care about turn on 
+
+when things happen: a step that must run before another, a value used after the point where it should have been checked. A BSTRACT therefore keeps the events in execution order, as a trace 
+
+τ = e1 ≺ e2 ≺ · · · ,
+
+and we write e′ ≻ e for e ≺ e′. The typed record and the order together capture what ran, with what arguments, and in what sequence. One piece remains: fixing what a policy may say about the run, and the facts it is judged on. 
+
+Closed-world grounding. A requirement also turns on what did not happen: a prohibition holds only if the for-bidden step never occurred, and a precondition is breached exactly when the guard is missing. Deciding an absence is sound only if the record is complete. V IGIL therefore treats the trace as a closed world. The run fixes two things: the vocabulary a policy may use, which keeps every condition finite, and the complete set of facts the policy is judged against, which makes absences decisive. 
+
+Definition 1 (Signature and facts) . Let E be the events of τ .The signature Σ = ( A, K, V ) collects the actions, argument names, and values the run exhibits, 
+
+A = { a(e) | e ∈ E }, K = S 
+
+> e∈E
+
+dom( e),V = { e[k] | e ∈ E ∧ k ∈ dom( e) } ∪ { o(e) | e ∈ E },
+
+and the fact base Jτ K reads the trace out field by field as a set of ground atoms, 
+
+Jτ K = [
+
+> e∈E
+
+
+
+{ a(e), s (e), o (e) } ∪ { e[k] | k ∈ dom( e) }
+
+
+
+∪ { ei ≺ ej | i < j },
+
+where each field stands for the equality fixing its value, for instance a(e) = warpAffine .The fact base is complete for the run: an atom missing from Jτ K records something the run did not do, so verdicts that rest on absences are sound. Its constants are the run’s concrete literals, so distinct names or values never coincide, and a condition on an argument an event does not carry is false. Every atom names the event it records, so a violation found over these facts traces back to the exact events at fault. 
+
+Example 1 (Abstracting the running example) . For the dashcam run the signature is small: 
+
+A ⊇ { estimate_M , warpAffine , validate_output },
+
+with argument names like transform , target , and file 
+
+in K, and the values that pass between steps in V . One of those values is the fitted transform M: the egomotion step e3
+
+records it as output, and the warp step e5 takes it as input, so among the few dozen atoms of Jτ K are 
+
+o(e3) = M, e5[transform ] = M, e3 ≺ e5.
+
+Requirement R3 (validate an artifact before consuming it) is now a question of order: is there a validating event for 
+
+M earlier than e5? The closed world lets a verdict rest on absences: the run performs no network call, so Jτ K contains no such atom, and a prohibition on network egress is judged satisfied by that absence, not by assumption. With the run reduced to this fact base and signature, the only remaining piece is the policy checked against them; Section 5 defines that language and its reduction to an SMT query. 
+
+## 5. Behavioral Policy Language 
+
+This section develops the language in which the recorded behavior is checked: a policy lifts the familiar access-control rule from a single request to the whole trace. We give its syntax (Section 5.1), the compilation of statements to requirements over the fact base (Section 5.2), and the sat-isfiability check that decides them with localized witnesses (Section 5.3). 
+
+5.1. Stating Policies 
+
+Behavioral requirements vary in wording, but they place three recurring demands on a rule. It has to pick out the steps it concerns; it has to constrain their order , since an obligation typically demands one step before another; and it often has to tie two steps to the same value, so that a guard counts only when it covered what a later step consumes. Figure 4 gives a language with one construct for each: a 
+
+pattern selects single events, a temporal form relates one or two patterns by their order, and a variable x ties two patterns to the same value. A statement is one form applied to its patterns. In access-control terms, a statement is a rule over an action, a resource, and a condition, but its only effect is to flag a violation, never to allow or deny. We take the constructs in turn and close with a fallback for requirements the forms do not cover. 
+
+Patterns. A pattern selects the events a statement concerns. It is a conjunction of conditions on one event:  
+
+> •
+
+a ∈ α constrains the action : the event is one of the kinds of step in α. 
+
+> •
+
+k ∈ S and k ∼ p constrain an argument : the value under name k lies in the set S, or matches the text pattern p. 
+
+> •
+
+k = x pins an argument to the variable x; a statement uses x once in each of its two patterns.  
+
+> •
+
+o ∼ p constrains the output : the recorded output matches the text pattern p. 
+
+> •
+
+s = ⊤ and s = ⊥ constrain the status : the step succeeded or failed. P ::= { φ1, . . . , φ m } policy                                                                                     
+
+> φ::= abs (ψ)|prec (ψ, ψ ′)|resp (ψ, ψ ′)statement
+> |bresp ℓ(ψ, ψ ′)|rslv (ψ, ψ ′)
+> |until (ψ, ψ ′, ψ b)|□ΘΘ::= ψ| ¬ Θ|Θ∧Θ|♢−Θ|♢+Θtemporal body
+> ψ::= a∈α|k∈S|k∼p|k=xpattern
+> |s=⊤ | s=⊥ | o∼p|ψ∧ψ
+> a∈A(action), s∈ {⊤ ,⊥} (status), o∈V(output),
+> k∈K(argument name; e[k]its value), xa value variable,
+> α⊆A,S⊆V(sets of actions and values), pa text pattern, ℓa bound.
+
+Figure 4. The V IGIL policy language. Its symbols are drawn from the run’s signature Σ = ( A, K, V ): the actions, argu-ment names, and values the run exhibits.  
+
+> •
+
+ψ ∧ ψ′ combines conditions. A pattern’s symbols come from the run’s signature Σ = (A, K, V ): α ⊆ A is a set of the run’s actions, S ⊆ V aset of its values, and k ∈ K one of its argument names. A pattern can therefore name only what the run exhibits; a term of the specification with no counterpart in Σ denotes the empty set, and a condition on it is false. The matching 
+
+∼ is plain text matching; it is evaluated outside the solver, and the solver sees only its ground outcomes e[k] ≈ p.
+
+Example 2 (Patterns on the running example) . R3 governs the steps that consume a transform; on the dashcam run these are the frame warps. One conjunction selects them: 
+
+ψc = ( a ∈ { warpAffine }) ∧ (s = ⊤).
+
+It matches every warp step that succeeded. A second pattern selects the hand-off of a mask: 
+
+ψh = ( a ∈ { release_artifact })∧(file ∼ "*.csr" ),
+
+where ∼ compares the argument’s text against the pattern, so 
+
+ψh covers every CSR file the run might name ( out_0.csr ,
+
+> out_1.csr
+
+, . . . ) without enumerating them. 
+
+Temporal forms. A pattern selects events; the temporal form constrains their order. The six forms name the ordering and history conditions that recur in behavioral requirements:  
+
+> •
+
+abs (ψ) demands the absence of ψ: a flat prohibition.  
+
+> •
+
+prec (ψ, ψ ′) gives ψ′ precedence : ψ is allowed only after 
+
+ψ′ has happened (the shape of a precondition).  
+
+> •
+
+resp (ψ, ψ ′) is the dual: it requires a later response ψ′ to every ψ (an obligation).  
+
+> •
+
+bresp ℓ(ψ, ψ ′) bounds that response to the next ℓ events.  
+
+> •
+
+rslv (ψ, ψ ′) requires every ψ to be resolved by the end of the run: only the finally delivered state is judged, and a later ψ supersedes an earlier one.  
+
+> •
+
+until (ψ, ψ ′, ψ b) guards an interval: after a trigger ψ,the bad pattern ψb is forbidden until a resolving ψ′
+
+intervenes. 
+
+Example 3 (Forms of the running example) . The dashcam requirements translate form by form. R2 requires masks only after global motion compensation; it is a precedence between two action patterns: 
+
+prec   a ∈ { emit_mask }, a ∈ { warpAffine } .
+
+R1 requires validation before hand-off; it is a precedence on the hand-off pattern ψh above: 
+
+prec   ψh, a ∈ { validate_output } .
+
+R0 fixes the sampling rate; it is the absence ( abs ) of any off-specification rate. Finally, R3 requires a validation-required artifact to be validated before it is consumed; it ties two steps to the same value: 
+
+prec   ψc ∧ (transform = x), ψv ∧ (target = x) ,
+
+where ψv = (a ∈ {validate_output }) matches the validating steps. ψc selects the warp steps, transform = x
+
+names the value a warp consumes, and target = x requires the validated value to be that same one. On the dashcam run 
+
+x is the transform M: the statement is broken exactly when a warp consumes M with no earlier validate of M.
+
+Beyond the six forms. For a requirement that none of the forms expresses, a statement applies □ (“always”) directly to a temporal body Θ: patterns combined with ¬, ∧, ♢−
+
+(“at some earlier point”), and ♢+ (“at some later point”); the two diamonds are past- and future-directed shorthands for the standard eventually operator ♢. Appendix E writes out this reading for each preset form. 
+
+5.2. Compiling Statements into Requirements 
+
+A statement says what must hold; to test it against a trace, we need a formula the solver can check. Compilation is syntax-directed, from a policy down to its patterns: V IGIL 
+
+compiles each statement φ of the policy to its requirement 
+
+Rφ through the judgment 
+
+Σ ⊢ φ ⇝ Rφ,
+
+read “under signature Σ, statement φ compiles to require-ment Rφ”, also written encode (φ, Σ) ; Figure 5 gives the rules. The figure has three parts. At the top, P OLICY conjoins the statements’ requirements: a policy holds exactly when every statement does. The remaining rules build Rφ, one per form plus F ALLBACK , and they share one shape: a guarded quantification over the events. The outer conjunc-tion ranges over all events, and for an event matching ψ
+
+the body requires a matching ψ′ at the right position in 
+
+≺ (earlier for prec , later for resp , within the next ℓ events for bresp , written e ≺ℓ e′, and so on). The foot interprets the leaves: each pattern denotes a one-event predicate ψ(e),and each temporal-body operator unfolds into the same finite quantification. A requirement is therefore one condition per event, conjoined; writing Rφ(e) for the condition on event e,
+
+Rφ = ^
+
+> e∈E
+
+Rφ(e).
+
+For prec , Rφ(e) reads: if e matches ψ, then some earlier event matches ψ′; when the two patterns share the variable 
+
+x, each disjunct of a binary form gains the conjunct e′[k′] = Σ ⊢ φi ⇝ Rφi (1 ≤ i ≤ m)Σ ⊢ { φ1, . . . , φ m} ⇝ V                                                                                                                                              
+
+> iRφi
+> (POLICY )Rφ=V
+> e¬ψ(e)Σ⊢abs (ψ)⇝Rφ
+> (ABS )Rφ=V
+> eΘ( e)Σ⊢□Θ⇝Rφ
+> (FALLBACK )
+> Rφ=V
+> e
+>  ψ(e)⇒W
+> e′≺eψ′(e′)
+> Σ⊢prec (ψ, ψ ′)⇝Rφ
+> (PREC )Rφ=V
+> e
+>  ψ(e)⇒W
+> e′≻eψ′(e′)
+> Σ⊢resp (ψ, ψ ′)⇝Rφ
+> (RESP )
+> Rφ=V
+> e
+>  ψ(e)⇒W
+> e≺ℓe′ψ′(e′)
+> Σ⊢bresp ℓ(ψ, ψ ′)⇝Rφ
+> (BR ESP )Rφ=V
+> e
+>  ψ(e)⇒ψ′(e)∨W
+> e′≻e(ψ′(e′)∨ψ(e′)) 
+> Σ⊢rslv (ψ, ψ ′)⇝Rφ
+> (RSLV )
+> Rφ=V
+> e
+>  ψ(e)⇒V
+> eb≻e(ψb(eb)⇒W
+> e≺ec≺ebψ′(ec)) 
+> Σ⊢until (ψ, ψ ′, ψ b)⇝Rφ
+> (UNTIL )
+> and each pattern ψdenotes a predicate ψ(e)on one event:
+> (a∈α)( e)≜a(e)∈α(k∈S)( e)≜e[k]∈S(k∼p)( e)≜e[k]≈p(s=⊤)( e)≜s(e) = ⊤
+> (s=⊥)( e)≜s(e) = ⊥(o∼p)( e)≜o(e)≈p(ψ∧ψ′)( e)≜ψ(e)∧ψ′(e)
+> and a temporal body Θunfolds by the same finite quantification (a bare pattern ψis read by its predicate above):
+> (¬Θ)( e)≜¬Θ( e)(Θ ∧Θ′)( e)≜Θ( e)∧Θ′(e)(♢−Θ)( e)≜W
+> e′≺eΘ( e′)(♢+Θ)( e)≜W
+> e′≻eΘ( e′)
+
+Figure 5. Symbolic compilation of the policy language, top down: a policy to the conjunction of its statements (P OLICY ), each statement to a requirement Rφ by one rule per form (with F ALLBACK for a bare temporal body), and each pattern and temporal-body operator to a one-event predicate (foot). 
+
+e[k], so only the events that agree count. Every quantifier ranges over the finite event set E, and every set is drawn from the finite signature, so each Rφ is a ground, quantifier-free formula over Jτ K, decided by an ordinary solver query. 
+
+5.3. Deciding Requirements with Witnesses 
+
+Checking a statement is a single solver query: the recorded facts either are consistent with the requirement or refute it, and on a refutation the offending events are read off the solver’s unsatisfiable core. 
+
+Encoding. VIGIL asserts the fact base Jτ K together with the requirement, one condition Rφ(e) per event, and asks whether the facts refute the requirement: 
+
+unsat  Jτ K ∧ R φ
+
+ ⇔ τ̸ |= φ. 
+
+The equivalence holds because the fact base is complete: the facts fix everything the run did, so they contradict Rφ
+
+exactly when the run breaks one of its conditions. Because 
+
+Jτ K pins down a finite structure and Rφ is quantifier-free over it, the query is decidable. The checking problem thus reduces statement by statement, 
+
+τ̸ |= P ⇔ _
+
+> φ∈P
+
+unsat  Jτ K ∧ R φ
+
+,
+
+and the goal fixed by the problem statement is decided by m
+
+such queries over one fact base: the run satisfies P exactly when no query is unsatisfiable. 
+
+Localization. An inconsistency establishes that the run is unsafe, but an operator acting on the verdict also needs to know where it broke. The solver reports more than unsat .
+
+muc returns a minimal unsatisfiable core : a smallest set of asserted conditions that already contradicts the facts. Each condition in the core names the event it constrains, so localization is a lookup rather than a search: 
+
+loc( φ) = { e ∈ E | R φ(e) ∈ muc (Jτ K ∧ R φ) },
+
+and one solver query yields the verdict and its core together. For the binary forms, the core names an event matching ψ
+
+whose required ψ′ is missing; for abs it names an event exhibiting ψ, and for until it names the trigger of the broken interval. 
+
+Example 4 (Localizing the violation) . On the violating dashcam run, the warp step e5 consumes the transform M.The condition that R3’s requirement places on e5 asks for an earlier validate of the value it consumes: 
+
+Rφ(e5) = ψc(e5) ⇒
+
+_
+
+> e′≺e5
+
+ ψv (e′) ∧ e′[target ] = e5[transform ].
+
+The facts make ψc(e5) true and fix e5[transform ] = M, but no event before e5 validates M, so every disjunct is false: the facts and Rφ(e5) cannot hold together, and the query is unsatisfiable. Every other condition is consistent with the facts, so muc returns the singleton {R φ(e5)}, and the lookup gives loc( φ) = {e5}. V IGIL surfaces e5 as the action to block. 
+
+## 6. Implementation 
+
+We implement V IGIL in roughly 7,000 lines of Python 3.12 as a prototype of the framework in Figure 3. The im-plementation uses Z3 as the backend SMT solver and 
+
+claude-opus-4-6 for the specification-compilation step (Appendix C), with fast-mode . The language model is used only to draft statements in the policy language; all grounding, validation, SMT encoding, and safe/unsafe de-cisions are performed by deterministic components. Two implementation choices keep the language model contained. First, in C OMPILE the model may only use the vocabulary that A BSTRACT recovers from the run, and a statement it proposes is accepted only after validation against the observed signature; clauses that cannot be grounded are reported as unsupported rather than silently kept. Second, VERIFY invokes Z3 on each grounded statement indepen-dently and reports a witness per statement, so localiza-tion stays tied to the statement that failed. For argument grounding, C OMPILE can only reference parameter roles that ABSTRACT binds to concrete trace events. V IGIL grounds these roles from a small catalog of common POSIX and developer-tool commands, AST-based recovery for case-shipped Python, shell, and JavaScript scripts, and optional  
+
+> -help
+
+probing for external CLIs. -help probing is opt-in because it runs the target binary. 
+
+Deployment. VIGIL runs outside the agent, in a sandboxed or mediated runtime that records the execution stream and can pause policy-relevant operations before their effects are released; this fits agent workflows that already mediate tool execution through a workspace, sandbox, or gateway. At each enforcement point, the runtime presents V IGIL with the trace so far and the pending operation. Prohibitions and preconditions are decided on the trace so far, since a witnessed violation cannot be undone; open obligations are judged when the run ends. 
+
+Enforcement actions. On a violating pending invocation, the runtime’s pre-execution hook denies the call and returns the localized witness (Claude Code’s pre-tool-use deny, or an MCP gateway holding a request); a blocked call has no effects to undo. The deployment then halts the run, asks for user approval, or rolls the sandbox back to its last check-point and lets the agent replan: V IGIL decides whether the pending operation is safe, and the deployment chooses how to proceed. In the real-world study (Section 7.5), external CLIs are replaced by logging stubs, so verdicts gate the trace replay rather than live effects. 
+
+## 7. Evaluation 
+
+In this section, we present the design and results of the evaluation for answering the following research questions:  
+
+> •
+
+RQ1 (Effectiveness). How effectively does V IGIL detect specification violations in real LLM-agent trajectories without flagging benign workloads, compared with state-of-the-art runtime defenses?  
+
+> •
+
+RQ2 (Ablation). What is the contribution of V IGIL ’s individual components?  
+
+> •
+
+RQ3 (Runtime Overhead). What is the per-case cost of V IGIL , and how does it scale with the length of the trajectory?  
+
+> •
+
+RQ4 (Real-world Study). Does V IGIL detect and block policy violations in real-world skill deployments? 
+
+7.1. Experimental Setup 
+
+Our evaluation rests on a labeled corpus of real agent execu-tions, each paired with its skill specification and a ground-truth violation label, against which we compare V IGIL with a set of runtime-enforcement baselines. 
+
+Benchmark. We construct the main evaluation set from SkillsBench [11] and Skill-Inject [23], combining them into a final labeled evaluation set, denoted SB+SI. This set contains 152 executions: 72 policy-violating trajectories and 80 benign trajectories. We use AgentDojo [24] and SafeAgentBench [25] only for additional cross-benchmark comparisons. Further details on labeling are in Appendix A.  
+
+> •
+
+SkillsBench. SkillsBench provides over 4,000 task-performance trajectories. We use an LLM to screen for trajectories whose skill documentation states an en-forceable behavioral policy and whose execution appears relevant to that policy. We then manually inspect each candidate to label whether it violates or follows the policy.  
+
+> •
+
+Skill-Inject. It does not provide raw execution tra-jectories, we replay its tasks in Claude Code using  
+
+> claude-sonnet-4-6
+
+with bypassPermissions , then record the resulting agent executions. From these re-played executions, we identify and label trajectories that violate the behavioral policy stated by the skill and trajectories that do not.  
+
+> •
+
+Additional comparisons. AgentDojo is a dynamic benchmark for prompt-injection attacks and defenses in tool-using LLM agents, and SafeAgentBench evaluates safe task planning in embodied LLM agents. We use both as cross-benchmark comparisons under the set-tings used by the corresponding baselines. For Agent-Dojo, we use the published trajectories generated by 
+
+> gpt-4o-2024-05-13
+
+.
+
+Baselines. We select three direct baselines to represent the prevailing paradigms in agent policy enforcement:  
+
+> •
+
+AgentSpec [14] represents action-boundary enforce-ment . Its rule language can state temporal triggers, but each rule is evaluated when its trigger action is proposed, so the decision sees one pending action at a time and cannot reach evidence that lives elsewhere in the trace, such as artifact identity or long-range event order.  
+
+> •
+
+Progent [15] similarly represents action-boundary guardrails , compiling policies into per-tool-call permis-sion allowlists.  
+
+> •
+
+LLM-as-judge uses claude-opus-4-6 as a model-only whole-trace judge. It observes the full trace context, but operates without deterministic formal semantics and cannot produce a reliable, localized witness for runtime blocking. Together, these baselines allow us to compare V IGIL ’s 
+
+trace-grounded approach against both localized and infor-mal enforcement strategies. For AgentSpec and Progent, we count a blocked action as a reported violation; for LLM-as-Table 1. Comparison of V IGIL with other policy-enforcement systems.                                                                                    
+
+> VIGIL AgentSpec Progent LLM-as-judge Benchmark 1Tests TP FP Prec. Rec. F1 TP FP Prec. Rec. F1 TP FP Prec. Rec. F1 TP FP Prec. Rec. F1 SB+SI 152 69 889.6% 95.8% 92.6% 34 12 73.9% 47.2% 57.6% 40 47 46.0% 55.6% 50.3% 48 590.6% 66.7% 76.8% AgentDojo [24] 629 298 35 89.5% 99.3% 94.2% 290 41 87.6% 96.7% 91.9% 285 49 85.3% 95.0% 89.9% 297 34 89.7% 99.0% 94.1% SafeAgentBench [25] 546 234 498.3% 94.4% 96.3% 231 299.1% 93.1% 96.0% N/A 222 41 84.4% 89.5% 86.9%
+> 1AgentDojo and SafeAgentBench rows reuse cases, not native metrics. We score TP, FP, precision, recall, and F1 under our policy-enforcement protocol. Progent is N/A on SafeAgentBench: its release targets tool-call permissions and lacks an embodied-action adapter.
+
+judge, we count a positive judgment as a reported violation (Appendix B). 
+
+Metrics. For violation detection, we report TP, FP, preci-sion, recall, and F1 per system; any reported violation on a benign trace counts as a false positive. For overhead, we report end-to-end latency and stage-level latency. 
+
+Experiment settings. We ran all experiments on a server running Ubuntu 22.04.5 LTS with 16 logical Intel Xeon Gold 5222 CPUs and 125 GiB of RAM. 
+
+7.2. RQ1. Effectiveness 
+
+We evaluate V IGIL , AgentSpec, Progent, and the LLM-as-judge baseline on SB+SI. Each system receives the same specification-derived policy and execution trace, and we score whether it reports a policy violation under its intended enforcement interface. Representative policy categories and formalizations for SB+SI appear in Appendix D. 
+
+Overall results. Table 1 compares V IGIL with the baselines and shows a stark contrast between benchmarks that require trace-level reasoning and those decided by single-call. On our primary target, SB+SI, where violations turn on temporal structure and value binding, V IGIL detects 69 of the 72 violating executions with only 8 false positives on 80 benign runs (92.6% F1). Action-boundary defenses cannot track historical artifacts or prerequisites: AgentSpec and Progent miss about half the violations (57.6% and 50.3% F1). The LLM-as-judge baseline sees the full context and does better (76.8% F1), but still misses 24 temporal violations for lack of formal grounding. V IGIL leads the strongest baseline by 15.8 F1 points. The AgentDojo and SafeAgentBench rows serve as cross-benchmark sanity checks. Their labeled violations are largely visible at a single action boundary (e.g., a prohibited command string), exactly what AgentSpec and Progent are optimized for. AgentDojo also contains semantic prompt-injection conflicts that a strong whole-trace judge such as 
+
+claude-opus-4-6 can often classify directly. Even so, VIGIL holds its own without per-benchmark tuning: it is the strongest system on both SafeAgentBench (96.3% vs 96.0% F1) and AgentDojo (94.2% vs 94.1% F1), albeit by narrow margins. SB+SI remains the setting that measures the trace-level violations V IGIL is built for. These results reflect enforcement granularity. The same 
+
+bash call may be benign or violating depending on the file it targets, an earlier validation, and the artifact it leaves behind;    
+
+> 0510 15
+> AgentSpec
+> LLM-as-judge
+> VIGIL
+> 15 .2
+> 12 .5
+> 5.4
+> Macro balanced enforcement error (%), lower is better
+
+Figure 6. Cross-benchmark balanced enforcement error, macro-averaged over the three benchmark sets. Progent ap-pears only in Table 1, as it does not run on SafeAgentBench. VIGIL improves recall by deciding over grounded events across the full trace rather than at the pending action alone. 
+
+Measuring enforcement reliability. A runtime monitor fails in exactly two ways: it misses a real violation, or it falsely blocks a benign run. Either error can be hidden by accepting more of the other: flag everything and recall is perfect, flag nothing and false alarms vanish. Figure 6 therefore reports the one number that punishes both, the 
+
+balanced enforcement error (BEE): 
+
+BEE = 12
+
+ FNR + FPR ,
+
+where the FNR is the fraction of violating executions a sys-tem misses and the FPR is the fraction of benign executions flagged; BEE is the complement of balanced accuracy. Thus, BEE is how often the monitor gets the call wrong, counting a missed violation and a blocked legitimate run as equally costly. We macro-average over the three benchmark sets so each counts equally. V IGIL attains the lowest macro BEE (5.4%), less than half that of the next best complete baseline: reducing both error types rather than optimizing recall alone. 
+
+Error analysis. The baselines err in different directions. Progent over-blocks benign executions because it turns the policy into a narrow allowlist: SB+SI policies rarely enu-merate every safe command, path, or argument, and all 47 of its false positives are benign calls the allowlist rejects. The LLM-as-judge errs the other way, missing 24 violations. VIGIL avoids both by checking grounded trace events rather than a complete allowlist or an unconstrained model verdict. VIGIL ’s own remaining errors mark two system bound-aries. False negatives mark the boundary of trace ob-servability : policy-relevant evidence can stay hidden inside an opaque utility script. In Figure 7a, the agent invokes 
+
+secure_archive.py ; the script creates an unencrypted ZIP (a no-op zf.setpassword ) and immediately unlink sthe source file. The policy requires an integrity check be-tween write and deletion, but both actions run inside the script body and never surface as trace events. agent invokes       
+
+> secure_archive.py numbers.xlsx recorded as e26
+> open ZIP (no real encryption)
+> zf.setpassword (no-op on write)
+> input_file.unlink()
+> control returns to agent (stdout only) recorded as e27
+> no trace facts recorded for these steps (they live inside the script body)
+
+(a) False negative: secure_archive.py      
+
+> “Bulk modifications to calendar data without explicit user confirmation risk loss of important scheduling information”
+> policy
+> abs (a∈ { Edit } ∧ file_path ∼"*calendar*" )
+> Edit(file_path=".../calendar.ics", old_string="...090000Z", new_string="...120000Z")
+> event
+> the policy statement drops the qualifier “bulk ”
+
+(b) False positive: benign calendar edit Figure 7. V IGIL ’s two error boundaries. (a) A false negative at the boundary of trace observability: the policy-relevant steps run inside the script body and produce no trace facts. (b) A false positive from compilation fidelity: the generated statement drops the qualifier bulk and fires on a benign single-event edit. Table 2. Ablation results on SB+SI (152 cases).                             
+
+> Configuration Prec. Rec. FPR F1 ∆Prec. ∆Rec.
+> VIGIL 89.6% 95.8% 10.0% 92.6% ——w/o Arg. Grounding 78.0% 63.9% 16.2% 70.2% ↓11.6 ↓31.9 w/o Policy Struct. 86.7% 90.3% 12.5% 88.4% ↓2.9 ↓5.5
+
+False positives mark the boundary of compilation fi-delity : the LLM can translate a specification into an overly broad statement or a wrong temporal form. In Figure 7b, the specification limits a rule to bulk calendar modifications, the generated statement drops the qualifier, and the monitor fires on a benign single-event reschedule. In these cases, the error is semantic over-generalization, not a failure to compile. Both boundaries define clear future work: deeper sandbox instrumentation, and stricter compilation prompting. 
+
+Takeaway I. VIGIL detects 69 of 72 real violations at 95.8% recall and 89.6% precision, leading the strongest state-of-the-art baseline by 15.8 F1 points. V IGIL sets a new state of the art for detecting behavioral violations in real agent executions. 
+
+7.3. RQ2. Ablation Study 
+
+We ablate the two structures that make operation under-standing available before solver checking. All variants use the same SB+SI evaluation set, labels, and metrics as RQ1, and each removes one source of structure while leaving the rest of the pipeline unchanged: 1) w/o Argument Grounding removes the grounding of command and script arguments into event fields, so the monitor still observes tool calls but loses which values within an event can be referenced by the policy. 2) w/o Policy Structure removes the structured interme-diate form used when translating natural-language spec-ifications into executable policies, testing whether the compilation step preserves ordering constraints, object identities, and final-state obligations without that. Table 2 reports the ablation results. Removing argument grounding reduces precision by 11.6 percentage points and recall by 31.9 points. Without grounded arguments, C OM - 
+
+> PILE
+
+cannot connect conditions to the values that matter within an event, so the monitor falls back to action-only matches that miss most argument-dependent violations. The missed cases are concentrated in protocols whose violation depends on the meaning of command arguments, such as paths, modes, script targets, payload strings, or target ob-jects. Removing policy structure reduces precision by 2.9 percentage points and recall by 5.5 points. The compiler still produces executable statements, but more often emits broad single-event abs statements that miss temporal/final-state violations or fire on benign payloads that match the generated condition. These misses are concentrated in proto-cols whose natural-language form is not a simple forbidden action, including ordering constraints, prerequisite checks, and final-artifact requirements. Together, the ablations show that V IGIL depends on structured evidence before solver checking: grounded event values and policy structure. 
+
+Takeaway II. Removing argument grounding costs 31.9 recall points; removing policy structure costs another 5.5. Both components contribute decisively: together they provide the operation understanding that powers V IGIL ’s leading accuracy. 
+
+7.4. RQ3. Runtime Overhead 
+
+We measure V IGIL ’s overhead on all SB+SI traces and de-compose end-to-end latency into the three stages in Figure 3. Table 4 shows that V IGIL averages 4.38 s per trace, with COMPILE ’s single LLM call accounting for 92.5%. This cost does not grow with trace length. C OMPILE ’s input is the observed vocabulary of the run, and Figure 8 shows it saturating near 10 KB once the initial events have introduced the run’s tools, argument names, and artifact types; end-to-end runtime therefore stays stable across the full range of trace lengths. For modern AI coding-agent workloads, where standard Bash commands average 4–6 s and tasks run for several minutes [39], a 4-second overhead is well within acceptable limits. More importantly, because the bottleneck is entirely within the LLM translation step rather than the SMT solver, Table 3. Representative real-world findings across deployed skill ecosystems.                             
+
+> Ecosystem Root cause Observed violation Impact
+> Trail of Bits [27] Specification gap : ASan/fuzzer obligation split over skills ASan fuzzing with memory limits enabled Missed crashes NVIDIA [36] Specification gap : Slurm workflow lacks a retry bound Unbounded Slurm GPU resubmissions GPU cost Cloudflare [37] Specification conflict : example violates bundle secret rule Secret passed through shell into wrangler Secret exposure Databricks [26] Agent execution gap : CLI-version gate not propagated Commands ran without CLI-version gate Partial deploy Anthropic [28] Agent execution gap : ignored data_only save warning Workbook saved after data_only=True Formula loss Microsoft Deep Wiki [38] Agent execution gap : ignored “never overwrite” rule Existing AGENTS.md overwritten Context loss
+
+Table 4. Runtime breakdown on SB+SI.           
+
+> ABSTRACT COMPILE VERIFY End-to-end
+> 0.063 s (1.4%) 4.05 s (92.5%) 0.27 s (6.2%) 4.38 s 020 40 60 80
+> Trace events
+> 0
+> 5
+> 10
+> 15
+> Vocabulary (KB)
+> saturates ~10 KB
+
+Figure 8. The vocabulary exposed to C OMPILE saturates, so VIGIL ’s overhead stays stable as traces grow. it is highly optimizable. Deployments can cache compiled policies per skill, utilize faster model serving, or deploy small local distilled models to reduce end-to-end latency, while the determinism of the sub-second V ERIFY path re-mains uncompromised. 
+
+Takeaway III. The online check decides in 0.27 s; 92.5% of the 4.38 s end-to-end cost is one cacheable, optimizable LLM compilation call, and the total plateaus as the trace vocabulary saturates. At agent timescales, VIGIL ’s enforcement is effectively free: a fraction of a single tool call buys a solver-backed verdict on every action. 
+
+7.5. RQ4. Real-world Skill-Bundle Study 
+
+To assess V IGIL in the real world, we evaluate it on skill bundles drawn from deployed ecosystems. We deployed VIGIL over 216 executions sampled across three tiers: default-enabled harness bundles (e.g., Claude Code, Codex); first-party vendor ecosystems (e.g., NVIDIA, Databricks); and widely-used open-source catalogs 1.Across these monitored executions, V IGIL surfaced 34 confirmed, real-world policy-violating runs out of 44 alerts. These violations include both skill-attributed defects, such as missing or conflicting bundle specifications, and agent-      
+
+> 1. Marketplace/catalog bundles are assembled from public market-places [40] where users install multiple third-party skills together.
+
+attributed failures, where the agent does not preserve or en-force a stated skill rule at runtime. We have a responsibility to disclose skill-attributed findings to affected maintainers through available channels. For agent-attributed failures, the skill specification already states the rule; the issue is that the agent runtime does not enforce it. One skill-attributed issue has been acknowledged by NVIDIA. For each bundle, we used the BenchFlow SDK [41] to mount the skill documents in a Docker container and replaced external CLIs with logging stubs. In this replay-safe study, V IGIL identifies the call it would block in a live deployment and outputs the offending witness before the stubbed effect is released. The 34 confirmed violations fall into three recurring patterns: 1) composition-level obligations missing across otherwise coherent skills; 2) persistent policy obligations lost across a task-driven trace; 3) stated skill rules not operationalized during execution. Table 3 separates failure origin: the first three findings expose specification gaps , where skill documents leave obli-gations underspecified or conflicting, while the last three expose agent execution gaps , where specifications state rules but agents fail to enforce them. We examine two in depth. 
+
+Case study 1: composition-level underspecification (Trail of Bits / NVIDIA). The first case concerns a 15-skill fuzzing bundle drawn from Trail of Bits’ open-source testing-handbook skills [27]. The bundle combines 
+
+address-sanitizer , aflpp , and libfuzzer . The rele-vant skill documents state that AddressSanitizer maps, but does not reserve, 16+ TB of virtual address space [42], and instruct agents to disable the corresponding fuzzer memory limit when ASan is enabled: -m none for AFL++ and -rss_limit_mb=0 for libFuzzer. These re-quirements appear under different flag names and mecha-nisms ( RLIMIT_AS for AFL++ and an RSS watchdog for libFuzzer), and the skill documents do not state the cross-skill obligation explicitly. In the probed trace, the agent compiled with -fsanitize=address but invoked both fuzzers without the required memory-limit-disabling flags. This configuration can silently invalidate the campaign. Under a global policy derived from the LLVM AddressSan-itizer warning on memory-limiting tools [43], any fuzzer invocation after an ASan-instrumented compilation must explicitly disable the corresponding fuzzer memory limit. VIGIL localizes the violation to the misconfigured fuzzer invocation. We reported a similar composition-level issue for NVIDIA’s skills, where a missing liveness specification caused repeated Slurm GPU submissions after evaluation failures; NVIDIA acknowledged this as a real cost concern. 
+
+Case study 2: missed prerequisite in execution (Databricks). The second case concerns a precondi-tion violation in a Databricks skill bundle [26]. The  
+
+> databricks-core
+
+skill states an explicit precondition: 
+
+“If the CLI is missing or outdated (< v0.292.0), stop immediately and do not attempt workarounds.” How-ever, operational skills such as databricks-dabs and  
+
+> databricks-pipelines
+
+instruct the agent to run com-mands like databricks bundle deploy without refer-encing this version gate. In the probed trace, the agent’s version check returned a non-matching result, yet the agent proceeded to execute databricks commands. The appli-cable policy is a Precedence property: every databricks 
+
+command must be preceded by a successful version check confirming CLI ≥ 0.292. The probed trace contains no such event, so V IGIL catches the gap and blocks the deployment. The gate exists precisely because operational commands can misbehave on an outdated CLI; an agent that skips it can leave a bundle deployment half-applied. 
+
+Takeaway IV. On 216 executions of shipped skill bun-dles, V IGIL surfaces 34 confirmed policy-violating runs and localizes each to the offending call. The findings span NVIDIA, Databricks, Cloudflare, and Trail of Bits, covering both skill-specification defects and agent run-time enforcement gaps; NVIDIA acknowledged one skill-attributed issue. 
+
+## 8. Related Work 
+
+VIGIL builds on runtime enforcement for AI agents, autho-rization policy languages, and agent-skill security, but differs by grounding each policy in the observed trace. 
+
+Runtime enforcement for AI agents. Runtime enforce-ment moves AI-agent safety beyond prompt-level guidance to mechanisms that monitor tool use, constrain data influ-ence, and enforce policies [44, 45]. Action-boundary sys-tems such as AgentSpec [14], Progent [15], Conseca [16], and PCAS [17] guard proposed tool calls or compile con-textual policies into instrumented checks. Context- and data-aware systems such as CaMeL [18], IFC-based agents [19, 46], AgentArmor [47], and AgentSentry [48] constrain actions using isolation, provenance, program analysis, or temporal causal diagnostics. Together, they decide whether proposed actions proceed, are sanitized, or are constrained by policy, provenance, isolation, or data flow. Execution-level work [20, 21, 49] treats trajectories, effects, and world-state updates as the object of analysis. However, they use executions mainly as objects to classify or validate, rather than as contexts that shape enforcement. VIGIL instead grounds each behavioral specification in the observed trace, refining the policy to the concrete run and capturing relational or temporal violations in executions. 
+
+Policy languages. Policy languages express security rules over users, actions, resources, and conditions while leav-ing enforcement to a separate monitor or decision proce-dure [31, 50, 51]. Cedar [52] provides a domain-specific language for fine-grained authorization policies, and major cloud platforms such as AWS IAM [53], Azure RBAC [54], and Google Cloud IAM [55] provide established policy languages for cloud resources. Zelkova [56] further shows that IAM-style policies can be given formal semantics and checked with SMT. However, these languages operate at the resource-authorization level: they decide whether a principal may perform an action on a resource under a set of at-tributes. Agent skill policies require a lower-level execution view: their policy object is a finite run with tool outputs, argument relations, and temporal ordering across calls, not a single authorization request. Recent agent policy languages adapt policy ideas to agent actions: AgentSpec [14] and Progent [15] express action-level rules, while Conseca [16] and PCAS [17] gener-ate or compile contextual policies for agent tasks. However, existing agent policy languages typically tie policies to a relatively fixed action or task context. V IGIL instead treats the observed trace as the policy context, so the enforceable specification can be refined online as the run unfolds. 
+
+Agent skill security. Agent skills package procedural knowledge, instructions, executable code, and resources into reusable capabilities; this expands the agent security bound-ary from model responses and tool APIs to the skill package itself [57, 58]. Recent studies characterize skill architec-tures and lifecycle risks [57–59], and show that public skill ecosystems contain vulnerable, malicious, and harmful skills [60–62]. Recent systems audit or benchmark these risks: Skill-Inject [23] studies skill-file injection, Agent-Trap [63] evaluates runtime trust failures, SkillProbe [64] audits marketplace skills, and Semia [65] converts skill text and structure into Datalog for static analysis. Closest to our setting, Sefz [9] shows that benign inputs can trigger specification violations when a skill breaks its own natural-language guardrails. V IGIL complements this line by turning such behavioral requirements into runtime enforcement. In-stead of searching for inputs that expose a violation, V IGIL 
+
+grounds the specification in the observed trace and checks whether the concrete run satisfies it. 
+
+## 9. Conclusion 
+
+We presented V IGIL , a runtime reference monitor that makes agent-skill behavioral specifications executable. VIGIL 
+
+grounds each specification in the agent’s own execution trace and checks it with SMT, returning a localized witness when a run violates the policy. On real LLM-agent runs, V IGIL 
+
+detects trace-level violations that single-call defenses miss (95.8% recall at 89.6% precision) and surfaces 34 confirmed violations across deployed skill ecosystems, including one specification defect acknowledged by NVIDIA. Agent skills are still trusted to keep the contracts they declare; V IGIL 
+
+makes those contracts enforceable at runtime. References 
+
+[1] Anthropic, “Equipping agents for the real world with Agent Skills,” https://www.anthropic.com/engineering/equipping-agents-for-the-rea l-world-with-agent-skills, 2025. [2] GitHub, “GitHub Copilot now supports Agent Skills,” https://github .blog/changelog/2025-12-18-github-copilot-now-supports-agent-ski lls/, 2025. [3] Google Cloud, “Level up your agents: Announcing Google’s official skills repository,” https://cloud.google.com/blog/topics/developers-p ractitioners/level-up-your-agents-announcing-googles-official-skill s-repository, 2026. [4] Amazon Web Services, “AWS Agent Toolkit: Skills,” https://docs.a ws.amazon.com/agent-toolkit/latest/userguide/skills.html, 2026. [5] NVIDIA, “NVIDIA verified agent skills provide capability gover-nance for AI agents,” https://developer.nvidia.com/blog/nvidia-verif ied-agent-skills-provide-capability-governance-for-ai-agents/, 2026. [6] P. Reddy and A. S. Gujral, “Echoleak: The first real-world zero-click prompt injection exploit in a production llm system,” in Proceedings of the AAAI Symposium Series , vol. 7, no. 1, 2025, pp. 303–311. [7] Noma Security, “ForcedLeak: AI agent risks exposed in Salesforce Agentforce,” https://noma.security/blog/forcedleak-agent-risks-expos ed-in-salesforce-agentforce/, 2025. [8] J. Bort, “A Meta AI security researcher said an OpenClaw agent ran amok on her inbox,” https://techcrunch.com/2026/02/23/a-meta-ai-s ecurity-researcher-said-an-openclaw-agent-ran-amok-on-her-inbox/, 2026. [9] Y. Li, H. Wen, Y. Chen, H. Liu, Y. Tian, and Y. Feng, “No attack required: Semantic fuzzing for specification violations in agent skills,” 
+
+arXiv preprint arXiv:2605.13044 , 2026. [10] E. Yurtsever, J. Lambert, A. Carballo, and K. Takeda, “A survey of autonomous driving: Common practices and emerging technologies,” 
+
+IEEE access , vol. 8, pp. 58 443–58 469, 2020. [11] X. Li, W. Chen, Y. Liu, S. Zheng, X. Chen, Y. He, Y. Li, B. You, H. Shen, J. Sun et al. , “Skillsbench: Benchmarking how well agent skills work across diverse tasks,” arXiv preprint arXiv:2602.12670 ,2026. [12] Microsoft, “Build agents you can trust across any framework with open evals and a control standard,” https://devblogs.microsoft.com/f oundry/build-2026-open-trust-stack-ai-agents/, 2026. [13] NVIDIA, “Overview of NVIDIA OpenShell,” https://docs.nvidia.co m/openshell/about/overview, 2026. [14] H. Wang, C. M. Poskitt, and J. Sun, “Agentspec: Customizable runtime enforcement for safe and reliable llm agents,” arXiv preprint arXiv:2503.18666 , 2025. [15] T. Shi, J. He, Z. Wang, H. Li, L. Wu, W. Guo, and D. Song, “Pro-gent: Programmable privilege control for llm agents,” arXiv preprint arXiv:2504.11703 , 2025. [16] L. Tsai and E. Bagdasarian, “Contextual agent security: A policy for every purpose,” in Proceedings of the 2025 Workshop on Hot Topics in Operating Systems , 2025, pp. 8–17. [17] N. Palumbo, S. Choudhary, J. Choi, P. Chalasani, and S. Jha, “Policy compiler for secure agentic systems,” arXiv e-prints , pp. arXiv–2602, 2026. [18] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr, “Defeating prompt injec-tions by design,” arXiv preprint arXiv:2503.18813 , 2025. [19] M. Costa, B. Köpf, A. Kolluri, A. Paverd, M. Russinovich, A. Salem, S. Tople, L. Wutschitz, and S. Zanella-Béguelin, “Securing ai agents with information-flow control,” arXiv preprint arXiv:2505.23643 ,2025. [20] Y. Ruan, H. Dong, A. Wang, S. Pitis, Y. Zhou, J. Ba, Y. Dubois, C. Maddison, and T. Hashimoto, “Identifying the risks of lm agents with an lm-emulated sandbox,” in International Conference on Learn-ing Representations , vol. 2024, 2024, pp. 27 031–27 098. [21] J. Wu and M. Gong, “Policy-invisible violations in llm-based agents,” 
+
+arXiv preprint arXiv:2604.12177 , 2026. [22] C. Barrett and C. Tinelli, “Satisfiability modulo theories,” in Hand-book of model checking . Springer, 2018, pp. 305–343. [23] D. Schmotz, L. Beurer-Kellner, S. Abdelnabi, and M. An-driushchenko, “Skill-inject: Measuring agent vulnerability to skill file attacks,” arXiv preprint arXiv:2602.20156 , 2026. [24] E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-Kellner, M. Fis-cher, and F. Tramèr, “Agentdojo: A dynamic environment to evaluate prompt injection attacks and defenses for llm agents,” Advances in Neural Information Processing Systems , vol. 37, pp. 82 895–82 920, 2024. [25] S. Yin, X. Pang, Y. Ding, M. Chen, Y. Bi, Y. Xiong, W. Huang, Z. Xiang, J. Shao, and S. Chen, “Safeagentbench: A benchmark for safe task planning of embodied llm agents,” arXiv preprint arXiv:2412.13178 , 2024. [26] Databricks, “Databricks Agent Skills,” https://github.com/databricks/ databricks-agent-skills, 2025, accessed: 2026-06-11. [27] Trail of Bits, “Testing handbook skills for Claude Code,” https://gith ub.com/trailofbits/skills/tree/main/plugins/testing-handbook-skills, 2025, accessed: 2026-06-10. [28] Anthropic, “Anthropic skills,” https://github.com/anthropics/skills/tre e/main/skills, 2026. [29] Model Context Protocol, “Model context protocol specification,” http s://modelcontextprotocol.io, 2024, accessed: June 26, 2026. [30] F. B. Schneider, “Enforceable security policies,” ACM Transactions on Information and System Security (TISSEC) , vol. 3, no. 1, pp. 30– 50, 2000. [31] J. Ligatti, L. Bauer, and D. Walker, “Edit automata: Enforcement mechanisms for run-time security policies,” International Journal of Information Security , vol. 4, no. 1, pp. 2–16, 2005. [32] M. B. Dwyer, G. S. Avrunin, and J. C. Corbett, “Patterns in property specifications for finite-state verification,” in Proceedings of the 21st international conference on Software engineering , 1999, pp. 411–420. [33] G. De Giacomo and M. Y. Vardi, “Linear temporal logic and linear dynamic logic on finite traces,” in Proceedings of the Twenty-Third In-ternational Joint Conference on Artificial Intelligence (IJCAI) . AAAI Press, 2013, pp. 854–860. [34] L. De Moura and N. Bjørner, “Z3: An efficient smt solver,” in In-ternational conference on Tools and Algorithms for the Construction and Analysis of Systems . Springer, 2008, pp. 337–340. [35] H. Wen, H. Liu, J. Song, Y. Chen, W. Guo, and Y. Feng, “Foray: Towards effective attack synthesis against deep logical vulnerabilities in DeFi protocols,” in Proceedings of the 2024 ACM SIGSAC Con-ference on Computer and Communications Security (CCS) , 2024. [36] NVIDIA, “Nemo-evaluator-launcher skills,” https://github.com/NVI DIA/skills/tree/8c40eff71464e661df027f547c4a7d0f69fe3693/skills/ NeMo-Evaluator-Launcher, 2026. [37] Cloudflare, “Cloudflare skills,” https://github.com/cloudflare/skills, 2026. [38] Microsoft, “Microsoft skill bundle,” https://github.com/microsoft/ski lls/, 2026. [39] Y. Zheng, J. Fan, Q. Fu, Y. Yang, W. Zhang, and A. Quinn, “Agentc-group: Understanding and controlling OS resources of AI agents,” 
+
+arXiv preprint arXiv:2602.09345 , 2026. [40] ClawHub, “Clawhub,” https://clawhub.ai/, 2026, accessed: 2026-06-12. [41] BenchFlow, “Benchflow,” https://github.com/benchflow-ai/benchflo w, 2026, accessed: 2026-06-11. [42] K. Serebryany, D. Bruening, A. Potapenko, and D. Vyukov, “{AddressSanitizer }: A fast address sanity checker,” in 2012 USENIX annual technical conference (USENIX ATC 12) , 2012, pp. 309–318. [43] LLVM Project, “AddressSanitizer — Clang documentation,” https: //clang.llvm.org/docs/AddressSanitizer.html, accessed: 2026-06-11. [44] J. Kim, X. Liu, Z. Wang, S. Qiu, B. Li, W. Guo, and D. Song, “The attack and defense landscape of agentic ai: A comprehensive survey,” 
+
+arXiv preprint arXiv:2603.11088 , 2026. [45] J. Kim, W. Guo, and D. Song, “Sok: Attack and defense landscape of agentic ai systems,” in 35th USENIX Security Symposium (USENIX Security 26) , 2026. [46] Y. Cai, W. Tang, C. Wen, and S. Qin, “Ghost in the agent: Re-defining information flow tracking for llm agents,” arXiv preprint arXiv:2604.23374 , 2026. [47] P. Wang, Y. Liu, Y. Lu, Y. Cai, H. Chen, Q. Yang, J. Zhang, J. Hong, and Y. Wu, “Agentarmor: Enforcing program analysis on agent runtime trace to defend against prompt injection,” arXiv preprint arXiv:2508.01249 , 2025. [48] T. Zhang, Y. Xu, J. Wang, K. Guo, X. Xu, B. Xiao, Q. Guan, J. Fan, J. Liu, Z. Liu et al. , “Agentsentry: Mitigating indirect prompt injection in llm agents via temporal causal diagnostics and context purification,” arXiv preprint arXiv:2602.22724 , 2026. [49] H. M. Pysklo, A. Zhuravel, and P. D. Watson, “Agent-diff: Bench-marking llm agents on enterprise api tasks via code execution with state-diff-based evaluation,” arXiv preprint arXiv:2602.11224 , 2026. [50] M. Blaze, J. Feigenbaum, J. Ioannidis, and A. Keromytis, “The keynote trust-management system version 2,” RFC Editor, Tech. Rep. RFC 2704, September 1999. [51] N. Damianou, N. Dulay, E. Lupu, and M. Sloman, “The ponder policy specification language,” in International Workshop on Policies for Distributed Systems and Networks . Springer, 2001, pp. 18–38. [52] J. W. Cutler, C. Disselkoen, A. Eline, S. He, K. Headley, M. Hicks, K. Hietala, E. Ioannidis, J. Kastner, A. Mamat et al. , “Cedar: A new language for expressive, fast, safe, and analyzable authorization,” 
+
+Proceedings of the ACM on Programming Languages , vol. 8, no. OOPSLA1, pp. 670–697, 2024. [53] Amazon Web Services, “Policies and permissions in aws identity and access management,” https://docs.aws.amazon.com/IAM/latest/Use rGuide/access_policies.html, 2026, accessed: 2026-06-06. [54] Microsoft Azure, “What is azure role-based access control (Azure RBAC)?” https://learn.microsoft.com/en-us/azure/role-based-acces s-control/overview, 2026, accessed: 2026-06-06. [55] Google Cloud, “Iam overview,” https://cloud.google.com/iam/docs/ overview, 2026, accessed: 2026-06-06. [56] J. Backes, P. Bolignano, B. Cook, C. Dodge, A. Gacek, K. Luckow, N. Rungta, O. Tkachuk, and C. Varming, “Semantic-based automated reasoning for aws access policies using smt,” in 2018 Formal Methods in Computer Aided Design (FMCAD) . IEEE, 2018, pp. 1–9. [57] R. Xu and Y. Yan, “Agent skills for large language models: Archi-tecture, acquisition, security, and the path forward,” arXiv preprint arXiv:2602.12430 , 2026. [58] Y. Jiang, D. Li, H. Deng, B. Ma, X. Wang, Q. Wang, and G. Yu, “Sok: Agentic skills–beyond tool use in llm agents,” arXiv preprint arXiv:2602.20867 , 2026. [59] Z. Li, J. Wu, X. Ling, X. Cui, and T. Luo, “Towards secure agent skills: Architecture, threat taxonomy, and security analysis,” arXiv preprint arXiv:2604.02837 , 2026. [60] Y. Liu, W. Wang, R. Feng, Y. Zhang, G. Xu, G. Deng, Y. Li, and L. Zhang, “Agent skills in the wild: An empirical study of security vulnerabilities at scale,” arXiv preprint arXiv:2601.10338 , 2026. [61] Y. Liu, Z. Chen, Y. Zhang, G. Deng, Y. Li, J. Ning, Y. Zhang, and L. Y. Zhang, “Malicious agent skills in the wild: A large-scale security empirical study,” arXiv preprint arXiv:2602.06547 , 2026. [62] Y. Jiang, Y. Zhang, M. Backes, X. Shen, and Y. Zhang, “Harmful-skillbench: How do harmful skills weaponize your agents?” arXiv preprint arXiv:2604.15415 , 2026. [63] H. Zhuang, H. Xing, Y. Zhou, Y. Ma, Y. Huang, Y. Shen, Y. Han, and X. Zhang, “Agenttrap: Measuring runtime trust failures in third-party agent skills,” arXiv preprint arXiv:2605.13940 , 2026. [64] Z. Guo, Z. Chen, X. Nie, J. Lin, Y. Zhou, and W. Zhang, “Skillprobe: Security auditing for emerging agent skill marketplaces via multi-agent collaboration,” arXiv preprint arXiv:2603.21019 , 2026. [65] H. Wen, Y. Li, H. Liu, C. Shou, Y. Chen, Y. Tian, and Y. Feng, “Semia: Auditing agent skills via constraint-guided representation synthesis,” arXiv preprint arXiv:2605.00314 , 2026. Table 5. Representative policy categories and formalizations in SB+SI. 
+
+Category Example policy Formalization 
+
+Required event property Period search must include flux uncertainties. □(periodSearch (x) ⇒ hasFluxErr (x)) 
+
+Authorization constraint Transfers require approved destinations. □(transfer (x, d ) ⇒ approvedDest (d)) 
+
+Temporal precondition Validate archives before source removal. □(removeSource (x) ⇒ ♢−validArchive (y, x )) 
+
+Final-state integrity Delivered Excel models must have zero for-mula errors.   
+
+> □(deliver (x)⇒noFormulaErr (x))
+
+## Appendix A. Labeling Protocol for SB+SI 
+
+We construct SB+SI by combining violation-oriented candi-date mining with randomly sampled benign executions. For SkillsBench, we first screen the released task-performance trajectories for cases in which the skill documentation states a behavioral obligation that can be checked against an ex-ecution trace, such as an ordering requirement, prerequisite check, argument constraint, or artifact-use rule. This screen is used to find candidate violations and excludes tasks whose specification only describes task success, user preference, or high-level quality criteria without an enforceable trace-level obligation. For Skill-Inject, which does not release raw trajectories, we replay its tasks in Claude Code and apply the same trace-level inclusion criteria to the recorded executions. To construct the benign class, we randomly sample executions from the same benchmark sources and manually inspect them against the corresponding skill specifications. A randomly sampled execution is retained as benign only when the relevant behavioral obligation is satisfied, is not triggered, or no trace-checkable obligation applies. We dis-card sampled executions when the trace lacks the evidence needed to judge the obligation, when the specification is ambiguous, or when the apparent failure is only a task-quality error rather than a behavioral-policy violation. All retained cases are manually labeled from the skill documentation, the execution trace, and any produced arti-facts visible to the monitor. A trajectory is labeled violat-ing only when the recorded execution contains a concrete event sequence that contradicts the skill’s stated behavioral specification. We use a conservative labeling rule: a case is retained as violating only when the violated obligation and responsible event sequence are both identifiable from the trace; otherwise, the case is excluded rather than adju-dicated into either class. This process produces 152 labeled executions in SB+SI: 72 policy-violating trajectories and 80 benign trajectories. 
+
+## Appendix B. Baseline Adaptation Protocol 
+
+We keep the policy source and execution trace fixed across all systems, and score every verdict against the same ground-truth label. For each SB+SI case, AgentSpec and Progent receive the closest faithful rule encoding supported by their action-boundary interfaces. Policies over the pending ac-tion, its arguments, or local trigger conditions are encoded directly. Policies that require long-range artifact identity, historical data flow, or evidence outside the pending action are encoded as the strongest action-boundary approximation, without adding V IGIL -style trace memory to the baseline. The LLM-as-judge baseline receives only the inputs available before enforcement: the full execution trace, the skill specification, and the same policy-relevant context available to V IGIL . It returns a binary violation verdict with a short rationale, but does not receive V IGIL ’s alert, compiled policy, SMT witness, or the ground-truth label. 
+
+## Appendix C. Specification-Compilation Prompt Template 
+
+VIGIL uses the language model only to draft candidate policy documents, not to judge whether a trace violates a policy. Figure 9 shows an abridged template of the prompt interface. 
+
+> Abridged specification-compilation prompt template
+> Task: Translate the natural−language skill policy into a PolicyDocument. Return YAML only. Inputs: 1. SECURITY_PROTOCOL: the skill’s natural−language policy text. 2. observed_vocabulary: actions, argument roles, command options, predicates, scripts, and text samples recovered from the trace. 3. signature: the allowed condition operators and temporal templates. 4. policy_language: the target schema and declared role set. Grounding contract: − Draft policy statements only; do not classify the trace. − Use only literals and symbols present in the inputs. − Do not emit event ids, witness ids, SMT variables, expected verdicts, violation labels, or other trace−checking artifacts. − Emit Unsupported when a rule cannot be grounded. Output: A YAML PolicyDocument containing policy facts and one or more statements over actions, conditions, resources, and temporal templates.
+
+Figure 9. Abridged prompt template used for specification compilation. Every drafted PolicyDocument is parsed and vali-dated against the observed signature before SMT encoding; invalid, ill-typed, or unsupported clauses are rejected by deterministic components. Appendix D. Policy Examples 
+
+Table 5 gives representative policy categories from SB+SI and their finite-trace formalizations. 
+
+## Appendix E. The Preset Forms as Instances of □ Θ
+
+Table 6 writes each preset form of the policy language in the temporal vocabulary of the fallback. Table 6. Each preset form as an instance of the fallback shape □ Θ. Here ♢+ 
+
+> ≤ℓ
+
+bounds the search to the next ℓ events; 
+
+until ’s interval condition is given by its compilation rule. 
+
+Form As □ Θ
+
+abs (ψ) □ ¬ψ
+
+prec (ψ, ψ ′) □(ψ ⇒ ♢−ψ′)
+
+resp (ψ, ψ ′) □(ψ ⇒ ♢+ψ′)
+
+bresp ℓ(ψ, ψ ′) □(ψ ⇒ ♢+
+
+> ≤ℓ
+
+ψ′)
+
+rslv (ψ, ψ ′) □(ψ ⇒ ψ′ ∨ ♢+(ψ′ ∨ ψ)) 
+
+until (ψ, ψ ′, ψ b) after ψ: no ψb before a resolving ψ′
