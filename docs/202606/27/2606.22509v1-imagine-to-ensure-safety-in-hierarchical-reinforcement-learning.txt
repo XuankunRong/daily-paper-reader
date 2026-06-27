@@ -1,0 +1,489 @@
+Title: Imagine to Ensure Safety in Hierarchical Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.22509v1
+
+Published Time: Tue, 23 Jun 2026 02:13:32 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+# Imagine to Ensure Safety in Hierarchical Reinforcement Learning 
+
+Gregory Gorbov 2,3, Artem Latyshev 1,2 and Aleksandr I. Panov 1,2 
+
+> 1
+
+Cognitive AI Systems Lab, Moscow 117312, Russia; latyshev.a@miriai.org ; panov@cogailab.com  
+
+> 2
+
+Moscow Independent Research Institute of Artificial Intelligence, Moscow 141701, Russia; gorbov.g@miriai.org  
+
+> 3
+
+FRC Computer Science RAS, Moscow 119333, Russia Correspondence: panov@cogailab.com 
+
+Abstract 
+
+This work investigates the safe exploration problem in reinforcement learning, where an agent must maximize cumulative performance while simultaneously satisfying safety constraints. This challenge becomes even more pronounced in long-horizon tasks, where existing safe methods face fundamental limitations due to compounding estimation errors and restricted exploration capabilities. To address this problem, we propose a method that combines a learnable world model with two complementary policies—a high-level policy and a low-level policy—to promote safety at both hierarchical levels. The high-level policy generates intermediate subgoals that bias exploration toward safe regions, while the low-level policy uses imagined rollouts in the learned world model to reduce unsafe behaviors when reaching these subgoals. The proposed method was evaluated on challenging long-horizon navigation and manipulation tasks with high-dimensional action spaces, where it significantly outperforms existing Safe RL baselines in both success rate and strong empirical constraint satisfaction, consistently meeting the prescribed safety budget across seeds, while prior approaches fail to effectively solve these complex long-horizon scenarios. 
+
+Keywords: reinforcement learning; safe reinforcement learning; hierarchical reinforcement learning; model based reinforcement learning; safe exploration 
+
+# 1 Introduction 
+
+Exploration is one of the most critical capabilities for Reinforcement Learning (RL) agents, enabling them to discover optimal behaviors for achieving predefined goals. One of the main challenges in applying RL algorithms to the real world is the lack of safety during the exploration process, which can lead to damage to expensive hardware or dangerous situations [ 1]. Therefore, there is an urgent need for Safe RL approaches that address the Safe Exploration problem, which we investigate in this work. Conventional Safe RL approaches typically adopt the Constrained Markov Decision Process (CMDP) [ 2] framework, which incorporates an additional cost function to regulate action safety through constraint enforcement. Most current Safe RL methods optimize a composite objective function comprising two components – reward and cost (e.g., Risk-Sensitive Criterion, Lagrangian-Based Approach, SafetyDreamer[ 3]) [ 4–8]. These approaches enable the RL controller to maximize performance while minimizing safety constraint violations. However, as demonstrated in [ 9], these methods face a fundamental challenge: the inherent difficulty for the controller to simultaneously optimize performance and safety constraints. Furthermore, these approaches typically employ flat-policy-based architectures (single-level policy), which fundamentally restrict their capability to solve long-horizon tasks — a well-documented shortcoming evidenced in Hierarchical RL (HRL) literature 1
+
+> arXiv:2606.22509v1 [cs.AI] 21 Jun 2026
+
+[10 , 11 ]. This architectural constraint consequently limits their practical applicability in complex, temporally extended scenarios where multi-level decision-making is essential. Consequently, there exists a critical need for novel approaches capable of addressing long-horizon decision-making while rigorously maintaining safety constraints. 
+
+The long-horizon problem is typically characterized by either: (1) an extended sequence of environment steps, (2) complex agent dynamics, or (3) sparse reward setting. Current solutions to this challenge predominantly involve demonstration learning, curriculum strategies, or HRL approaches [ 12 –15 ]. Demonstration-based and curriculum approaches require substantial engineering effort and domain expertise, whereas HRL methods offer greater generalization across diverse tasks. The literature exhibits a significant gap in methods that effectively combine HRL with Safe RL approaches. Currently known techniques such as LyapunovRRT [ 16 ], IAHRL [ 17 ], and Safe HIRO [18 ] fail to address the challenge of learning in long-horizon environments while maintaining specified safety constraints in partial observability settings. These methods present substantial limitations: they require complete environment state information, rely on manually generated options that demand expert knowledge for each specific environment, lack the ability to generate safe subgoals needed to ensure safety throughout the learning process. In this work, we propose a method ITES (Imagine To Ensure Safety in HRL) that uses a high-level policy to simplify the complex optimization task for the RL controller by generating safe intermediate subgoals (Figure 1). We also use the world model to verify the safety of actions taken by the RL controller in the imagination (predicting next steps in the world model) before executing them directly. Furthermore, we identify a systematic limitation of existing state-of-the-art Safe RL approaches when deployed in high-dimensional, long-horizon robotic domains. While these methods often attain competitive results on short-horizon benchmarks, their performance deteriorates markedly as task complexity increases, leading to violations of safety constraints and reduced task completion. In contrast, ITES exhibits substantially improved robustness and success rates while consistently satisfying safety requirements, thereby effectively addressing scenarios in which prior methods fail to generalize. Our main contributions are: 
+
+• Our work identifies a fundamental limitation in current Safe RL methods employing flat-policy-based architectures: their inability to solve long-horizon tasks while preserving safety. To address this critical challenge, we propose ITES, a novel framework that successfully resolves this dual requirement. 
+
+• We propose a safe hierarchical method — using a world model to ensure the safety of the controller, as well as a cost model for generating safe subgoals. 
+
+• We introduce a novel state-of-the-art approach for high-dimensional, long-horizon robotic tasks, demonstrating significant improvements in both safety and performance while maintaining the required safety level. Additionally, we show that on short-horizon tasks our method also outperforms existing Safe RL state-of-the-art approaches in terms of task success, again preserving the mandated safety constraints. The implementation of the proposed method is publicly available at: https://github.com/ Gricha1/ITES_alg 
+
+2Figure 1: The ITES generates intermediate subgoals, orange circles , to achieve the main goal, 
+
+green circle , which enables the controller to optimize safety over a short-horizon for each of these subgoals. To ensure that the entire trajectory remains safe, the proposed method first predicts a safe subgoal for the controller, and second, the controller in imagination (via world model) optimizes safety towards that subgoal. 
+
+# 2 Related Work 
+
+Safe RL Methods . Modern Safe RL approaches can be broadly grouped into three categories: (1) stability-based methods, such as Lyapunov functions and control barrier functions, which require access to system dynamics; (2) intervention-based techniques (e.g., shielding), which rely on hand-crafted safety rules; and (3) constrained optimization methods, including Risk-Sensitive Criterion [19 ] and Lagrangian-based approaches such as TD3-Lagrangian [ 8], CUP [ 20 ], FOCOPS [ 21 ], and SafeDreamer [ 3]. Notably, this third class of methods offers greater generality than both stability-based and intervention-based approaches, as it can be applied directly in partially observable environments without requiring either accurate system dynamics or manually specified safety rules. CUP and FOCOPS approximate the cost constraint via a Taylor expansion to obtain tractable updates and theoretical safety guarantees; however, this approximation inherently introduces sys-tematic estimation errors — a well-known limitation that persists regardless of the task horizon. TD3-Lagrangian instead directly optimizes the dual Lagrangian formulation of the CMDP objective. SafeDreamer adapts Dreamer by incorporating Constrained CEM planning within a learned world model and currently achieves state-of-the-art performance on short-horizon SafetyGym tasks. Despite their empirical success, constrained optimization methods face several fundamental challenges: dual optimization instability [ 9], sample inefficiency, and insufficient exploration, all of which become particularly severe in sparse-reward settings or environments with large state and action spaces. 
+
+HRL . HRL frameworks (HAC [ 12 ], HiRO [ 11 ], HRAC [ 13 ]) achieve temporal abstraction through subgoal decomposition, effectively addressing long-horizon challenges. However, these methods inherently lack safety guarantees, either assuming intrinsically safe subgoals or relying on carefully engineered reward functions. When integrated with Safe RL, hierarchical decomposition can also simplify the dual optimization problem: the low-level policy can focus on optimizing short-horizon objectives while the high-level policy operates over long-horizon subgoals, enabling more stable and efficient learning under safety constraints. 
+
+Safe HRL Approaches . The integration of safety constraints with hierarchical RL remains largely unexplored. Existing solutions exhibit critical limitations: Safe HiRO [ 18 ] depends on differentiable cost functions, LyapunovRRT [ 16 ] requires full state observability for region of attraction computation, and IAHRL [ 17 ] is restricted to specific domains through handcrafted options. Our 3proposed ITES framework overcomes these limitations by operating under partial observability while handling unknown, non-differentiable cost functions, and providing verifiable subgoal safety without domain-specific constraints. To our knowledge, ITES represents the first comprehensive solution combining model-based HRL with safety-constrained optimization under these general conditions. 
+
+# 3 Preliminaries 
+
+3.1 Constrained Goal-Conditioned MDP 
+
+We investigate the mathematical formulation of the Safe Exploration problem introduced in [ 1]through the framework of CMDP, represented as ⟨S, A, G, p, R, c, d, μ, γ ⟩. The environment transition function p(s′|s, a ) specifies the probability density of reaching s′ ∈ S after taking action a ∈ A
+
+in state s ∈ S. The initial state distribution μ(s0) defines the probability density of beginning an episode at state s0. The variable g ∈ G denotes the final agent goal in the goal space G. It is generally assumed that the agent does not know the transition dynamics p(s′|s, a ). For each transition ⟨s, a, s ′⟩, the environment produces a scalar external reward r(s, a, s ′) and another scalar 
+
+c(s, a ) as the cost. In our framework, we treat c as a state-dependent function, i.e., c(s, a ) = c(s).The parameter d ∈ R represents the cost limit, indicating the maximum allowable sum of costs over an episode. The optimization problem is to maximize cumulative external rewards from an environment: J(π) = Eπ
+
+P 
+
+> t
+
+γtr(s, a, s ′), while satisfying cost constraint: Jc(π) ≤ d.Following [ 13 ], we employ a hierarchical framework to solve the problem. We adopt a hierarchical agent policy π with two levels: a high-level controller with policy πhθh (sg|s, g ) and a low-level controller with policy πlθl (a|s, s g) with sg ∈ G denoting the subgoal generated by policy πhθh . These controllers are parameterized by separate neural network approximators, with parameters θh and θl, respectively. The high-level controller seeks to maximize the external return: 
+
+Jex = Eπhθh
+
+X
+
+> i
+
+γirhi , rhi =
+
+> t=ki +k−1
+
+X
+
+> t=ki
+
+r(st, a t, s t+1 ) (1) This policy generates high-level actions in the form of subgoals sg ∼ πhθ (sg|s, g ), where sg, g ∈ G, at intervals of k time steps ( k > 1 is a predefined hyperparameter). The goal space G is a sub-space of S, with a known mapping function ϕ : S → G. The low-level policy performs a primary action 
+
+a ∼ πlθl (a|s, s g), a ∈ A at every time step. This policy is modulated by intrinsic rewards rin for reaching subgoals generated by high-level controller. The intrinsic reward rin (s, s g) = −|| ϕ(s) − sg|| 
+
+is a negative Euclidean distance between mappings of current state s and subgoal sg. The low-level objective is to maximize the cumulative intrinsic rewards Jin :
+
+Jin (πlθl ) = Esg ∼πhθh ,π lθl
+
+> i=t+k
+
+X
+
+> i=t
+
+rin (si, s g) (2) The overall objective for the agent policy is to find such parameters θl, θ h that the Jex and Jin 
+
+are maximized and the cumulative cost Jc(π) = Eπhθh ,π lθl
+
+P
+
+> τ
+
+Pkτ +k−1 
+
+> t=kτ
+
+c(st, a t) is limited: 
+
+π∗ 
+
+> θh
+
+= arg max Jex (πhθh ), π∗ 
+
+> θl
+
+= arg max Jin (πlθl ) s.t. Jc(π) ≤ d (3) 
+
+# 4 Method 
+
+The proposed approach ensures safety at two complementary levels: safe subgoal generation and safe subgoal execution . To generate subgoals that lie within the safe region, we employ a cost model CM
+
+4that classifies states as safe or unsafe, together with the high-level cost value function Qhc (s, s g, g ),which estimates the expected cumulative cost of selecting a subgoal sg. These components guide the high-level policy toward subgoals that are both safe and feasible. To ensure that the agent can safely reach these subgoals, we incorporate imagined safety through a world model M , which predicts short-horizon transitions s′ = Mθm (s, a ). Combined with the cost model CM , the world model enables safety evaluation of low-level trajectories in imagination, allowing the low-level controller to avoid unsafe behaviors while pursuing its assigned subgoal. 
+
+4.1 Hierarchy Structure 
+
+As a base algorithm for our approach, we adopted HRAC[13] (Hierarchical Reinforcement learning with k-step Adjacency Constraint), which consists of two policies: high-level controller πhθh (sg|s, g )
+
+and low-level controller πlθl (a|s, s g). The main idea is to generate subgoals that are at a specified distance k from the agent’s current position. For this purpose, an Adjacency Network ψ is employed, which maps each state s to its embedding ψ(s). This network is trained using the following loss function: 
+
+Ladj = Esi,s j ∈S l · max( || ψ(si) − ψ(sj )|| − ϵ, 0) + (1 − l) · max( ϵ + δ − || ψ(si) − ψ(sj )|| , 0) (4) where δ > 0 is a margin between embeddings, ϵ is a scaling factor, and l ∈ { 0, 1} represents the label indicating k-step adjacency. This loss function enables the Adjacency Network to predict embeddings for states si and sj that are k steps apart, such that the condition || ψ(si) − ψ(sj )|| < ϵ 
+
+is satisfied. Subsequently, this network is utilized to update the high-level controller based on the TD3 algorithm [22], incorporating a component into its loss function: 
+
+Lh = −Qhθqh (s, s g, g ) + βhadj Ladj (s, s g), (5) here βhadj is adjacency loss coefficient—the scaling hyperparameter. For the low-level controller, the TD3 algorithm is employed without modifications with the loss function: 
+
+Ll = −Qlθql (s, a, s g), (6) where Qhθqh and Qlθql are action value functions (approximated by neural networks) which estimate discounted external and internal returns respectively. HRAC enables solving long-horizon tasks but cannot be directly applied in CMDP settings. Below we demonstrate how to ensure safety both in subgoal generation and in low-level policy execution. 
+
+4.2 High-level Safety - safe subgoal generation 
+
+The scheme for updating the high-level policy is illustrated in Figure 2. The update is carried out through transitions ⟨s, s g, R h⟩ and modules such as the cost model CM and the Qhθqh function, which calculate the safety and utility of the generated subgoal. 5Figure 2: The scheme illustrates the training process for the low-level policy and the high-level policy. Left : the cost model CM and the world model M are responsible for ensuring safety during the updates of the low-level policy, while the Qlθql -function is utilized to optimize the reward. Right: 
+
+the cost model CM is employed for safety considerations in updating the high-level policy, with the 
+
+Qh-function used for reward optimization. 
+
+Cost model. The objective of the cost model CM is to predict the probability that an arbitrary subgoal is safe sg using local state information s:
+
+saf ety h(sg, s ) = CM (sg, s ) ∈ [0 , 1] . (7) Since in our experiments the cost function c is binary and is a function of the state c : S → { 0, 1},the cost model can be used to predict the cost values of states. However, we propose to consider the safety of subgoals as the probability of their safety. Optimizing such safety helps generate goals that are further away from the boundary of safe and unsafe states. For the implementation of the cost model, we utilize a neural network (MLP approximator) parameterized by θc. We use Binary Cross Entropy Loss as the loss function for learning this MLP. So, the output value of cost model can be considered as the probability that the state is safe. We train the model in an online manner using the same replay buffer employed for the World Model M .The cost model relies solely on local obstacle observations, yet remains accurate for nearby subgoal prediction as HRAC generates short-horizon subgoals sg within observable ranges. 
+
+High-level policy objective. To ensure that high-level policy generates a safe subgoal, a component Lsaf ety h (s, s g) = −saf ety h(sg, s ) was incorporated into HRAC loss function (5) with scaling factor βhsaf e (safety hyperparameter): 
+
+Lh = − Qhθqh (s, s g, g ) + βhadj Ladj (s, s g) + βhsaf e Lsaf ety h (s, s g) (8) where β factors are predefined hyperparameters that are chosen empirically. Our experiments revealed that relying solely on the cost model CM to generate safe subgoals is insufficient. In such cases, the high-level policy may learn to predict subgoals within safe regions that are nevertheless infeasible for the low-level policy to reach (e.g., predicting a subgoal behind an obstacle, thereby forcing the low-level policy to perform long-horizon obstacle avoidance). To address this issue, we incorporate the high-level cost value function Qhc (s, s g, g ), which estimates the expected discounted cost-to-go until the end of the episode, as an additional objective term for the high-level policy, and learn the Lagrangian multiplier λ adaptively to enforce the safety constraint 
+
+Qhc (s, s g, g ) ≤ d. The resulting high-level objective is: 
+
+Lh = −Qhθqh (s, s g, g ) + βhadj Ladj (s, s g) + βhsaf e Lsaf ety h (s, s g) + λQ hc (s, s g, g ) (9) 6The Lagrange multiplier λ is updated via dual gradient ascent and projected to λ ≥ 0:
+
+λ ←
+
+h
+
+λ +  Qhc (s, s g, g ) − di
+
+> +
+
+. (10) The high-level cost critic Qhc (s, s g, g ) is trained by standard Bellman regression on high-level tran-sitions, analogously to the reward critic, using the cumulative cost collected during the corresponding 
+
+k-step subgoal interval. 
+
+4.3 Low-level Safety - safe subgoal execution 
+
+The cost model is used to evaluate subgoals generated by the high-level policy and to optimize them to be safe subgoals. However, while the agent attempts to achieve these safe subgoals, it may violate safety constraints (for example, a mobile robot accelerating excessively while trying to reach a subgoal). To address this issue, we employ a combination of the cost model and the world model (the left learning scheme in Figure 2). Given a current subgoal for the agent, sg, we check for safety in imagination by sequentially generating actions using the low-level policy a ∼ πlθl (a|s, s g) and then employing the world model to obtain the next state s′ = M (s, a ), repeating this procedure n times. Here, n is the number of imagination steps that is chosen from discrete uniform distribution n ∼ U ({1..k − 1}) (the left part of Figure 2). The total safety for low-level controller is calculated using the cost and the world models as follows: 
+
+saf ety l(s, s g) = CM (ϕ(sn), s ) ∈ [0 , 1] . (11) Although we evaluate safety at a single randomly sampled imagined step, sampling n uniformly makes this an unbiased estimate of average rollout safety, so minimizing it improves safety along the whole trajectory in expectation. Employing cumulative imagined safety costs, instead of random sampling n, demonstrates inferior training stability and worse safety performance. We attribute this to two key factors: (1) Computing cost values via the cost model for all imagined states leads to gradient explosion, particularly with long imagination horizons (10-20 steps), and (2) The well-known world model limitation where prediction errors accumulate over extended imagination horizons. By using random states for safety evaluation instead of full rollouts, we avoid lengthy trajectory computations while simultaneously mitigating accumulated prediction errors - an approach that also decreases time for training. The resulting value of saf ety l(s, s g) is then utilized in the total actor loss: 
+
+Ll = −Qlθql (s, a, s g) + βlsaf e Lsaf ety l (s, s g), where Lsaf ety l (s, s g) = −saf ety l(s, s g) (12) here βlsaf e is a hyperparameter similar to βhsaf e from (8). Imaginary safety can be added to the high-level policy as an additional loss rather than to the low-level one. However, since predicting subgoals is a more complex task, and based on our experiments, the low-level policy learns to achieve subgoals more quickly than the high-level policy, we incorporate imaginary safety into the low-level policy. To train the cost model and the world model, we utilize a warm start by executing 30 , 000 
+
+random steps in the environment and pretrain both models over 100 epochs. 
+
+4.4 Practical Implementation 
+
+The ITES approach is summarized in Algorithm 1, which details the training loop for both the high-level and low-level policies. Two key auxiliary components are employed: the cost model CMθc 
+
+and the world model M .7For the cost model, a replay buffer is maintained with a balanced distribution of safe and unsafe states. This strategy mitigates class imbalance and reduces the risk of overfitting, a common challenge in Safe RL scenarios. For the world model, we adopt a lightweight predictive model from [ 23 ] rather than more complex architectures such as RSSM (which is used in Dreamer [ 24 ]), which typically require extensive training. Since our method operates with short-horizon subgoals, a short-horizon world model suffices, reducing cumulative prediction errors and enabling efficient planning within each subgoal horizon. Specifically, we model the transition function p(s′|s, a ) using an ensemble of n neural networks, denoted as Mθm . Each model Mi predicts the next state s′ = Mi(s, a ), and the final prediction is obtained by averaging over the ensemble, Mθm (s, a ) = 1
+
+> n
+
+Pni=1 Mi(s, a ), which helps reduce both epistemic and aleatoric uncertainties. 
+
+Algorithm 1 ITES 
+
+Input: Environment env , High-level policy πh, low-level policy πl, world model M , cost model 
+
+CM , adjacency network ψ, high-level action frequency k, number of training episodes N , adjacency learning frequency L.Pretrain Mθm and CM using random experience. 
+
+for n = 1 to N do 
+
+Reset the environment and sample the initial state s0.
+
+t = 0 .
+
+repeat if t ≡ 0 (mod k) then 
+
+Sample subgoal sg ∼ πhθh (sg|st, g ).
+
+end if 
+
+Sample low-level action at ∼ πlθl (at|st, s g).Make step st+1 , r t, c t, done = env (st, a t).Calculate reward rin = rin (st+1 , s g).
+
+t = t + 1 .
+
+until done is true .Train CM using a class-balanced replay buffer. Train world model Mθm .Train high-level policy πh using Eq. 9. Train low-level policy πl using Eq. 12. 
+
+if n ≡ 0 (mod L) then 
+
+Fine-tune ψ using Eq. 4. 
+
+end if end for 
+
+85 Experiments 
+
+Table 1: Final performance on SafeAntMaze and SafePusher. Where SAM-C - SafeAntMaze Cshape, SAM-W - SafeAntMaze Wshape, SR - success rate. Methods satisfying the safety condition (Final Cost ≤ d) are highlighted in green , while non-compliant methods are marked in red . Results are averaged over 5 random seeds Env Method Final SR ↑ Final Cost ↓
+
+ITES 0.88 ± 0.01 15 .2 ± 17 .3
+
+SafeDreamer 0 13 ± 18 .11 
+
+SAM CUP 0 6.8 ± 22 .4
+
+C FOCOPS 0 19 .4 ± 50 .9
+
+TD3L/R 0.38 ± 0.04 83 .6 ± 37 .2
+
+PPOLAG 0.2 ± 0.2 41 .2 ± 1.1
+
+TD3LAG 0.13 ± 0.33 133 .45 ± 184 .4
+
+ITES 0.35 ± 0.05 183 ± 16 .5
+
+TD3L/R 0.05 ± 0.02 154 ± 13 .5
+
+SAM CUP 0 103.5 ± 21 .5
+
+W FOCOPS 0 141 .0 ± 26 .0
+
+TD3LAG 0 128 .68 ± 210 
+
+PPOLAG 0 105 ± 20 .1
+
+SafeDreamer 0 216 .3 ± 199 
+
+ITES 0.42 ± 0.02 12.8 ± 0.87 
+
+SafeDreamer 0 6.7 ± 2.7
+
+TD3LAG 0.05 ± 0.03 54 .72 ± 3.16 
+
+Pusher CUP 0.01 46 .14 ± 0.42 
+
+FOCOPS 0 55 .83 ± 1.67 
+
+PPOLAG 0 51 .25 ± 1.25 
+
+In this section, we address four research questions: RQ1 —can safe flat-policy methods solve long-horizon tasks while satisfying constraints? RQ2 —can ITES solve long-horizon tasks under the prescribed cost limit? RQ3 —how does ITES perform on short-horizon SafetyGym tasks where a flat policy is sufficient? RQ4 —how do the proposed components (high-level safe subgoal generation and low-level imagined safety) contribute to overall safety and performance? To address these research questions, we developed two long-horizon benchmarks — SafeAntMaze and SafePusher — based on the Gymnasium environments AntMaze and Pusher. We trained flat policy approaches (FOCOPS, CUP, TD3LAG) to evaluate RQ1 and compared them against our proposed ITES method on the long-horizon benchmark. Due to the lack of other fully trainable Safe RL+HRL methods in the literature, we additionally developed HRAC-LAG, a hierarchical baseline, for RQ2. Furthermore, we evaluated our approach on the short-horizon SafetyGym benchmark against additional flat policy baselines (PPOLAG) and a model-based method (MBPPOL). All experiments were run on an NVIDIA GeForce RTX 3060 (8GB). For the same number of environment steps, ITES required 24h (AntMaze) and 12h (SafetyGym), while SafeDreamer required 72h and 34h, respectively, due to a heavier world model. 95.1 Environments Description 
+
+Long-Horizon environments. SafeAntMaze is a safety-wrapped variant of Mujoco AntMaze, where an 8-DoF ant navigates with partial observability (coordinates, joint angles, and velocities; 
+
+S ⊂ R30 ). Positions within distance dist from walls incur a cost (+1), with d = 25 (C-shaped) and d = 200 (W-shaped) thresholds. Episodes terminate at 500 steps. SafePusher adapts the Mujoco Pusher task: a 7-DoF arm must push an object to a target using torque control ( A ⊂ R7). Observations ( S ⊂ R24 ) include joint, object, and target states. The task is long-horizon due to high-dimensional control complexity, with a cost limit d = 25 and 100-step episodes. We classify these two benchmarks as long-horizon due to the high-dimensional action space of the agent and the correspondingly large state vector representing the robot’s configuration (see Appendix B). 
+
+Short-Horizon environments. In the tasks from the Safety Gym benchmark [ 1], the optimal policy achieves the goal within 100 to 200 steps on average. We classify this benchmark as short-horizon due to the robots’ simple dynamics and straightforward navigation task. By default, the environment utilizes the Euclidean distance as the reward function, while the cost function assigns a value of +1 when the agent is located within a hazardous zone. Additionally, we consider the PointGoal1 environment from SafetyGym, with sparse reward structure, granting a reward of +1 for reaching the goal. We refer to this environment as PointGoal sparse. Training in an environment with sparse rewards is generally considered to be a more challenging task. We use cost limit d = 40 
+
+for this environment. See Appendix C for additional details on the short-horizon environments. 
+
+5.2 Metrics 
+
+Following [ 1], we report (i) performance as the average success rate (or episodic reward) over E=40 
+
+evaluation episodes, (ii) the average undiscounted episodic cost return ˆJc = 1
+
+> E
+
+PEi=1 
+
+PTep  
+
+> t=0
+
+ct,and (iii) the cost rate ρ = 1
+
+> T
+
+PTt=0 ct, where T is the total number of environment interaction steps. 
+
+5.3 Baselines 
+
+We consider two types of baselines: hierarchical (HRAC, HRAC-LAG) and flat-policy-based: CUP [20 ], FOCOPS [ 21 ], MBPPOL [ 6], TD3LAG [ 1]. To obtain a fair comparison of our safety component to HRAC algorithm against the Lagrangian-based approach, we added a Lagrange multiplier to the high-level policy of the HRAC algorithm and named this as HRAC - LAG that serves as a Safe RL + HRL baseline. To compare with model-based approaches, we propose the MBPPOL algorithm, an algorithm consisting of a single policy that utilizes a world model to train a Lagrangian PPO in a simulated environment and also consider the current state-of-the-art in Safe RL, SafeDreamer 
+
+[3], which employs a world model based on RSSM, a Lagrangian multiplier for constraint handling, and planning in the latent space. To provide a comparison with off-policy approaches, we propose the TD3LAG algorithm, which consists of the TD3 policy and a Lagrangian multiplier. TD3L/R 
+
+extends TD3LAG with curriculum learning, generating intermediate subgoals upon failure to enhance exploration through progressive target achievement. We do not adopt LyapunovRRT, IAHRL, or Safe HIRO as baselines because they are incom-patible with the environments proposed in this work due to their inherent limitations. Specifically, LyapunovRRT requires ground-truth obstacle positions, while all considered environments oper-ate under partial observability; IAHRL employs options that are infeasible to implement in these settings; and Safe HIRO necessitates prior knowledge of the cost function and its differentiability, yet agents in our tasks lack access to such information, and the cost functions used are inher-10 ently non-differentiable. Nevertheless, we performed quantitative comparisons with SafeHIRO (see Appendix D) and qualitative comparisons with IAHRL (see Appendix E). 
+
+5.4 Long-Horizon Task Solving via Safe Flat Policies (RQ1) 
+
+Table 1 clearly demonstrates the fundamental limitation of flat-policy-based Safe RL methods in solving long-horizon tasks, as evidenced by their near-zero final success rate. The main issue is that these methods fall into a local minimum in reward formulations based on Euclidean distance to the goal: in SafeAntMaze environments the agent must temporarily incur penalties to navigate around obstacles, but flat-policy-based policies greedily maximize immediate reward and therefore fail to reach the target — consistently reflected in their near-zero success rates (SAM C - SafeDreamer: 0, CUP: 0, C-FOCOPS: 0) despite widely varying safety-violation metrics. Although curriculum learning used in TD3L/R helps improve performance, this technique is highly engineering-dependent and cannot be reliably applied across arbitrary environments, limiting its generality. Notably, these methods achieve low safety violation metrics (SAM C - CUP: 6.8, FOCOPS: 19.4, SafeDreamer: 13) primarily because the agent remains stationary and thus avoids violating safety constraints, rather than through successful navigation. 
+
+5.5 Evaluation on long-horizon tasks (RQ2) 
+
+Figure 3 demonstrates ITES’s superior performance versus HRAC-LAG and HRAC across SafeAnt-Maze and SafePusher benchmarks. While all methods achieve comparable success rates (0.89-0.93) in SafeAntMazeCshape, ITES reduces cost violations by 42% through its World/Cost Model framework, contrasting with HRAC-LAG’s noisy Qlc estimates. For SafePusher, ITES improves success rates by 18% over HRAC, consistent with [ 25 ], as the cost function’s dual role as both constraint and reward signal enables more efficient task completion while maintaining safety. The stabilized learning dynamics from model-based safety verification account for these performance advantages. Across all three long-horizon environments(in Table 1), ITES substantially outperforms all other baselines in success rate while remaining safety-compliant. Compared to SafeDreamer, ITES increases success rate by 88% in SAM-C, 35% in SAM-W, and 42% in SafePusher, with an average improvement of 55% across the three environments. At the same time, ITES satisfies safety constraints in all settings. 11 Figure 3: Baselines comparison on SafeAntMaze, SafePusher benchmarks . Comparison of our proposed ITES method with the safe HRAC-LAG and the unsafe HRAC methods. First row :SafeAntMazeCshape environment. Second row : the SafeAntMazeWshape environment. Third row : the SafePusher environment. Each run was conducted with 5 seeds. The shaded area represents the standard deviation. 
+
+5.6 Evaluation on short-horizon tasks (RQ3) 
+
+In the experiments on the SafetyGym benchmark, Figure 4 presents a comparison with hierarchical policies. It is observed that in the PointGoal1, CarGoal1 environment, our method outperforms HRAC-LAG in both safety while maintaining comparable success rates. 12 Figure 4: Baselines comparison on SafetyGym . First row : PointGoal1. Second row :CarGoal1. Results are averaged over 5 random seeds Table 2 provides a comparison of the final weights of flat-policy-based approaches (CUP and FOCOPS) with our method ITES on SafetyGym. In the CarGoal1 environment, which features more complex agent dynamics and a larger state space compared to PointGoal1, flat-policy-based methods struggle to maintain high performance: TD3-Lagrangian achieves only 8.21, and SafeDreamer 6.6, as these approaches adopt conservative behaviors and solve fewer tasks. Consequently, they appear safer, achieving lower costs (e.g., SafeDreamer cost = 0), yet such behavior is suboptimal under the task’s safety specification, where a policy is considered safe if its cost ≤ 40 . In contrast, our method successfully balances performance and safety, achieving a higher reward (PointGoal1: 19 .6,CarGoal1: 18 .3) while keeping cost below the threshold. The results on the PointGoal sparse environment (see Table 2) indicate that simple model-free flat-policy-based algorithms are unable to learn to solve the task, with performance scores of CUP at 1.755, and TD3LAG at 0.07. Such a low success rate indicates that both approaches fail to solve the task effectively. In the case of CUP, the agent remains stationary, resulting in minimal cost, while TD3LAG executes greedy actions but cannot learn to solve the task due to sparse reward conditions. The MBPPOL algorithm utilizes ground truth obstacle information (instead of LiDAR data during training) in PointGoal1, PointCar1, and PointGoal sparse environments in the original implementation of the approach. This leads to an unfair comparison, which is why we have marked its metrics with a "-" sign. Nevertheless, even in this setup, the approach performs worse than our method on PointGoal sparse tasks, as it encounters difficulties when learning in sparse reward scenarios. Meanwhile, SafeDreamer achieves a final reward of only 0.5 in the sparse setting, as it employs a reward model trained on an imbalanced dataset due to the sparse rewards; this leads to overly conservative behavior since the method cannot learn to solve tasks requiring a longer horizon than the original PointGoal1 task. These results demonstrate that, under similar safety conditions, ITES exhibits superior performance compared to baselines, achieving a score of 8.64, while maintaining safety constraints. 13 Table 2: Final performance on SafetyGym benchmark. Where PG1 - PointGoal1, CG1 -CarGoal1, PGs - PointGoal1 sparse. Cost limit for each environment d = 40 . Results are averaged over 5 random seeds. Env Method Final Reward ↑ Final Cost ↓
+
+ITES 19.6 ± 0.46 32 .83 ± 1.97 
+
+TD3LAG 15 .75 ± 0.39 56 .22 ± 0.85 
+
+FOCOPS 14 .97 ± 9.01 33 .72 ± 42 .24 
+
+PG1 CUP 14 .42 ± 6.74 19 .02 ± 20 .08 
+
+PPOLAG 12 .96 ± 6.95 25 .80 ± 34 .99 
+
+SafeDreamer 12 ± 4 10 .3 ± 9.5
+
+MBPPOL - -ITES 18.3 ± 0.03 21 .72 ± 0.59 
+
+FOCOPS 15 .23 ± 10 .76 31 .66 ± 93 .51 
+
+PPOLAG 13 .27 ± 9.26 21 .72 ± 32 .06 
+
+CG1 TD3LAG 8.21 ± 6.88 53 .7 ± 9.45 
+
+SafeDreamer 6.6 ± 1.2 0
+
+CUP 6.14 ± 6.97 36 .12 ± 89 .56 
+
+MBPPOL - -ITES 8.64 ± 0.38 33 .46 ± 1.47 
+
+FOCOPS 7.635 ± 0.2 22 .9 ± 1.5
+
+PPOLAG 6.85 ± 0.76 32 .645 ± 5.9
+
+MBPPOL 6.15 ± 0.15 34 .1 ± 3.6
+
+PGs CUP 1.755 ± 0.95 12 .925 ± 5.3
+
+SafeDreamer 0.5 ± 0.5 3.22 ± 2.34 
+
+TD3LAG 0.07 ± 0.01 64 .7 ± 1.91 
+
+5.7 Ablation Study: Impact of ITES Components on Safety (RQ4) 
+
+Comparison of ITES w/o HLS and ITES w/o LLS : To test whether safety can be enforced at only one hierarchy level, we compare ITES to (i) ITES w/o LLS (no low-level safety; safety enforced only at the high level) and (ii) ITES w/o HLS (no high-level safety; safety enforced only at the low level) on SafeAntMazeCshape . As shown in Figure 5 (first row), high-level safety substantially reduces cost and cost rate, while adding low-level safety further improves safety and reduces variance. In particular, ITES w/o LLS shows higher cost variance because the agent can violate constraints while traveling to a safe subgoal. 
+
+Comparison of flat ITES (without high-level) and ITES : The results of training ITES and TD3 with imagined safety computed using the world model, denoted as TD3IMG, are presented in Figure 5 (second row). Although the cost metric indicates that ITES is significantly safer than TD3IMG, this difference arises because TD3IMG can only minimize safety in imagination over a 10-step horizon (not until the end of the episode); we cannot increase this horizon, as doing so would cause the world model to diverge. In contrast, ITES generates subgoals 10 steps ahead, enabling the TD3 policy to safely reach these goals. 
+
+Impact of Qhc function on safety performance : Furthermore, we examined how integrating the Q cost function into the high-level policy’s objective loss affects performance, as shown in Figure 5, (third row). 14 Figure 5: First row : Low/High safety level analysis. Different versions of ITES are depicted in the figure, with ITES w/o LLS - ITES without low-level safety implementing safety solely at the high-level and ITES w/o HLS - ITES without high-level safety implementing safety solely at the low-level on the SafeAntMazeCshape. Second row : Comparison of ITES without high-level policy and ITES on the PointGoal1. Third row : Comparison of ITES and ITES without Qhc function on the PointGoal1. Plots were obtained across 5 seeds. 
+
+# 6 Conclusions 
+
+In summary, we study safe exploration under CMDP constraints and show that flat safe RL baselines struggle on long-horizon tasks. We propose ITES, which combines safe subgoal generation with imagined low-level safety. On long-horizon navigation and manipulation benchmarks, ITES improves success rates while consistently meeting the prescribed safety budget across seeds, and it remains competitive on short-horizon environments. However, ITES has limitations, including the need to manually design the mapping function ϕ
+
+from state space to goal space for each task, which restricts its adaptability, particularly to visual input. Future work will focus on addressing these limitations, such as learning goal spaces, improving scalability to enable the application of ITES in real-world robotics tasks. 
+
+# Author Contributions 
+
+Conceptualization, G.G., A.L. and A.P.; methodology, G.G. and A.L.; software, G.G.; formal analysis, G.G.; investigation, G.G. and A.L.; validation, A.L.; writing—original draft preparation, G.G.; 15 writing—review and editing, G.G., A.L. and A.P.; supervision, A.P. All authors have read and agreed to the published version of the manuscript. 
+
+# Funding 
+
+This research was funded by the Ministry of Science and Higher Education of the Russian Federation grant number 075-15-2024-544. 
+
+# Data Availability 
+
+The source code supporting the findings of this study is available at https://github.com/Gricha1/ ITES_alg .
+
+# Conflicts of Interest 
+
+The authors declare no conflicts of interest. 
+
+# A Cost and World Models Training 
+
+We further present the training curves for both the cost model and world model components of our approach in the AntMazeCShape environment. Figure 6 displays the cost model’s heatmap visualization, demonstrating that after a 30 k-step warm-start phase, the model already identifies 
+
+20 − 30% of all hazardous states in the environment. Furthermore, the F1-score progression shown in Figure 7 indicates that approximately 500 k training steps are sufficient for the cost model to achieve competent performance. 
+
+Figure 6: Heatmap visualization of the Cost Model in the SafeAntMazeCshape environ-ment . The blue contour demarcates the safe zone boundaries. Left : Heatmap during early training (≤ 80 k steps). Center : Heatmap after full training ( 1 × 2.56 steps). Right : Color bar indicating state safety (1: hazardous, 0: safe). 16 Figure 7: Training metrics for the ITES approach’s Cost Model and World Model in the SafeAntMazeCshape environment : Cost Model Loss (Binary Cross-Entropy, BCE), World Model Loss (Mean Squared Error, MSE), and Cost Model F1-score, evaluated on a 30 k-step dataset collected through random policy exploration. 
+
+# B Long-Horizon Environments 
+
+SafeAntMaze (Figure 8) was created with the safety wrapper for the MujocoAntMaze environment used in the work [ 13 ]. In SafeAntMaze, the agent is an Ant with action and observation spaces: 
+
+A ⊂ R8, S ⊂ R30 . The agent can only observe its current coordinates, joint angles, and angular velocities, lacking information about obstacles. Additionally, we have implemented a safety buffer for the agent’s position: if it is within a specified distance, dist , from a wall, that position is considered unsafe, resulting in a cost of +1 for the agent, the environment has a maximum episode length of 500 timesteps. We developed two types of maps in this environment: SafeAntMazeCshape and SafeAntMazeWshape. We use d = 25 and d = 200 for SafeAntMazeCshape and SafeAntMazeWshape respectively. The SafePusher environment (Figure 9) employs a custom safety wrapper and is built upon the MujocoPusher environment from Gymnasium [ 26 ]. In this task, the agent must manipulate a 7-DoF robotic arm to push a cylindrical object to a target position. The observation space consists of a 24-dimensional vector containing information about the arm joints, end-effector position, object position, and target location. The action space is a 7-dimensional vector representing torque values applied to each joint. This constitutes a long-horizon task due to the robot’s high-dimensional action space and the inherent complexity of even basic end-effector positioning maneuvers for flat policy approaches, the environment has a maximum episode length of 100 timesteps. We use cost limit 
+
+d = 25 for this environment. 17 Figure 8: Up : The figure illustrates the SafeAntMazeCshape environment, where a robot Ant is assigned, and the agent faces a long-horizon task with a specified goal. Down : The scheme of the environments for C shape (left) and W shape (right), where the green point represents Ant start pose, yellow point is Ant final goal, the light field represents a safe zone, the pink field denotes a dangerous area that incurs a cost of +1 for each step taken inside it, and the orange zone indicates a static obstacle. The red trajectory is generated by the HRAC algorithm, which does not take safety into account, while the blue trajectory is produced by the ITES algorithm. 
+
+Figure 9: The figure depicts the SafePusher environment. Left : the MuJoCo visualization shows the robotic manipulator in black , with the white object representing the movable target and the red marker indicating its desired final position. Right : displays a top-view schematic of the environment: the red circle denotes the manipulable object, the green circle represents the end-effector position, the yellow circle marks the target location for the object, and the blue zone indicates a hazardous area. The agent receives a cost penalty of +1 for every timestep during which the object remains within this hazardous zone. 
+
+# C Short Horizon Environments 
+
+The Safety Gym benchmark [ 1] establishes a suite of constrained RL tasks requiring agents to accomplish navigation objectives while maintaining safety by avoiding hazardous states. In the 18 PointGoal environment, a point-mass robot with two-dimensional translational and rotational control operates within the workspace(action space: 2), while the CarGoal environment employs a differential-drive car governed by acceleration and steering dynamics(action space: 2). Both environments utilize a unified observation space featuring lidar-like proximity measurements (16 beams) that detect hazards, goal position coordinates, augmented with the agent’s kinematic state. The primary task involves navigating to a specified goal position while circumventing hazardous areas. A critical challenge emerges from the agents’ inherent kinematic constraints: the point-mass robot’s limited maneuverability and the car’s non-holonomic dynamics significantly elevate collision risks during exploration, particularly in cluttered configurations. This characteristic makes these environments particularly suitable for evaluating the trade-off between task performance and safety compliance in RL agents. We use cost limit d = 40 for this environment. A visual representation of the environment is provided in Figure 10. 
+
+Figure 10: The image presents two tasks: PointGoal1 (left) and CarGoal1 (right) from the SafetyGym environment. The blue circles represent hazardous zones, where the agent incurs a cost of +1 while within them. The green circle indicates the agent’s goal, and the blue box represents a movable vase, which the agent can interact with without incurring a penalty. 
+
+Figure 11: The image illustrates the CarRun environment from the BulletSafetyGym Benchmark. The Car robot is depicted in blue , while the boundaries are shown in orange . Crossing these boundaries incurs a cost. The agent’s objective is to drive straight at the maximum allowable speed; exceeding this speed also results in a cost. 19 Table 3: Qualitative comparison of ITES, Safe HIRO, and IAHRL. Here, Adapt. LL indicates whether a single low-level policy can be reused across tasks, and No diff. cost indicates that the method does not require a differentiable cost function. Method Adapt. LL No diff. cost Safe SG WM ITES Yes Yes Yes Yes Safe HIRO Yes No No No IAHRL No Yes Yes Yes Table 4: Final performance on CarRun comparing ITES and SafeHIRO, where SCRs denotes SafeCarRun with a sparse cost setting and SCRd denotes SafeCarRun with a dense cost setting. The reported safety metric follows the benchmark’s original convention and can take negative values because it depends on the agent’s speed and distance to the walls. Env Method Final Reward ↑ Final Cost ↓
+
+SCRs ITES 750.1 -228.7 
+
+SafeHIRO − −
+
+SCRd ITES 750.1 −228 .7
+
+SafeHIRO 216 -480 
+
+Table 5: Controller (low-level TD3) hyperparameters. A/P denotes SafeAntMaze and SafePusher, and SG denotes SafetyGym. 
+
+Hyperparameter A/P SG 
+
+Actor learning rate 0.0001 0.0001 Critic learning rate 0.001 0.001 Replay buffer size 200,000 200,000 Batch size 128 128 Soft update rate 0.005 0.005 Policy update frequency 1 1
+
+γ 0.95 0.95 Table 6: Safety-related hyperparameters. A/P denotes SafeAntMaze and SafePusher, and SG denotes SafetyGym. 
+
+Hyperparameter A/P SG 
+
+Subgoal safety coefficient βh 
+
+> safe
+
+800 10 Controller safety coefficient βl 
+
+> safe
+
+6 0.001 20 Table 7: Adjacency network hyperparameters. A/P denotes SafeAntMaze and SafePusher, and SG denotes SafetyGym.                   
+
+> Hyperparameter A/P SG
+> Learning rate 0.0002 0.0002 Batch size 64 64 Online training frequency (steps) 50,000 (5000) 50,000 Online training epochs 25 25 Embedding dim 32 32 Hidden dim 128 128
+> ϵk1.0 1.0
+> δ0.2 0.2
+
+# D Comparison on the SafetyBullet Benchmark 
+
+Among other hierarchical algorithms addressing safety, SafeHIRO [ 18 ] stands out as the most similar to our approach, as it also employs subgoal generation. The Table 4 provides a comparison between the ITES approach and SafeHIRO in the CarRun environment from the SafetyBullet Benchmark in Figure 11. The CarRun environment features a dense cost function (incorporating information about the distance to walls into the cost); this environment is labeled as cost dense in the table. Since the SafeLayer used in SafeHIRO requires a differentiable cost function for training, SafeHIRO cannot be trained in the original problem formulation where the cost is a binary sparse function. This is why dashes are present in the sparse row for SafeHIRO. It is important to note that the CarRun benchmark uses its own benchmark-specific safety metric. Unlike the nonnegative episodic CMDP cost used in our main experiments, this metric depends on the agent’s speed and distance to the walls and can therefore take negative values. In contrast, ITES can be trained on both sparse and dense cost functions and achieves consistent results without entering the dangerous zone (where the sparse cost = 0). From the results obtained with a sparse cost function, it is evident that the cost value for SafeHIRO is lower, as it leverages additional information in the cost function specifically, the distance to obstacles encoded as a cost signal while our algorithm does not utilize such information. Nevertheless, our algorithm outperforms SafeHIRO in terms of performance. Additionally, we provide a table highlighting the differences between the ITES, SafeHIRO, and IAHRL algorithms Table 3. 21 Table 8: Cost model and world model hyperparameters. A/P denotes SafeAntMaze and SafePusher, and SG denotes SafetyGym. 
+
+Hyperparameter A/P SG Cost Model 
+
+Initial exploration steps 30,000 30,000 Pretrain epochs 100 100 Batch size 128 512 Buffer size 1,000,000 1,000,000 Learning rate 0.001 0.001 
+
+World Model 
+
+Initial exploration steps 30,000 30,000 Pretrain epochs 100 100 Batch size 256 256 Buffer size 1,000,000 1,000,000 Learning rate 0.001 0.001 Train freq 20 20 Num networks 8 8Num elites 6 6Hidden size 200 200 Table 9: Manager (high-level TD3) hyperparameters. A/P denotes SafeAntMaze and SafePusher, and SG denotes SafetyGym. 
+
+Hyperparameter A/P SG 
+
+Actor learning rate 0.0001 0.0001 Critic learning rate 0.001 0.001 Replay buffer size 200,000 200,000 Batch size 128 128 Soft update rate 0.005 0.005 Policy update frequency 10 5
+
+γ 0.99 0.99 High-level action frequency k 20 10 Reward scaling 0.1 100 Adjacency loss coefficient βh 
+
+> adj
+
+20 20 
+
+# E Comparison with other Safe RL + HRL Methods 
+
+The Bullet Safety Gym CarRun environment extends the Safety Gym benchmark by implementing a realistic autonomous vehicle navigation task within the PyBullet physics simulator. The environment features a differential-drive car agent controlled through continuous steering and acceleration inputs, operating under non-holonomic constraints that complicate safe navigation. The observation space combines 16-bin LIDAR proximity readings (5m range) for hazard detection, egocentric 22 goal coordinates, and proprioceptive vehicle state including velocity and orientation. The primary task requires navigating to sequentially generated goal positions between static walls, with sparse reward = +1000 upon goal achievement and continuous penalty costs ( −1 per timestep) for hazard proximity. Figure 11 illustrates the environment’s procedural obstacle generation and the agent’s sensor coverage. 
+
+# F Training Details 
+
+The hyperparameters are reported in Tables 7, 9, 5, 8, and 6. Most of these were adopted from HRAC [13 ] and MBPPOL [ 6]. For the Car and Point environments, we used the same hyperparameters (SG column). Similarly, the hyperparameters for SafeAntMaze-C, SafeAntMaze-W, and SafePusher are reported in the A/P column. 
+
+# References 
+
+[1] Alex Ray, Joshua Achiam, and Dario Amodei. Benchmarking safe exploration in deep reinforce-ment learning. arXiv preprint arXiv:1910.01708 , 2019. [2] Eitan Altman. Constrained Markov Decision Processes , volume 7. CRC press, 1999. [3] Weidong Huang, Jiaming Ji, Borong Zhang, Chunhe Xia, and Yaodong Yang. Safedreamer: Safe reinforcement learning with world models. In The Twelfth International Conference on Learning Representations , 2024. [4] Javier Garcıa and Fernando Fernández. A comprehensive survey on safe reinforcement learning. 
+
+Journal of Machine Learning Research , 16(1):1437–1480, 2015. [5] Lukas Brunke, Melissa Greeff, Adam W Hall, Zhaocong Yuan, Siqi Zhou, Jacopo Panerati, and Angela P Schoellig. Safe learning in robotics: From learning-based control to safe reinforcement learning. Annual Review of Control, Robotics, and Autonomous Systems , 5:411–444, 2022. [6] Ashish K Jayant and Shalabh Bhatnagar. Model-based safe deep reinforcement learning via a constrained proximal policy optimization algorithm. In Advances in Neural Information Processing Systems , volume 35, pages 24432–24445. Curran Associates, Inc., 2022. [7] Yannick Hogewind, Thiago D Simao, Tal Kachman, and Nils Jansen. Safe reinforcement learning from pixels using a stochastic latent representation. In The Eleventh International Conference on Learning Representations , 2023. [8] Sehoon Ha, Peng Xu, Zhenyu Tan, Sergey Levine, and Jie Tan. Learning to walk in the real world with minimal human effort. In Conference on Robot Learning , pages 1110–1120. PMLR, 2021. [9] Haonan Yu, Wei Xu, and Haichao Zhang. Towards safe reinforcement learning with a safety editor policy. In Advances in Neural Information Processing Systems , volume 35, pages 2608–2621. Curran Associates, Inc., 2022. [10] Elliot Chane-Sane, Cordelia Schmid, and Ivan Laptev. Goal-conditioned reinforcement learning with imagined subgoals. In International Conference on Machine Learning , pages 1430–1440. PMLR, 2021. 23 [11] Ofir Nachum, Shixiang Shane Gu, Honglak Lee, and Sergey Levine. Data-efficient hierarchical reinforcement learning. In Advances in Neural Information Processing Systems , volume 31. Curran Associates, Inc., 2018. [12] Andrew Levy, Robert Platt, and Kate Saenko. Hierarchical reinforcement learning with hindsight. In International Conference on Learning Representations , 2019. [13] Tianren Zhang, Shangqi Guo, Tian Tan, Xiaolin Hu, and Feng Chen. Generating adjacency-constrained subgoals in hierarchical reinforcement learning. In Advances in Neural Information Processing Systems , volume 33, pages 21579–21590. Curran Associates, Inc., 2020. [14] Ajay Mandlekar, Danfei Xu, Roberto Martín-Martín, Silvio Savarese, and Li Fei-Fei. Learn-ing to generalize across long-horizon tasks from human demonstrations. arXiv preprint arXiv:2003.06085 , 2020. [15] Andrea Bassich and Daniel Kudenko. Continuous curriculum learning for reinforcement learning. In Proceedings of the 2nd Scaling-Up Reinforcement Learning (SURL) Workshop. IJCAI , 2019. [16] Zikang Xiong, Joe Eappen, Ahmed H Qureshi, and Suresh Jagannathan. Model-free neural lyapunov control for safe robot navigation. In 2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 5572–5579. IEEE, 2022. [17] Sang-Hyun Lee, Yoonjae Jung, and Seung-Woo Seo. Imagination-augmented hierarchical reinforcement learning for safe and interactive autonomous driving in urban environments. 
+
+IEEE Transactions on Intelligent Transportation Systems , 2024. [18] Felippe Schmoeller Roza, Hassan Rasheed, Karsten Roscher, Xiangyu Ning, and Stephan Günnemann. Safe robot navigation using constrained hierarchical reinforcement learning. In 
+
+2022 21st IEEE International Conference on Machine Learning and Applications (ICMLA) ,pages 737–742. IEEE, 2022. [19] Xin Huang, Meng Feng, Ashkan Jasour, Guy Rosman, and Brian Williams. Risk conditioned neural motion planning. In 2021 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 9057–9063. IEEE, 2021. [20] Long Yang, Jiaming Ji, Juntao Dai, Linrui Zhang, Binbin Zhou, Pengfei Li, Yaodong Yang, and Gang Pan. Constrained update projection approach to safe policy optimization. In Advances in Neural Information Processing Systems , volume 35, pages 9111–9124. Curran Associates, Inc., 2022. [21] Yiming Zhang, Quan Vuong, and Keith Ross. First order constrained optimization in policy space. In Advances in Neural Information Processing Systems , volume 33, pages 15338–15349. Curran Associates, Inc., 2020. [22] Scott Fujimoto, Herke Hoof, and David Meger. Addressing function approximation error in actor-critic methods. In International conference on machine learning , pages 1587–1596. PMLR, 2018. [23] Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine. When to trust your model: Model-based policy optimization. In Advances in Neural Information Processing Systems ,volume 32. Curran Associates, Inc., 2019. 24 [24] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. Mastering diverse domains through world models. arXiv preprint arXiv:2301.04104 , 2023. [25] Xingzhou Lou, Junge Zhang, Ziyan Wang, Kaiqi Huang, and Yali Du. Safe reinforcement learning with free-form natural language constraints and pre-trained language models. arXiv preprint arXiv:2401.07553 , 2024. [26] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang, and Wojciech Zaremba. Openai gym. arXiv preprint arXiv:1606.01540 , 2016. 25

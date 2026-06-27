@@ -1,0 +1,1478 @@
+Title: On the Position Bias of On-Policy Distillation
+
+URL Source: https://arxiv.org/pdf/2606.22600v1
+
+Published Time: Tue, 23 Jun 2026 02:20:39 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# On the Position Bias of On-Policy Distillation 
+
+Yan Xie 1∗ Sijie Zhu 1∗ Tiansheng Wen 2 Bo Chen 1† Yifei Wang 3†
+
+> 1
+
+Xidian University 2Georgia Institute of Technology 3Amazon AGI SF Lab 
+
+Blog Hugging Face  Github 
+
+## Abstract 
+
+On-Policy Distillation (OPD) improves the learning efficiency of standard rein-forcement learning through dense, token-level supervision from teachers. In the standard KL objective of OPD, token-level losses are uniformly averaged, implying equal weights for all tokens. However, we discover that not all tokens are created equal: as student rollouts grow longer, they deviate further from the teacher’s distribution, leading to degraded supervision quality at later positions. As a result, OPD using only the first 30% of tokens can perform comparably to using all tokens, whereas OPD using only the last 30% of tokens barely learns anything. In this work, we provide a principled understanding of this issue through the lens of constrained optimization. Based on these insights, we derive Importance-Weighted On-Policy Distillation (IW-OPD), in which the weight assigned to each token depends on the accumulated discrepancy between the student’s and teacher’s distributions, naturally upweighting earlier tokens and downweighting later ones with larger deviations. We show that IW-OPD converges significantly faster than OPD, with better learning efficiency, and achieves better final performance than standard OPD in both same-size and cross-scale settings, improving performance by 6.9 points on AIME-2025. 0 10 20 30 40 50 
+
+> Training step
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Reward
+> Standard OPD
+> Suffix 30%
+> Prefix 30%
+
+(a) OPD training with the same token budget but supervision applied to different token positions. 0 10 20 30 40 50 60 70 80 90 100 
+
+> Prefix Ratio (%)
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> 45
+> Partial Rollout Accuracy (%)
+> Teacher-Student
+> Reasoning Gap
+> Teacher (Qwen3-30B-A3B)
+> Student (Qwen3-1.7B)
+
+(b) Teacher–student gap in final accuracy when conditioned on student-generated prefixes. 
+
+Figure 1: Position Bias in OPD training. (a) With the same 30% token budget, training on the prefix part of each response matches or exceeds full token Standard OPD, whereas training on the suffix part fails to learn effectively. Student: Qwen3-0.6B, Teacher: Qwen3-4B-Instruct-2507. (b) 
+
+Teacher and student accuracy are measured by the probability of reaching a correct answer from a given student-generated prefix. Student model maintains a low accuracy, while the teacher model’s mean@32 accuracy of eventually reaching the correct answer drops rapidly toward the student level as the student-generated prefix becomes longer. 
+
+> ∗
+
+Equal Contribution. {yanxie940, zsj200454}@gmail.com 
+
+> †
+
+Corresponding Authors: Bo Chen (bchen@mail.xidian.edu.cn) and Yifei Wang (yifeiwg@amazon.com). This work was conducted outside of Amazon. Preprint.      
+
+> arXiv:2606.22600v1 [cs.LG] 21 Jun 2026 010 20 30 40 50
+> Step
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Reward
+> AIME2025 Pass@32
+> Standard OPD
+> IW-OPD(Ours)
+
+(a) AIME25 accuracy during training. Teacher: Qwen3-4B, Student: Qwen3-1.7B. 1.0× 2.4× 6.7× 
+
+> Compression Ratio (Teacher: Qwen3-4B-Instruct-2507)
+> 0.40
+> 0.50
+> 0.60
+> 0.70
+> 0.80
+> Performance Score  +4.0%
+> +5.1%
+> +14.9%
+> Teacher
+> Performance Comparison: Standard OPD vs. PACE
+> Standard OPD
+> IW-OPD(Ours)
+
+(b) Final accuracy vs. compression ratio (teacher parameters / student parameters) 
+
+Figure 2: IW-OPD improves both sample efficiency and final performance. (a) AIME 2025 accuracy during training: IW-OPD converges faster and achieves better final performance than Standard OPD. (b) Final accuracy across student scales distilled from the same teacher; the IW-OPD advantage grows from +4 .0% at 1.0× compression to +14 .9% at 6.7×.
+
+## 1 Introduction 
+
+On-Policy Distillation (OPD) trains a student on its own rollouts, while a stronger teacher provides dense token-level supervision at the prefixes visited by the student [ 1, 10 , 25 , 40 , 24 ], substantially improving learning efficiency over sparse trajectory-level rewards in LLM post-training [6, 11]. An OPD objective uniformly aggregates per-token KL divergence as in standard knowledge distilla-tion. However, it overlooks the nature of OPD, where samples are generated from a weak student, which often produces erroneous outputs that are out-of-distribution (OOD) for the teacher model. As shown in Figure 1b, teacher can still provide reliable prediction when rolling out from early student tokens, but its performance also deteriorates quickly at longer student rollouts, indicating that these prefixes have drifted away from the teacher distribution and it can provide limited value on it. This clear trend reveals a position bias in OPD: early tokens in student rollouts should receive high-weights since it’s high-quality, while later tokens should be down-weighted. A further controlled study confirms this intuition: as shown in Figure 1a, with the same 30% token budget, OPD with only 30% prefixes matches or exceeds full OPD, whereas OPD with 30% suffix provides little benefit. These observations suggest that OPD should be viewed as an allocation problem under a finite local-update budget. Since each update can move the student policy only a limited distance, the update should spend more gradient budget on prefixes where teacher supervision is still compatible with the student’s trajectory. We formalize this intuition through a constrained local projection toward the teacher. Solving this constrained problem yields a closed-form optimal policy whose sample weights are governed by the teacher-to-student likelihood ratio. This ratio explains the observed Position Bias 
+
+phenomenon: once student rollouts move the trajectory away from the teacher-preferred reasoning path, the prefix ratio decreases, and optimal policy naturally reduces the sampling probability of downstream tokens. IW-OPD ( Importance-Weighted On-Policy Distillation) implements this principle with a bounded, detached compatibility multiplier based on unsigned cumulative prefix discrepancy. The method requires no additional teacher evaluations beyond standard OPD and reduces to standard OPD when the extra weighting is removed. Experiments show faster convergence and stronger final performance (Figure 2), with AIME25 gains over OPD reaching +6 .9 points at step 10 and +1 .7 points at convergence. Moreover, IW-OPD makes stronger teachers more sample-efficient and yields larger relative gains as students become smaller. Accordingly, this paper makes three contributions: 1. We identify the position bias phenomenon in OPD and explain it from a constrained-optimization perspective. This view shows why teacher-compatible prefixes dominate useful supervision. (§3). 2. We propose IW-OPD as an efficient OPD objective with token-level importance estimated from the discrepancy between the teacher and the student models (§4). 3. We demonstrate that in pratice, IW-OPD consistently improves OPD with faster convergence and stronger final performance, and that its advantage scales with teacher–student mismatch: stronger teachers become more sample-efficient, while smaller students obtain larger gains (§5). 22 Preliminaries 
+
+Let D denote the prompt distribution, πθ the student policy, and πT the teacher policy. For a prompt 
+
+x and response y = ( y1, . . . , y T ), the trajectory-level distributions decompose autoregressively: 
+
+πθ (y|x) = 
+
+> T
+
+Y
+
+> t=1
+
+πθ (yt|x, y <t ), πT (y|x) = 
+
+> T
+
+Y
+
+> t=1
+
+πT (yt|x, y <t ). (1) 
+
+On-Policy RL. Standard RLVR (e.g., GRPO [ 30 ]) samples trajectories from the current policy and optimizes a trajectory-level reward: 
+
+JRL (θ) = max  
+
+> θ
+
+Ex∼D , y ∼πθ (·| x)
+
+r(x, y ), (2) where r(x, y ) is obtained from a reward model [ 5, 8 , 21 ] or a verifier [ 7 , 22 , 41 , 13 ]. The policy gradient takes the form 
+
+∇θ JRL = Ex, y ∼πθ
+
+ TX
+
+> t=1
+
+At ∇θ log πθ (yt|x, y <t )
+
+
+
+, (3) where the advantage At computed from the trajectory reward assigns the same credit to every token. 
+
+On-Policy Distillation (OPD). OPD [ 1, 10 , 25 ] replaces the sparse trajectory-level reward with dense token-level supervision from a teacher model πT [40, 24]: 
+
+JOPD (θ) = max  
+
+> θ
+
+−DKL (πθ || πT ) = −Ex, y ∼πθ
+
+> T
+
+X
+
+> t=1
+
+log πθ (yt|x, y <t )
+
+πT (yt|x, y <t ) , (4) where y = [ y1, . . . , y T ] ∼ πθ (y|x) denotes a sampled answer from the student πθ . In practice, OPD decomposes sequence-level objective and uses a token-local semi-gradient that treats the sampled prefixes as fixed [24, 25] as in Eq. (3): 
+
+∇θ JOPD ≈ Ex, y ∼πθ
+
+ TX
+
+> t=1
+
+AOPD  
+
+> t
+
+∇θ log πθ (yt|x, y <t )
+
+
+
+, (5) where OPD assigns a token-level advantage from the teacher–student distribution gap: 
+
+AOPD  
+
+> t
+
+:= −(log πθ (yt|x, y <t ) − log πT (yt|x, y <t )) . (6) 
+
+## 3 Position Bias in On-Policy Distillation 
+
+Standard OPD provides dense token-level supervision, but it aggregates all token-level KL terms uniformly in Eq. (4) . In this section, we observe that OPD actually has a clear position bias : its early tokens are much more valuable for learning compared to its later tokens. We will show two interesting empirical phenomena in Sec. 3.1 and provide a theoretical explanation in Sec. 3.2. 
+
+3.1 The Position Bias Phenomenon in OPD Early-token supervision drives OPD performance. To evaluate the influence of token positions in OPD learning, we fix the supervision budget and vary only the supervised segment. Prefix-30 applies OPD to the first 30% response tokens, while Suffix-30 applies OPD to the last 30%; Standard OPD uses all valid tokens. All other training settings are unchanged (details in Appendix C). Figure 1a shows a strong asymmetry. Supervising only the prefix 30% of tokens achieves performance comparable to standard OPD and consistently outperforms supervising only the suffix 30%. In contrast, suffix-only supervision yields substantially lower rewards throughout training. These results indicate that OPD benefits primarily from early-token supervision, while supervision on later tokens alone provides limited gains. 
+
+Teacher–student gap largely persists after OPD. Meanwhile, we also observe that even if the OPD objective tries to minimize the KL divergence between the teacher and student, the actual 30 5 10 15 20 25 30 35 40 45 50 55 
+
+> Training step
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Mean Token KL
+> plateaus
+> Mean
+> Mean KL approx.
+
+(a) Mean token-level reverse KL across training steps. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Relative response position t / T
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> Token-Level KL
+> Initialization
+> Convergence
+
+(b) Token-level reverse KL before and after OPD training. 200 400 600 800 1000                    
+
+> Token position
+> −1200
+> −1000
+> −800
+> −600
+> −400
+> −200
+> 0
+> Prefix Log Likelihood
+> log πT(y<t∣x)
+> log πθ(y<t∣x)
+> log πT(y<t∣x)
+> πθ(y<t∣x)
+
+(c) Log-likelihoods gap of student-sampled prefix vs. prefix length. 
+
+Figure 3: Position Bias phenomena in OPD. (a) The mean token-level KL decreases during OPD training but plateaus at a non-zero residual. (b) Token-level reverse KL before and after OPD training. (c) Sequence-level log-probabilities of student-sampled prefixes under the student and teacher. Student: Qwen3-0.6B; Teacher: Qwen3-4B-Instruct. divergence between these two only decreases by 20% even if training converges and the student performance saturates (shown in Fig. 3a and Fig. 3b). It suggests that OPD training effectively only optimizes the student within a small local region. This could be because the OPD only optimizes on student-generated samples and this kind of RL training is known to produce minimal weight update[35, 4, 20, 33, 43]. The two phenomena combined suggest an interesting learning landscape in OPD learning: it only optimizes the student distribution locally and most of the gains come from early prefix tokens . Why does OPD have such a position bias and what does it imply for learning efficiency? We provide a theoretical explanation of this phenomenon in the next section. 
+
+3.2 Understanding Position Bias from a Finite-Budget Allocation Perspective 
+
+As the empirical result in Sec. 3.1 indicates that OPD only moves the student distribution within a small range, we can think of the actual OPD training as a constrained optimization problem, where the student distribution stays in a local region during training: 
+
+min  
+
+> q
+
+DKL (q∥πT ) s.t. DKL (q∥πθ ) ≤ ρ, (7) where πθ denotes the student distribution, and ρ denotes the effective local update budget measured by KL divergence. It can also be viewed as a trust-region objective where the policy is only updated within a trust region of radius ρ. In fact, this constrained objective admits a closed-form solution q⋆,as revealed in the following proposition. The proof can be found at Appendix A.1. 
+
+Proposition 1 (Optimal Policy) . Given πθ and πT with common support. In the local-update regime 
+
+0 < ρ < D KL (πT ∥πθ ), the trust-region constraint in Eq. (7) is active and the unique solution is 
+
+q⋆θ (y) = πθ (y)
+
+Zα(θ)
+
+ πT (y)
+
+πθ (y)
+
+α
+
+, (8) 
+
+which reweights the student policy πθ by the likelihood ratio rθ (y) = πT (y)/π θ (y). Here, Zα(θ) = 
+
+Ey∼πθ [rθ (y)α] denotes the normalizing factor, and α ∈ (0 , 1) is a constant depends on ρ.
+
+The optimal policy q⋆ is proportional to likelihood ratio. This likelihood-based reweighting view in Proposition 1 explains why the position bias in Figure 1a arises. Along student rollouts, the prefix probability under the student, πθ (y<t ), usually decreases smoothly because the sequence is sampled from πθ . In contrast, the same prefix probability under the teacher, πT (y<t ), can drop much faster once early student decisions move the reasoning path away from the teacher-preferred region, as illustrated in Figure 3c. Therefore the prefix ratio rθ (y<t )α tends to become smaller at later positions. The constrained optimum would allocate less mass to such low-ratio prefixes, while uniform OPD continues to spend the same update budget on their suffix tokens. Thus, position bias is a consequence of applying uniform token-level updates to a local projection problem whose optimal solution is inherently ratio-weighted. 44 Importance-Weighted On-Policy Distillation 
+
+Based on the insights from §3, in this section, we propose a more efficient OPD objective, Importance-Weighted OPD, that leverages the position bias to learn more efficiently. 
+
+4.1 Importance-Weighted OPD 
+
+As discussed in Sec. 3.1, OPD can only optimize within a local region and the optimal policy it could attain is q⋆θ (Eq. 8), which reweights the base student policy πθ with teacher–student gap measured by the likelihood ratio. As discussed in Sec. 3.2, only tokens with relatively high likelihood ratios provide meaningful learning signals in OPD since the others have very low probability of being sampled. Motivated by this observation, we propose to directly optimize the divergence between the optimal policy q⋆ and the teacher, which directly emphasizes high-probability samples: 
+
+min  
+
+> θ
+
+Jq⋆θ = −DKL (q⋆θ ∥πT ). (9) Since q⋆θ is a reparameterized distribution induced by the student and teacher, we can further repa-rameterize this new learning objective by sampling from πθ instead. More specifically, it will be equivalent to an Importance-Weighted OPD (IW-OPD) objective, as revealed in the next proposition. 
+
+Importance-weighted form of the projected objective. For clarity, we first fix the prompt x and omit it from the notation. We consider the non-trivial local-update regime 0 < ρ < D KL (πT ∥πθ )
+
+from Proposition 1. In this regime α is induced by the effective step-size budget ρ, and the trust-region constraint is active as DKL (q⋆θ ∥πθ ) = ρ. Thus we have: 
+
+DKL (q⋆θ ∥πT ) = Eq⋆θ
+
+
+
+log q⋆θ (y)
+
+πT (y)
+
+
+
+= Eq⋆θ
+
+
+
+log q⋆θ (y)
+
+πθ (y)
+
+
+
++ Eq⋆θ
+
+
+
+log πθ (y)
+
+πT (y)
+
+
+
+= ρ + Eq⋆θ
+
+
+
+log πθ (y)
+
+πT (y)
+
+
+
+. (10) 
+
+Proposition 2 (Importance-Weighted OPD Objective) . By applying a change of measure from q⋆θ to 
+
+πθ and substituting Eq. (8) , we obtain an importance-weighted trajectory-level objective and define the following token-level surrogate (proof in Appendix A.2): 
+
+J ⋆
+
+> IW
+
+(θ) = −Ey∼πθ
+
+" TX
+
+> t=1
+
+sg [˜ rt] log πθ (yt | y<t )
+
+πT (yt | y<t )
+
+#
+
+, ˜rt = rt
+
+Zα,t 
+
+. (11) 
+
+where rt := rθ (y<t ) = πT (y<t )/π θ (y<t ) depends on α and denotes the prefix likelihood ratio at position t, inherited from the trajectory-level ratio in Proposition 1. The position-wise normalizer is 
+
+Zα,t = Ey<t ∼πθ [rt]. sg[ ·] is stop gradient operator. 
+
+Eq. (11) shows that the Eq. (9) objective can be optimized using πθ -sampled rollouts as standard OPD, with each token-level KL term reweighted by a detached, normalized prefix-importance weight ˜rt. This weight, introduced by q⋆θ , becomes larger for teacher-compatible prefixes with high teacher–student likelihood ratio and smaller after accumulated teacher–student drift. Similar to OPD, the gradient of IW-OPD can be written as a policy gradient form with importance-weighted advantage (proof in Appendix A.3): 
+
+∇θ J ⋆
+
+> IW
+
+(θ) ≈ Ey∼πθ
+
+" TX
+
+> t=1
+
+AIW-OPD  
+
+> t
+
+∇θ log πθ (yt | y<t )
+
+#
+
+, (12) where 
+
+AIW-OPD  
+
+> t
+
+= −sg [˜ rt] (log πθ (yt | y<t ) − log πT (yt | y<t )) . (13) With stop-gradient applied, the coefficient in Eq. (12) acts as a multiplicative weight on the OPD policy-gradient signal. Thus, the weighted gradient is the operational form of the constrained-optimization view in Eq. (9) : it corrects OPD’s position bias by reallocating the finite update budget through prefix-importance weights. 50 10 20 30 40 50     
+
+> Training step
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> Reward
+> Standard OPD
+> α= 1
+> α= 0.1
+> α= 0.01
+> α= 0.001
+
+(a) α in prefix-importance weights ablation. 100 200 300 400 500 600 
+
+> Token position
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> Ideal Weight
+> alpha=1
+> alpha=0.1
+> alpha=0.01
+> alpha=0.001
+
+(b) Prefix-importance weights visu-alization. 0 10 20 30 40 50 
+
+> Training step
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> Reward
+> Signed
+> Unsigned
+
+(c) Signed vs. Unsigned prefix-importance weights ablation. 
+
+Figure 4: From signed prefix ratio to unsigned prefix discrepancy. (a) Directly using the ideal prefix ratio is sensitive to α. (b) Token-wise visualization shows the desired overall downward trend, but also local rebounds caused by signed cancellation. (c) Replacing signed accumulation with the unsigned weight gives a more stable weighting signal. 
+
+4.2 Stable Token-level Importance Weight Estimate 
+
+Eq. (12) provides a principled reweighting ˜rα,t ∝ πT (y<t )/π θ (y<t ) for OPD. However, since the probability π(y<t ) = Π t−1 
+
+> i=1
+
+π(yi|y<i ) multiplies over longer sequence, the ratio will vary dramatically as t grows, which introduces severe training instability. Below, we discuss several techniques helpful to stabilize this importance weight estimate (techniques ablation in Sec. 5.3). 
+
+Small weight index α. A small α → 0 can help flatten the difference, but it is still not sufficient. Fig. 4a shows strong sensitivity to α: large values such as α = 1 and α = 0 .1 substantially degrade training, while only very small values such as α = 0 .01 and α = 0 .001 roughly match standard OPD. Fig. 4b visualizes this numerical instability: α directly controls the scale and sharpness of the prefix weights, making the raw weights either overly concentrated or nearly flat. Beyond adjusting α, we discover several effective strategies that stabilize the importance estimate. 
+
+I. Stabilization via log scaling. We first scale down the the probability gap by considering their ratio in the log space, which will preserve their order while mitigating the exponentially accumulated gaps: 
+
+˜rlog  
+
+> t
+
+= log rt = α X
+
+> k<t
+
+(log πT (yk|y<k ) − log πθ (yk|y<k )) = α X
+
+> k<t
+
+AOPD  
+
+> k
+
+, (14) which directly corresponds to the sum of token-level OPD advantages AOPD  
+
+> k
+
+.
+
+II. Correcting positive-advantage tokens. Since the rollout tokens are sampled from the student, πθ (yk|y<k ) is often relatively large on these tokens, and thus, as shown in Fig. 3c, 
+
+log πT (yk|y<k ) − log πθ (yk|y<k ) is mostly negative. However, for some tokens where the teacher assigns higher probability than the student, this term becomes positive. These terms can partially offset the accumulated negative prefix gap, as shown in Fig. 4b. In practice, we find it helpful to further reduce this cancellation effect by reverting the negative importance weights, leading to a sum of non-negative token-level discrepencies measured by |AOPD  
+
+> k
+
+|:
+
+˜rabs  
+
+> t
+
+= X
+
+> k<t
+
+ I[AOPD  
+
+> k
+
+< 0] AOPD  
+
+> k
+
+− I[AOPD  
+
+> k
+
+> 0] AOPD 
+
+> k
+
+ = − X
+
+> k<t
+
+AOPD  
+
+> k
+
+. (15) We empirically compare both the original (Eq. 14) and unsigned versions in Fig. 4c, both variants are improve in practice, while the unsigned version yields higher p better results. 
+
+III. Normalization. Although sign correction ensures monotonicity of importance weights as sequence grow, the absolute scale could still vary significantly across samples. To mitigate this effect, we therefore apply a simple within-sample standardization. In particular, for a sample whose importance weights lie in [dT , 0] , where the maximum 0 corresponds to the beginning of the sequence and the minimum dT corresponds to the end, we standardize the discrepancy to [0 , 1] with 
+
+˜rnorm  
+
+> t
+
+= dt − dmin 
+
+dmax − dmin 
+
+− P 
+
+> k<t
+
+|AOPD  
+
+> k
+
+| − (− P 
+
+> k<T
+
+|AOPD  
+
+> k
+
+|)0 − (− P 
+
+> k<T
+
+|AOPD  
+
+> k
+
+|) = 1 −
+
+P 
+
+> k<t
+
+AOPD 
+
+> k
+
+P 
+
+> k<T
+
+AOPD 
+
+> k
+
+. (16) 6Table 1: Evaluation results with Qwen3-30B-A3B-Instruct-2507 as teacher (small student–teacher overlap). Math results are reported as mean@32 accuracy (%). Methods with subscript 10 are evaluated at training step 10. Bold indicates the best result within each student group. 
+
+Student Method Math Code Avg 
+
+AIME24 AIME25 HMMT25 HE+ MBPP+ 
+
+Teacher Model 74.7 62.8 44.2 86.6 75.1 68.7 Qwen3-4B Base 23.1 21.4 10.0 75.3 64.5 38.9 OPD 10 51.2 42.4 23.5 76.2 66.7 52.0 IW-OPD 10 56 .2+5.0 49 .3+6.9 27 .3+3.8 76 .8+0.6 68 .1+1.4 55 .5+3.5 
+
+OPD 55.3 48.0 27.1 77.2 69.1 55.3 IW-OPD 57.5 +2.2 49.7 +1.7 28.7 +1.6 78.7 +1.5 70.9 +1.8 57.1 +1.8 
+
+Qwen3-1.7B Base 13.4 11.0 6.8 59.6 52.5 28.7 OPD 10 30.5 20.2 14.4 53.0 52.6 34.1 IW-OPD 10 33 .0+2.5 23 .2+3.0 15 .6+1.2 55 .5+2.5 54 .8+2.2 36 .4+2.3 
+
+OPD 34.6 28.7 15.5 64.6 53.7 39.4 IW-OPD 35.5 +0.9 29.5 +0.8 16.4 +0.9 65.2 +0.6 55.0 +1.3 40.3 +0.9 
+
+Qwen3-0.6B Base 1.5 3.4 1.3 28.2 28.4 12.6 OPD 10 6.2 14.1 6.5 26.9 23.1 15.4 IW-OPD 10 7.8+1.6 15 .8+1.7 7.6+1.1 28 .4+1.5 27 .5+4.4 17 .4+2.0 
+
+OPD 11.0 17.8 7.1 29.6 28.7 18.8 IW-OPD 11.5 +0.5 19.3 +1.5 8.0 +0.9 32.5 +2.9 31.9 +3.2 20.2 +1.4 
+
+Table 2: Evaluation results with Qwen3-4B-Instruct-2507 as teacher (large student–teacher overlap). Math results are reported as mean@32 accuracy (%). Methods with subscript 10 are evaluated at training step 10. Bold indicates the best result within each student group. 
+
+Student Method Math Code Avg 
+
+AIME24 AIME25 HMMT25 HE+ MBPP+ 
+
+Teacher Model 60.4 46.7 31.0 82.5 71.3 58.4 Qwen3-4B Base 23.1 21.4 10.0 75.3 64.5 38.9 OPD 10 56.3 45.7 23.6 76.0 66.1 54.0 IW-OPD 10 58 .7+2.4 46 .7+1.0 25 .0+1.4 77 .8+1.8 67 .5+1.4 55 .1+1.2 
+
+OPD 56.5 46.3 24.4 76.3 67.8 54.3 IW-OPD 58.7 +2.2 46.7 +0.4 25.0 +0.6 77.9 +1.6 68.2 +0.4 55.3 +1.0 
+
+Qwen3-1.7B Base 13.4 11.0 6.8 59.6 52.5 28.7 OPD 10 33.4 24.7 11.3 61.1 53.4 36.8 IW-OPD 10 35 .2+1.8 25 .9+1.2 13 .2+1.9 62 .0+0.9 54 .0+0.6 38 .1+1.3 
+
+OPD 34.0 26.4 13.7 61.5 53.7 37.9 IW-OPD 35.2 +1.2 27.1 +0.7 15.3 +1.6 62.8 +1.3 54.9 +1.2 39.1 +1.1 
+
+Qwen3-0.6B Base 1.5 3.4 1.3 28.2 28.4 12.6 OPD 10 11.1 17.1 6.9 26.8 31.0 18.6 IW-OPD 10 12 .4+1.3 19.0 +1.9 9.4+2.5 28 .1+1.3 33 .9+2.9 20 .6+2.0 
+
+OPD 11.8 17.1 7.7 29.8 33.3 20.0 IW-OPD 13.6 +1.8 19.0 +1.9 9.6 +0.9 31.6 +1.8 35.7 +2.4 21.9 +1.9 
+
+IV. Interpolation with OPD. Finally, after normalization, end-of-sequence tokens will have low weights. We perform an interpolation with the original OPD to balance these two effects: 
+
+˜rIW −OPD  
+
+> t
+
+= 1 + γ · ˜rnorm  
+
+> t
+
+= 1 + γ 1 −
+
+P 
+
+> k<t
+
+AOPD 
+
+> k
+
+P 
+
+> k<T
+
+AOPD 
+
+> k
+
+!
+
+, (17) where higher γ ≥ 0 indicates a higher contribution from the teacher-informed importance weights. In practice, we find γ = 0 .5 is a good default choice (Other parameters in Appendix C.2). 7Table 3: Evaluation results with Qwen3-235B-A22B-Instruct-2507 as teacher. Math results are reported as mean@32 accuracy (%). Bold indicates the best result within each student group.                                 
+
+> Student Method Math Code Avg
+> AIME24 AIME25 HMMT25 HE+ MBPP+
+> Teacher Model 80.7 69.2 55.6 90.2 77.6 74.7 Qwen3-30B-A3B Base 28.4 23.4 15.2 77.8 69.5 42.9 OPD 69.5 56.7 38.4 82.1 71.3 63.6 IW-OPD 70.8 +1.3 58.9 +2.2 40.5 +2.1 83.5 +1.4 73.7 +2.4 65.5 +1.9
+
+## 5 Experiments 
+
+5.1 Setup 
+
+We evaluate IW-OPD in two teacher regimes and three student scales. The students are Qwen3-4B, Qwen3-1.7B, and Qwen3-0.6B. The first teacher is Qwen3-4B-Instruct-2507, which gives a larger overlap setting within the same model family. The second teacher is Qwen3-30B-A3B-Instruct-2507, which gives a smaller overlap setting and tests whether prefix weighting remains useful when the student often leaves the teacher’s preferred trajectory region. Training uses DeepMath with difficulty at least 6, about 57K problems, for math, and Eurus-RL-Code, about 25K problems, for code. We evaluate math on AIME 2024, AIME 2025, and HMMT 2025. We evaluate code on HumanEval+ and MBPP+. The baselines are the student base model before distillation and standard OPD. All reported numbers are averaged over three random seeds. 
+
+5.2 Main Results IW-OPD consistently improves OPD. Tab. 1, 2 report the main evaluation results. IW-OPD consistently improves over standard OPD across all evaluated teacher–student pairs and benchmarks. In the two full evaluation regimes with Qwen3-4B and Qwen3-30B-A3B teachers, IW-OPD improves the final reported average for every student scale. The additional experiment using Qwen3-235B-A22B-Instruct-2507 as the teacher and Qwen3-30B-A3B as the student in Tab. 3 further shows that the prefix-importance weighting remains effective in a much larger distillation setting, improving the math average by 1.9 points over OPD. Beyond vanilla OPD, Appendix D shows that IW-OPD can also be combined with other OPD variant that redesign the reward term, such as ExOPD [42]. 
+
+IW-OPD improves sample efficiency. The early checkpoints show that reweighting changes the efficiency of the update, not only the final endpoint. IW-OPD is ahead of OPD at step 10 in every reported teacher–student regime. The effect is especially clear in the Qwen3-30B-A3B → Qwen3-4B setting, where IW-OPD 10 improves the average score from 52.0 to 55.5 and AIME25 from 42.4 to 49.3. Notably, this step-10 checkpoint already matches the final OPD checkpoint in average performance. This supports the allocation view: by reducing the relative influence of drifted prefixes, IW-OPD spends more of each update on prefixes where teacher supervision can still redirect the student. 
+
+IW-OPD improves efficiency as teachers scale up. We next isolate the effect of teacher scaling by fixing the student. For the Qwen3-4B student, using the stronger Qwen3-30B-A3B teacher gives a better final OPD average than using the Qwen3-4B teacher, 55.3 versus 54.3. However, standard OPD is less sample-efficient with the stronger teacher in the early stage: at step 10, distilled from 30B-A3B teacher reaches only 52.0 average score, lower than 54.0 from 4B teacher. This suggests that a stronger teacher can provide a better final target but also induces larger teacher–student trajectory mismatch, so uniform OPD needs more updates before the student can effectively benefit from its supervision. IW-OPD alleviates this inefficiency. In the same Qwen3-4B student setting, IW-OPD 10 
+
+with 30B-A3B teacher reaches 55.5 average score, surpassing IW-OPD 10 with 4B teacher at 55.1. On AIME25, the reversal is even clearer: standard OPD 10 with 30B-A3B teacher is behind the 4B teacher, 42.4 versus 45.7, whereas IW-OPD 10 makes the 30B-A3B teacher outperform the 4B teacher, 49.3 versus 46.7. These results show that IW-OPD makes stronger teachers more sample-efficient by reallocating training signal toward teacher-compatible prefixes. 8Table 4: Ablation results on AIME25. We isolate trajectory-adaptive prefix selection, unsigned discrepancy, and the effect of using the practical surrogate with a standard OPD blend. Variant AIME25 ∆ vs. OPD baseline 
+
+Prefix selection strategy 
+
+Standard OPD 43.3 0.0 Amplify fixed prefix 43.7 +0.4 Linear decay 44.1 +0.7 Manual curriculum 44.8 +1.5 
+
+Cumulative-share (ours) 48.9 +5.6 
+
+Signed vs. unsigned discrepancy 
+
+Signed P Ak 45.9 +2.6 
+
+Unsigned P |Ak| (ours) 48.9 +5.6 
+
+Weight source and OPD blend 
+
+Ideal weight only 42.1 -1.2 Ideal weight w. OPD blend 43.9 +0.6 Surrogate weight only 46.2 +2.9 
+
+OPD blend (ours) 48.9 +5.6 
+
+IW-OPD benefits more as students scale down. We first isolate the effect of student scaling by fixing the teacher. With Qwen3-4B-Instruct-2507 as the teacher, the final average improvement of IW-OPD over OPD increases as the student becomes smaller: from +1.0 points for the 4B student, to +1.2 points for the 1.7B student, and to +1.9 points for the 0.6B student. In relative terms, these correspond to approximately +1.8%, +3.2%, and +9.5%, respectively. The same trend is also visible at step 10, where the relative gains grow from +2.0% to +3.5% and then to +10.8% as the student size decreases. These results indicate that IW-OPD is especially helpful in cross-scale distillation: when the student is much smaller than the teacher, student rollouts are more likely to drift away from the teacher-compatible region, and uniform OPD wastes more update budget on low-quality downstream supervision. 
+
+IW-OPD scales to stronger teachers and larger students. The experiment with Qwen3-235B-A22B-Instruct-2507 as the teacher in Table 3 provides a large-scale stress test beyond the small-student regimes. Although standard OPD already gives a strong 30B student, IW-OPD still improves all reported math benchmarks, with gains of 1.3 points on AIME24, 2.2 points on AIME25, and 2.1 points on HMMT25. This indicates that prefix-importance weighting is not merely a remedy for weak students; it remains useful when distilling a very strong teacher into a capable student. 
+
+5.3 Ablations 
+
+Table 4 isolates three design choices: how token weights are assigned, how prefix discrepancy is measured, and whether the weighted term should be blended with standard OPD. We use Qwen3-0.6B as the student because this setting makes prefix selection most visible. 
+
+Adaptive prefix selection matters more than a fixed shape. Amplifying a fixed ratio (30%) prefix gives only +0 .4, and a hand-designed position schedule gives +1 .5. After unsigned correction, 
+
+˜rIW −OPD becomes a monotonically decreasing weight. Accordingly, we test a direct linear-decay variant, which gives only +0 .7. The cumulative-share rule gives +5 .6. This ordering separates the benefit of early token preference from the benefit of trajectory adaptivity. A smooth preference for earlier positions is not enough. The useful boundary between reliable and unreliable prefixes changes across rollouts, so the weight must follow each trajectory’s own discrepancy trace. Easy rollouts can keep high weights for longer, while hard rollouts should reduce downstream weights earlier. 
+
+Unsigned discrepancy is the better prefix compatibility proxy. Using signed accumulation gives 
+
++2 .6, while the unsigned version gives +5 .6. Signed terms can cancel even when the prefix has passed through several model disagreements. This cancellation makes a drifted prefix appear compatible with the teacher. The absolute statistic treats each disagreement as evidence that the student has moved away from the shared prefix region. 9The surrogate should allocate extra budget rather than replace OPD. The ideal likelihood-ratio weight is useful as a derivation target but not as a literal training rule. Using it alone collapses performance, and blending it with OPD gives only a small gain. This matches the instability observed in Figure 4: the raw ratio has high variance and is sensitive to signed cancellations along long trajectories. The practical surrogate is more robust because it preserves the desired ordering of prefixes while removing the unstable product scale. However, using the surrogate alone is still weaker than blending it with OPD. The blend keeps the standard dense OPD signal as a floor and allocates additional update budget to compatible prefixes, which is the intended role of IW-OPD. 
+
+## 6 Related Work 
+
+On-policy and token-selective distillation. Classical KD [ 12 ] trains on teacher-generated data and can suffer from exposure bias [ 3, 2, 27 ]. OPD supervises student-sampled rollouts: GKD [ 1] unifies on/off-policy data through f -divergences, MiniLLM [ 10 ] optimizes reverse KL with policy-gradient estimators, and recent OPD work studies on-policy teacher supervision and its extensions [ 17 , 31 ,42 , 44 ]. Selective distillation further asks where supervision should be applied, using sequence-level curricula [ 36 , 23 , 39 ] or token-level weights based on frequency, difficulty, teacher confidence, and student learning state [ 9 , 18 , 14 , 38 , 16 ]. IW-OPD follows this token-selective view and uses on-policy prefix compatibility as the weighting signal. 
+
+Credit assignment and reweighted policy updates. RLVR pipelines [ 7, 30 ] must assign sparse out-come rewards over long reasoning traces. Process-supervision and process-reward methods provide denser step-level feedback [ 19 , 34 , 6 ], and recent token-level analyses identify high-entropy forking tokens, critical tokens, and reasoning rather than boilerplate tokens as disproportionate drivers of learning [ 35 , 4 , 20 , 33 , 43 , 11 ]. IW-OPD allocates dense teacher supervision by prefix compatibility. Its constrained-projection view connects to trust-region and proximal policy updates [ 15 , 28 , 29 ], sequence-level importance correction in GSPO and online DPO [ 46 , 26 , 37 ], and geometric interpola-tion/Rényi midpoints [32, 45]. 
+
+## 7 Discussion and Conclusion 
+
+The key insight of this work is that OPD supervision is not uniformly reliable along a student-generated trajectory. This creates a position bias : teacher supervision is often more useful near the beginning of the rollout than near the end. Such bias is not unique to OPD. It may also appear in many methods involving two autoregressive sequence models, such as on-policy RL where samples are drawn from the current policy but updates move toward a new policy. The issue is especially visible in OPD since the teacher–student distribution gap is not known in advance, so we cannot predefine where their trajectories remain compatible. In conclusion, we identify position bias as a key inefficiency in On-Policy Distillation and explain it through a finite-budget local projection view. Motivated by this analysis, IW-OPD reallocates additional gradient budget toward teacher-compatible prefixes using a stable cumulative prefix-discrepancy weight, while keeping standard OPD as the dense supervision floor. Experiments across same-family, cross-scale, and stronger-teacher settings show that this simple modification improves both sample efficiency and final performance. More broadly, our results suggest that effective on-policy supervision should account not only for token-level disagreement, but also for the trajectory context (i.e., the prefix) during which that disagreement occurs. 10 References 
+
+[1] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In The Twelfth International Conference on Learning Representations ,2024. URL https://openreview.net/forum?id=3zKtaqxLhW .[2] Kushal Arora, Layla El Asri, Hareesh Bahuleyan, and Jackie Chi Kit Cheung. Why exposure bias matters: An imitation learning perspective of error accumulation in language generation. In Findings of the Association for Computational Linguistics: ACL 2022 , pages 700–710, 2022. [3] Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer. Scheduled sampling for sequence prediction with recurrent neural networks. In Advances in Neural Information Processing Systems , 2015. [4] Eric J. Bigelow, Ari Holtzman, Hidenori Tanaka, and Tomer Ullman. Forking paths in neural text generation. In International Conference on Learning Representations , 2025. [5] Zheng Cai, Maosong Cao, Haojiong Chen, Kai Chen, Keyu Chen, Xin Chen, Xun Chen, Zehui Chen, Zhi Chen, Pei Chu, et al. Internlm2 technical report. arXiv preprint arXiv:2403.17297 ,2024. [6] Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Wenjie Peng, Jianhao Chen, Ning Chen, Zhiyuan Liu, and Maosong Sun. Process reinforcement through implicit rewards. arXiv preprint arXiv:2502.01456 , 2025. [7] DeepSeek-AI. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. [8] Hanze Dong, Wei Xiong, Bo Pang, Haoxiang Wang, Han Zhao, Yingbo Zhou, Nan Jiang, Doyen Sahoo, Caiming Xiong, and Tong Zhang. Rlhf workflow: From reward modeling to online rlhf. 
+
+arXiv preprint arXiv:2405.07863 , 2024. [9] Shuhao Gu, Jinchao Zhang, Fandong Meng, Yang Feng, Wanying Xie, Jie Zhou, and Dong Yu. Token-level adaptive training for neural machine translation. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pages 1035–1046, Online, 2020. Association for Computational Linguistics. doi: 10.18653/v1/2020.emnlp-main. 76. URL https://aclanthology.org/2020.emnlp-main.76/ .[10] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. MiniLLM: Knowledge distillation of large language models. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=5h0qf7IBZZ .[11] Yuhang He, Haodong Wu, Siyi Liu, Hongyu Ge, Hange Zhou, Keyi Wu, Zhuo Zheng, Qihong Lin, Zixin Zhong, and Yongqi Zhang. Rethinking token-level credit assignment in RLVR: A polarity-entropy analysis. arXiv preprint arXiv:2604.11056 , 2026. [12] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. In 
+
+NIPS Deep Learning and Representation Learning Workshop , 2015. URL https://arxiv. org/abs/1503.02531 .[13] Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xiangyu Zhang, and Heung-Yeung Shum. Open-reasoner-zero: An open source approach to scaling up reinforcement learning on the base model. arXiv preprint arXiv:2503.24290 , 2025. [14] Haiduo Huang, Jiangcheng Song, Yadong Zhang, and Pengju Ren. SelecTKD: Selective token-weighted knowledge distillation for LLMs, 2025. URL https://arxiv.org/abs/ 2510.24021 .[15] Sham M. Kakade. A natural policy gradient. In Advances in Neural Information Processing Systems , volume 14, pages 1531–1538, 2001. [16] Minsang Kim and Seung Jun Baek. Explain in your own words: Improving reasoning via token-selective dual knowledge distillation. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=zph7e5JaXc .11 [17] Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, and Ning Ding. Rethinking on-policy dis-tillation of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 , 2026. doi: 10.48550/arXiv.2604.13016. URL https://arxiv.org/abs/ 2604.13016 .[18] Chen Liang, Haoming Jiang, Xiaodong Liu, Pengcheng He, Weizhu Chen, Jianfeng Gao, and Tuo Zhao. Token-wise curriculum learning for neural machine translation. In Findings of the Association for Computational Linguistics: EMNLP 2021 , pages 3658–3670, Punta Cana, Dominican Republic, 2021. Association for Computational Linguistics. doi: 10.18653/v1/2021. findings-emnlp.310. URL https://aclanthology.org/2021.findings-emnlp.310/ .[19] Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In 
+
+International Conference on Learning Representations , 2024. [20] Zicheng Lin, Tian Liang, Jiahao Xu, Qiuzhi Lin, Xing Wang, Ruilin Luo, Chufan Shi, Siheng Li, Yujiu Yang, and Zhaopeng Tu. Critical tokens matter: Token-level contrastive estimation enhances LLM’s reasoning capability. In International Conference on Machine Learning , 2025. [21] Chris Yuhao Liu, Liang Zeng, Yuzhen Xiao, Jujie He, Jiacai Liu, Chaojie Wang, Rui Yan, Wei Shen, Fuxiang Zhang, Jiacheng Xu, et al. Skywork-reward-v2: Scaling preference data curation via human-ai synergy. arXiv preprint arXiv:2507.01352 , 2025. [22] Jiawei Liu and Lingming Zhang. Code-r1: Reproducing r1 for code with reliable rewards. 2025. [23] Lingyuan Liu and Mengxiang Zhang. Being strong progressively! enhancing knowledge distillation of large language models through a curriculum learning framework. arXiv preprint arXiv:2506.05695 , 2025. [24] LLM-Core, Xiaomi. MiMo-V2-Flash technical report. arXiv preprint arXiv:2601.02780 , 2026. [25] Kevin Lu. On-policy distillation. Thinking Machines Lab Blog, 2025. URL https:// thinkingmachines.ai/blog/on-policy-distillation/ .[26] Rafael Rafailov, Archit Sharma, Eric Mitchell, Stefano Ermon, Christopher D. Manning, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. In Advances in Neural Information Processing Systems , volume 36, 2023. [27] Stéphane Ross, Geoffrey J. Gordon, and J. Andrew Bagnell. A reduction of imitation learning and structured prediction to no-regret online learning. In Proceedings of the 14th International Conference on Artificial Intelligence and Statistics , pages 627–635, 2011. [28] John Schulman, Sergey Levine, Philipp Moritz, Michael I. Jordan, and Pieter Abbeel. Trust region policy optimization. In International Conference on Machine Learning , pages 1889– 1897, 2015. [29] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [30] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y.K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [31] Mingyang Song and Mao Zheng. A survey of on-policy distillation for large language models. 
+
+arXiv preprint arXiv:2604.00626 , 2026. [32] Tim van Erven and Peter Harremoës. Rényi divergence and kullback-leibler divergence. IEEE Transactions on Information Theory , 60(7):3797–3820, 2014. [33] Jean Vassoyan, Nathanaël Beau, and Roman Plaud. Ignore the KL penalty! boosting exploration on critical tokens to enhance RL fine-tuning. In Findings of the Association for Computational Linguistics: NAACL 2025 , pages 6123–6133, 2025. 12 [34] Peiyi Wang, Lei Li, Zhihong Shao, R.X. Xu, Damai Dai, Yifei Li, Deli Chen, Y. Wu, and Zhifang Sui. Math-shepherd: Verify and reinforce LLMs step-by-step without human annotations. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics ,2024. [35] Shenzhi Wang, Le Yu, Chang Gao, Chujie Zheng, Shixuan Liu, Rui Lu, Kai Dang, Xionghui Chen, Jianxin Yang, Zhenru Zhang, Yuqiong Liu, An Yang, Andrew Zhao, Yang Yue, Shiji Song, Bowen Yu, Gao Huang, and Junyang Lin. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for llm reasoning. In Advances in Neural Information Processing Systems , 2025. [36] Yuqiao Wen, Zichao Li, Wenyu Du, and Lili Mou. f-divergence minimization for sequence-level knowledge distillation. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 10817–10834, Toronto, Canada, 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.acl-long.605. URL 
+
+https://aclanthology.org/2023.acl-long.605/ .[37] Tengyang Xie, Dylan J. Foster, Akshay Krishnamurthy, Corby Rosset, Ahmed Awadallah, and Alexander Rakhlin. Exploratory preference optimization: Harnessing implicit Q*-approximation for sample-efficient RLHF. arXiv preprint arXiv:2405.21046 , 2024. [38] Xurong Xie, Zhucun Xue, Jiafu Wu, Jian Li, Yabiao Wang, Xiaobin Hu, Yong Liu, and Jiangning Zhang. LLM-oriented token-adaptive knowledge distillation, 2025. URL https: //arxiv.org/abs/2510.11615 .[39] Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, and Zhipeng Wang. PACED: Distilla-tion and on-policy self-distillation at the frontier of student competence. arXiv preprint arXiv:2603.11178 , 2026. [40] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [41] Wenkai Yang, Jingwen Chen, Yankai Lin, and Ji-Rong Wen. Deepcritic: Deliberate critique with large language models. arXiv preprint arXiv:2505.00662 , 2025. [42] Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin. Learning beyond teacher: Generalized on-policy distillation with reward extrapolation. arXiv preprint arXiv:2602.12125 , 2026. [43] Ziang Ye, Zhenru Zhang, Yang Zhang, Jianxin Ma, Junyang Lin, and Fuli Feng. Disentangling reasoning tokens and boilerplate tokens for language model fine-tuning. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 20939–20957. Association for Computational Linguistics, 2025. doi: 10.18653/v1/2025.findings-acl.1078. [44] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 , 2026. [45] Yuzhong Zhao, Yue Liu, Junpeng Liu, Jingye Chen, Xun Wu, Yaru Hao, Tengchao Lv, Shaohan Huang, Lei Cui, Qixiang Ye, Fang Wan, and Furu Wei. Geometric-mean policy optimization. In International Conference on Learning Representations , 2026. [46] Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, Jingren Zhou, and Junyang Lin. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. doi: 10.48550/arXiv.2507.18071. URL 
+
+https://arxiv.org/abs/2507.18071 .13 A Proofs and Derivations 
+
+The derivations below fix a prompt x unless otherwise stated and omit the conditioning on x for notational simplicity. We write πT for the teacher next-token policy and also for its autoregressive trajectory distribution, as in the main text. The local projected distribution is denoted by q⋆θ , and the corresponding causal prefix weight is rθ . All distributions are understood to be supported on the common support where the relevant KL divergences are finite. 
+
+A.1 Solution of the Constrained Projection 
+
+We prove Proposition 1. The constrained projection is 
+
+q⋆θ = arg min  
+
+> q
+
+DKL (q∥πT ) s.t. DKL (q∥πθ ) ≤ ρ, (18) together with the normalization constraint P 
+
+> y
+
+q(y) = 1 .If the trust-region constraint were inactive, the solution would be the unconstrained minimizer q = πT .This is infeasible when 0 < ρ < D KL (πT ∥πθ ), so the constraint must be active in the local-update regime. Since DKL (q∥πT ) is strictly convex in q on the common support and the KL ball is convex, the KKT conditions identify the unique optimum. Introduce the Lagrangian 
+
+L(q, λ, μ ) = DKL (q∥πT ) + λ (DKL (q∥πθ ) − ρ) + μ X
+
+> y
+
+q(y) − 1
+
+!
+
+, (19) where λ ≥ 0 is the multiplier for the trust-region constraint and μ is the multiplier for normalization. Expanding the KL terms gives 
+
+L(q, λ, μ ) = X
+
+> y
+
+q(y) log q(y)
+
+πT (y) + λ X
+
+> y
+
+q(y) log q(y)
+
+πθ (y) − λρ + μ X
+
+> y
+
+q(y) − 1
+
+!
+
+. (20) Taking the functional derivative with respect to q(y) and setting it to zero yields 
+
+0 = ∂L
+
+∂q (y)= log q(y) − log πT (y) + 1 + λ (log q(y) − log πθ (y) + 1) + μ. (21) Rearranging terms, 
+
+(1 + λ) log q(y) = log πT (y) + λ log πθ (y) + const , (22) where the constant absorbs 1 + λ + μ and is independent of y. Therefore, 
+
+log q(y) = 11 + λ log πT (y) + λ
+
+1 + λ log πθ (y) + const . (23) Define 
+
+α := 11 + λ ∈ (0 , 1) , 1 − α = λ
+
+1 + λ . (24) Exponentiating and normalizing gives 
+
+qα(y) = πθ (y)1−απT (y)α
+
+Zα(θ) , Zα(θ) = X
+
+> y
+
+πθ (y)1−απT (y)α. (25) Equivalently, with 
+
+rθ (y) = πT (y)
+
+πθ (y) , Zα(θ) = Ey∼πθ [rθ (y)α] , (26) we can write 
+
+qα(y) = πθ (y)rθ (y)α
+
+Zα(θ) . (27) 14 It remains to identify the value of α induced by the radius ρ. Let 
+
+ψ(α) := log Zα(θ). (28) Then 
+
+ψ′(α) = Eqα [log rθ (y)] . (29) Therefore, 
+
+DKL (qα∥πθ ) = Eqα
+
+
+
+log qα(y)
+
+πθ (y)
+
+
+
+= Eqα [α log rθ (y) − ψ(α)] = αψ ′(α) − ψ(α). (30) Since the constraint is active, α is determined by 
+
+ρ = DKL (qα∥πθ ) = α ∂∂α log Zα(θ) − log Zα(θ), (31) This is the implicit relation for α. Also, 
+
+ddα DKL (qα∥πθ ) = αψ ′′ (α)= α Var qα [log rθ (y)] ≥ 0. (32) Thus increasing ρ increases the corresponding interpolation coefficient α whenever πT̸ = πθ .Finally, DKL (q0∥πθ ) = 0 and q1 = πT , so DKL (q1∥πθ ) = DKL (πT ∥πθ ). Hence each 0 < ρ < DKL (πT ∥πθ ) induces α ∈ (0 , 1) and 
+
+q⋆θ (y) = qα(y) = πθ (y)rθ (y)α
+
+Zα(θ) . (33) This is Eq. (8). When the budget is large enough that the teacher itself is feasible, the constraint can be inactive, 
+
+λ = 0 , and α = 1 , which recovers q⋆θ = πT . □
+
+A.2 Derivation of the Importance-Weighted OPD Objective 
+
+We prove Proposition 2. Fix a prompt x and let ht = ( x, y <t ). We keep the conditioning on x
+
+explicit in this appendix. We work in the non-trivial local-update regime of Proposition 1, where 
+
+0 < ρ < D KL (πT ∥πθ ) and the trust-region constraint is active: 
+
+DKL (q⋆θ ∥πθ ) = ρ. (34) The projected objective in Eq. (9) is 
+
+Jq⋆θ (θ; x) = max 
+
+> q⋆θ
+
+−DKL (q⋆θ ∥πT ) . (35) By adding and subtracting log πθ (y | x) inside the KL, we obtain 
+
+DKL (q⋆θ ∥πT ) = Ey∼q⋆θ (·| x)
+
+
+
+log q⋆θ (y | x)
+
+πT (y | x)
+
+
+
+= Ey∼q⋆θ (·| x)
+
+
+
+log q⋆θ (y | x)
+
+πθ (y | x)
+
+
+
++ Ey∼q⋆θ (·| x)
+
+
+
+log πθ (y | x)
+
+πT (y | x)
+
+
+
+= ρ + Ey∼q⋆θ (·| x)
+
+
+
+log πθ (y | x)
+
+πT (y | x)
+
+
+
+. (36) Thus, under a fixed local-update budget ρ, minimizing the projected KL is equivalent up to the constant ρ to minimizing the second term in Eq. (36). Following Eq. (8), write the trajectory-level likelihood ratio as 
+
+rθ (y | x) = πT (y | x)
+
+πθ (y | x) , Zα(θ, x ) = Ey∼πθ (·| x) [rθ (y | x)α] . (37) 15 Then the optimal projected policy can be written as 
+
+q⋆θ (y | x) = πθ (y | x)rθ (y | x)α
+
+Zα(θ, x ) , α ∈ (0 , 1) . (38) Therefore, q⋆θ (y | x)
+
+πθ (y | x) = rθ (y | x)α
+
+Zα(θ, x ) . (39) For any measurable function f , this gives the change-of-measure identity 
+
+Ey∼q⋆θ (·| x)[f (y)] = Ey∼πθ (·| x) [rθ (y | x)αf (y)] 
+
+Zα(θ, x ) . (40) By the autoregressive factorization, 
+
+log πθ (y | x)
+
+πT (y | x) = log 
+
+QTt=1 πθ (yt | ht)
+
+QTt=1 πT (yt | ht)=
+
+> T
+
+X
+
+> t=1
+
+log πθ (yt | ht)
+
+πT (yt | ht) . (41) Substituting Eq. (41) into Eq. (40) gives the exact trajectory-level importance-weighted form of the non-constant part of Eq. (36): 
+
+eJq⋆θ (θ; x) := − (DKL (q⋆θ ∥πθ ) − ρ) = −
+
+Ey∼πθ (·| x)
+
+h
+
+rθ (y | x)α PTt=1 log πθ (yt|ht) 
+
+> πT(yt|ht)
+
+i
+
+Zα(θ, x ) . (42) Eq. (42) is a sequence-level expression: every token term in the same sampled trajectory is multiplied by the full trajectory ratio rθ (y | x)α. However, OPD is optimized through a token-local semi-gradient on student-sampled prefixes. Hence the coefficient assigned to the token term at position t
+
+should depend only on the causal prefix ht = ( x, y <t ), rather than on the future suffix y≥t.To obtain the causal token-level surrogate, decompose the trajectory ratio as 
+
+rθ (y | x)α =
+
+ πT (y | x)
+
+πθ (y | x)
+
+α
+
+=
+
+ πT (y<t | x)
+
+πθ (y<t | x)
+
+α  πT (y≥t | x, y <t )
+
+πθ (y≥t | x, y <t )
+
+α
+
+. (43) The first factor is the prefix likelihood ratio inherited from the trajectory-level ratio in Proposition 1. We write 
+
+rt(y<t | x) := rθ (y<t | x) = πT (y<t | x)
+
+πθ (y<t | x)=
+
+> t−1
+
+Y
+
+> k=1
+
+πT (yk | x, y <k )
+
+πθ (yk | x, y <k ) . (44) The empty product is 1, so r1 = 1 . The position-wise normalizer is 
+
+Zα,t (θ, x ) := Ey<t ∼πθ (·| x) [rt(y<t | x)α] , (45) and the normalized prefix ratio is 
+
+˜rt(y<t | x) := rt(y<t | x)α
+
+Zα,t (θ, x ) . (46) Replacing the full trajectory ratio in Eq. (42) with its causal prefix component yields the token-level IW-OPD surrogate for a fixed prompt: 
+
+J ⋆
+
+> IW
+
+(θ; x) = −Ey∼πθ (·| x)
+
+" TX
+
+> t=1
+
+sg [˜ rt(y<t | x)] log πθ (yt | ht)
+
+πT (yt | ht)
+
+#
+
+. (47) 16 Here sg[ ·] denotes the stop-gradient operator. It makes the normalized prefix ratio act as a detached multiplicative coefficient on the standard token-level log-ratio term. Averaging Eq. (47) over x ∼ D gives 
+
+J ⋆
+
+> IW
+
+(θ) = −Ex∼D , y ∼πθ (·| x)
+
+" TX
+
+> t=1
+
+sg [˜ rt(y<t | x)] log πθ (yt | x, y <t )
+
+πT (yt | x, y <t )
+
+#
+
+. (48) Suppressing the fixed prompt x in the notation recovers Eq. (11). □
+
+A.3 Standard OPD Chain Rule and Single-Step Semi-Gradient 
+
+We spell out the chain-rule decomposition of standard OPD and the single-step semi-gradient used by Eq. (12) . Fix a prompt x and write ht = ( x, y <t ). We keep the conditioning on x explicit in this appendix, while the main text suppresses it when no ambiguity arises. The per-prompt reverse-KL quantity minimized by standard OPD is 
+
+JOPD (θ; x) = max  
+
+> θ
+
+−DKL (πθ ∥πT ) = −Ey∼πθ (·| x)
+
+
+
+log πθ (y | x)
+
+πT (y | x)
+
+
+
+. (49) By the autoregressive factorization, 
+
+log πθ (y | x)
+
+πT (y | x) =
+
+> T
+
+X
+
+> t=1
+
+log πθ (yt | ht)
+
+πT (yt | ht) . (50) Therefore, 
+
+DKL (πθ ∥πT ) = Ey∼πθ (·| x)
+
+" TX
+
+> t=1
+
+log πθ (yt | ht)
+
+πT (yt | ht)
+
+#
+
+=
+
+> T
+
+X
+
+> t=1
+
+Ey<t ∼πθ (·| x)
+
+
+
+Eyt∼πθ (·| ht)
+
+
+
+log πθ (yt | ht)
+
+πT (yt | ht)
+
+ 
+
+=
+
+> T
+
+X
+
+> t=1
+
+Ey<t ∼πθ (·| x) [DKL (πθ (· | ht)∥πT (· | ht))] . (51) Next consider one local next-token KL at a fixed prefix ht:
+
+Dt(θ; ht) = DKL (πθ (· | ht)∥πT (· | ht)) . (52) Expanding over the next-token vocabulary gives 
+
+Dt(θ; ht) = X
+
+> a
+
+πθ (a | ht) [log πθ (a | ht) − log πT (a | ht)] . (53) Differentiating this local KL while holding the sampled prefix ht fixed yields 
+
+∇θ Dt(θ; ht) = X
+
+> a
+
+∇θ πθ (a | ht) [log πθ (a | ht) − log πT (a | ht) + 1] = Ea∼πθ (·| ht)
+
+ 
+
+log πθ (a | ht)
+
+πT (a | ht) + 1 
+
+
+
+∇θ log πθ (a | ht)
+
+
+
+. (54) The +1 term vanishes because 
+
+Ea∼πθ (·| ht) [∇θ log πθ (a | ht)] = ∇θ
+
+X
+
+> a
+
+πθ (a | ht) = 0 . (55) Thus, 
+
+∇θ Dt(θ; ht) = Ea∼πθ (·| ht)
+
+
+
+log πθ (a | ht)
+
+πT (a | ht) ∇θ log πθ (a | ht)
+
+
+
+. (56) 17 Using the OPD advantage notation in Eq. (6), for a sampled token a = yt we have 
+
+AOPD  
+
+> t
+
+:= − (log πθ (yt | ht) − log πT (yt | ht)) = − log πθ (yt | ht)
+
+πT (yt | ht) . (57) Therefore, the negative local KL gradient, written in policy-gradient ascent form, is 
+
+−∇ θ Dt(θ; ht) = Eyt∼πθ (·| ht)
+
+AOPD  
+
+> t
+
+∇θ log πθ (yt | ht) . (58) The word “semi-gradient” is important. The chain-rule decomposition in Eq. (51) is exact, but the token-local update in Eq. (58) treats the sampled prefix y<t as fixed context. A full score-function gradient of the sequence-level reverse KL would instead couple all positions: 
+
+∇θ DKL (πθ (· | x)∥πT (· | x)) = Ey∼πθ (·| x)
+
+" TX
+
+> k=1
+
+log πθ (yk | hk)
+
+πT (yk | hk)
+
+! TX
+
+> t=1
+
+∇θ log πθ (yt | ht)
+
+!# 
+
+.
+
+(59) Standard OPD practice instead uses the single-step token-local update direction. With the sign convention of Eq. (6), this gives 
+
+∇θ JOPD (θ) ≈ Ex∼D , y ∼πθ (·| x)
+
+" TX
+
+> t=1
+
+AOPD  
+
+> t
+
+∇θ log πθ (yt | ht)
+
+#
+
+, (60) which is the standard OPD form in the main text. We now apply the same single-step rule to the ideal IW-OPD surrogate in Proposition 2. For a fixed prompt, Eq. (11) can be written as 
+
+J⋆
+
+> IW
+
+(θ; x) = −Ey∼πθ (·| x)
+
+" TX
+
+> t=1
+
+sg [˜ rt(y<t | x)] log πθ (yt | ht)
+
+πT (yt | ht)
+
+#
+
+, (61) where the notation follows the main text: 
+
+rt := rθ (y<t | x) = πT (y<t | x)
+
+πθ (y<t | x) , Zα,t (θ, x ) = Ey<t ∼πθ (·| x) [rt] , ˜rt = rt
+
+Zα,t 
+
+. (62) When differentiating the local next-token term at position t, all prefix-determined quantities are treated as fixed context. This includes the sampled prefix y<t , the prefix ratio rt, the normalizer 
+
+Zα,t , and the normalized prefix ratio ˜rt. The stop-gradient operator in Eq. (61) enforces exactly this convention. Detaching the prefix ratio is necessary for preserving the single-step OPD semi-gradient. Indeed, for fixed α,
+
+log rt = α X
+
+> k<t
+
+(log πT (yk | hk) − log πθ (yk | hk)) = α X
+
+> k<t
+
+AOPD  
+
+> k
+
+. (63) Since the teacher is fixed, differentiating through the ratio would introduce prefix score terms: 
+
+∇θ log rt = −α X
+
+> k<t
+
+∇θ log πθ (yk | hk). (64) Such terms couple the token-t update to earlier sampled actions and recover a sequence-level credit-assignment estimator rather than the token-local OPD semi-gradient. Differentiating Zα,t would similarly require gradients through both the prefix sampling distribution and the prefix likelihood ratio. Therefore, both rt and Zα,t are detached in the single-step update. With these detached prefix quantities, the local IW-OPD update is simply the standard OPD update multiplied by the normalized prefix ratio. Thus, 
+
+∇θ J⋆
+
+> IW
+
+(θ) ≈ Ex∼D , y ∼πθ (·| x)
+
+" TX
+
+> t=1
+
+AIW -OPD  
+
+> t
+
+∇θ log πθ (yt | ht)
+
+#
+
+, (65) 18 where 
+
+AIW -OPD  
+
+> t
+
+= sg [˜ rt] AOPD 
+
+> t
+
+= −sg [˜ rt] (log πθ (yt | ht) − log πT (yt | ht)) . (66) This is the semi-gradient form of Eq. (12) , with the stop-gradient convention inherited from Eq. (11) .
+
+□
+
+## B Algorithm 
+
+For clipped PPO, let π0 be the frozen rollout policy for the current batch, and use ηt(θ) = πθ (yt |
+
+x, y <t )/π 0(yt | x, y <t ) for the PPO ratio. The inner update minimizes 
+
+LIW -OPD (θ) = −Ex,y,t 
+
+min  ηt(θ)AIW -OPD  
+
+> t
+
+, clip( ηt(θ), 1 − ϵclip , 1 + ϵclip ) AIW -OPD 
+
+> t
+
+ , (67) where the expectation is over valid response tokens. 
+
+Algorithm 1 IW-OPD: Importance-Weighted On-Policy Distillation 
+
+Require: Student πθ , teacher πT , prompt distribution D, amplification γ (default 0.5), PPO clip 
+
+ϵclip , stabilizer ε. 
+
+> 1:
+
+Initialize rollout policy π0 ← πθ . 
+
+> 2:
+
+for each training iteration do  
+
+> 3:
+
+Sample x ∼ D and generate y = ( y1, . . . , y T ) from π0(· | x). 
+
+> 4:
+
+Cache ℓ0,t ← log π0(yt | x, y <t ) and ℓT,t ← log πT (yt | x, y <t ) for all valid tokens t. 
+
+> 5:
+
+Set AOPD  
+
+> t
+
+← sg[ ℓT,t − ℓ0,t ] for all valid tokens t. 
+
+> 6:
+
+Set ˜rIW −OPD  
+
+> t
+
+← 1 + γ
+
+
+
+1 −
+
+> P
+> k<t
+
+|AOPD  
+
+> k
+
+| 
+
+> P
+> k<T
+
+|AOPD  
+
+> k
+
+|
+
+
+
+for all valid tokens t. 
+
+> 7:
+
+Set AIW -OPD  
+
+> t
+
+← sg[˜ rIW −OPD  
+
+> t
+
+]AOPD  
+
+> t
+
+for all valid tokens t. 
+
+> 8:
+
+for several PPO inner steps do  
+
+> 9:
+
+Update θ by minimizing Eq. (67), using ηt(θ) = exp(log πθ (yt | x, y <t ) − ℓ0,t ). 
+
+> 10:
+
+end for  
+
+> 11:
+
+Refresh rollout policy: π0 ← πθ . 
+
+> 12:
+
+end for 
+
+## C Experimental Setup and Hyperparameters 
+
+This section reports the implementation details used for the experiments in §5. All OPD variants are implemented in the same verl -based PPO training pipeline. The student samples responses on-policy; student and teacher log probabilities are then evaluated on the sampled response tokens. No learned reward model is used: the token-level OPD or IW-OPD advantages are passed directly into the clipped PPO surrogate. 
+
+C.1 Models and Data 
+
+For all Qwen3 models, we use the chat template with thinking disabled. Prompts longer than the context budget are filtered rather than truncated, and response tokens beyond the generated answer mask are excluded from all OPD and IW-OPD computations. 
+
+C.2 Training Hyperparameters 
+
+Epoch budgets follow the corresponding model-scale scripts and are held fixed across OPD and IW-OPD within each setting. All reported comparisons use the same data order and seed set across methods. 19 Table 5: Model and data configurations used in the main experiments. 
+
+Component Configuration 
+
+Students Qwen3-4B, Qwen3-1.7B, and Qwen3-0.6B. Teachers Qwen3-4B-Instruct-2507 for the large-overlap setting; Qwen3-30B-A3B-Instruct-2507 for the small-overlap setting. Math training data DeepMath problems filtered to difficulty level ≥ 6 (approximately 57K prompts). Code training data Eurus-RL-Code (approximately 25K prompts). Validation during training AIME 2024 and AIME 2025, evaluated every 10 training steps. Final evaluation AIME 2024, AIME 2025, and HMMT 2025 for math; HumanEval+ and MBPP+ for code. 
+
+Table 6: Default training hyperparameters. Unless noted otherwise, the same values are used for OPD and IW-OPD within each model–teacher setting. 
+
+Hyperparameter Value 
+
+Training framework verl PPO trainer with vLLM rollouts Nodes / GPUs 4 nodes, 32 GPUs Learning rate 1 × 10 −5
+
+Training batch size 1024 prompts PPO mini-batch size 1024 PPO micro-batch size 1 per GPU PPO epochs per rollout batch 1PPO clipping range 0.2 Dual-clip constant 3.0 Loss aggregation Token mean Maximum prompt length 2048 tokens Maximum response length 16384 tokens Rollout samples per prompt 1 during training Training decoding Temperature 1.0, top-p 1.0
+
+Validation decoding Temperature 1.0, top-p 1.0, 32 samples per prompt for math validation Optimizer warmup 0 warmup ratio Entropy coefficient 0KL reward penalty Disabled Auxiliary KL loss Low-variance KL form, coefficient 0 Rollout importance correction Token-level correction with threshold 5.0 Checkpoint / evaluation frequency Save every 10 steps; validate every 10 steps 
+
+C.3 Method-Specific Parameters 
+
+Finally, IW-OPD perform an interpolation with the original OPD to balance these two effects: 
+
+AIW −OPD  
+
+> t
+
+= sg[˜ rIW −OPD  
+
+> t
+
+] · AOPD  
+
+> t
+
+= 1 + γ 1 −
+
+P 
+
+> k<t
+
+AOPD 
+
+> k
+
+P 
+
+> k<T
+
+AOPD 
+
+> k
+
+!! 
+
+· AOPD  
+
+> t
+
+, (68) where higher γ ≥ 0 indicates a higher contribution from the teacher-informed importance weights. In practice, we find γ = 0 .5 is a good default choice. 
+
+C.4 Evaluation Protocol 
+
+For math benchmarks, we generate 32 responses per problem with vLLM using temperature 1.0, top-p
+
+1.0, maximum generation length 16384, and seed-matched sampling across methods. Each prompt appends the instruction: “Please reason step by step, and put your final answer within \boxed{}.” We extract the final boxed answer and evaluate it with symbolic equivalence checking. Tables report the aggregation specified in their captions, e.g., best@32 or mean@32. For code benchmarks, we use the EvalPlus evaluation suite for HumanEval+ and MBPP+. Greedy single-sample evaluation is used for the reported pass-rate results. 20 Checkpoints with subscript 10 in the main tables are evaluated at training step 10. Converged OPD and IW-OPD checkpoints are selected using the same validation protocol within each model–teacher setting and are then evaluated on the held-out math and code benchmarks. 
+
+## D Combination experiments with other reward design methods 
+
+Table 7: Combination results with ExOPD; both methods are distilled from Qwen3-30B-A3B. Math results are reported as mean@32 accuracy (%). IW-ExOPD denotes the combination of IW-OPD and ExOPD. Bold indicates the best result within each student group. 
+
+Student Method Math Code Avg 
+
+AIME24 AIME25 HMMT25 HE+ MBPP+ 
+
+Teacher Model 74.7 62.8 44.2 86.6 75.1 68.7 Qwen3-4B Base 23.1 21.4 10.0 75.3 64.5 38.9 OPD 55.3 48.0 27.1 77.2 69.1 55.3 ExOPD 57.9 50.1 31.7 78.9 70.2 57.8 IW-ExOPD 59.4 +1.5 51.7 +1.6 32.0 +0.3 80.1 +1.1 71.0 +0.8 58.8 +1.0 
+
+Qwen3-1.7B Base 13.4 11.0 6.8 59.6 52.5 28.7 OPD 34.6 28.7 15.5 64.6 53.7 39.4 ExOPD 37.6 31.8 16.8 67.2 55.0 41.7 IW-ExOPD 38.9 +1.3 33.2 +1.4 18.3 +1.5 68.5 +1.3 57.4 +2.4 43.2 +1.5 
+
+IW-OPD is orthogonal to reward design. IW-OPD changes how an already-computed OPD signal is allocated across positions, so it is not tied to a particular advantage or reward design. As one example, ExOPD [ 42 ] reformulates OPD as a reinforcement-learning problem with a KL constraint, separates out the reward term, and improves exploration by scaling that reward with a fixed hyperparameter λ. Since IW-OPD supplies prefix-level importance weights, we can apply the same idea on top of ExOPD by making the reward scale prefix-dependent. We call this combination IW-ExOPD. As shown in Table 7, IW-ExOPD improves over ExOPD for both Qwen3-4B and Qwen3-1.7B students. This suggests that prefix-level importance weighting is orthogonal to reward design, rather than being tied only to vanilla OPD. 
+
+## E Limitations 
+
+At convergence, ˜rt approaches 1 − t/T rather than becoming perfectly uniform—a mild residual non-uniformity. Cumulative prefix discrepancy is a conservative prefix-compatibility proxy induced by the prefix likelihood-ratio principle, not an exact density-ratio correction. Experiments are conducted at the 4B student scale; validation at larger scales remains future work. 21

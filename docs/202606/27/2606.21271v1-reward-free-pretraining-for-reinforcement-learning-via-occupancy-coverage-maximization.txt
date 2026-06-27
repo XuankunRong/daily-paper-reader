@@ -1,0 +1,1619 @@
+Title: Reward-free Pretraining for Reinforcement Learning via Occupancy Coverage Maximization
+
+URL Source: https://arxiv.org/pdf/2606.21271v1
+
+Published Time: Tue, 23 Jun 2026 00:45:12 GMT
+
+Number of Pages: 32
+
+Markdown Content:
+# Reward-free Pretraining for Reinforcement Learning via Occupancy Coverage Maximization 
+
+## Marco Pratticò 1
+
+> marco.prattico@iit.it
+
+## Pietro Novelli 1
+
+> pietro.novelli@iit.it
+
+## Massimiliano Pontil 1,2
+
+> massimiliano.pontil@iit.it
+
+## Carlo Ciliberto 2
+
+> c.ciliberto@ucl.ac.uk
+
+Abstract 
+
+Sparse rewards pose a central challenge in reinforcement learning, since agents receive no informative signal until they reach their goal. Intrinsic-reward methods address this issue by optimizing non-stationary objectives such as novelty, prediction error, or skill diversity, thereby injecting a supervision signal into the problem. While effective, these methods often require that the extrinsic (sparse) reward can be evaluated – either online or during offline relabeling of the stored transitions. This limitation is particularly vexing for multi-task, meta-, and continual reinforcement learning, where agents’ interactions with the environment are usually reward-free . In this work, we present a method to pre-train transferable exploration policies 
+
+that rapidly adapt to sparse rewards at downstream task time. Our objective maximizes state-space covering for the occupancy measure, and can be framed in terms of entropy maximization. Its algorithmic implementation, ROVER, leverages recent advances on the operatorial formulation of RL to estimate occupancy with a learned resolvent world model, bypassing common hurdles associated with density and entropy estimation. ROVER further introduces a virtual “sink" state for unexplored regions, balancing coverage of known states with expansion into unseen ones and preventing cyclic expansion–collapse behavior during learning. In tabular and pixel-based sparse navigation tasks, ROVER produces more uniform aggregate coverage and stronger initializations for downstream tasks than standard reward-free baselines. 
+
+# 1 Introduction 
+
+Sparse rewards remain a central obstacle for reinforcement learning (RL) [ 1 ]. As informative feedback is observed only after reaching a task-dependent event, the behavior available at the beginning of training becomes of primary importance for downstream learning. Reward-free pretraining addresses this observation by letting the agent interact with the environment before the reward is specified, and can precondition the explicit-reward problem through data [ 2], representations [ 3 –6 ], world models [ 7, 8], or policies [ 9 ]. However, data- and representation-based transfer often assumes that the downstream reward function can be evaluated offline after pretraining, for instance by relabeling stored transitions. This assumption is often inappropriate in multi-task, meta, or continual sparse-reward problems, where meaningful feedback is observed only online, when the agent actually reaches the task-dependent goal. Many reward-free objectives are motivated by coverage. Maximum-entropy and state-marginal objectives seek broad state occupancies [ 10 – 14 ]; prediction-error and curiosity methods reward novelty relative to a learned model [ 15 – 17 ]; and skill-diversity methods encourage distinguishable outcomes [ 18 , 19 ]. In practice, these objectives are often optimized through non-stationary proxies that change with the data, the density estimate, the representation, or the auxiliary model. As a result, a method may discover many states during pretraining and still end with a policy whose discounted occupancy is concentrated in a small region [13, 16]. In this work, we focus on policy transfer when the downstream reward is unavailable both during pretraining and at any later offline relabeling stage. We formulate reward-free policy pretraining as occupancy coverage :learning a stationary Markov policy whose discounted state occupancy is broadly distributed over the reachable 
+
+> 1Computational Statistics and Machine Learning - Istituto Italiano di Tecnologia, 16100 Genova, Italy
+> 2AI Centre, Computer Science Department, University College London, London, UK.
+
+1
+
+> arXiv:2606.21271v1 [cs.LG] 19 Jun 2026
+
+state space. Concretely, we embed the state occupancy measure in a Reproducing Kernel Hilbert Space (RKHS) [ 20 ] and minimize its squared Hilbert norm, which penalizes concentrated occupancies under the kernel-induced notion of similarity. This objective is equivalent to maximizing the metric Rényi entropy of order 2 [21 ]; in the tabular setting, it is also equivalent to matching the uniform measure in MMD distance, see Prop. 1. With learned representations, the same objective promotes diversity in the similarity geometry induced by the representation. We implement this objective in Reward-free pretraining via Occupancy coVERage maximization (ROVER). ROVER is an end-to-end algorithm that learns a representation, estimates the kernel mean embedding of the occupancy measure in closed form, and computes policy gradients for its squared norm. We solve the resulting policy-improvement step by policy mirror descent in closed form. A key component of ROVER is a virtual “sink” state that augments the learned transition operator to handle unsupported state-action regions. This augmentation yields an explicit cost for assigning occupancy outside the current data support and prevents the expansion–collapse behavior observed with purely data-supported operators. Our contributions are threefold. First, we formalize occupancy coverage as a target-free RKHS objective for sparse-reward policy transfer and relate it to MMD matching, Rényi-2 diversity, and potential-theoretic energy minimization. Second, we derive an operator-based policy update for minimizing this objective from a learned transition model. Third, we introduce a sink-state augmentation for the transition operator and show empirically that it stabilizes coverage under partial data. Experiments in tabular and pixel-based sparse navigation environments show that ROVER induces more transferable coverage behavior than standard reward-free baselines. 
+
+# 2 Problem Statement: Occupancy Coverage 
+
+Consider a discounted Markov decision process with state space X , action space A, transition kernel τ (· | x, a ),initial state distribution ν0, and discount factor γ ∈ (0 , 1) . For a stationary Markov policy π(· | x), its discounted state occupancy is the probability measure defined by 
+
+dπν0 (B) = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γtPπ (xt ∈ B | x0 ∼ ν0), B ⊆ X measurable , (1) where the probability is taken over trajectories induced by π and τ . Equivalently, dπν0 (B) captures the probability of stopping in B when starting from ν0 and then following π for a number of steps sampled from the geometric distribution with mean γ/ (1 − γ). We write dπ when ν0 is fixed. Exploration strategies for sparse-reward problems often try, explicitly or implicitly, to spread the state occupancy. The standard formulation of this principle is to seek a policy whose state occupancy has maximal entropy. This viewpoint underlies maximum-entropy exploration methods [ 10 – 12 ] and is also the reference point for state-marginal matching, which casts coverage as minimizing D(dπ , u ) for a reference state distribution 
+
+u and a divergence or discrepancy D (such as the KL) [ 13 ]. The closest match to our work is MEPOL [ 11 ]. However, it relies on a hand-specified state metric, making nontrivial the extension to high-dimensional states, such as raw images, motivating ROVER’s learned latent-kernel formulation. Other methods implement the same objective less directly: APT estimates a particle-based entropy surrogate [ 14 ]; RND and related curiosity methods use prediction error as a time-varying novelty signal [ 15 – 17 ]; and skill-diversity methods encourage coverage through distinguishable latent-conditioned outcomes [18, 19]. The practical difficulty is that many implementations couple the coverage criterion to a moving auxiliary object, such as a predictor, density estimator, nearest-neighbor geometry, or skill discriminator. Such non-stationarity can produce policies that transiently discover new regions without retaining them in the final discounted occupancy. The stronger requirement of covering states without forgetting them along an individual trajectory is also generally history-dependent: deciding whether the next state improves coverage depends on the set of states already visited. We use kernel mean embeddings to express coverage as a discrepancy between occupancies [ 20 ]. Let 
+
+ϕ : X → H be a feature map into an RKHS with kernel k(x, y ) = ⟨ϕ(x), ϕ (y)⟩H. For probability measures ρ
+
+2and q over X , define 
+
+μρ =
+
+∫
+
+> X
+
+ϕ(x) ρ(dx ) and MMD 2(ρ, q ) = ∥μρ − μq ∥2
+
+> H
+
+. (2) If a target distribution u were known, minimizing MMD 2(dπ , u ) would be a direct occupancy-matching objective. However, a uniform target may be undefined on non-compact spaces, expensive to estimate in high-dimensional observation spaces, and infeasible when the reachable occupancy set does not contain the uniform distribution. The following finite-state calculation shows that, in the tabular case, the target can be removed without altering the minimizer. 
+
+Proposition 1. Let X be finite with |X | = N , let k(x, y ) = δxy , and let u be the uniform distribution over X .Then, for any policy π we have ∥μdπ ∥2 
+
+> H
+
+= ∑ 
+
+> x∈X
+
+dπ (x)2 and 
+
+arg min  
+
+> π∈Π
+
+MMD 2(dπ , u ) = arg min  
+
+> π∈Π
+
+∥μdπ ∥2
+
+> H
+
+. (3) 
+
+Proof. With the Dirac kernel, the embedding is the probability vector itself; hence 
+
+∥μdπ ∥2 
+
+> H
+
+= ∑
+
+> x,y ∈X
+
+dπ (x)dπ (y)δxy = ∑
+
+> x∈X
+
+dπ (x)2. (4) Furthermore, 
+
+MMD 2(dπ , u ) = ∑
+
+> x∈X
+
+(
+
+dπ (x) − 1
+
+N
+
+)2
+
+= ∑
+
+> x∈X
+
+dπ (x)2 − 2
+
+N
+
+∑
+
+> x∈X
+
+dπ (x) + 1
+
+N = ∥μdπ ∥2 
+
+> H
+
+− 1
+
+N ,
+
+because ∑ 
+
+> x
+
+dπ (x) = 1 . The two objectives, therefore, differ by a constant independent of π.This motivates the target-free self-similarity objective 
+
+J (π) = ∥μdπ ∥2 
+
+> H
+
+=
+
+∫ ∫ 
+
+k(x, y ) dπ (dx ) dπ (dy ). (5) The objective penalizes assigning probability mass to pairs of states that are similar under the kernel. For normalized nonnegative similarity kernels, (5) is the inverse of the order-2 diversity of dπ [ 21 ]; with the Dirac kernel this reduces to the inverse collision probability, and log (1 /J (π)) is the Rényi entropy of order 2. Sec. A.1 expands this interpretation, while Sec. A.2 gives the complementary potential-theoretic view of (5) as an energy minimization problem. In learned representation spaces, (5) should not be read as uniformity over raw observations, rather as uniformity over representations. ROVER makes such geometry explicit, estimates the occupancy induced by the current representation through an operator model, and controls unsupported regions through the sink-state mechanism introduced in Sec. 3.1. 
+
+# 3 Proposed Algorithm: ROVER 
+
+ROVER uses the operator formulation of Markov decision processes to make the occupancy objective computable. Following [ 22 ] and recent work on learning Koopman-style transition operators in controlled systems [ 23 – 31 ], we represent state-distribution evolution through linear operators. Once such an operator is estimated from data, discounted occupancies of candidate policies can be written and differentiated in closed-form. For a state-action distribution ρ ∈ M (X × A ) and a state distribution ν ∈ M (X ), define the transition and policy operators by 
+
+(Tμ)( B) = 
+
+∫
+
+> X ×A
+
+τ (B | x, a ) ρ(dx, da ), (Pπ ν)( C) = 
+
+∫
+
+> X
+
+∫
+
+> A
+
+1C (x, a ) π(da | x) ν(dx ), (6) 3Algorithm 1 ROVER pretraining loop 
+
+Require: Discount γ, PMD step size η, KRR regularization λ, sink scale ε 
+
+> 1:
+
+Initialize behavior policy p = p0 and replay buffer D = ∅ 
+
+> 2:
+
+for each pretraining round do  
+
+> 3:
+
+Collect transitions using p and add them to D 
+
+> 4:
+
+Representation learning: update ϕθ on D using (9)  
+
+> 5:
+
+World-model estimation: compute ¯Tn by the sink-biased regression in (17)  
+
+> 6:
+
+Policy mirror descent: initialize π0(· | x) = 1 /|A| and C = 0  
+
+> 7:
+
+for j = 0 , . . . , T PMD − 1 do  
+
+> 8:
+
+Compute cπj from Thm. 2  
+
+> 9:
+
+C ← C + cπj 
+
+> 10:
+
+πj+1 (· | x) ← σ(−η⟨ψ(x, ·), Ψ⊤ 
+
+> n
+
+C⟩) 
+
+> 11:
+
+end for  
+
+> 12:
+
+Update p ← πTPMD  
+
+> 13:
+
+end for  
+
+> 14:
+
+return pretrained policy p and representation ϕθ
+
+for measurable B ⊆ X and C ⊆ X × A . Then the state distribution evolves as νt+1 = TP π νt, and the discounted occupancy admits the resolvent form 
+
+dπν0 = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γt(TP π )tν0 = (1 − γ)( Id − γTP π )−1ν0. (7) Since our objective J (π) in (5) involved the MMD, we consider the natural lifting of T and P to mean embeddings. More precisely, given two representations ψ : X × A → G and ϕ : X → H into two feature spaces 
+
+G and H respectively, we can define ˜Tμψρ = μϕ
+
+> Tρ
+
+, with μψ and μϕ denoting the corresponding mean embeddings. Where clear from the context, with some abuse of notation, we will use the simplified notation Tμρ = μTρ.The policy operator can be lifted in the same way, so the resolvent characterization in (7) extends to mean embeddings and can be readily used to reformulate our objective as 
+
+J (π) = ∥(1 − γ)( Id − γTP π )−1μν0 ∥2 
+
+> H
+
+(8) Leveraging the formulation above, ROVER estimates the lifted version of T and uses the corresponding resolvent to differentiate an approximate version of J (·). The resulting method alternates between data collection and three steps: representation learning, transition-operator estimation, and policy mirror descent, as summarized in Alg. 1. 
+
+Step 1: Representation learning.. The feature map ϕ determines the geometry of the coverage objective, so ROVER learns ϕ from the transition data rather than fixing it a priori. Given transitions (x, a, x ′), we compute L1-normalized latent states ϕθ (x) = fθ (x)/∥fθ (x)∥1 and state-action features ψθ (x, a ) = ϕθ (x) ⊗ ea,where ea is the one-hot vector for action a. A linear predictor W is trained to align the predicted next-state representation W ψ θ (x, a ) with ϕθ (x′) using an InfoNCE loss [32–34]: 
+
+LNCE (ϕθ , W ) = − log exp( ⟨ ¯ϕθ (x′
+
+> i
+
+), W ¯ψθ (xi, a i)⟩)
+
+∑ 
+
+> j
+
+exp( ⟨ ¯ϕθ (x′ 
+
+> j
+
+), W ¯ψθ (xi, a i)⟩) , (9) where ¯v = v/ ∥v∥2 and negatives are drawn from the batch. This contrastive loss is an implementation choice rather than a structural requirement of the method. Other self-supervised objectives for predictive or bootstrap representation learning, such as BYOL-style losses [ 35 ] or self-predictive auxiliary losses [ 17 ], could be used in the same role. For the policy update, the learned representation supplies both the kernel in (5) and the state-action features used by the operator estimate. 
+
+Step 2: Transition-operator estimation.. The estimation problem is to approximate the lifted transition 4operator from sampled transitions. For a Dirac measure at (x, a ), Tδ(x,a ) = τ (· | x, a ). Since μψδ(x,a ) = ψ(x, a ),the lifted operator should map ψ(x, a ) to μϕτ (·| x,a ), that is, to the conditional mean E[ϕ(x′) | x, a ]. In the implementation we use ψ(x, a ) = ϕ(x) ⊗ ea, where ea is the one-hot encoding of the discrete action. Aconditional mean embedding estimates this operator as a linear map from state-action features to next-state embeddings [ 20 , 36 ]. Given a dataset D = {(xi, a i, x ′
+
+> i
+
+)}ni=1 and the learned feature map, ROVER estimates 
+
+E[ϕ(x′) | x, a ] ≈ Tψ(x, a ). The estimator is the regularized least-squares solution of the vector-valued regression problem 
+
+min 
+
+> T
+> n
+
+∑
+
+> i=1
+
+∥ϕ(x′
+
+> i
+
+) − Tψ(xi, a i)∥2 
+
+> H
+
++ λ∥T∥2HS , (10) namely ˆTn = Φ ⊤ 
+
+> n
+
+(K + λId )−1Ψn. (11) Here Φn has “rows” ϕ(x′
+
+> i
+
+)⊤, Ψn has “rows” ψ(xi, a i)⊤, and K = Ψ nΨ⊤ 
+
+> n
+
+is the state-action Gram matrix. This is the standard kernel ridge regression estimator of the conditional mean embedding. Its finite-dimensional sandwich form is what makes the policy update below computable. 
+
+Step 3: Policy mirror descent.. Given an estimated transition operator ˆTn, let Rπ = ( Id − γ ˆTnPπ )−1.Differentiating J (π) through the resolvent gives the functional gradient 
+
+∇PJ (π) = 2 γ(1 − γ)2 ˆT∗
+
+> n
+
+R∗ 
+
+> π
+
+Rπ μν0 ⊗ Rπ μν0 , (12) which can be employed in first-order optimization methods to minimize the objective function (5). Concretely, the gradient can be evaluated thanks to the kernel trick, as shown in the following theorem, proved in Sec. C. 
+
+Theorem 2 (Dual Form of the Gradient) . Consider a transition operator with “sandwich” structure 
+
+ˆT = Φ ⊤GΨ, (13) 
+
+where Φ ∈ Rn×dϕ has rows ϕ(x′
+
+> i
+
+)⊤, Ψ ∈ Rn×dψ has rows ψ(xi, a i)⊤, and G ∈ Rn×n is symmetric. Define 
+
+Kϕ = ΦΦ ⊤ and (Mπ )ij = ∑ 
+
+> a
+
+π(a | x′
+
+> i
+
+)⟨ψ(x′
+
+> i
+
+, a ), ψ (xj , a j )⟩. If μ0 = Φ ⊤α0, a direct substitution of (13) into (12) 
+
+gives 
+
+[∇π J (π)]( x, a ) = ⟨ψ(x, a ), Ψ⊤cπ ⟩, (14) 
+
+where cπ = 2 γ(1 − γ)2G(Id − γM ⊤ 
+
+> π
+
+G)−1Kϕ(Id − γGM π )−1α0.
+
+Similarly to [ 37 –39 ], ROVER optimizes its objective via Policy Mirror Descent, which guarantees that at each iteration the updated π is a valid conditional probability distribution. Since the KRR estimator in (11) satisfies (13) with G = ( K + λId )−1, the Policy Mirror Descent iterates can be written, leveraging Thm. 2, as 
+
+πt+1 (· | x) = σ
+
+(
+
+log π0(· | x) − η
+
+〈
+
+ψ(x, ·), Ψ⊤
+
+> nt
+
+∑
+
+> s=0
+
+cπs
+
+〉)
+
+, (15) where σ is the softmax. We note that the optimization history is compressed into the vector ∑ts=0 cπs of accumulated coefficients. 
+
+## 3.1 Sink-State Augmentation 
+
+The estimator ˆTn in (11) is supported by the state-action features observed in the dataset. For a query (x, a )
+
+far from this support, the kernel vector Ψnψ(x, a ) is close to zero, and therefore ˆTnψ(x, a ) ≈ 0. Since the objective minimizes an RKHS norm, this zero prediction can be incorrectly treated as a low-cost continuation of the dynamics. In fact, it only indicates that the learned operator has no data with which to predict the next-state embedding. 5Figure 1: Effect of sink-state augmentation under an intentionally severe zero-buffer update in the multi-room environment. Each column shows a later policy-optimization round, with visitation counts plotted on a log scale. Top: without the sink state , the learned operator is fit only to the most recent batch, so previously covered regions become unsupported and the policy oscillates over the first rooms. Bottom: with the sink state , unsupported mass is routed to a controlled absorbing state, yielding policies that expand while retaining connected coverage of earlier regions. Fig. 1 (Top row) illustrates the resulting instability. The diagnostic uses a zero-memory buffer, so the operator is fit only on the most recent batch. Without an explicit representation of unsupported regions, previously visited rooms can disappear from the support of the next operator fit, and the policy oscillates between expansion and rediscovery. With a replay buffer this effect is less abrupt, but it will occur eventually through finite capacity, imbalanced sampling, or representation drift. We therefore augment the state space with a virtual absorbing state sSε representing the part of the model unsupported by data. Let ¯X = X ∪ { sSε } and define ¯ϕ : ¯X → ¯H = H ⊕ R as 
+
+¯ϕ(x) = 
+
+{
+
+(ϕ(x), 0) if x ∈ X ,
+
+(0 H, ε ) if x = sSε , (16) where ε > 0 fixes the norm of one unit of sink occupancy. We use the absorbing prior T0 = ¯ϕSε ⊗ 1, under the normalization ⟨1, ¯ψ(x, a )⟩ = 1 , and estimate the transition operator by the shifted ridge problem 
+
+¯Tn = T0 + ( ¯Φ⊤ 
+
+> n
+
+− ¯ϕSε 1⊤
+
+> n
+
+)(K + λId )−1 ¯Ψn. (17) Here ¯Φn and ¯Ψn contain the observed augmented next-state and state-action embeddings, and K = ¯Ψn ¯Ψ⊤ 
+
+> n
+
+.
+
+Proposition 3 (Prediction of the augmented estimator) . Let k(x, a ) = ¯Ψn ¯ψ(x, a ) and α(x, a ) = ( K +
+
+λId )−1k(x, a ). Then the estimator in (17) satisfies 
+
+¯Tn ¯ψ(x, a ) = ¯Φ⊤ 
+
+> n
+
+α(x, a ) + (1 − 1⊤ 
+
+> n
+
+α(x, a )) ¯ϕSε . (18) 
+
+In particular, if k(x, a ) ≈ 0, then ¯Tn ¯ψ(x, a ) ≈ ¯ϕSε .Proof. Evaluating (17) at ¯ψ(x, a ) gives 
+
+¯Tn ¯ψ(x, a ) = T0 ¯ψ(x, a ) + ( ¯Φ⊤ 
+
+> n
+
+− ¯ϕSε 1⊤ 
+
+> n
+
+)( K + λId )−1k(x, a ).
+
+Since T0 = ¯ϕSε ⊗ 1 and ⟨1, ¯ψ(x, a )⟩ = 1 , the first term is ¯ϕSε . Collecting terms gives the claim. The coefficient 1 − 1⊤ 
+
+> n
+
+α(x, a ) is the part of the prediction not explained by the training inputs. The augmented estimator routes this residual to sSε rather than to the zero vector. The bottom row of Fig. 1 shows the corresponding effect on the learned policy sequence. 
+
+Proposition 4 (Finite-dimensional structure) . Under the normalization above, define 
+
+˜Φ⊤ 
+
+> n
+
+= [ ¯Φ⊤ 
+
+> n
+
+− ¯ϕSε 1⊤ 
+
+> n
+
+¯ϕSε
+
+] , ˜Ψn =
+
+[ ¯Ψn
+
+1⊤
+
+]
+
+, ˜G = diag(( K + λId )−1, 1) .
+
+6Then the augmented estimator admits the sandwich form 
+
+¯Tn = ˜Φ⊤ 
+
+> n
+
+˜G ˜Ψn. (19) 
+
+Moreover, the policy-induced matrix associated with the augmented operator is ˜Mπ = diag (Mπ , 1) , where Mπ is defined as in Thm. 2. Consequently, the dual gradient formula in Thm. 2 applies to the augmented model after replacing (Φ , Ψ, G, M π ) by (˜Φ, ˜Ψ, ˜G, ˜Mπ ).
+
+The detailed derivation of Prop. 4 is given in Prop. 7. The block-diagonal form leaves the PMD algebra unchanged but augments the learned model with an explicit unsupported component. 
+
+Theorem 5 (Sink-state objective decomposition) . Let ¯μ0 = ( μ0, 0) be the initial embedding with no sink mass, and let ¯Pπ be an extension of Pπ to ¯X with the absorbing sink block described above. Assume that I − γ ¯Tn ¯Pπ is invertible, and let 
+
+¯μ(π) = (1 − γ)( I − γ ¯Tn ¯Pπ )−1 ¯μ0 ∈ ¯H
+
+be the augmented discounted occupancy embedding. Let PH be the orthogonal projection from ¯H = H ⊕ R onto 
+
+H, and define 
+
+ˆμ(π) = PH ¯μ(π), mSε (π) = ⟨¯μ(π), ¯ϕSε ⟩ ¯H
+
+∥ ¯ϕSε ∥2¯H
+
+.
+
+Then 
+
+∥¯μ(π)∥2¯H = ∥ˆμ(π)∥2 
+
+> H
+
++ ε2mSε (π)2. (20) 
+
+Proof. By construction ¯ϕSε ∈ { 0H} ⊕ R and ∥ ¯ϕSε ∥2¯H = ε2. The decomposition ¯μ(π) = ˆμ(π) + mSε (π) ¯ϕSε is orthogonal, hence the Pythagorean identity gives (20). Thus ε controls the relative cost of assigning occupancy to unsupported regions. Small values make unsupported continuations cheap; large values make the policy optimization conservative. During pretraining, the sink term is used only to regularize the learned operator and policy update. After pretraining, the transferred object is the learned representation and policy. To avoid the O(n3) cost of full kernel inversion, the implementation uses a Nystrom approximation [ 40 , 41 ]with m ≪ n anchor points from the replay buffer, reducing the dominant matrix inversion cost to O(m3) per update. A simplified overview and the matrix-level implementation details are given in Algorithms 2 and 3. 
+
+# 4 Experiments 
+
+Since the primary contribution of this work is the derivation of a stable, closed-form exploration objective (5), our experimental section was designed as a controlled diagnostic probe rather than a benchmark of raw capability. We engineered these environments from scratch to isolate specific topological pathologies, as bottlenecks or hard-to-explore subspaces, that induce the oscillatory failures affecting standard reward-free methods. This granular control allows us to directly visualize the collapse and expansion of the occupancy measure μ(π) in the RKHS, which is impossible in high-dimensional latent spaces. Further, such a setting helped to verify the role of the introduced augmented state by observing the mass transfer to the sink state se, and demonstrate the stability in settings where the non-augmented density-based approach is shown to diverge (Fig. 1). We evaluate our method’s ability to efficiently explore and keep a covering behaviour on a suite of fully observable, hard-to-explore MiniGrid-style environments [ 42 ] (Sec. F.1). Here, we consider mainly three configurations: the Middle-Room Fig. 4, a room in the middle connected with corridors to rooms on each side, 
+
+Multiple Rooms , a series of 5 rooms connected by a corridor, and the Maze configuration Fig. 5, available in 
+
+> 3
+
+, while other environmental architectures are considered in the appendix. We illustrate a snapshot of these environments in Sec. F.1. All the configurations offer a tabular or a pixel-based observation, with discrete actions ( |A| = 4 ), and the downstream task employs a sparse reward structure ( −1 per step until the goal) to encourage shortest-path discovery. 
+
+> 3Code and hyper parameters available github.com/marcopra/ROVER.
+
+7Figure 2: Top: Behaviour of the resulting policy For each method, we sample 50 trajectories from a representative checkpoint during pretraining, selected either near full feasible state-space coverage or near the end of the pretraining window. Bottom: Samples collected during pretraining , we visualize the entire dataset collected by each method. 
+
+## 4.1 Behavior Induced by Reward-Free Objectives 
+
+We analyze the behavior induced by different reward-free pretraining objectives in the Middle Room environment. The observation is a one-hot encoding of the discrete state, although ROVER still learns a representation using (9). We compare ROVER against Random Network Distillation (RND) [ 16 ], State Marginal Matching (SMM) [ 13 ], Unsupervised Active Pre-Training (APT) [ 14 ], MAXENT [ 10 ], and Contrastive Intrinsic Control (CIC) [19]. In Fig. 2, we visualize each method using 50 sampled trajectories from a representative checkpoint, selected either near the point where feasible state-space coverage is achieved or near the end of pretraining. The snapshots highlight the difference between discovering states during pretraining and obtaining a final policy whose occupancy broadly covers the state space. Several baselines visit different regions over the course of training, but their policy snapshots often concentrate on one region at a time (Fig. 7). Thus, the replay buffer may be diverse, while the final transferred behavior is not. This distinction matters in sparse-reward transfer. If the downstream reward can be evaluated offline, pretraining data can in principle be relabeled and reused. However, in many sparse-reward tasks, success is an interaction-time event observed only when the agent actually reaches the task-dependent goal. Oscillatory behavior in intrinsic-reward methods has been observed for methods such as SMM and RND by [ 13 ], and often stems from the non-stationarity of the exploration signal. In prediction-error methods such as RND [ 16 ], unvisited states are rewarding until they become predictable, after which the policy is pushed toward other regions. Previously visited regions can later become attractive again due to function-approximation error, forgetting, or distribution shift, producing cycles of expansion and rediscovery. Entropy-, density-, and marginal-matching methods such as APT, MAXENT, and SMM can exhibit a related effect. They encourage visitation of underrepresented states, but the set of underrepresented states changes as the replay distribution evolves. As a result, these methods may produce diversity in the data collection without ensuring that the final policy induces balanced aggregate coverage, especially in bottlenecked environments. Skill-based methods, such as CIC, learn different behaviors by conditioning the policy on a latent skill. This can help the agent explore, but it does not directly force the final behavior to visit all reachable regions evenly. Even if we sample different skills at evaluation time, the resulting trajectories may still spend too much time in some regions and too little in others, especially when rooms are connected by narrow bottlenecks. Therefore, learning distinct skills can lead to diverse behaviors, but it does not necessarily produce the balanced coverage that ROVER explicitly optimizes. Overall, these observations suggest that common reward-free objectives can be effective for discovery, but 8Figure 3: State-space coverage sample efficiency in Multi-Rooms and Maze . On the x-axis, the observations are obtained by sampling from the environment. Top : pretraining samples required to reach full coverage. We displayed values until 100 × 10 3. The red-dotted line shows when the full coverage is reached by resampling with ROVER’s learned policy. Bottom : samples required to reach full coverage by resampling from the final policy. We displayed values until 10 × 10 3, an order of magnitude less than exploring from scratch. do not directly optimize the property needed for behavior transfer: a final policy whose discounted occupancy is broadly distributed over the reachable state space. By contrast, ROVER directly targets occupancy coverage and progressively expands the visited state space while retaining previously discovered regions. 
+
+## 4.2 Full Coverage in Controlled Settings 
+
+In this section, we compare the number of samples required by ROVER and the baselines to achieve full state-space coverage during reward-free pretraining in the Multi-Rooms and Maze environments, considering both state-based and pixel-based observations (Fig. 3). The results show that ROVER reaches full coverage substantially faster than the baselines when run from scratch. The learned policy can also be used after pretraining to efficiently resample trajectories. In both environ-ments, resampling from the final ROVER policy reduces the number of samples required to cover the state space by approximately one order of magnitude in each environment and setting. Thus, ROVER provides two complementary benefits: it improves exploration efficiency during pretraining, and it produces a final policy that remains effective for state-space coverage. This property is particularly useful in multi-task settings. A single pretrained policy can be reused across different downstream tasks in the same environment, so the pretraining cost should be viewed as an upfront investment and amortized over the number of fine-tuning tasks. We provide a more detailed analysis in Sec. F.6. Such exploratory coverage can also remain useful under stochastic rewards, where the agent must repeatedly sample the environment to infer the underlying reward distribution, as in multi-armed bandit problems. Overall, these results show that ROVER not only explores the state space efficiently during pretraining, but also preserves a covering behavior at the end of training. This is the central property targeted by our objective. While the main focus of this section is therefore on the exploration behavior induced by ROVER, we also demonstrate its compatibility with downstream model-free methods in Sec. F.3 and F.4. 
+
+# 5 Conclusion 
+
+We introduced ROVER, a reward-free pretraining method for sparse-reward settings where downstream rewards are not available for offline relabeling. In this regime, the main transferable object is the behavior induced by 9the pretrained policy. We therefore formulate reward-free pretraining as occupancy coverage : learning a policy whose discounted occupancy is broadly distributed over the reachable state space. Our main contribution is a theoretically and empirically motivated objective for behavioral transfer. By minimizing the self-similarity of the discounted occupancy measure in an RKHS, the objective recovers uniform coverage in the finite tabular case and encourages space-filling behavior in learned representation spaces. Further, we describe ROVER, a concrete algorithm that optimizes this objective, using a learned resolvent world model and a sink-state augmentation that stabilizes exploration by balancing expansion into unseen regions with retention of previously covered states. Empirically, ROVER induces broader and more stable coverage than standard reward-free baselines in controlled sparse-navigation tasks, and provides effective initializations for downstream model-free RL. The stability of the algorithm is ensured thanks to the introduction of a virtual “sink state”, which allows for controlling the exploration-exploitation trade-off. Our current study is intentionally limited to discrete action spaces and simple environments. This choice allows us to isolate the coverage objective and analyze its behavior directly, rather than presenting ROVER as a fully scalable exploration algorithm. Future work should study scalable representations that make occupancy coverage meaningful in high-dimensional domains, approximate implementations of the resolvent objective, and extensions to continuous actions, partial observability, and larger benchmarks. We view this work as a first step toward establishing occupancy coverage as a principled objective for reward-free behavioral transfer. 
+
+# References 
+
+[1] Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction . MIT press Cambridge, 1998. [2] Denis Yarats, David Brandfonbrener, Hao Liu, Michael Laskin, Pieter Abbeel, Alessandro Lazaric, and Lerrel Pinto. Don’t change the algorithm, change the data: Exploratory data for offline reinforcement learning, 2022. URL https://arxiv.org/abs/2201.13425 .[3] Ahmed Touati and Yann Ollivier. Learning one representation to optimize all rewards. Advances in Neural Information Processing Systems , 34:13–23, 2021. [4] Siddhant Agarwal, Harshit Sikchi, Peter Stone, and Amy Zhang. Proto successor measure: Representing the space of all possible solutions of reinforcement learning, 2024. URL https://arxiv.org/abs/2411.19418 .[5] Andrea Tirinzoni, Ahmed Touati, Jesse Farebrother, Mateusz Guzek, Anssi Kanervisto, Yingchen Xu, Alessandro Lazaric, and Matteo Pirotta. Zero-shot whole-body humanoid control via behavioral foundation models. arXiv preprint arXiv:2504.11054 , 2025. [6] André Barreto, Will Dabney, Rémi Munos, Jonathan J Hunt, Tom Schaul, Hado P Van Hasselt, and David Silver. Successor features for transfer in reinforcement learning. Advances in neural information processing systems , 30, 2017. [7] Nicklas Hansen, Hao Su, and Xiaolong Wang. Td-mpc2: Scalable, robust world models for continuous control. arXiv preprint arXiv:2310.16828 , 2023. [8] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. Mastering diverse domains through world models. arXiv preprint arXiv:2301.04104 , 2023. [9] Michael Laskin, Denis Yarats, Hao Liu, Kimin Lee, Albert Zhan, Kevin Lu, Catherine Cang, Lerrel Pinto, and Pieter Abbeel. Urlb: Unsupervised reinforcement learning benchmark. arXiv preprint arXiv:2110.15191 ,2021. [10] Elad Hazan, Sham Kakade, Karan Singh, and Abby Van Soest. Provably efficient maximum entropy exploration. In International conference on machine learning , pages 2681–2691. PMLR, 2019. 10 [11] Mirco Mutti, Lorenzo Pratissoli, and Marcello Restelli. A policy gradient method for task-agnostic exploration. In 4th Lifelong Machine Learning Workshop at ICML 2020 , 2020. [12] Denis Yarats, Rob Fergus, Alessandro Lazaric, and Lerrel Pinto. Reinforcement learning with prototypical representations. In International Conference on Machine Learning , pages 11920–11931. PMLR, 2021. [13] Lisa Lee, Benjamin Eysenbach, Emilio Parisotto, Eric Xing, Sergey Levine, and Ruslan Salakhutdinov. Efficient exploration via state marginal matching. arXiv preprint arXiv:1906.05274 , 2019. [14] Hao Liu and Pieter Abbeel. Behavior from the void: Unsupervised active pre-training, 2021. URL 
+
+https://arxiv.org/abs/2103.04551 .[15] Deepak Pathak, Pulkit Agrawal, Alexei A Efros, and Trevor Darrell. Curiosity-driven exploration by self-supervised prediction. In International conference on machine learning , pages 2778–2787. PMLR, 2017. [16] Yuri Burda, Harrison Edwards, Amos Storkey, and Oleg Klimov. Exploration by random network distillation. arXiv preprint arXiv:1810.12894 , 2018. [17] Deepak Pathak, Dhiraj Gandhi, and Abhinav Gupta. Self-supervised exploration via disagreement. In 
+
+International conference on machine learning , pages 5062–5071. PMLR, 2019. [18] Paul-Antoine Le Tolguenec, Yann Besse, Florent Teichteil-Konigsbuch, Dennis G. Wilson, and Emmanuel Rachelson. Exploration by learning diverse skills through successor state measures, 2024. URL https: //arxiv.org/abs/2406.10127 .[19] Michael Laskin, Hao Liu, Xue Bin Peng, Denis Yarats, Aravind Rajeswaran, and Pieter Abbeel. Cic: Contrastive intrinsic control for unsupervised skill discovery, 2022. URL https://arxiv.org/abs/2202. 00161 .[20] Krikamol Muandet, Kenji Fukumizu, Bharath Sriperumbudur, and Bernhard Schölkopf. Kernel mean embedding of distributions: A review and beyond. Foundations and TrendsÂ ® in Machine Learning , 10 (1-2):1–141, 2017. [21] Tom Leinster and Emily Roff. The maximum entropy of a metric space. The Quarterly Journal of Mathematics , 72(4):1271–1309, 2021. [22] Pietro Novelli, Marco Pratticò, Massimiliano Pontil, and Carlo Ciliberto. Operator world models for reinforcement learning. Advances in Neural Information Processing Systems , 37:111432–111463, 2024. [23] Naoya Takeishi, Yoshinobu Kawahara, and Takehisa Yairi. Learning Koopman invariant subspaces for dynamic mode decomposition. Advances in Neural Information Processing Systems , 30, 2017. [24] Bethany Lusch, J Nathan Kutz, and Steven L Brunton. Deep learning for universal linear embeddings of nonlinear dynamics. Nature Communications , 9(1):4950, 2018. [25] Samuel E Otto and Clarence W Rowley. Linearly recurrent autoencoder networks for learning dynamics. 
+
+SIAM Journal on Applied Dynamical Systems , 18(1):558–593, 2019. [26] Vladimir Kostic, Pietro Novelli, Andreas Maurer, Carlo Ciliberto, Lorenzo Rosasco, and Massimiliano Pontil. Learning dynamical systems via Koopman operator regression in reproducing kernel Hilbert spaces. 
+
+Advances in Neural Information Processing Systems , 35:4017–4031, 2022. [27] Vladimir Kostic, Karim Lounici, Pietro Novelli, and Massimiliano Pontil. Sharp spectral rates for Koopman operator learning. Advances in Neural Information Processing Systems , 36:32328–32339, 2023. [28] Feliks Nüske, Sebastian Peitz, Friedrich Philipp, Manuel Schaller, and Karl Worthmann. Finite-data error bounds for Koopman-based prediction and control. Journal of Nonlinear Science , 33(1):14, 2023. 11 [29] Minchan Jeong, Jongha Jon Ryu, Se-Young Yun, and Gregory W. Wornell. Efficient parametric SVD of koopman operator for stochastic dynamical systems. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview.net/forum?id=kL2pnzClyD .[30] Giacomo Turri, Luigi Bonati, Kai Zhu, Massimiliano Pontil, and Pietro Novelli. Self-supervised evolution operator learning for high-dimensional dynamical systems. arXiv preprint arXiv:2505.18671 , 2025. [31] Preston Rozwood, Edward Mehrez, Ludger Paehler, Wen Sun, and Steven L Brunton. Koopman-assisted reinforcement learning. arXiv preprint arXiv:2403.02290 , 2024. [32] Aaron van den Oord, Yazhe Li, and Oriol Vinyals. Representation learning with contrastive predictive coding. arXiv preprint arXiv:1807.03748 , 2018. [33] Michael Laskin, Aravind Srinivas, and Pieter Abbeel. Curl: Contrastive unsupervised representations for reinforcement learning. In International conference on machine learning , pages 5639–5650. PMLR, 2020. [34] Ruijie Zheng, Xiyao Wang, Yanchao Sun, Shuang Ma, Jieyu Zhao, Huazhe Xu, Hal Daumé III, and Furong Huang. Taco: Temporal latent action-driven contrastive loss for visual reinforcement learning. Advances in Neural Information Processing Systems , 36:48203–48225, 2023. [35] Zhaohan Guo, Shantanu Thakoor, Miruna Pislar, Bernardo Avila Pires, Florent Altché, Corentin Tallec, Alaa Saade, Daniele Calandriello, Jean-Bastien Grill, Yunhao Tang, Michal Valko, Remi Munos, Mohammad Gheshlaghi Azar, and Bilal Piot. Byol-explore: Exploration by bootstrapped prediction. Advances in neural information processing systems , 35:31855–31870, 2022. [36] Steffen Grunewalder, Guy Lever, Luca Baldassarre, Massi Pontil, and Arthur Gretton. Modelling transition dynamics in mdps with rkhs embeddings. arXiv preprint arXiv:1206.4655 , 2012. [37] Lior Shani, Yonathan Efroni, and Shie Mannor. Adaptive trust region policy optimization: Global convergence and faster rates for regularized mdps. In Proceedings of the AAAI conference on artificial intelligence , volume 34, pages 5668–5675, 2020. [38] Alekh Agarwal, Sham M. Kakade, Jason D. Lee, and Gaurav Mahajan. On the theory of policy gradient methods: Optimality, approximation, and distribution shift. Journal of Machine Learning Research , 22 (98):1–76, 2021. [39] Lin Xiao. On the convergence rates of policy gradient methods. Journal of Machine Learning Research , 23 (282):1–36, 2022. [40] Christopher Williams and Matthias Seeger. Using the nyström method to speed up kernel machines. 
+
+Advances in neural information processing systems , 13, 2000. [41] Alessandro Rudi, Raffaello Camoriano, and Lorenzo Rosasco. Less is more: Nyström computational regularization. Advances in neural information processing systems , 28, 2015. [42] Maxime Chevalier-Boisvert, Bolun Dai, Mark Towers, Rodrigo Perez-Vicente, Lucas Willems, Salem Lahlou, Suman Pal, Pablo Samuel Castro, and Jordan Terry. Minigrid & miniworld: Modular & customizable reinforcement learning environments for goal-oriented tasks. Advances in Neural Information Processing Systems , 36:73383–73394, 2023. [43] NS Landkof. Foundations of modern potential theory , volume 180. Springer, 1972. [44] Douglas P Hardin and Edward B Saff. Minimal riesz energy point configurations for rectifiable d-dimensional manifolds. Advances in Mathematics , 193(1):174–204, 2005. [45] Charalambos D Aliprantis and Kim C Border. Infinite dimensional analysis: a hitchhiker’s guide . Springer, 2006. 12 [46] Timothy P Lillicrap, Jonathan J Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa, David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. arXiv preprint arXiv:1509.02971 , 2015. [47] Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash Kumar, Henry Zhu, Abhishek Gupta, Pieter Abbeel, et al. Soft actor-critic algorithms and applications. arXiv preprint arXiv:1812.05905 , 2018. [48] Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for offline reinforcement learning, 2020. URL https://arxiv.org/abs/2006.04779 .13 A Connections to Information Geometry and Potential Theory 
+
+## A.1 Connection to Rényi Entropy and Diversity. 
+
+Our use of a Reproducing Kernel Hilbert Space (RKHS) naturally equips the state space with a notion of similarity, quantified by the kernel function k(x, y ) = ⟨ϕ(x), ϕ (y)⟩H. Following the framework of [ 21 ], we use this similarity to define the typicality of a state x with respect to the occupancy measure d(π) as the expected similarity to a random sample: 
+
+κ(x) = 
+
+∫
+
+k(x, y ) d(π)( dy ).
+
+This measure of local concentration allows us to define the global “spread" of the distribution. The diversity of order q is defined as the generalized mean (of order 1 − q) of the inverse typicality (or “atypicality"): 
+
+Dq (d(π)) = 
+
+(∫
+
+> X
+
+( 1
+
+κ(x)
+
+)1−q
+
+d(π)( dx )
+
+) 11−q
+
+. (21) In the specific case of q = 2 , this expression simplifies to the harmonic mean of the atypicality, which is the reciprocal of the expected similarity: 
+
+D2(d(π)) = 1
+
+∫ 
+
+> X
+
+κ(x) d(π)( x) = 1
+
+∥μ(π)∥2
+
+> H
+
+. (22) Consequently, minimizing our objective ∥μ(π)∥2 
+
+> H
+
+is mathematically equivalent to maximizing the diversity of the state occupancy distribution, as measured by (22). Furthermore, the logarithm of this quantity, 
+
+H2(d(π)) = log D2(d(π)) , corresponds exactly to the Rényi entropy of order 2 (collision entropy) and as shown by [ 21 ], maximizing this entropy provides a canonical definition of the “uniform distribution" in general metric spaces where the standard Lebesgue measure may not apply, thereby justifying our objective as a generalized uniformity-matching strategy. 
+
+## A.2 Connection to Potential Theory. 
+
+Our objective J (π) is also formally equivalent to the energy integral in potential theory [ 43 ]. Interpreting the kernel k(x, y ) as a repulsive potential between x and y, minimizing ∥μ(π)∥2 
+
+> H
+
+corresponds to finding the minimum energy configuration of the probability mass d(π).The coverage properties of the solution of such a problem have been studied for a number of different kernel (that is, potential) functions. For singular potentials (e.g., Riesz kernels k(∥x − y∥) = ∥x − y∥−s), the solution (equilibrium measure) is theoretically guaranteed to be the uniform distribution on the domain [43, 44]. 
+
+Example 1 (Diffusive vs. Ballistic Transport) . To illustrate how energy minimization drives exploration, we analyze a canonical 1D exploration problem. Consider an agent on the semi-infinite integer lattice Z≥0 starting at x0 = 0 . We compare the Riesz energy Js(π) (using kernel k(x, y ) = |x − y|−s for s > 0) of two distinct policies in the limit of long horizons ( γ → 1): 1. Diffusive Policy ( πdif f ): A uniform random walk ( a ∼ Bernoulli (0 .5) ), reflecting at the origin. 2. Ballistic Policy ( πbal ): A directed policy ( a = +1 ) moving constantly to the right. Intuitively, πbal achieves superior coverage because it strictly avoids backtracking, whereas πdif f wastes time going backward half of the time. In Sec. B, we derive the characteristic length L of the state occupancy for both policies, showing that coverage scales as Lbal ∝ ϵ−1 versus Ldif f ∝ ϵ−1/2, where ϵ = 1 − γ.
+
+Proposition 6 (Energy Scaling) . As γ → 1, the energies of the diffusive and ballistic policies scale as: 
+
+Js(πdif f ) ∝ ϵs/ 2 and Js(πbal ) ∝ ϵs. (23) 
+
+Since ϵ is small and s > 0, we have ϵs ≪ ϵs/ 2, implying Js(πbal ) ≪ J s(πdif f ).
+
+14 This result demonstrates that our objective function (5) can be interpreted as the interaction energy of a cloud of particles, and it correctly identifies and penalizes the backtracking moves of random walks. By minimizing this objective, the agent is naturally driven toward the ballistic regime, maximizing the spatial spread of its trajectories. 
+
+# B Proof of Proposition 6 
+
+Proposition 6 (Energy Scaling) . As γ → 1, the energies of the diffusive and ballistic policies scale as: 
+
+Js(πdif f ) ∝ ϵs/ 2 and Js(πbal ) ∝ ϵs. (23) 
+
+Since ϵ is small and s > 0, we have ϵs ≪ ϵs/ 2, implying Js(πbal ) ≪ J s(πdif f ).Proof. We derive the asymptotic scaling of the state occupancy measure dπ and the resulting Riesz energy 
+
+Js(π) for both policies as γ → 1. Let ϵ = 1 − γ denote the inverse effective horizon. 
+
+Case A: Ballistic Policy ( πbal ). The agent moves deterministically: xt = t. The discounted state occupancy is given by the geometric distribution: 
+
+dbal (x) = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γtδ(x − t) = ϵ(1 − ϵ)x. (24) For small ϵ, this approximates 4 an exponential distribution dbal (x) ≈ ϵe −ϵx . The characteristic width (scale) is 
+
+Lbal ∼ ϵ−1.
+
+Case B: Diffusive Policy ( πdif f ). The agent follows a symmetric random walk with reflection at x = 0 .The occupancy ddif f (x) satisfies the stationary Bellman flow equation for x > 0:
+
+d(x) = γ
+
+[ 12 d(x − 1) + 12 d(x + 1) 
+
+]
+
+. (25) Rearranging terms yields γd (x + 1) − 2d(x) + γd (x − 1) = 0 . We seek a solution d(x) ∝ λx with λ < 1. The characteristic equation γλ 2 − 2λ + γ = 0 yields roots λ± = (1 ± √1 − γ2)/γ . Selecting the stable root λ− and using √1 − γ2 ≈ √2ϵ:
+
+λ− ≈ 1 − √2ϵ ≈ e−√2ϵ. (26) Thus, ddif f (x) ≈ √2ϵe −x√2ϵ, with characteristic width Ldif f ∼ ϵ−1/2. Now notice how both occupancies take the form of an exponential distribution p(x) = λe −λx supported on [0 , ∞), where λbal = ϵ and λdif f = √2ϵ.We compute the Riesz energy integral explicitly using the substitution u = λx, v = λy :
+
+Js(π) = 
+
+∫ ∞
+
+> 0
+
+∫ ∞
+
+> 0
+
+p(x)p(y)|x − y|−s dx dy (27) 
+
+=
+
+∫ ∞
+
+> 0
+
+∫ ∞
+
+> 0
+
+(λe −λx ) ( λe −λy ) |x − y|−s dx dy (28) 
+
+= λ2
+
+∫ ∞
+
+> 0
+
+∫ ∞
+
+> 0
+
+e−ue−v
+
+∣∣∣ uλ − vλ
+
+∣∣∣−s du λdv λ (29) 
+
+= λs
+
+∫ ∞
+
+> 0
+
+∫ ∞
+
+> 0
+
+e−(u+v)|u − v|−s du dv 
+
+︸ ︷︷ ︸
+
+> Cs
+
+. (30) The integral Cs converges to a constant depending only on s (for s < 1). Thus, the energy scales directly with the decay rate: Js(π) ∝ λs. Substituting the decay rates λ derived in Part 1:      
+
+> 4This result can be obtained taking the logarithm of (1 −ϵ)xand the first order Taylor approximation in ϵ.
+
+15 • Ballistic: λbal ∼ ϵ =⇒ J s(πbal ) ∝ ϵs.
+
+• Diffusive: λdif f ∼ ϵ1/2 =⇒ J s(πdif f ) ∝ (ϵ1/2)s = ϵs/ 2.Comparing the two regimes as ϵ → 0:
+
+Js(πbal )
+
+Js(πdif f ) ∝ ϵs
+
+ϵs/ 2 = ϵs/ 2 → 0. (31) 
+
+# C Proof of Theorem 2 
+
+We derive the dual form of the gradient for a general transition operator with the sandwich structure T = Φ ⊤GΨ.Starting from the primal gradient (12): 
+
+∇PJ (π) = 2 γ(1 − γ)2T∗R∗ 
+
+> π
+
+μ(π) ⊗ Rπ μ0, (32) where Rπ = ( I − γTP π )−1 is the resolvent operator. 
+
+Step 1: Resolvent representation. The key observation is that the resolvent admits the dual represen-tation 
+
+(I − γTP π )−1 = Φ ⊤(Id − γGM π )−1GΨPπ + IH, (33) where terms orthogonal to the data span contribute identity. To see this, note that the Neumann series 
+
+(I−γTP )−1 = ∑∞
+
+> t=0
+
+(γTP )t can be “folded” using the sandwich structure: each power (TP )t = Φ ⊤(GM π )t−1GΨP
+
+for t ≥ 1, where Mπ = Ψ Pπ Φ⊤ captures the policy-induced coupling between data points. Applying this to μ0 = Φ ⊤α0 yields: 
+
+Rπ μ0 = Φ ⊤(Id − γGM π )−1α0. (34) 
+
+Step 2: Adjoint action. The adjoint T∗ = Ψ ⊤GΦ maps the occupancy embedding μ(π) = (1 − γ)Φ ⊤(Id −
+
+γGM π )−1α0 to: 
+
+T∗R∗ 
+
+> π
+
+μ(π) = (1 − γ)Ψ ⊤G(Id − γM ⊤ 
+
+> π
+
+G)−1Kϕ(Id − γGM π )−1α0. (35) 
+
+Step 3: Dual gradient form. Evaluating the gradient at (x, a ) and using ⟨ψ(x, a ), Ψ⊤v⟩ =∑ 
+
+> i
+
+vi⟨ψ(x, a ), ψ (xi, a i)⟩, we obtain the stated form with coefficient vector cπ = 2γ(1 − γ)2G(Id −
+
+γM ⊤ 
+
+> π
+
+G)−1Kϕ(Id − γGM π )−1α0.
+
+# D Properties of the Augmented Transition Operator 
+
+## D.1 Preliminaries - Discounted Occupancy Measure 
+
+We define the discounted state occupancy measure ν(π) as follows: 
+
+dπ (x) = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γt E 
+
+> s0∼μ0(·),at∼π(·| st),st+1 ∼T (·| st,a t)
+
+[1(st = sx ] (36) where (1 − γ) serves as the normalization constant, and the expectation is taken over trajectories induced by the policy π and the transition dynamics T (as defined in (5)). 16 By leveraging the operator formulation introduced in (5), we can express the probability of visiting state s
+
+at time step t in a compact form. Expanding the expectation over the trajectory distribution yields: 
+
+E 
+
+> s0∼μ0(·),at∼π(·| st),st+1 ∼T (·| st,a t)
+
+[1(st = s)] = ∑
+
+> s0∈S
+
+μ0(s0) ∑
+
+> a0∈A
+
+π(a0|s0) ∑
+
+> s1∈S
+
+T (s1|s0, a 0) . . . ∑
+
+> at−1∈A
+
+π(at−1|st−1)T (s|st−1, a t−1)
+
+(37) 
+
+= [( TP π )tμ0)]( s) (38) Here, the recursive application of the policy operator Pπ and transition operator T captures the sequential evolution of the state density. Consequently, the occupancy measure can be written as the resolvent of the transition operator applied to the initial distribution. Thus, we can plug this result into the discounted occupancy measure above: 
+
+dπ (x) = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+[( γTP π )tμ0]( x) = (1 − γ)[( Id − γTP π )−1μ0]( x) (39) where the last equality follows from T and P being Markov operators [ 45 ] ( ∥T∥ = ∥P∥ = 1 ), making the Neumann series convergent. Consequently, we assume that for a given ϕ : X → Rz and a dataset Φ ∈ Rn×z , we can rewrite μ0 = Φ ∗α0,where α0 is coefficient array. Recalling Thm. 2 we assume to work with T = Φ ∗GΨ for some matrix G. Then, we can rewrite the discounted state space function as 
+
+dπ (x) = (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+[( γTP π )tμ0]( x) (40) 
+
+= (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+[( γΦ∗ ˆGΨPπ )tΦ∗α0]( x) (41) 
+
+= (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+[Φ ∗(γ ˆGΨPπ Φ∗)tα0]( x) (42) where in (42), we unravel the sum and the exponential to bring in the right Φ∗ and bring out the left. We then define M = Ψ Pπ Φ∗ and, consequently, dπ (x) = (1 − γ) ∑∞
+
+> t=0
+
+[Φ ∗(γB ΨPπ Φ∗)tα0]( x).
+
+## D.2 Feature augmentation 
+
+Here we show that under the augmented kernel definition, the estimated transition operator ˆTn maps the sink state to itself. Let eSε be the embedding of the sink state sSε . Thus, we set ˆΦ ∈ Rn×zx+1 , ˆΨ ∈ Rn×zxa +1 as the datasets containing the state and the state-action pair embeddings augmented with an additional dimension, which is set to 0. The sink state embedding is defined as eSε =
+
+( 0
+
+...
+
+> 01
+
+)
+
+∈ Rzx+1 . In the following analysis, we define 1k as a column vector containing k-times the 1 value. The augmented version of embedding datasets ¯Φ
+
+end ¯Ψ are defined in the following manner: 
+
+¯Φ∗ = [ ˆΦ∗ − e1∗ 
+
+> zxa +1
+
+ˆΨ∗ e] ∈ Rzx+1 ×n+1 (43) 
+
+¯Ψ = 
+
+[ ˆΨ
+
+1∗
+
+> zxa +1
+
+]
+
+∈ Rn+1 ×zxa +1 (44) The coefficient matrix ˆG = ( K + λId )−1 from Prop. 4 extends to the augmented setting as: 
+
+¯G =
+
+[ ˆG 00 1
+
+]
+
+∈ Rn+1 ×n+1 . (45) 17 We assume that the initial distribution can be rewritten as ¯ν0 = ¯Φ∗ ¯α0, where ¯α0 =
+
+( 10
+
+...
+
+> 0
+
+)
+
+∈ Rzx+1 .
+
+We also assume the normalization condition: there exists 1H ∈ H such that 
+
+⟨1H, ψ (x, a )⟩H = 1 , ∀(x, a ) ∈ X × A . (46) 
+
+Proposition 7 (Structure of the Augmented Operator ¯Tn). Under the normalization condition (46) , the augmented transition operator ¯T defined in (17) admits the sandwich form 
+
+¯T = ¯Φ⊤ ¯G ¯Ψ, (47) 
+
+where ¯Φ and ¯Ψ are the augmented feature matrices defined in (43) and (44) , and ¯G = diag ( ˆG, 1) with 
+
+ˆG = ( K + λId )−1. Moreover, the policy-induced matrix inherits a block-diagonal structure: 
+
+¯Mπ = diag( Mπ , 1) , (48) 
+
+where Mπ is the policy-induced matrix from the original (non-augmented) problem. Consequently, the dual gradient formula of Thm. 2 applies directly with the (n + 1) -dimensional augmented matrices. Proof. The proof proceeds in three parts: (i) verifying the sandwich form ¯T = ¯Φ⊤ ¯G ¯Ψ, (ii) showing the sink state is absorbing, and (iii) establishing the block-diagonal structure of ¯Mπ .
+
+Part 1: Sandwich form.. By construction, ¯T = ¯Φ⊤ ¯G ¯Ψ with ¯G = diag ( ˆG, 1) follows directly from the definitions (43) and (44). 
+
+Part 2: The sink state is absorbing.. We verify that the transition operator maps the sink state to itself. Before passing through ¯T, the sink state passes through Pπ yielding exa ∈ Rzxa +1 .
+
+¯Texa = ¯Φ∗ ¯G ¯Ψexa (49) 
+
+= ¯Φ∗ ¯G
+
+[ ˆΨ
+
+1∗
+
+> zxa +1
+
+]
+
+exa (50) 
+
+= ¯Φ∗ ¯G
+
+[
+
+ˆΨexa 
+
+1∗
+
+> zxa +1
+
+e
+
+]
+
+(51) 
+
+= ¯Φ∗
+
+[ ˆG 00 1
+
+] [ 01
+
+]
+
+(52) 
+
+= ¯Φ∗
+
+[01
+
+]
+
+(53) 
+
+= [ ˆΦ∗ − e1∗ 
+
+> zxa +1
+
+ˆΨ∗ e] [01
+
+]
+
+(54) 
+
+= e (55) This shows that the sink state is absorbing: ¯Texa = e. In (51), we used that ˆΨexa = 0 by orthogonality and 
+
+1∗
+
+> zxa +1
+
+e = 1 .18 For completeness, we also verify the behavior on regular states: 
+
+¯T ˆψ(x) = ¯Φ∗ ¯G ¯Ψ ˆψ(x) (56) 
+
+= ¯Φ∗ ¯G
+
+[ ˆΨ
+
+1∗
+
+> zxa +1
+
+]
+
+ˆψ(x) (57) 
+
+= ¯Φ∗
+
+[ ˆG 00 1
+
+] [ ˆΨ ˆψ(x, a )
+
+1∗ 
+
+> zxa +1
+
+ˆψ(x, a )
+
+]
+
+(58) 
+
+= [ ˆΦ∗ − e1∗ 
+
+> zxa +1
+
+ˆΨ∗ e] [ ˆG ˆΨ ˆψ(x, a )
+
+1∗ 
+
+> zxa +1
+
+ˆψ(x, a )
+
+]
+
+(59) 
+
+= [ ˆΦ∗ ˆG ˆΨ ˆψ(x, a ) − e1∗ 
+
+> zxa +1
+
+ˆΨ∗ ˆG ˆΨ ˆψ(x, a ) + e1∗ 
+
+> zxa +1
+
+ˆψ(x, a )] = (1) , (2) (60) 
+
+(1) ≈ [ ˆΦ∗ ˆG ˆΨ ˆψ(x, a ) + e1∗ 
+
+> zxa +1
+
+ˆψ(x, a )] , if ˆΨ ˆψ(x, a ) ≈ 0 (61) 
+
+(2) ≈ [ ˆΦ∗ ˆG ˆΨ ˆψ(x, a )] (62) In (60), ˆG = ( ˆΨ ˆΨT + λId )−1 ≈ ( ˆΨ ˆΨT )−1 for a small λ. Then, e1∗ 
+
+> zxa +1
+
+ˆΨ∗ ˆG ˆΨ ˆψ(x, a ) ≈ e1∗ 
+
+> zxa +1
+
+ˆψ(x, a ) and it leads to (62). 
+
+Part 3: Block-diagonal structure of ¯Mπ .. Recall from Sec. D.1 that M = Ψ PΦ∗. We show that ¯M = ¯Ψ¯P ¯Φ∗
+
+has block-diagonal structure, where ¯P =
+
+[P
+
+0
+
+]
+
+. We obtain the following structure for ¯M :
+
+¯M = ¯Ψ¯P ¯Φ∗ (63) 
+
+= ¯Ψ
+
+[P
+
+0
+
+] [Φ∗ − e1∗
+
+> zxa +1
+
+Ψ∗ e] (64) 
+
+= ¯Ψ [PΦ∗ − Pe1∗
+
+> zxa +1
+
+Ψ∗ Pe] (65) 
+
+=
+
+[ Ψ
+
+1∗
+
+> zxa +1
+
+] [PΦ∗ − Pe1∗
+
+> zxa +1
+
+Ψ∗ Pe] (66) 
+
+=
+
+[ ΨPΦ∗ − ΨPe1∗
+
+> zxa +1
+
+Ψ∗ ΨPe
+
+1∗
+
+> zxa +1
+
+(PΦ∗ − Pe1∗
+
+> zxa +1
+
+Ψ∗) 1∗
+
+> zxa +1
+
+Pe
+
+]
+
+(67) (68) We analyze the M matrix point-wise, starting from the upper-left block. 
+
+¯Mij = ψ(xi, a i)(Pϕ∗(x′ 
+
+> j
+
+) − Pe1∗
+
+> zxa +1
+
+ψ∗(xj , a j )) (69) In the following, we proceed with the computations with the first part of the multiplication, which is 
+
+ψ(xi, a i)Pϕ(x′ 
+
+> j
+
+)⟩⟨ψ(xi, a i)∗, Pϕ(x′ 
+
+> j
+
+)⟩ = ⟨ϕ(xi) ⊗ eai , ∑
+
+> a∈A
+
+π(a|x′ 
+
+> j
+
+)ϕ(x′ 
+
+> j
+
+) ⊗ ea⟩ (70) 
+
+=
+
+
+
+∑
+
+> a∈A
+
+π(a|x′ 
+
+> j
+
+)⟨ϕ(xi), ϕ (x′ 
+
+> j
+
+)⟩ ⊗ ea=ai (71) 
+
+= π(a|x′ 
+
+> j
+
+)K(xi, x ′ 
+
+> j
+
+) (72) Here, we proceed with the second element of the above multiplication ψ(xi, a i)Pe1∗
+
+> zxa +1
+
+ψ(xj , a j ):
+
+ψ(xi, a i)Pe1∗
+
+> zxa +1
+
+ψ(xj , a j ) = π(ai|e)K(xi, e )1∗
+
+> zxa +1
+
+ψ(xj , a j ) = 0 (73) 
+
+¯Mij = π(a|x′ 
+
+> j
+
+)K(xi, x ′ 
+
+> j
+
+) = Mij (74) In (71), the sum is zero for every a̸ = ai, due to the presence of ea=ai , which is basically a Dirac delta. The upper-right block yelds to π(ai|e)K(xi, e ) = 0 as in (73), which is 0 due to K(xi, e ). For the bottom-left block, 19 the (n + 1 , j ) entry of ¯M corresponds to the inner product between the (n + 1) -th row of ¯Ψ (which is 1⊤) and the j-th column of ¯P ¯Φ∗. For a regular state x′ 
+
+> j
+
+∈ X :
+
+( ¯M )n+1 ,j = ⟨1, Pπ ¯ϕ(x′ 
+
+> j
+
+)⟩ − ⟨ 1, Pπ ¯ϕ(e)⟩ · ⟨ 1, ψ (xj , a j )⟩
+
+= ∑
+
+> a∈A
+
+π(a|x′ 
+
+> j
+
+) ⟨1, ψ (x′ 
+
+> j
+
+, a )⟩
+
+︸ ︷︷ ︸
+
+> =1
+
+− ∑
+
+> a∈A
+
+π(a|e) ⟨1, ¯ψ(e, a )⟩
+
+︸ ︷︷ ︸
+
+> =1
+
+· ⟨ 1, ψ (xj , a j )⟩
+
+︸ ︷︷ ︸
+
+> =1
+
+= 1 − 1 = 0 ,
+
+where we used the normalization assumption ⟨1H, ψ (x, a )⟩ = 1 for all (x, a ).This establishes ¯Mπ = diag( Mπ , 1) , completing the proof. 20 E Algorithm 
+
+## E.1 Simplified 
+
+Algorithm 2 ROVER (Simplified) 
+
+Require: Discount γ, step size η, regularization λ 
+
+> 1:
+
+Initialize policy p = p0, replay buffer D = ∅ 
+
+> 2:
+
+for each episode do  
+
+> 3:
+
+Collect transitions using p, add to D 
+
+> 4:
+
+// 1. Representation Learning  
+
+> 5:
+
+Update encoder ϕθ via contrastive loss (9) on D 
+
+> 6:
+
+// 2. World Model Estimation  
+
+> 7:
+
+Compute ¯Tn via (sink-biased) regression (17) on D 
+
+> 8:
+
+// 3. Policy Mirror Descent  
+
+> 9:
+
+Initialize π0 = 1 /|A| , C = 0  
+
+> 10:
+
+for t = 1 , . . . , T PMD do  
+
+> 11:
+
+Compute gradient coefficients cπt Thm. 2  
+
+> 12:
+
+C ← C + cπt 
+
+> 13:
+
+πt+1 (·| x) ← softmax (−η⟨ψ(x, ·), Ψ⊤ 
+
+> n
+
+C⟩) 
+
+> 14:
+
+end for  
+
+> 15:
+
+Update p ← πTPMD  
+
+> 16:
+
+end for 
+
+## E.2 Full Algorithm 
+
+21 Algorithm 3 ROVER (Full Details) 
+
+Require: discount factor γ ∈ (0 , 1) , step size η > 0, kernel function k(x, x ′) = ⟨ϕθ (x), ϕ θ (x′)⟩ with learned feature map ϕθ : X → Rz , initial weights C0 = 0 ∈ Rm×|A| , Linear Layer W. 
+
+Tsteps , PMD : training steps, PMD steps 
+
+1: for t = 1 to Tsteps do 
+
+2: compute Ht ∈ R1×n such that Hj = k(xt, x j )
+
+3: at ← argmax softmax (−ηH tCt) ∈ R1×|A| 
+
+4: xt+1 ∼ P (· | xt, at)
+
+5: D ← D ∪ (xt, at, xt+1 )
+
+6: ϕθ ← UpdateEmbedders (D, ϕ θ )
+
+7: Ct ← UpdateActor (D, ϕ )
+
+8: end for 
+
+9: 10: function UpdateEmbedders (D)
+
+11: Sample minibatch {(xi, a i, x ′
+
+> i
+
+)}Bi=1 ∼ D 
+
+12: Compute latent states zi = ϕθ (xi)
+
+13: Compute target latents z′ 
+
+> i
+
+= ( ϕθ (x′
+
+> i
+
+)) |stop_grad 
+
+14: Predict next latent ˆz′ 
+
+> i
+
+= W (zi ⊗ eai )
+
+15: LNCE = − 1
+
+> B
+
+∑Bi=1 log exp( ⟨¯ˆz′
+
+> i,¯z′
+> i⟩)
+
+∑Bj=1 exp( ⟨¯ˆz′  
+
+> i,¯z′
+> j⟩)
+
+{Contrastive (normalized) (9)} 
+
+16: Update embedder ϕθ and W to minimize LNCE 
+
+17: Return ϕθ
+
+18: end function 
+
+19: 20: function UpdateActor (D, ϕ )
+
+21: /* Policy Mirror Descent */ 
+
+22: Sample minibatch {(xi, a i, x ′
+
+> i
+
+)}mi=1 ∼ D 
+
+23: let k(x, z ) = ϕ(x)⊤ϕ(z)
+
+24: let E ∈ Rm×|A| with rows Ei = OneHot |A| (ai)
+
+25: let K ∈ Rm×m such that Kij = k(x′
+
+> i
+
+, x ′ 
+
+> j
+
+)
+
+26: let H ∈ Rm×m such that Hij = k(xi, x ′ 
+
+> j
+
+)
+
+27: let ˆΦ ∈ Rm×zx+1 such that ˆΦ = {ϕ(xi)}mi=1 
+
+28: let ˆΨ ∈ Rm×zxa +1 such that ˆΨ = {ϕ(xi) ⊗ ea}mi=1 
+
+29: compute ˜Φ
+
+30: compute G = ( ˆΨ ˆΨ∗ + Id )−1
+
+31: compute α0 ∈ Rm such that μ0 = ˆΦ∗α0
+
+32: ¯G ←
+
+(G 00 1
+
+)
+
+, ¯α0 ← (α∗
+
+> 0
+
+, 1) ∗
+
+33: /* Policy Mirror Descent Updates */ 
+
+34: C0 = 0 
+
+35: for t = 0 , 1, . . . , PMD − 1 do 
+
+36: πt+1 ← softmax 
+
+(
+
+− ηH ∗Ct
+
+)
+
+∈ Rm×|A| {Closed Form Policy Update} 
+
+37: Mπt+1 = H ⊙ (Eπ ∗
+
+> t+1
+
+) ∈ Rm×m
+
+38: ¯Mπt+1 ←
+
+(Mπt+1 00 1
+
+)
+
+39: Uπt+1 ← (I − γ ¯G ¯Mπt+1 )−∗ ¯Φ
+
+40: c ← 2γ(1 − γ)2 ¯G−∗ Uπt+1 U ∗ 
+
+> πt+1
+
+¯α0 {Closed Form Gradient Computation for the MMD loss} 
+
+41: Ct+1 ← Ct + diag( c)E
+
+42: end for 
+
+43: Return CPMD 
+
+44: end function 
+
+22 F More on the Experiments 
+
+## F.1 Environment Details 
+
+We evaluate ROVER on sparse-reward navigation environments designed to isolate coverage and bottleneck-exploration behavior. We designed different goal navigation configurations to experiment in a controllable settings. All the following environments can give discrete observations (i.e., one-hot encoding) or pixel-based observations, which consist of an RGB image 84 × 84 . The location information is hidden both types of observation. The action space is discrete with four actions: up, down, left and right. The reward is −1 per step, to encourage the agent to find the shortest path, and the episode end when the agent reaches the target or it reaches H steps. 
+
+Middle Room. The main diagnostic domain is Middle Room , where the agent starts from a central room connected through narrow single-cell corridors to multiple surrounding rooms. This layout makes it possible to distinguish transient discovery from stable occupancy coverage, since a policy must repeatedly traverse bottlenecks to induce broad aggregate behavior. Here, the states are 129, and the horizon is H = 15 .
+
+Figure 4: Snapshot of the Middle Room environment 
+
+Maze. We experimented also in a Maze setting. In this case, the X = |108 | and the horizon H = 128 .
+
+Two Rooms and Multi Rooms. In the appendix, we extend our evaluation to other configurations: Two-Rooms (Fig. 6, left) and Multi-Rooms (Fig. 6, right) with goals placed at different distances from the start state. The state space and horizon are respectively |X | = 99 , H = 80 and |X | = 109 , H = 300 . Two-Rooms serve as a simple environment to see that already in the simplest bottlenecked configuration, we see a lack of performance of the baselines. The Multi-Rooms is interesting in that all the baselines explore all the rooms effectively, but the learnt behaviour is not smart enough to probabilistically see all of them, while this is the case of ROVER. 23 Figure 5: Snapshots of the Sparse Reward Maze environment. 
+
+Figure 6: Snapshots of the Sparse Reward Navigation environments. The agent is depicted as the red square, while the goal is the green star. On the left, Two Rooms . On the right, Multi-Room with a Single Corridor 
+
+## F.2 More on the Behaviour induced by Reward-free Objectives 
+
+We analyze the behavior induced by different reward-free pretraining objectives in the Middle Room environment as described already in Sec. 4.1. We compare ROVER against Random Network Distillation (RND) [ 16 ], State Marginal Matching (SMM) [ 13 ], Unsupervised Active Pre-Training (APT) [ 14 ], MAXENT [ 10 ], and Contrastive Intrinsic Control (CIC) [19]. We visualize each method by sampling 50 trajectories from policy snapshots taken at initialization, at two intermediate checkpoints, and at the end of pretraining. For skill-based algorithms, each trajectory is computed by sampling a latent skill vector z from a random distribution, following the codebase provided by [9, 19]. 
+
+## F.3 Test on a Simple Configuration: Two-Rooms 
+
+We evaluate performance in the tabular case with discrete state and action spaces in the Two-Rooms environment. We compare our pre-training method against several unsupervised baselines: Random Network Distillation (RND) [ 16 ], State Marginal Matching (SMM) [ 13 ], Unsupervised Active Pre-Training (APT) [ 14 ], and Contrastive Intrinsic Control (CIC) [ 19 ]. For the supervised fine-tuning phase, we employ the Deep Deterministic Policy Gradient (DDPG) algorithm [ 46 ] as done in [ 9 ], adapted here to the discrete action space. We also include a “from scratch” baseline where DDPG is trained without any pre-training. In Fig. 8, our method significantly outperforms all the baselines and the scratch initialization, achieving superior sample efficiency and final performance within the limited interaction budget. With this experiment, we highlight the failure of the baseline transfer behaviour even in the simplest setting. As evidenced in Fig. 8, during the exploration phase, our policy generates a rich learning signal by frequently visiting the goal and populating the buffer with diverse transitions. In the end, this pre-training overhead is amortized across all potential downstream tasks, and a further 24 Figure 7: Middle Room exploration during reward-free pretraining. We sample 50 trajectories from policy snapshots at initialization, two intermediate checkpoints, and the end of pretraining for ROVER and reward-free baselines. While several methods discover diverse states over training, their individual policies often collapse to localized occupancy; in contrast, effective transfer requires a final policy that broadly covers the state space. 25 analysis is provided in App. F.6. 
+
+Figure 8: In the plots, the learning curve of DDPG using different policy initialization. The environment is 
+
+Two-Rooms of dimensions 7 × 7 connected by a corridor, which is a single state. In the left plot, the goal is set in the first room (i.e., simpler to discover), while on the right, the goal is in the second room with respect to the initial position. In the plot, we show the mean and standard error among five random seeds. 
+
+## F.4 Initialization on Different Model-free Algorithms 
+
+We subsequently extend our evaluation to the Multi-Rooms and Two-Rooms environment in an image-based setting, where the agent receives 84 × 84 RGB images as input. In this context, we apply our initialization strategy on top of DDPG and Soft Actor-Critic (SAC) [ 47 ]. In this high-dimensional setting, our initialization strategy consistently enhances sample efficiency compared to standard initializations, effectively accelerating the learning of the downstream policy. In Fig. 9, we show the results for the Two Rooms environment with the goal located in the first room (left) and second room (right). The bottom row displays results for the multi-room environment, with the goal positioned in the fourth room (left) and fifth room (right). We observe that ROVER initialization is compatible with both downstream algorithms, accelerating convergence in both cases. Notably, unlike in the tabular setting, DDPG fails to make progress in the Two Rooms environment (specifically when the goal is in the second room) given the limited interaction budget. We attribute this failure to the difficulty of learning the encoder from images from scratch. In this context, ROVER significantly improves sample efficiency by transferring a pre-trained encoder together with the initial policy. 
+
+## F.5 How ROVER Affects Sample Efficiency When Learning to Reach Different Goal Locations 
+
+We conduct an ablation study to evaluate the sensitivity of convergence time to the distance between the starting position and the goal. To isolate the effects of policy initialization, we utilize a tabular setting with one-hot state encodings; this ensures that any performance gains are attributable solely to the transferred policy rather than feature learning. As illustrated in Fig. 10, the performance of standard DDPG degrades significantly as the goal distance increases, highlighting the difficulty of exploration in larger state spaces. In contrast, agents initialized with ROVER demonstrate convergence behavior that is slightly variant to the target’s location, effectively neutralizing the exploration penalty typically associated with distant goals. 
+
+## F.6 Scaling Analysis of Pre-training Overhead 
+
+To assess the computational cost of our proposed pre-training phase, we analyzed the number of interaction steps required to achieve substantial state coverage across increasingly complex environments. We conducted 26 Figure 9: Comparison of learning curves for DDPG and SAC initialized with ROVER. Top row: Two Rooms 
+
+environment with the goal located in the first room (left panel) and second room (right). Bottom row: five room 5 connected by a corridor environment with the goal in the fourth room (left) and fifth room (right). We show the mean and standard error among five seeds. this experiment in the Multi-Room domain using one-hot state encodings, varying the number of rooms to increase the total state space size |S|.We define the pre-training budget T as the number of timesteps required for the policy to visit at least 
+
+95% of the available states within a 20-episode evaluation window. Our objective is to determine the effective overhead per potential downstream task. Since a single unsupervised pre-training phase facilitates learning for any goal location g ∈ S, the amortized cost per task is given by T / |S|.The results, averaged over 5 seeds, are presented in Tab. 1. We observe that the total interactions required (T ) scale approximately linearly with the size of the state space. Consequently, the amortized overhead remains remarkably stable—roughly 65 –75 steps per potential goal state—even as the environment complexity triples. This preliminary analysis suggests that the additional cost incurred by pre-training is relatively minor when amortized across the distribution of possible tasks. By investing a linear amount of exploration upfront, we enable rapid adaptation to any specific goal, providing a sample efficiency boost that outweighs the initial overhead compared to training from scratch for each new target. 27 Figure 10: Comparison of learning curves for DDPG versus DDPG initialized with ROVER in the multi-room environment. The plots show performance for goals located in the first room (left), fourth room (center), and fifth room (right). We show the mean and standard error among five seeds. Table 1: Analysis of pre-training sample efficiency in the Multi-Room environment with one-hot encodings. The “Amortized Overhead” represents the pre-training cost divided by the number of potential goal locations (states), indicating a constant scaling factor relative to environment size. 
+
+Number of Rooms State Space Size (|S|) Pre-training Steps (T ) Amortized Overhead (T / |S|)3 43 2800 ± 285 65 4 65 4100 ± 235 63 5 109 7800 ± 380 72 6 130 9600 ± 335 74 7 153 10800 ± 425 70 While these results are specific to the tabular setting with exact state representations, they offer a promising lower bound on efficiency. In continuous domains, where the number of potential goal locations is theoretically infinite, the amortized overhead approaches zero ( T / ∞ → 0). However, practical applications often constrain goals to specific manifolds or subsets; in such cases, this linear scaling implies that ROVER remains a computationally viable strategy for initializing goal-agnostic agents. 
+
+## F.7 Replay Buffer transfer to Offline algorithms 
+
+Transferring the replay buffer collected during unsupervised pre-training and transferring the pre-trained policy are distinct evaluation protocols, and they need not produce the same ranking across exploration methods. Policy transfer measures whether pre-training provides a good initialization for subsequent online learning, whereas data transfer measures the quality of the dataset collected during pre-training when reused by an offline RL algorithm [ 2 , 9]. We therefore complement the policy-transfer results with a separate data-transfer study, even if it is not the main purpose of ROVER. Following Yarats et al. [2] , we collect a fixed dataset with each exploration method and train the downstream agent purely offline, without any further interaction with the environment. As downstream learners, we consider CQL [ 48 ], which is explicitly designed for offline RL through conservative regularization, and DDPG [ 46 ], which we report only as a reference since it lacks any mechanism to control extrapolation error in the offline setting. We evaluate the resulting policies deterministically after 15 k gradient updates. All other aspects of the setup are the same as in Sec. F.3, considering the Two Rooms and Multi Rooms settings. The results are reported in Tab. 2. Under CQL, ROVER is consistently the strongest method, matching or outperforming all baselines in every environment and remaining the only method that succeeds on the hardest Multi-Room task (Goal: Room 5). Under offline DDPG, the picture is different: ROVER remains competitive 28 and performs best on the easier settings, whereas CIC attains stronger average performance on the most distant goals. This difference can be explained by the shape of the replay buffer distribution. As shown in the Sec. F.7.1, CIC and ROVER cover similar regions of the state space, but differ in density. CIC produces a more homogeneous dataset, while ROVER places more mass near the initial states and along trajectory prefixes, consistent with its objective of exploring new regions without forgetting previously visited ones. Compared to CIC and ROVER , APT, RND, and SMM appear less effective at producing replay buffers that support downstream offline learning on these navigation tasks. The same dataset structure affects the two offline algorithms differently. Offline DDPG relies on repeated batch updates and tends to benefit from more homogeneous coverage, which reduces instability in poorly represented regions. This helps explain why CIC can be stronger on the hardest goals under offline DDPG. CQL, by contrast, prefers transitions that are well supported by the data. Thus, the dataset need not be uniform everywhere: it is more important that it contains reliable start-to-goal transition chains. Even if the goal itself is visited less often, repeated intermediate transitions can still support near-optimal CQL performance. This is the kind of structure induced by ROVER , which explains why its data are preferred by CQL. Overall, these results show that data transfer and behavior transfer capture different properties of unsuper-vised exploration, while also confirming that the replay buffers generated by ROVER remain highly effective in the fully offline setting. Table 2: Offline RL performance after 15 k gradient updates on custom goal-navigation tasks. CQL and DDPG are trained on fixed datasets collected during unsupervised pre-training, without further environment interaction. Results are mean ± standard error over 7 seeds. Goals are in Rooms 1–2 for Two Rooms and Rooms 2, 4, 5 for Multi Rooms. Online DDPG trained for 50 k interactions is reported as a reference. Best result is boldfaced separately for each algorithm. Algorithm Dataset policy Two Rooms Multi Rooms Goal: Room 1 Goal: Room 2 Goal: Room 2 Goal: Room 4 Goal: Room 5 CQL Random −11 .0 ± 0.0 −35 .0 ± 37 .3 −300 .0 ± 0.0 −300 .0 ± 0.0 −300 .0 ± 0.0                                                                                                                                                                                     
+
+> APT −11 .0±0.0−80 .0±0−11 .0±0.0−300 .0±0.0−300 .0±0.0
+> SMM −11 .0±0.0−80 .0±0.0−300 .0±0.0−300 .0±0.0−300 .0±0.0
+> CIC −11 .0±0.0−17 .0±0.0−11 .0±0.0−21 .0±0.0−300 .0±0.0
+> RND −11 .0±0.0−80 .0±0.0−11 .0±0.0−300 .0±0.0−300 .0±0.0
+> ROVER (Ours) −11 .0±0.0−17 .0±0.0−11 .0±0.0−21 .0±0.0−26 .0±0.0
+> DDPG Random −11 .0±0.0−32 .0±62 .4−218 .2±140 .0−300 .0±0.0−300 .0±0.0
+> APT −11 .0±0.0−80 .0±0.0−135 .1±154 .5−300 .0±0.0−300 .0±0.0
+> SMM −11 .0±0.0−80 .0±0.0−300 .0±0.0−300 .0±0.0−300 .0±0.0
+> CIC −11 .0±0.0−71 .2±23 .8−91 .6±141 .0−100 .7±136 .1−143 .4±146 .5
+> RND −11 .0±0.0−80 .0±0.0−217 .4±141 .3−300 .0±0.0−300 .0±0.0
+> ROVER (Ours) −11 .0±0.0−17 .0±0.0−54 .4±105 .9−140 .6±149 .1−221 .7±133 .7
+> DDPG (online) 50k interactions −11 .0±0.0−17 .0±30 .1−11 .0±0.0−160 .5±152 .8−221 .3±133 .7
+
+F.7.1 Replay Buffer Coverage Heatmaps 
+
+To better understand the differences observed in the data-transfer experiments, we visualize the empirical state-visitation distributions induced by the replay buffers collected during unsupervised pre-training. For each exploration method, we aggregate the visited states stored in the replay buffer and report the corresponding visitation heatmap over the grid. These plots provide a qualitative view of how the dataset is distributed spatially, complementing the return values reported in Table 2. The main observation is that the datasets produced by the different methods often have similar support , in the sense that they eventually cover comparable portions of the navigable state space, but differ substantially in 
+
+density . In particular, CIC tends to produce a more homogeneous replay buffer once distant regions are reached, whereas ROVER places more mass near the initial states and along trajectory prefixes and bottlenecks. This 29 Figure 11: Replay-buffer state-visitation heatmaps in the Two Rooms environment for the different unsu-pervised exploration methods. Darker colors indicate states that appear more frequently in the replay buffer collected during pre-training. While several methods eventually cover both rooms, the induced datasets differ markedly in density. behavior is consistent with the design of ROVER : the objective is not only to expand toward novel regions, but also to do so without forgetting previously visited ones. As a result, the replay buffer retains stronger density around the starting region and around the corridors that connect the start distribution to distant rooms. This distinction helps explain the different behavior of the offline learners. A more homogeneous dataset, such as the one induced by CIC, can be beneficial to offline DDPG, whose batch updates are sensitive to uneven coverage and can deteriorate when large parts of the state-action space are weakly represented. By contrast, CQL benefits more from datasets that contain reliable and repeatedly observed transition chains from the start toward the goal. In this case, the denser prefix structure induced by ROVER is advantageous, since the conservative update can propagate value through well-supported transitions without relying on poorly represented actions. The remaining baselines are generally weaker in both respects: Random lacks directed exploration, while APT, RND, and SMM either fail to maintain sufficient support on long trajectories or produce datasets that are too sparse in the regions that matter for downstream control. Overall, the heatmaps support the interpretation given in Sec. F.7: in these navigation tasks, offline performance depends not only on whether a method reaches distant parts of the environment, but also on how the replay buffer distributes mass across start states, bottlenecks, and distal regions. This clarifies why replay buffers with similar support can nevertheless induce different behavior when paired with different offline RL algorithms. 
+
+## F.8 Gamma ans Sink State sensitivity analysis 
+
+We perform a preliminary sensitivity analysis of the discount factor γ, the sink-state norm ϵ, and the batch size used for policy mirror descent updates. Experiments are conducted in the 5-room Multi-Room environment, where we measure state-space coverage as a function of the number of training samples. In this setting, 30 Figure 12: Replay-buffer state-visitation heatmaps in the Multi Rooms environment for the different unsupervised exploration methods. Although CIC and ROVER both reach distant rooms, their replay buffers differ in how often the traversed regions are revisited. 
+
+|S| = 109 , |S||A| = 436 , and the horizon is H = 300 .For the discount factor, intermediate values provide the most favorable trade-off between early exploration and long-horizon planning. In particular, γ = 0 .9 performs well in the low-sample regime, whereas γ = 0 .99 
+
+achieves stronger asymptotic coverage. In contrast, smaller values, such as γ ≤ 0.8, and very large values, such as γ = 0 .999 , lead to slower convergence or reduced final coverage. We observe that the method is generally robust to the sink-state norm ϵ over a range of small values. With a large batch size of 8096 samples, corresponding to approximately 18 × |S||A| , setting ϵ = 0 or using small positive values, e.g., ϵ ≤ 0.1, leads to rapid coverage of the feasible state space. Larger values degrade performance, and the extreme setting ϵ = 10 prevents effective exploration. This behavior is consistent with the large-batch regime, where the sampled replay data is likely to contain most previously observed state-action pairs, allowing the learned transition model to be fit on nearly all discovered transitions. When reducing the batch size to 1024 , approximately 2.3 × |S||A| , the preferred regime shifts slightly toward a small but nonzero sink-state norm. In particular, ϵ = 10 −3 performs best among the tested values. One possible explanation is that, with fewer samples, some previously observed state-action pairs may be omitted when fitting the transition model, making the agent more prone to revisit already explored regions. In this case, a small sink-state component can help regularize the model and improve exploration. Overall, these results suggest that exploration performance depends on the interaction between γ, ϵ, and the policy-update batch size. Nevertheless, the method remains robust across a broad range of hyperparameter settings, with failures primarily occurring under extreme choices such as very large ϵ. We view these experiments as preliminary evidence of robustness. 31 Figure 13: Preliminary analysis on the sensitivity of γ and ϵ norm of the sink state. 
+
+## F.9 ROVER Initialization in Dense Reward Settings 
+
+We further investigate the impact of ROVER pre-training in environments with dense, shaped rewards, defined as the negative distance to the target. In this setting, exploration is no longer “blind" but explicitly guided by the reward gradient. We evaluate performance on the Multi-Room environment (5 rooms, goal in the 4th), comparing both discrete (one-hot) and visual (pixel-based) observations to decouple the effects of the pre-trained policy from the pre-trained encoder. In the discrete setting (Fig. 14, Left), ROVER initialization provides no significant advantage over learning from scratch. This is expected, as the dense reward signal is sufficient to guide the agent without the need for intrinsic exploration. However, in the visual domain (Fig. 14, Right), transferring the pre-trained encoder yields a substantial acceleration in convergence. This suggests that while the policy prior offers limited utility when dense guidance is available, the representation learned by the world model remains highly effective for visual feature extraction. We leave a granular decomposition of these effects—isolating the encoder transfer from the policy transfer—to future work. 
+
+Figure 14: In this plot, we show the learning curves using DDPG and DDP + ROVER in state-based (left) and pixel-based (right) environments. In particular, we considered Multi-Room , where the goal is in the fourth room. 32

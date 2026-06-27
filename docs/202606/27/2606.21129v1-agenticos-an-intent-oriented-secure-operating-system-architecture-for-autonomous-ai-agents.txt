@@ -1,0 +1,425 @@
+Title: AgenticOS: An Intent-Oriented Secure Operating System Architecture for Autonomous AI Agents
+
+URL Source: https://arxiv.org/pdf/2606.21129v1
+
+Published Time: Tue, 23 Jun 2026 00:35:45 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# AgenticOS: An Intent-Oriented Secure Operating System Architecture for Autonomous AI Agents 
+
+Zhen Zhao d, Yu Zhang a, Yanpeng Zhu c, Jia Wang b, Songqiao Tao b, Xin Cheng b, Jiexin Gao e, 
+
+> aTencent Technology (Shanghai) Co., Ltd., Shanghai 200030, China
+> bShenzhen Tencent Computer System Co., Ltd., Shenzhen 518057, China
+> cTencent Cloud Computing (Beijing) Co., Ltd. Shanghai Branch, Shanghai 200030, China
+> dTencent Cloud Computing (Beijing) Co., Ltd., Beijing 100080, China
+> eOffi ce of Informatization Development and Management, South-Central Minzu University, Wuhan 430074, China
+
+Abstract 
+
+As LLM-driven autonomous agents gradually acquire capabilities for autonomous planning, tool invocation, network access, code execution, and cross-application collaboration, traditional operating-system security models based on “resource exposure plus permission checks” are facing structural challenges. Existing POSIX-style system-call interfaces expose general-purpose resource primitives – such as files, networks, processes, memory mappings, and dynamic execution – to processes. Once an agent runtime is compromised by prompt injection, supply-chain poisoning, or malicious tool outputs, an attacker may combine these primitives into behaviors far beyond the scope of the user’s task authorization. This paper proposes AgenticOS, an intent-oriented secure operating system architecture for autonomous AI agents. Its core paradigm is to reconstruct the operating system from a “resource manager” into an “intent filter”: agents no longer request low-level resources directly, but instead submit structured intent declarations. Based on the Manifest, the system dynamically synthesizes a least-capability environment and enforces mandatory mediation, auditing, and information-flow constraints on external e ff ects. AgenticOS does not attempt to weaken the general computational capability of the operating system. Rather, it redraws the ownership boundary of general capabilities: generic file, network, protocol, process, and toolchain capabilities are no longer directly exposed to the agent runtime, but are encapsulated on the system side as policy-constrained, auditable, and compositionally limited semantic capabilities. Building on prior work in capability security, microkernels, sandboxing, formal isolation, and information-flow control, this paper proposes a four-layer architecture consisting of the Ghost Kernel, Logic Shutter, Agent Capsule, and Semantic Boundary Gateway. It further introduces the Intent ABI, Manifest-Only Runtime, Weaver-based dynamic capability generation, and an admission model for AgenticOS-native Skills. The paper also discusses the ecological boundary of application capability migration: the long-term goal of AgenticOS is not to replace all application forms, but to gradually consolidate software capabilities that are delegable, amenable to semantic abstraction, and auditable into operating-system-native capabilities. 
+
+Keywords: Operating System Security, AI Agent, Intent Filtering, Capability Security, Intent ABI, Formal Isolation 
+
+1. Introduction 
+
+1.1. System Security Problems Introduced by Autonomous Agents 
+
+AI is undergoing a transition from text-generation models to autonomous agents capable of autonomous planning, tool in-vocation, and network interaction. Traditional applications are usually operated explicitly by users through graphical interfaces or command lines, and their behavioral boundaries are jointly determined by user actions, application logic, and operating-system permissions. By contrast, autonomous agents typically operate in the following mode: a user provides a high-level task, and the agent decomposes the task into steps, selects tools,            
+
+> Email addresses: jeremiazhao@tencent.com (Zhen Zhao),
+> yugozhang@tencentos.com (Yu Zhang), rockerzhu@tencent.com
+> (Yanpeng Zhu), jasperwang@tencent.com (Jia Wang),
+> toeytao@tencent.com (Songqiao Tao), denisecheng@tencent.com (Xin Cheng), gjx@mail.scuec.edu.cn (Jiexin Gao )
+
+reads context, accesses external services, and produces external eff ects on its own. This shift creates a fundamental security tension: users au-thorize “task intent,” while operating systems expose “resource primitives.” For example, a user may only authorize an agent to “organize the experimental results of a project and generate a summary.” Yet in a traditional system, the agent process often simultaneously obtains general capabilities such as file read-ing, network access, subprocess execution, dynamic loading, and temporary-directory writes. If the agent is compromised by prompt injection, malicious dependencies, or poisoned tool out-puts, an attacker can combine these general capabilities into lat-eral movement, sensitive-data exfiltration, persistence, or covert communication paths. Therefore, the operating-system security problem in the agent era is not simply “how to grant an agent fewer permis-sions.” The deeper question is how the system can understand and constrain the forms of tasks that an agent is allowed to 
+
+> arXiv:2606.21129v1 [cs.CR] 19 Jun 2026
+
+complete. This paper refers to this problem as the mismatch between resource-permission models and task intent. 
+
+1.2. From Resource Manager to Intent Filter 
+
+The POSIX system-call interface of current operating sys-tems, such as Linux, is a set of general computational prim-itives. Interfaces such as open , read , write , socket , connect ,
+
+mmap , execve , and f ork are neutral in isolation, but their com-positional closure is extremely powerful: once a process obtains su ffi cient resource access, it can express behaviors far beyond the original task objective. The central observation of AgenticOS is that, for highly au-tonomous agents, the security boundary should not be built around the low-level question of “whether a process is allowed to access a resource.” Instead, it should be built around the se-mantic question of “whether this external e ff ect conforms to the declared task intent.” AgenticOS therefore aims to remove the agent runtime’s direct dependence on general system-call se-mantics and replace it with one-shot capability synthesis based on intent declarations. We position AgenticOS as an “agent-native operating system”: a secure computing substrate de-signed for highly autonomous AI systems, centered on intent constraints and least capability. It should be noted that AgenticOS does not deprive the sys-tem of general computational capability. Instead, it encapsu-lates such capability on the system side as structured, auditable, and policy-mediated semantic capabilities, rather than handing it to agents in the form of raw system calls or general resource handles. 
+
+1.3. Theoretical Foundations and Limitations of Existing Ap-proaches 
+
+AgenticOS is not a security model invented from scratch; rather, it recombines and lifts several existing lines of work. First, capability security emphasizes least authority and un-forgeable capability handles. Traditional capability-based sys-tems, the object-capability model, KeyKOS, EROS, Capsicum, and CHERI all attempt to replace global permission checks with capability objects [1–6]. AgenticOS inherits this idea, but further elevates capability objects from “resource handles” to “task-intent handles”: a capability constrains not only which resource can be accessed, but also under what semantics and in which task context an external e ff ect may be produced. Second, microkernels and formal verification emphasize a minimal trusted computing base (TCB) and provable isolation. Systems such as seL4 demonstrate that kernel-level isolation and access control can be rigorously proven on a relatively small code base [7]. The Ghost Kernel in AgenticOS follows this direction, but it does not attempt to become a complete general-purpose kernel. Instead, as the minimal trusted kernel, the Ghost Kernel provides only isolation, scheduling, measure-ment, and the root of attestation. Third, sandboxing, WASM, eBPF, SFI /CFI, and language-level restrictions can constrain the execution environment of un-trusted code [8–10]. However, sandboxing alone cannot solve the problem of “legal capabilities being abused in combina-tion.” For instance, an agent that is allowed to read an inter-nal API, summarize it through a model, and write a report may still exfiltrate sensitive information through a chain of legiti-mate interfaces. AgenticOS therefore introduces intent media-tion, information-flow labels, and capability-composition anal-ysis beyond sandboxing; these ideas can also be connected to classic information-flow control models [11, 12]. Fourth, LLM agents face new threats such as prompt injec-tion, indirect prompt injection, tool-output poisoning, supply-chain contamination, and data exfiltration [13]. Meanwhile, works such as ReAct and Toolformer show that models are evolving from pure text generation toward an execution paradigm that combines reasoning, acting, and tool use [14, 15]. This paper argues that, for long-running agents that can invoke multiple tools, the security boundary should be lowered into the operating-system capability model rather than relying only on prompt filtering, tool allowlists, or application-layer sandboxes. 
+
+1.4. Contributions 
+
+The main contributions of this paper are as follows: 
+
+• It proposes an intent-oriented operating-system security paradigm for autonomous agents, reconstructing the OS from a “resource manager” into an “intent filter.” 
+
+• It designs a four-layer AgenticOS architecture consisting of the Ghost Kernel, Logic Shutter, Agent Capsule, and Semantic Boundary Gateway. 
+
+• It introduces the Intent ABI and Manifest-Only Runtime, enabling the agent runtime to access only semantic capa-bilities generated from task declarations. 
+
+• It presents a Weaver-based dynamic capability generation mechanism, as well as generation, registration, and admis-sion principles for AgentOS-native Skills. 
+
+• It analyzes the architecture’s impact on system-call attack surfaces, supply-chain poisoning, capability-composition attacks, intent drift, and covert channels. 
+
+• It discusses the ecological boundary of migrating from applications to application capabilities, and explains how AgentOS-native Skills can host delegable software capa-bilities. 
+
+2. Design Goals and Threat Model 
+
+2.1. Threat Model 
+
+This paper focuses on the following in-scope threats: 
+
+• Fully compromised agent process: an attacker obtains ar-bitrary code execution inside an Agent Capsule and at-tempts lateral movement, escape from the isolation bound-ary, or kernel-level operations. 2• Supply-chain poisoning: agent dependencies, Skills, model configurations, or toolchain components are im-planted with malicious logic that attempts to leak sensitive data through legitimate ABIs. 
+
+• Tool-output poisoning: external services return malicious instructions or structured inducements that cause the agent to perform unauthorized behavior. 
+
+• Capability-composition attacks: the attacker does not vio-late any single interface policy, but combines multiple le-gitimate interfaces into unintended external e ff ects. 
+
+• Covert-channel attacks: the attacker uses call frequency, output size, timing di ff erences, or interface presence to es-tablish low-bandwidth illicit communication channels. 
+
+2.2. Security Assumptions 
+
+The security analysis of AgenticOS relies on the following assumptions: 
+
+• Eff ective isolation primitives: hardware-level memory iso-lation, virtualization isolation, or trusted execution envi-ronments are logically reliable, such as VT-x, AMD-V, In-tel TDX, AMD SEV, or equivalent mechanisms. 
+
+• Trusted Ghost Kernel: the minimal trusted kernel, the Ghost Kernel, has a su ffi ciently small code base, and its key isolation, scheduling, and measurement logic can be formally verified or intensively audited. 
+
+• Reliable cryptographic mechanisms: the cryptographic primitives used by capability tokens, component signa-tures, remote attestation, and audit-log hash chains are not broken. 
+
+• Trusted policy inputs: Manifests, organizational policies, human approvals, and capability-registration information come from a trusted management plane. This paper does not assume that the agent itself is trustwor-thy, nor does it assume that an LLM can reliably identify all malicious instructions. The goal of AgenticOS is precisely to ensure that a compromised or misled agent still cannot cross the semantic capability boundary granted by the system. 
+
+2.3. Design Goals 
+
+AgenticOS has the following design goals: 
+
+• Intent first: the system authorizes by task intent and ex-ternal e ff ect, rather than by raw files, raw ports, or raw processes. 
+
+• Least capability: before an agent starts, it must submit a Manifest, and the system generates only the minimum ca-pability set required to complete the declared task. 
+
+• No raw byte streams: an Agent Capsule does not directly access sockets, pipes, device files, or arbitrary protocol byte streams. 
+
+• No arbitrary execution: an Agent Capsule does not directly expose interfaces such as exec , f ork , dlopen , or mmap ,which can be generalized into arbitrary execution environ-ments. 
+
+• Auditability: all external e ff ects must be recorded as struc-tured events and bound to the Manifest, capability tokens, and call chains. 
+
+• Provable isolation: the underlying isolation, measurement, and capability-generation chains should be formally mod-elable, with the TCB minimized as much as possible. 
+
+• Evolvability: the system allows new Skills to be developed and registered, but does not allow agents to bypass the ad-mission process and self-expand capabilities at runtime. 
+
+3. AgenticOS Design 
+
+3.1. From Resource Manager to Intent Filter 
+
+The core responsibility of a traditional OS is to manage hard-ware resources and check permissions when processes access those resources. AgenticOS shifts this responsibility toward in-tent filtering: the system first determines whether the external eff ect requested by an agent conforms to the task intent declared in the Manifest, and only then maps it to controlled low-level operations.( Fig 1 and Fig 2 illustrate the di ff erences in security paradigms between traditional operating systems and Agenti-cOS.) 
+
+> Figure 1: Traditional OS: Permission Based
+
+Under this model, the attack surface shifts from “finding ex-ploitable system-call entries” to “attempting to abuse restricted semantic interfaces.” This does not mean that attacks become impossible; rather, it means that attackers must operate within a narrower, more auditable, and more policy-constrained abstrac-tion layer. 3Figure 2: AgenticOS: Intent-Manifest Based 
+
+3.2. Four-Layer Architecture Overview 
+
+AgenticOS adopts a four-layer vertical design, with strict one-way dependencies between layers to provide defense in depth. The four layers have distinct responsibilities. The Ghost Kernel provides the minimal trusted isolation substrate. The Logic Shutter performs intent recognition, policy mediation, capability-token management, and auditing. The Agent Cap-sule hosts the restricted agent runtime. The Semantic Boundary Gateway handles external protocols, credentials, content filter-ing, and output normalization. 
+
+3.3. Ghost Kernel: The Minimal Trusted Kernel 
+
+The Ghost Kernel is the trust root of the entire system and runs at the highest privilege level, such as VMM Root, a hard-ware TEE secure domain, or an equivalent isolation domain. The term “Ghost Kernel” does not imply mystery; it empha-sizes that the kernel is not directly reachable at runtime. It does not accept general system calls from Agent Capsules, expose device files, provide debugging interfaces, or host complex pro-tocol stacks. The Ghost Kernel is responsible for only three classes of primitives: 
+
+• Encrypted memory allocation: based on hardware mem-ory encryption or page-table isolation mechanisms, it allo-cates isolated physical pages for each Agent Capsule and enforces isolation between capsules through EPT /NPT or equivalent mechanisms. 
+
+• Deterministic time-slice scheduling: it provides controlled CPU-time allocation to reduce the ability to construct covert channels through scheduling timing. 
+
+• Measurement and attestation root: it provides crypto-graphic hashes of the capsule’s initial state, ABI Stubs, Manifest bindings, and semantic-library versions to sup-port remote attestation and audit traceability. 
+
+> Figure 3: AgenticOS Four-Layer Architecture Diagram
+
+The core constraint of the Ghost Kernel is “no exposed in-terface.” Resource allocation is performed statically as much as possible when a capsule is created. At runtime, the Ghost Ker-nel responds only to a minimal control-plane request set from the Logic Shutter. Under the stated security assumptions, this design structurally removes privilege-escalation paths that rely on system-call entries and complex kernel services. 
+
+3.4. Logic Shutter 
+
+The Logic Shutter is the semantic translation layer and policy enforcement point of AgenticOS. It runs at a trust level above Agent Capsules and below the Ghost Kernel. It is responsible for intent recognition, capability validation, policy mediation, information-flow labeling, and audit logging. The main functions of the Logic Shutter include: 
+
+• Intent parsing and validation: it receives semantic requests from Agent Capsules and determines whether they match 4the capability list, data-flow constraints, and output targets declared in the Manifest. 
+
+• Capability-token management: it issues, validates, and re-vokes unforgeable capability tokens, binding them to agent identity, Manifest, request chain, and resource budget to prevent replay or cross-task reuse. 
+
+• Audit-log generation: it records each intent call as an im-mutable structured event, including caller, cap _id , input digest, output digest, policy version, and mediation result. 
+
+• Information-flow labeling: it attaches source labels to in-put data and enforces label-based blocking, redaction, or human-confirmation policies at output interfaces. The Logic Shutter is responsible for semantic recognition and intent mediation, whereas the Semantic Boundary Gateway is responsible only for executing external e ff ects after the intent has been authorized. In this paper, the word “semantic” in “Se-mantic Boundary Gateway” does not refer to natural-language semantic recognition. Rather, it means that the gateway accepts only semantic operations structurally defined by the Intent ABI and does not expose raw byte streams, sockets, protocol stacks, or credentials to Agent Capsules. A typical intent-call flow is shown below. 
+
+3.5. Agent Capsule 
+
+An Agent Capsule is the actual runtime environment for agent code. Unlike a traditional container or virtual machine, a capsule follows the Manifest-Only Runtime principle: before startup, the agent must submit a structured intent declaration that specifies required network domains, file scopes, tool-call types, model sessions, output targets, and human-confirmation points. Capabilities outside the Manifest have no corresponding interfaces in the capsule address space. The key constraints of a capsule include: 
+
+• Intent manifest discipline: all capabilities originate from the Manifest and are explicitly bound to the call chain through cap _id .
+
+• Dynamic ABI generation: at startup, the Logic Shutter and Weaver generate a dedicated interface table for the capsule based on the Manifest. If network access is not declared, the capsule contains no network-call stubs, socket struc-tures, or DNS-resolution entries. 
+
+• No general resource-operation capabilities: the capsule does not directly expose general system calls such as f ork ,
+
+exec , mmap , dlopen , or socket , and it cannot bypass the Intent ABI to produce arbitrary external e ff ects. However, the capsule still retains restricted local computation, infer-ence, planning, and state-update capabilities. 
+
+• Mandatory DSL constraints: high-risk agents may be re-quired to use a restricted domain-specific language (DSL) whose syntax permits only composition of intent primi-tives declared in the Manifest, thereby reducing intent drift at the language level. The capsule runtime can be implemented using WASM, eBPF, native code restricted by CFI /SFI, or hardware-capability architectures such as CHERI. This paper does not elaborate on a specific engineering implementation; instead, it emphasizes that these mechanisms serve “capability-expression reduction” in AgenticOS, not merely traditional code isolation. 
+
+3.6. Semantic Boundary Gateway 
+
+The Semantic Boundary Gateway is the only controlled boundary between Agent Capsules and the external world. Its role is not to infer an agent’s true intent, but to transform struc-tured intents into controlled external e ff ects after the Logic Shutter has authorized them. The Semantic Boundary Gateway includes the following functions: 
+
+• Protocol proxying: complex protocols such as SSH, TLS, HTTP, message queues, and object storage are imple-mented on the gateway side, while Agent Capsules do not access protocol-stack details. 
+
+• Credential hosting: private keys, access tokens, certifi-cates, and session cookies are hosted by the gateway. Cap-sules receive only task-bound semantic capabilities, not copyable credentials. 
+
+• Semantic channels: capsules and the gateway do not ex-change raw byte streams. They communicate through structured messages. All fields are subject to strict schema validation, and blob fields are bound to declarative digests to avoid protocol tunneling. 
+
+• Output auditing and normalization: the gateway performs content filtering, structural validation, size padding, and pacing control for all outgoing content, reducing data-exfiltration risk and covert-channel bandwidth. From the perspective of the security boundary, the Semantic Boundary Gateway turns the “external world” from a directly reachable object into a system-hosted semantic resource. An agent cannot arbitrarily construct TCP byte streams; it can only call Manifest-bound Intent ABI functions such as FetchJS ON ,
+
+U ploadArti f act , and S endMessage .
+
+4. Intent ABI and Capability Generation Mechanism 
+
+4.1. Manifest-Only Runtime 
+
+The success of AgenticOS depends on whether its seman-tic interfaces can remain “non-generalizable,” meaning that the compositional closure of the interface set must not degenerate into a general system-call table. The Manifest-Only Runtime is the core mechanism for achieving this goal. A Manifest contains at least the following information: 
+
+• Agent identity and version: agent name, model or code version, build hash, and signature information. 
+
+• Input objects: readable documents, tables, database views, message queues, or external APIs. 5Figure 4: Intent invocation end-to-end flow—from capsule request to external response. 
+
+• Output targets: writable documents, artifact repositories, message channels, or approval systems. 
+
+• Network boundary: allowed domains, path prefixes, HTTP methods, request rates, and data types. 
+
+• Tool capabilities: permitted compilation, testing, template rendering, static analysis, or patch-application capabili-ties. 
+
+• Model capabilities: permitted model sessions, context windows, data-retention policies, and inference budgets. 
+
+• Information-flow rules: allow, deny, or require-human-approval relationships between input source labels and output sinks. 
+
+• Human-confirmation points: explicit human confirmation for high-risk external e ff ects, such as sending emails, com-mitting code, deploying services, or transferring funds. A Manifest is not an ordinary configuration file; it is the sole basis for capability synthesis. Without a Manifest declaration, there is no corresponding ABI Stub. Without an ABI Stub, there is no entry point for producing that class of external e ff ect. 
+
+4.2. Design Principles of the Intent ABI 
+
+The Intent ABI is an application binary interface oriented to-ward task intent. It di ff ers from a traditional syscall ABI: the latter provides general resource operations, whereas the former provides structured semantic operations. Its design principles are as follows: 
+
+• Non-generalizability: interface composition must not ex-press arbitrary I /O, arbitrary process creation, or arbitrary network protocols. 
+
+• No byte streams: primitives such as socket , pipe , and raw file descriptors are prohibited. 
+
+• No arbitrary execution: general execution such as 
+
+exec (cmdline ) is prohibited; toolchain capabilities must be decomposed into concrete and auditable semantic in-terfaces. 
+
+• Reified capabilities: network permissions are bound to the five-tuple ⟨domain , path prefix , method , data type , bud-get ⟩.
+
+• Auditable output: all external e ff ects must be recorded as structured events and associated with the Manifest and ca-pability tokens. 
+
+• Constrained information flow: interface inputs and outputs must carry labels, enabling the policy engine to analyze propagation paths from sources to sinks. 
+
+4.3. Core Interface Families 
+
+The Intent ABI can be divided into six families shown in Table 1. Each interface call must carry the cap _id declared in the Manifest. The policy engine then performs fine-grained valida-tion and makes a mediation decision based on information-flow labels, resource budgets, call history, and human-confirmation state. 
+
+4.4. Prohibited Interfaces 
+
+The following POSIX semantics are permanently excluded from the Intent ABI: open , read , write , socket , connect , bind ,
+
+mmap , execve , f ork , ptrace , dlopen , and syscall .6Table 1: Intent ABI families and their primitives. 
+
+Family Primitives 
+
+Identity & Session GetAgentIdentity ,
+
+GetExecutionContext ,
+
+EmitAuditEvent 
+
+Documents & Data ReadDeclaredDoc ,
+
+WriteDeclaredDoc , ParseDoc ,
+
+RenderDoc , TransformTable ,
+
+ComputeHash 
+
+Network Capabilities FetchJSON , FetchDoc ,
+
+UploadArtifact ,
+
+SendMessage , ResolveDNS ,
+
+RequestHumanApproval 
+
+Toolchain PythonCompile , RunUnitTest ,
+
+RenderTemplate ,
+
+ApplyPatch , BuildArtifact ,
+
+StaticAnalyze 
+
+Model Inference OpenModelSession ,
+
+ModelInfer , ModelEmbed ,
+
+ModelSummarize ,
+
+CloseModelSession 
+
+Environment Observation GetResourceBudget ,
+
+GetTrustedTime 
+
+This list is not merely an API blacklist; it is the lower bound of the security boundary. It provides hard termination rules for static analyzers, the Weaver linker, and formal verification: any component that attempts to inject raw file descriptors, raw sockets, dynamic linkers, or arbitrary execution entries into an Agent Capsule must fail during the build stage. 
+
+4.5. Weaver and Dynamic ABI Generation 
+
+Weaver is the builder in AgenticOS that generates the capsule runtime environment from the Manifest, agent code, and stan-dard semantic library. Its role is not merely to link libraries, but to prove that “the capability set an agent can call” is consistent with “the task boundary declared by the Manifest.” Weaver must perform the following checks: 
+
+• Consistency between Manifest and code references: the code must contain no call sites for undeclared capabilities. 
+
+• Valid standard semantic-library signatures: all ABI Stubs must have verifiable origins and traceable versions. 
+
+• Unreachability of prohibited interfaces: the capsule binary must contain no raw syscalls, dynamic loaders, raw sock-ets, or external interpreter entries. 
+
+• Analyzable information-flow paths: paths from input la-bels to output sinks must comply with organizational poli-cies. 
+
+• Reproducible build: external auditors must be able to re-produce the capsule environment and verify that the ABI Stubs are fully consistent with the Manifest. 
+
+4.6. Skill Generation, Registration, and Admission 
+
+AgenticOS allows agents to assist in generating new Skills in the development state. A Skill here refers to an operating-system-native capability unit callable through the Intent ABI, such as “organize a table and generate a report,” “run project unit tests,” “perform a read-only query against a specified API,” or “generate an email draft from a template.” However, Skill generation must not be equivalent to runtime self-escalation. Before any new Skill enters the AgenticOS run-time state, it must pass the following admission process: 
+
+• Development-state generation: an agent may generate Skill code, a draft Manifest, and test cases in an uncon-trolled or low-trust development environment. 
+
+• Capability declaration: the Skill must declare its required inputs, outputs, network boundary, toolchain dependen-cies, model capabilities, and human-confirmation points. 
+
+• Static analysis: Weaver checks whether the Skill refer-ences prohibited interfaces, contains undeclared external eff ects, or violates information-flow policies. 
+
+• Testing and proof: the Skill must provide unit tests, behav-ioral examples, code-intent consistency proofs, or equiva-lent audit materials. 
+
+• Signature and registration: an approved Skill is signed and registered as a component of the system semantic library. 
+
+• Runtime invocation: agents can invoke registered Skills only through Manifest declarations and capability tokens. Thus, the essence of the AgentOS-native Skill ecosystem is not to let agents expand capabilities without limits, but to let application capabilities settle into system capabilities in an au-ditable, composable, and revocable manner. 
+
+5. Security Analysis 
+
+5.1. Structural Removal of the System-Call Attack Surface 
+
+Traditional container escapes and kernel privilege escalations usually rely on exploitable system-call interfaces, complex ker-nel objects, or device-driver flaws. In AgenticOS, the Agent Capsule address space contains no general system-call entry, no direct page-table access capability, no raw protocol stack, and no dynamic linker. The Ghost Kernel itself also exposes no runtime service interface to capsules. Therefore, under the stated security assumptions, traditional syscall-based escape paths are structurally removed. More pre-cisely, escape is no longer expressed as “calling a dangerous kernel interface from inside a capsule,” but is transformed into the following narrower questions: 7Figure 5: Generation and Execution Workflow from Manifest to Dynamic ABI 
+
+• whether the Ghost Kernel isolation implementation has de-fects; 
+
+• whether the Logic Shutter has incorrectly mediated an in-tent; 
+
+• whether Weaver has generated ABI Stubs inconsistent with the Manifest; 
+
+• whether the Semantic Boundary Gateway has incorrectly exposed raw protocols or credentials. Residual risks remain. For example, if the Ghost Kernel contains page-table management errors, DMA-control flaws, or measurement-chain vulnerabilities, it may still become an at-tack entry. Therefore, the Ghost Kernel should adopt minimiza-tion and formal-verification ideas similar to seL4, and combine them with hardware TEEs, IOMMU, and memory encryption to reduce the impact of implementation flaws. 
+
+5.2. Supply-Chain Poisoning and Capability-Composition At-tacks 
+
+Even if each individual Intent ABI appears safe, legitimate combinations of multiple ABIs may still construct unintended malicious behavior. For example: 
+
+> FetchJSON -> ModelSummarize -> WriteDeclaredDoc -> UploadArtifact | SendMessage
+
+Such an attack may appear as a normal call sequence at the level of single-call auditing. AgenticOS therefore cannot merely check whether each individual interface is authorized; it must also analyze data flow and the intent-interaction graph between interfaces. Hardening measures include: 
+
+• Intent-interaction graph analysis: during static analysis, construct the agent’s intent-interaction graph and identify paths that may form “sensitive input – model transforma-tion – external output” chains. 
+
+• Information-flow labeling: attach source labels to data obtained through interfaces such as FetchJS ON and 
+
+ReadDeclaredDoc , and enforce label policies at output in-terfaces such as U ploadArti f act and S endMessage .
+
+• Human approval: require RequestHumanApproval for high-risk flow paths and write the approval result into the audit chain. 
+
+• Runtime behavior baselines: the Logic Shutter maintains baselines for call frequency, data-flow direction, output-size distribution, and tool-composition patterns; deviations trigger blocking or degradation. 
+
+5.3. Intent Drift 
+
+Intent drift refers to a mismatch between the Manifest sub-mitted by an agent and the agent’s actual behavioral objec-tive. For example, an agent may claim to perform “data analy-sis” while its actual code includes network scanning, credential probing, or covert exfiltration logic. Because predicting arbi-trary code behavior is undecidable, static analysis cannot com-pletely rule out such drift in finite time. AgenticOS reduces this risk in layers: 
+
+• High-risk agents are required to use a restricted DSL, so that the language itself contains only the intent primitives declared in the Manifest. 
+
+• Agents written in general-purpose languages are subject to conservative static analysis, and all unrecognized calls are rejected by default. 
+
+• Agents that pass admission are subject to stricter runtime monitoring, resource budgets, and output auditing. 
+
+• Interfaces involving external side e ff ects require manda-tory human confirmation or policy approval. This means that AgenticOS does not claim to fully “under-stand” the true intent of arbitrary agents. Instead, through lan-guage constraints, capability generation, and runtime media-tion, it makes undeclared intent di ffi cult to convert into external eff ects. 
+
+5.4. Covert Channels 
+
+Although AgenticOS prohibits raw byte streams and proto-col tunneling, covert channels cannot be completely eliminated. Residual channels include: 
+
+• Timing channels: an agent encodes information by con-trolling the timing interval between API calls. 8• Size channels: an agent transmits bits by choosing di ff er-ent lengths of otherwise legitimate outputs. 
+
+• Presence channels: the choice of whether to call an inter-face can itself encode information. 
+
+• Content-selection channels: an agent selects among multi-ple legitimate summaries, phrasings, or orderings to trans-mit information at low bandwidth. Mitigations include: 
+
+• Request-timing normalization: the Logic Shutter batches external requests into fixed time windows. 
+
+• Output-size padding: the Semantic Boundary Gateway transmits structured outputs in fixed-size blocks and pads insu ffi cient blocks with randomness. 
+
+• Output-template constraints: in high-sensitivity scenarios, outputs must conform to fixed schemas, enumerated fields, or templates. 
+
+• Channel-bandwidth limitation: rate limiting, budget man-agement, and output normalization reduce residual chan-nel bandwidth to a level that is di ffi cult to exploit in prac-tice. Thus, the goal of AgenticOS with respect to covert channels is not to eliminate them completely in theory, but to compress them from high-bandwidth, hard-to-audit general communica-tion channels into low-bandwidth, modelable, and monitorable residual risks. 
+
+5.5. Trusted Boundaries of the Logic Shutter and Weaver 
+
+The Logic Shutter centrally hosts intent parsing, policy en-forcement, capability tokens, information-flow labels, and audit logic. Its TCB complexity is higher than that of the Ghost Ker-nel. Weaver, meanwhile, extracts interfaces from the standard semantic library and injects them into capsules. If the stan-dard semantic library is polluted—for example, if it contains an undocumented RawFD interface—the generated ABI may accidentally open a backdoor for agents. Hardening measures include: 
+
+• TCB minimization by decomposition: split the Logic Shutter into multiple isolated components, such as a DNS shutter, HTTP shutter, file shutter, model shutter, and pol-icy core, each running in an independent isolation domain. 
+
+• Implementation in memory-safe languages: implement the core Logic Shutter and Weaver in memory-safe lan-guages such as Rust to reduce bu ff er-overflow and use-after-free risks. 
+
+• Standard-library signatures and reproducible builds: all semantic-library components are cryptographically signed, and Weaver must verify the signature chain before injection. 
+
+• Manifest-code binding proof: agent submissions include a code-intent consistency proof, which Weaver machine-verifies during admission. 
+
+• Formal verification of critical paths: formally model the policy engine, capability-token manager, and ABI prohibited-interface checks. 
+
+6. Application Capability Migration and Ecological Bound-aries 
+
+6.1. From Application Migration to Application-Capability Migration 
+
+Traditional operating systems mainly provide low-level ab-stractions such as files, processes, networks, and devices to ap-plications. Traditional applications then encapsulate business logic, interaction interfaces, and external-service connections on top of those abstractions. The design innovation of Agenti-cOS lies in changing the boundary between the operating sys-tem and application capabilities: it attempts to extract from individual applications those software capabilities that can be declared, audited, and constrained, and consolidate them into governable semantic capabilities on the system side. Therefore, the migration target is not the “application it-self,” but the “application capability unit.” An application often plays three roles at once: human-computer interface, business-capability carrier, and resource-access proxy. AgenticOS does not require these three roles to migrate together. Instead, it pri-oritizes capability units that can be described by a Manifest, in-voked through the Intent ABI, bound to capability tokens, and recorded as audit events. In this way, the operating system is no longer merely a resource provider for applications, but gradu-ally becomes the hosting layer, governance layer, and composi-tion layer for application capabilities. The key value of this migration approach is that applica-tion capabilities move from “private functions inside an app” to “system-side capability objects that are declarable, reviewable, revocable, and composable.” It preserves necessary human-computer interfaces and specialized tool forms, while prevent-ing agents from needing to simulate UIs, abuse scripts, or di-rectly touch low-level system calls to complete tasks. In the long run, the goal of AgenticOS is not to cover all application experiences, but to cover an increasing number of software ca-pabilities that are delegable, amenable to semantic abstraction, and auditable. 
+
+6.2. AgentOS-Native Skill Ecosystem 
+
+As more private application capabilities settle into AgentOS-native Skills, the boundary of operating-system capabilities also changes. Traditional operating systems provide abstractions for files, processes, networks, and devices. AgenticOS further pro-vides high-level semantic capabilities such as “organize doc-uments,” “run tests,” “generate reports,” “query specified data sources,” and “send approval requests.” However, the Skill ecosystem must follow two principles: 9• Skills may grow, but the runtime capabilities of an agent may not grow spontaneously. New Skills must pass development-state generation, review, signature, and reg-istration processes. 
+
+• A Skill is a system capability, not an application-private backdoor. Every Skill must expose its Manifest, input /out-put schema, information-flow rules, audit events, and revo-cation mechanism. Under this model, AgenticOS can gradually absorb delegable software capabilities from traditional applications while avoid-ing placing agents back on top of infinitely composable general interfaces. 
+
+7. Discussion and Limitations 
+
+7.1. Completeness of Intent Expression 
+
+The true intent of arbitrary code cannot be precisely deter-mined in finite time; this is a variant of the halting problem and program-semantics undecidability. AgenticOS therefore can-not rely on “automatically understanding all code intent” as its security foundation. Feasible paths include enforcing re-stricted DSLs, deriving conservative approximations through static analysis, sampling agent behavior in the development state to assist Manifest generation, and limiting external e ff ects at runtime through capability tokens and audit mechanisms. 
+
+7.2. Performance and Usability Trade-O ff s
+
+Each semantic call may trigger multiple context switches from the Agent Capsule to the Logic Shutter, the Semantic Boundary Gateway, and the Ghost Kernel, incurring higher overhead than traditional system calls. Batched asynchronous requests, ABI caching, policy precompilation, and fixed-time-window processing can mitigate performance issues, but may also increase latency. AgenticOS must balance security, usabil-ity, and interaction experience. 
+
+7.3. POSIX Ecosystem Migration Cost 
+
+Abandoning POSIX compatibility means that traditional software cannot run unmodified inside Agent Capsules. This paper does not advocate migrating the entire software ecosys-tem at once. Instead, it advocates prioritizing software ca-pabilities that are delegable, amenable to semantic abstrac-tion, and auditable. Existing applications can continue to serve as development-state tools, human-computer interfaces, or sources of capabilities; verified capabilities can then be con-solidated into the Intent ABI or AgentOS-native Skills. 
+
+7.4. Boundaries of Formal Verification 
+
+The current architecture requires formal verification of the Ghost Kernel, critical paths in the Logic Shutter, and Weaver’s prohibited-interface checks. However, complete end-to-end verification from Manifest declarations to actual capsule be-havior remains di ffi cult. Future work includes establish-ing composition-safety theorems for the Intent ABI, proving information-flow constraints, and building a verifiable supply chain from Skill registration to runtime invocation. 
+
+7.5. Human Confirmation, Authorization Closure, and Respon-sibility Boundaries 
+
+AgenticOS addresses the boundary of agent capabilities, not responsibility attribution in the real world. Even if the system can restrict an agent’s external e ff ects through the Manifest, ca-pability tokens, and the Logic Shutter, high-risk decisions still require a clearly identifiable authorizing actor and responsibil-ity anchor. In other words, AgenticOS can answer the question “whether this agent is allowed to initiate a certain class of op-eration,” but it cannot transfer final responsibility for contract signing, fund transfers, production changes, or the adoption of medical advice to an automated executor. Therefore, human confirmation should not be treated as an ad hoc patch at the interaction layer, but as a first-class capability in the Intent ABI. Interfaces such as RequestHumanApproval 
+
+serve at least three functions: first, they explicitly interrupt high-risk external e ff ects in the agent’s automatic execution chain; second, they allow a user or organizational owner to con-firm whether the current operation matches the true intent, risk preference, and business context; third, they write the confirma-tion result, confirmer, confirmation scope, and policy version into the audit chain, forming a traceable authorization closure. This design does not weaken the autonomy goal of Agen-ticOS. On the contrary, it defines the system boundary be-tween autonomous agents and human responsibility: low-risk, reversible, and auditable capabilities may be executed automatically by agents; high-risk, irreversible, or real-world commitment-bearing capabilities must enter the system through explicit confirmation. Human confirmation is therefore not an exception mechanism in AgenticOS, but a key interface in its security model that connects technical control with real-world responsibility. 
+
+8. Conclusions 
+
+This paper proposes AgenticOS, a conceptual architecture that reconstructs operating-system security boundaries at a fun-damental level. Its core contribution is not to propose a stronger sandbox, but to migrate the operational boundary of agents from resource primitives to intent primitives. Agents no longer directly obtain raw file, raw network, raw process, or raw pro-tocol capabilities. Instead, they produce controlled external ef-fects through the Manifest, Intent ABI, capability tokens, Logic Shutter, and Semantic Boundary Gateway. In this model, the Ghost Kernel provides the minimal trusted isolation substrate; the Logic Shutter performs intent media-tion and information-flow control; the Agent Capsule hosts the restricted runtime; the Semantic Boundary Gateway proxies ex-ternal protocols and credentials; and Weaver ensures consis-tency between the Manifest and capsule capabilities. Agenti-cOS does not promise to eliminate all risks, nor does it attempt to replace all application forms. It aims to provide a more appropriate operating-system security abstraction for the era of autonomous agents: enabling software capabilities that are delegable, amenable to semantic abstraction, and auditable to gradually become operating-system-native capabilities, while 10 preserving necessary human-computer interfaces, specialized tool forms, human-confirmation mechanisms, and responsibil-ity boundaries. 
+
+References 
+
+[1] J. H. Saltzer, M. D. Schroeder, The protection of infor-mation in computer systems, Proceedings of the IEEE 63 (1975) 1278–1308. [2] B. W. Lampson, A note on the confinement problem, Communications of the ACM 16 (1973) 613–615. [3] N. Hardy, Keykos architecture, ACM SIGOPS Operating Systems Review 19 (1985) 8–25. [4] J. S. Shapiro, J. M. Smith, D. J. Farber, Eros: a fast capa-bility system, in: Proceedings of the seventeenth ACM symposium on Operating systems principles, 1999, pp. 170–185. [5] R. N. Watson, J. Anderson, B. Laurie, K. Kennaway, Capsicum: Practical capabilities for {UNIX }, in: 19th USENIX Security Symposium (USENIX Security 10), 2010. [6] R. N. Watson, J. Woodru ff , P. G. Neumann, S. W. Moore, J. Anderson, D. Chisnall, N. Dave, B. Davis, K. Gudka, B. Laurie, et al., Cheri: A hybrid capability-system ar-chitecture for scalable software compartmentalization, in: 2015 IEEE Symposium on Security and Privacy, IEEE, 2015, pp. 20–37. [7] G. Klein, K. Elphinstone, G. Heiser, J. Andronick, D. Cock, P. Derrin, D. Elkaduwe, K. Engelhardt, R. Kolanski, M. Norrish, et al., sel4: Formal verifica-tion of an os kernel, in: Proceedings of the ACM SIGOPS 22nd symposium on Operating systems principles, 2009, pp. 207–220. [8] R. Wahbe, S. Lucco, T. E. Anderson, S. L. Graham, E ffi -cient software-based fault isolation, in: Proceedings of the fourteenth ACM symposium on Operating systems princi-ples, 1993, pp. 203–216. [9] M. Abadi, M. Budiu, U. Erlingsson, J. Ligatti, Control-flow integrity principles, implementations, and applica-tions, ACM Transactions on Information and System Se-curity (TISSEC) 13 (2009) 1–40. [10] A. Haas, A. Rossberg, D. L. Schu ff , B. L. Titzer, M. Hol-man, D. Gohman, L. Wagner, A. Zakai, J.-F. Bastien, Bringing the web up to speed with webassembly, in: Pro-ceedings of the 38th ACM SIGPLAN conference on pro-gramming language design and implementation, 2017, pp. 185–200. [11] D. E. Denning, A lattice model of secure information flow, Communications of the ACM 19 (1976) 236–243. [12] A. Sabelfeld, A. C. Myers, Language-based information-flow security, IEEE Journal on selected areas in commu-nications 21 (2003) 5–19. [13] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, M. Fritz, Not what you’ve signed up for: Compromis-ing real-world llm-integrated applications with indirect prompt injection, in: Proceedings of the 16th ACM work-shop on artificial intelligence and security, 2023, pp. 79– 90. [14] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, Y. Cao, React: Synergizing reasoning and acting in lan-guage models, arXiv preprint arXiv:2210.03629 (2022). [15] T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, E. Hambro, L. Zettlemoyer, N. Cancedda, T. Scialom, Toolformer: Language models can teach themselves to use tools, Advances in neural information processing systems 36 (2023) 68539–68551. 11

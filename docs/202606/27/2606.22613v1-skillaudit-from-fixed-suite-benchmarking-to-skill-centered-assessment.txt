@@ -1,0 +1,1196 @@
+Title: SkillAudit: From Fixed-Suite Benchmarking to Skill-Centered Assessment
+
+URL Source: https://arxiv.org/pdf/2606.22613v1
+
+Published Time: Tue, 23 Jun 2026 02:21:51 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# SkillAudit 
+
+# From Fixed-Suite Benchmarking to Skill-Centered Assessment 
+
+Dexu Yu *,1 , Youhua Li *,2,11 , Zhaoyang Guan *,3 , Xianhao Lin *,4,11 , Jining Luan 5,11 , Zihao Rao 5,11 , Xuanqi Lan 6,
+
+Yang Ran 7, Bo Lan 7, Nai-Xin Zhai 2,11 , Hanwen Du 8,11 , Junchen Fu 9,11 , Wenhao Deng 9,11 ,
+
+Yongxin Ni 10, †,§ , Chunxiao Li 5, †        
+
+> 1Northeastern University, 2City University of Hong Kong, 3Northwestern University, 4Fudan University,
+> 5University of Science and Technology of China, 6Santa Clara University, 7Fenz AI,
+> 8Ohio State University, 9University of Glasgow, 10 National University of Singapore, 11 DeciLix Lab
+> *
+
+Equal contribution. †Corresponding authors { youhuali2-c@my.cityu.edu.hk, chunxiao.li@ustc.edu.cn, niyongxin@u.nus.edu} 
+
+Homepage: https://skillaudit.github.io/ 
+
+Abstract 
+
+Agent skills have become a practical way to extend large language model agents, but the growing skill ecosystem still lacks a reliable way to judge whether a skill is worth deploying. Existing evaluation methods remain largely anchored to fixed task suites, assessing skills through performance on predefined tasks and environments. As skill marketplaces expand, this paradigm becomes inadequate: fixed suites can conflate a skill’s marginal contribution with backbone strength and miss its value when tasks fall outside the skill’s intended scope. We introduce SkillAudit , an end-to-end framework for skill-centered assessment that takes an arbitrary agent skill as input and automatically generates a comprehensive, multi-dimensional evaluation report spanning utility, efficiency/cost, and safety. SkillAudit focuses on the skill artifact itself and constructs capability-aligned evaluation tasks directly from the skill package. The generated tasks are conducted in isolated sandbox environments to collect execution evidence, followed by automated checks with LLM-based judging to produce auditable results. To dissect the agent skills, we propose the baseline comparison principle to measure utility and efficiency/cost, and introduce a two-stage detection paradigm combining static semantic analysis with dynamic runtime verification to assess safety risks. After scanning top-ranked real-world skill packages spanning 23 occupational categories, we found that over 7% of skills are at risky status. We surface SkillAudit through a browser extension for user access at discovery time, with intermediate trajectories and all evaluation artifacts open-sourced at https: // github. com/ SkillAudit/ skillaudit .
+
+1 Introduction 
+
+Agent skills are becoming a common way to extend large language model agents. Skills are shareable artifacts that an agent can load on demand to specialize in a family of tasks Anthropic [2025]. Unlike models or single tool calls, skills package procedural knowledge, executable code, and environment assumptions into self-contained units that can be reused. Typically, they consist of a SKILL.md 
+
+file along with scripts, templates, dependencies, and metadata. Since Anthropic released the agent skill format in late 2025, public ecosystems have expanded from dozens of artifacts to hundreds of thousands across GitHub, community marketplaces, and corporate contributions Li et al. [2026]. 
+
+> §
+
+Project Leader Preprint. 
+
+> arXiv:2606.22613v1 [cs.AI] 21 Jun 2026
+
+Existing evaluation 
+
+> Task -First
+> with skill
+> baseline confounding
+> without skill
+> 92%
+> 89%
+> only
+> +3pp
+> fixed tasks can obscure true skill value.
+> fixed task
+> suite
+> skill as
+> condition
+> reported
+> score
+
+SkillAudit        
+
+> Skill -Centered
+> Skill -Centered evaluation estimates attributable skill value.
+> skill as input
+> skill package
+> (repository)
+> paired evaluation
+> with -skill no -skill
+> adoption -time report
+> Utility
+> Cost
+> pass_rate_gain
+> time _ saving
+> safety_score
+> Efficiency
+> Safety
+> token _saving
+
+Figure 1: SkillAudit centers evaluation on each skill artifact rather than benchmarking skills on a fixed task suite, providing a multi-dimensional evaluation report. 
+
+Table 1: Comparison of SkillAudit with representative prior benchmarks across key evaluation properties. Check marks denote supported properties. 
+
+Benchmark Skill artifact Skill-centered Utility Safety Efficiency Adoption surfacing 
+
+AgentBench Liu et al. [2024] × × ✓ × × ×
+
+τ -bench Yao et al. [2025] × × ✓ × × ×
+
+TheAgentCompany Xu et al. [2025] × × ✓ × × ×
+
+ToolLLM Qin et al. [2024] × × ✓ × × ×
+
+BFCL Patil et al. [2025] × × ✓ × × ×
+
+InjecAgent Zhan et al. [2024] × × × ✓ × ×
+
+SkillsBench Li et al. [2026] ✓ × ✓ × × ×
+
+SkillAudit (ours) ✓ ✓ ✓ ✓ ✓ ✓
+
+Despite agent skills increasingly resembling installable, software-like artifacts, developers still lack a principled way to judge whether a given skill is worth enabling. Adoption decisions today rely predominantly on README claims, star counts, and download figures surfaced by GitHub repositories and skill hubs, rather than on direct empirical evaluation evidence. This creates a critical evaluation gap at adoption time: it remains unclear whether a particular skill will improve task outcomes, reduce operational effort (time or tokens), or introduce new safety risks into the workflows it claims to support. Existing benchmarks evaluate agents, tools, or skill-augmented performance on fixed tasks, but they do not provide a general evaluation framework that takes an arbitrary skill artifact as input and produces a detailed, evidence-grounded skill report. AgentBench Liu et al. [2024], τ -bench Yao et al. [2025], and TheAgentCompany Xu et al. [2025] evaluate agents on fixed task suites; ToolLLM Qin et al. [2024] and BFCL Patil et al. [2025] study tool invocation behavior; InjecAgent Zhan et al. [2024] emphasizes adversarial robustness; and SkillsBench Li et al. [2026] evaluates skill artifacts against a curated task suite. Table 1 summarizes the features of existing benchmarks. The shared limitation is that tasks are fixed in advance, meaning such benchmarks can only effectively evaluate skills whose intended operating range already aligns with the predefined suite, leaving most real-world skills without an appropriate evaluation pathway. We therefore introduce SkillAudit , a framework for skill-centered assessment that takes an arbitrary skill as input and automatically generates a multi-dimensional evaluation report spanning utility, efficiency/cost, and safety . Rather than measuring how a skill shifts performance on a fixed benchmark, SkillAudit asks how a skill package can be systematically transformed into evaluation tasks that reflect what the skill is actually designed to do, as illustrated in Figure 1. To this end, SkillAudit first employs an LLM to parse SKILL.md , extracting the skill’s core capabilities and operational workflow, and formulates an evaluation scheme precisely tailored to the target skill. To prevent the skill’s procedural knowledge from being inadvertently encoded in the agent’s task and thus invalidating the evaluation, the agent is exposed only to the business-goal instructions, while the evaluator retains the capability analysis, scoring rubric, and expected outcomes. SkillAudit then compiles each scheme into executable task instances, runs them in isolated sandboxed environments, and applies rule-based checks alongside LLM-as-judge scoring to produce auditable evaluation 2Table 2: Comparison of representative agent skill evaluation frameworks. Evaluation Object : the skill artifact, the pipeline that generates skills, or the skill reuse method. Skill Source : a curated set or applicable to arbitrary skills in open ecosystem. Task Auto-gen. : whether evaluation tasks are automatically generated from the skill itself rather than from a fixed suite. Sandbox : whether tasks are executed in an isolated sandbox environment. 
+
+Utility : utility metric. Safety : One layer indicates static semantic analysis or dynamic runtime test only; Two layers indicates both static and dynamic; × indicates none. Efficiency/Cost : whether token or time savings are measured. Auditable Evidence : whether verifiable execution evidence is provided for users. Adoption Surfacing : whether evaluation results are surfaced at skill adoption or discovery time.                                                                   
+
+> System Evaluation Object Skill Source Task Auto-gen. Sandbox Utility Safety Efficiency & Cost Auditable Evidence Adoption Surfacing
+> SkillsBench Li et al. [2026] Skill artifact Curated ×✓Pass rate gain ××✓×
+> SWE-Skills-Bench Han et al. [2026] Skill artifact Curated ×✓Pass rate gain ×✓✓×
+> SkillTester Wang et al. [2026] Skill artifact Arbitrary ✓×Pass rate gain One layer ×✓Web UI SkillGenBench Zhou et al. [2026] Skill pipeline Curated ××Pass@ k××××
+> SkillLens Huang et al. [2026] Skill pipeline Curated ××Extraction efficacy; Target evolvability
+> ××✓×
+> SkillLens †Miao et al. [2026] Skill reuse Curated ××Acc@1; Success rate
+> ×✓××
+> SkillAudit (ours) Skill artifact Arbitrary ✓✓Pass rate gain Two layers ✓✓Browser extension
+> †This SkillLens is not strictly an agent skill evaluation framework; included here to disambiguate from other works sharing the same name.
+
+results. The comparison of the SkillAudit and some representative agent skill evaluation frameworks and tools is illustrated in Table 2. When assessing utility and efficiency/cost, focusing solely on the agent-with-skill setting conflates the agent’s intrinsic capabilities with the skill’s marginal contribution. To address this, we adopt the 
+
+baseline comparison principle . Specifically, each evaluation task is executed under two controlled conditions with identical configurations and scoring rubrics except for the presence of the target skill, i.e., paired with-skill and no-skill conditions. This design is motivated by the inherently relative nature of a skill’s marginal contribution, which captures the incremental gain over the baseline agent. And as the baseline agent gets stronger, it may subsume what a skill offers, thereby decreasing the skill’s marginal value. Regarding safety risks of a skill, we note that even if a safety risk is present in the skill’s instructions or scripts, the agent does not necessarily trigger it due to its own security guardrails. The agent may recognize the risks and proactively refuse to execute the risky actions. Therefore, it is essential to distinguish between the existence of a risk and its exploitability in practice. To this end, we propose the two-stage safety risk detection principle . In the first stage, SkillAudit predefines 21 risk patterns and conducts a comprehensive static semantic analysis of the skill package to identify which patterns are present, corresponding to the risks’ existence. In the second stage, SkillAudit constructs targeted runtime tests to determine whether the agent would actually trigger the identified risks during execution, assessing their exploitability. To validate the static semantic scanner in the first stage, we construct a controlled dataset of 29 skill packages with injected risk instances and human-annotated ground truth. On this dataset, the scanner achieves high recall on medium- and high-severity patterns ( 96 .0% and 97 .0% , respectively), demonstrating its reliability for large-scale deployment. To connect assessment with real adoption behavior, SkillAudit also includes a browser extension for skill-hosting platforms. When a developer visits a skill page, the extension displays a SkillAudit action, submits or retrieves the corresponding assessment, and opens an interactive report. This turns skill assessment from an offline benchmarking exercise into an adoption-time decision aid. Our contributions are fourfold. • An evidence-grounded evaluation framework for open skill ecosystems. We introduce Skil-lAudit, an end-to-end framework that takes an arbitrary agent skill as input and automatically generates a comprehensive, multi-dimensional evaluation report. It derives capability-matched utility schemes and security probes, executes them in instrumented sandboxes, and grounds every reported judgment in concrete execution evidence spanning utility, efficiency/cost, and safety. 3• A skill-centered formulation with baseline comparison and two-stage risk detection. We frame skill assessment around the skill artifact itself, adopting a baseline comparison principle that isolates marginal skill gain from backbone strength. For safety, we combine static semantic analysis with targeted dynamic runtime verification, jointly assessing both existence and exploitability of risks. • A discovery-time browser extension for practical skill adoption. We integrate SkillAudit reports into skill-hosting pages, connecting benchmark evidence to the moment when developers actually decide whether to install a skill. • Empirical validation across real-world skills and agent configurations. We evaluate SkillAudit on 226 real-world skill packages spanning 23 occupational categories across six agent–model configurations, producing a detailed evaluation report for each skill. Our key findings reveal that skill utility decreases as backbone strength increases, and that safety risk is largely independent of utility. Notably, over 7% of evaluated skills are rated as risky. 
+
+2 Problem Formulation 
+
+2.1 Skill Artifact 
+
+Agent skills are structured packages of procedural knowledge that augment agent capabilities at inference time without requiring model modification Li et al. [2026]. Unlike prompts, RAG, or tool calls, a skill encapsulates domain knowledge, standard operating procedures, task-specific experience, and user preferences into an installable package centered on SKILL.md and accompanied by executable scripts and code templates. The skill ecosystem is characterized by two coexisting properties: broad domain coverage and the high specialization of individual skills. As publicly available skills proliferate across diverse domains, each remains narrowly tailored to a specific task class with its own typical workflow and operational context. This makes it impractical to evaluate skills through a fixed set of predefined task categories or manually constructed tests. Automatically generating customized evaluation tasks on a per-skill basis thus emerges as the natural and necessary direction. 
+
+2.2 The Adoption-Time Question 
+
+As the public skill ecosystem grows to hundreds of thousands of packages, the question developers face is not which agent scores higher on a benchmark, but a practical adoption-time decision: given a skill package, should I install it? 
+
+This question decomposes into three assessment dimensions. 
+
+Utility. What incremental gains does the skill provide over the agent’s baseline competence? Utility reflects the extended capabilities offered by the skill. Notably, the marginal value a skill delivers varies across different agent configurations. 
+
+Efficiency and Cost. Does the skill improve efficiency by reducing the time and steps required to complete a task, or lower cost by decreasing token consumption? We wonder whether the domain knowledge and experience of a skill can streamline the agent’s execution path. 
+
+Safety Risk. Does the skill introduce potential security threats, such as prompt injection, data exfiltration, hidden instructions, or privilege escalation? Malicious skills can expose users to serious harm, making safety one of the most critical concerns in skill deployment. To ensure the credibility of the evaluation results, auditability is an indispensable requirement. Specif-ically, each finding in the report is supported by clear evidence, including execution trajectories, file change records, and network logs. This ensures that every evaluation outcome can be independently reproduced and verified. 43 Assessment Dimensions and Auditability Design 
+
+3.1 Assessment Dimensions 
+
+Utility. Utility measures the marginal contribution of a skill over the baseline agent’s capabilities. As the baseline grows stronger, its general capabilities may subsume the skill’s specialized competence, reducing the skill’s marginal value. SkillAudit therefore adheres to the baseline comparison principle , measuring net gain attributable to skill availability rather than to the agent’s general competence. SkillAudit characterizes the baseline agent’s competence boundary, identifying the gap between the skill’s specialized capabilities and what the baseline can already handle. Evaluation tasks are then designed to target precisely this gap, covering capabilities the skill provides while the backbone lacks, so that each task is genuinely discriminative with respect to skill availability. For each skill, three tasks are generated, each containing a matched pair of conditions: the with-skill and no-skill conditions share identical task settings and scoring rubric, differing solely in whether the target skill is made available to the agent. To quantify the performance gap, we introduce the pass-rate gain (PRG) metric, computing the net performance improvement of the with-skill condition over the no-skill baseline. 
+
+Efficiency and Cost. Efficiency and cost measure the net impact of equipping a skill on time and token consumption, respectively. The prior knowledge and standard operating procedures embedded in the skill may guide the agent to optimize its execution path and reduce redundant exploration, ultimately saving time and tokens. Following the baseline comparison principle , efficiency/cost evaluation reuses the paired task runs from utility assessment: SkillAudit records execution time and effective token consumption across with-skill and no-skill conditions, excluding fully failed pairs. The relative time and token savings are then aggregated into efficiency and cost scores, respectively. 
+
+Safety Risk. The safety risk of a skill is characterized by two properties: existence and exploitability. Existence refers to whether a specific risk pattern is present in the skill package, and exploitability refers to whether that risk is actually triggered during agent execution. Even when safety risks exist in a skill, some agents may recognize and refuse to trigger them due to built-in safety guardrails. However, others cannot resist such safety risks, causing catastrophic harm to users. Therefore, it is essential to assess both existence and exploitability. To this end, SkillAudit adopts a two-stage detection principle : static semantic analysis for existence and dynamic runtime test for exploitability. 
+
+Stage 1: Static Semantic Analysis. SkillAudit predefines 21 risk patterns across 5 categories, stratified into high, medium, and low severity. We use an LLM (i.e., Claude Sonnet 4.6) semantically scans the full skill package and produces an existence judgment with supporting evidence for each pattern. In this stage, our primary objective is to ensure the high recall on medium- and high-severity risks. To validate, we inject risk instances into 29 skill packages, collect human-annotated ground truth, and confirm very high recall on medium- and high-severity patterns (see Table 4). 
+
+Stage 2: Dynamic Runtime Test. For each identified risk, SkillAudit constructs a targeted test task and executes it, collecting agent trajectories, output files, filesystem changes, and network logs to assess whether the risk was triggered and whether the agent refused the risky path. This stage provides runtime evidence of exploitability and refines the static findings from Stage 1. Methods that rely solely on static analysis lack runtime evidence and cannot assess exploitability, while fixed-taxonomy test generation may misalign with a skill’s actual risk distribution, leading to insufficient coverage and wasted resources. The two-stage design of SkillAudit addresses the limitations of purely static or fixed-taxonomy approaches, ensuring both comprehensive risk coverage and runtime-grounded exploitability assessment. 
+
+3.2 Auditability Design 
+
+To ensure auditability, all evaluation tasks are executed in an isolated sandboxed environment. It has a built-in comprehensive logging system that captures all key information during agent execution, including step-by-step tool calls and execution results, execution time and token consumption, file creation/deletion/permission changes, and requests and responses to external networks. These records are not only used for result judgment but are also fully accessible to developers for auditing. For each skill, the report provides quantitative scores for each assessment dimension along with complete 5Skills Collection  Test Scheme Generation 
+
+Skill Packages K 
+
+SKILL.md 
+
+References 
+
+Scripts 
+
+Assets 
+
+Utility Scheme 
+
+Security Scheme  (Static →Dynamic)        
+
+> SKILL.md
+> (doc only) LLM Reasoning Generate 3 Scenarios
+> （agent / tester views ）
+> Define Checks
+> (verifier rules · judge items)
+> SKILL Package
+> (entire directory)
+> Static Scan
+> (21 risk patterns) Risk Findings Skip
+> （static signal sufficient ）NULL
+> NOT NULL Generate Probes
+> (each tied to a finding)
+
+Sandboxed Execution   
+
+> (baseline / with -skill / Probe Risk )
+> AI Agent
+> 1
+> Init env
+> 2
+> Run Agent
+> 3
+> Verifier
+> 4
+> Cleanup
+> Verifier Results
+> Resource Cost
+> Network Log
+> File Changes
+> Output Files
+> Execution Trace
+> Evidence bundle
+
+LLM Evaluation 
+
+& Aggregation 
+
+Consistency Check 
+
+Independent Scoring 
+
+Verifier as Gate   
+
+> 12
+> 45
+
+Paired Task Construction 
+
+> Task Template Utility Tasks
+> Security Tasks
+> No -skill
+> With -skill
+> With -skill
+> Probe Risk
+> task/
+> task.toml
+> instruction.md
+> environment/
+> Dockerfile
+> Skills/
+> tests/
+> solution/
+> 3
+
+Figure 2: SkillAudit pipeline. A collected skill is converted into utility and security schemes, compiled into utility and security tasks, executed in isolated sandboxes, and aggregated into utility, efficiency/cost, safety, and resource diagnostics. 
+
+evaluation suites, including task settings, scoring rubric, safety findings, execution trajectories, file system changes, and network logs. 
+
+4 SkillAudit 
+
+Starting from a collected package, SkillAudit derives skill-grounded evaluation tasks and safety probes, executes them in the agent sandbox environment 1, and aggregates the resulting evidence into deployment-facing reports over utility, efficiency/cost, and safety. The central design goal is to derive tasks from the skill’s claimed capabilities rather than from a fixed benchmark. Our framework covers five pipeline stages: skill collection, scheme generation, task construction, sandboxed execution, and automated evaluation. For reporting, we implement a browser extension that surfaces assessment results at adoption time. 
+
+4.1 Skill Collection 
+
+The pipeline begins by filtering raw external packages into benchmarkable skills and normalizing each admitted package into a common three-part representation: the documentation rooted at SKILL.md ,the implementation bundle, and provenance metadata such as source, owner, category, and package name. A package is admitted when it contains a root SKILL.md file. This matches prevailing skill-package conventions without assuming a fixed API, programming language, or script layout. This stage yields a collected set of normalized skills, together with the provenance records needed to trace every downstream scheme, task, execution bundle, and report back to its source package. 
+
+4.2 Scheme Generation 
+
+In this stage, we generate two types of evaluation scheme for each skill: utility scheme and security scheme. As described in Section 3.1, the utility scheme covers not only the evaluation of the utility dimension but also efficiency and cost dimensions. The security scheme is designed to support dynamic runtime testing. These schemes include the skill analysis, agent execution instructions, 
+
+1We adopt Harbor as our base sandbox environment and extend it with the necessary functionality. See https://www.harborframework.com/ 
+
+6testing mechanisms, required materials and environment configuration, scoring criteria, and expected outcomes. 
+
+Utility Scheme. By prompting an LLM to analyze the SKILL.md file and extract the skill’s intended usage, we derive a utility scheme comprising three representative scenarios for each skill. Each scenario is later instantiated as a matched no-skill/with-skill task pair. 
+
+Security Scheme. The security scheme starts with a static scan over the full skill package and produces a set of risk findings. The scan covers patterns such as prompt injection, credential access, unsafe file or network behavior, hidden instructions, supply-chain issues, and robustness failures. If no risks are identified, no security scheme is generated and dynamic runtime testing is skipped. Otherwise, we generate one probe specification per finding, which are subsequently used in task construction. 
+
+4.3 Task Construction and Sandboxed Execution 
+
+The generated utility and security schemes are then instantiated into executable tasks by an LLM-based agent (e.g., Claude Code). As shown in Figure 2, every task follows the same task format: a task configuration file ( task.toml ), an agent-facing instruction ( instruction.md ), sandboxed environment configurations, and verifier logic. Required materials and skill packages reside in the environment directory. To reduce sandbox initialization time, the agent and all required dependencies are pre-installed in a base Docker image. All tasks are subsequently executed within the same instrumented sandboxed pipeline, which keeps the task setup fixed across runs. 
+
+Utility Tasks and Security Tasks. Each utility scenario is compiled into two utility tasks: a no-skill task and a with-skill task. The two tasks share the same instruction, inputs, environment, and evaluation criteria. The only difference is whether the evaluated skill exists in the environment. This paired construction supports attribution to skill availability. Security tasks are constructed differently. Each probe specification becomes one with-skill risk task tied to a single finding. Here the goal is not counterfactual comparison, but runtime confirmation of a specific risk path when the skill is present. Utility tasks and security tasks still reuse the same task template and sandboxed execution pipeline, so they share tooling, logs, and provenance. 
+
+Traceable Trajectory with Grounded Evidence. Each trial yields a common evidence bundle containing the execution trace, output files, file changes, network log, resource cost, and verifier results, as illustrated in Figure 2. A utility scenario therefore yields two evidence bundles, one from the no-skill run and one from the with-skill run, while a security task yields one risk-oriented bundle. Using one evidence format for semantic judgment, safety confirmation, and cost accounting keeps all reported numbers traceable to concrete executions. 
+
+4.4 Reporting and Browser Extension 
+
+Based on the collected execution evidence, SkillAudit computes utility, efficiency/cost, and safety scores, and consolidates them into a per-skill deployment report. 
+
+Utility Scoring. We quantify utility by the mean pass-rate gain ( PRG ), which measures the marginal performance improvement over the no-skill baseline. For each skill j, let Vj denote the set of valid matched pairs. For each pair (j, k ) ∈ V j , an LLM judge scores both the with-skill and no-skill outputs against the same semantic checklist of Nj,k items, yielding nwi  
+
+> j,k
+
+and nwo  
+
+> j,k
+
+passed items respectively. The per-pair pass-rate gain is then: 
+
+PRG j,k = nwi  
+
+> j,k
+
+− nwo 
+
+> j,k
+
+Nj,k 
+
+(1) The skill-level utility score is the mean across all valid pairs: 
+
+PRG j = 1
+
+|V j |
+
+X
+
+> k∈V j
+
+PRG j,k (2) 
+
+Efficiency and Cost Scoring. We report efficiency and cost separately on the subset Veff  
+
+> j
+
+⊆ V j for which both runs pass at least one judge item. Let ˜q = qinput − qcache denote effective input tokens, 7and let twi 
+
+> j,k
+
+, two  
+
+> j,k
+
+and ˜qwi 
+
+> j,k
+
+, ˜qwo  
+
+> j,k
+
+denote the agent execution time and effective input tokens of the with-skill and no-skill runs respectively. For each such pair, we compute the per-pair efficiency gain (EG) and cost gain (CG) as the relative savings in agent execution time and effective input tokens, 
+
+EG j,k = max −1, min 1, two  
+
+> j,k
+
+− twi 
+
+> j,k
+
+two 
+
+> j,k
+
+!! 
+
+, CG j,k = max −1, min 1, ˜qwo  
+
+> j,k
+
+− ˜qwi 
+
+> j,k
+
+˜qwo 
+
+> j,k
+
+!! 
+
+(3) 
+
+EG j,k and CG j,k are clipped to [−1, 1] . We also define the per-pair efficiency-cost gain (ECG) as a weighted combination of the two: 
+
+ECG j,k = α EG j,k + (1 − α) CG j,k , (4) where α ∈ [0 , 1] controls the relative importance of time savings versus token savings, with α = 0 .5
+
+by default. We then report the skill-level scores: 
+
+EG j = 1
+
+|V eff  
+
+> j
+
+|
+
+X
+
+> (j,k )∈V eff
+> j
+
+EG j,k , CG j = 1
+
+|V eff  
+
+> j
+
+|
+
+X
+
+> (j,k )∈V eff
+> j
+
+CG j,k , (5) 
+
+ECG j = 1
+
+|V eff  
+
+> j
+
+|
+
+X
+
+> (j,k )∈V eff
+> j
+
+ECG j,k . (6) For interpretability, we also retain the raw resource deltas in agent execution time and effective input tokens over the same efficiency-valid pairs: 
+
+∆tj = 1
+
+|V eff  
+
+> j
+
+|
+
+X
+
+> (j,k )∈V eff
+> j
+
+ two  
+
+> j,k
+
+− twi 
+
+> j,k
+
+, ∆˜ qj = 1
+
+|V eff  
+
+> j
+
+|
+
+X
+
+> (j,k )∈V eff
+> j
+
+ ˜qwo  
+
+> j,k
+
+− ˜qwi 
+
+> j,k
+
+. (7) 
+
+Safety Scoring. We quantify safety risk by a score Sj ∈ [10 , 100] that aggregates confidence-weighted penalties from all static and dynamic findings for skill j. Each finding ℓ is characterized by three quantities: (i) a severity level σj,ℓ ∈ { H, M, L } mapped to a fixed base penalty w(H) = 15 ,
+
+w(M ) = 10 , w(L) = 5 ; (ii) an existence confidence cexist  
+
+> j,ℓ
+
+from the static scanner; (iii) an exploitabil-ity confidence cexploit  
+
+> j,ℓ
+
+estimated by dynamic judge from agent trajectories and runtime evidence. Five verdict types are assigned by the dynamic runtime judge, each mapped to an exploitability confidence range (Table A3): confirmed , suspected , agent_refused , path_exists_not_triggered , and 
+
+likely_false_positive . When no dynamic probe is available, cexploit  
+
+> j,ℓ
+
+defaults to 0.6. The final safety score subtracts the confidence-weighted penalties from a perfect score of 100, with a minimum score of 10: 
+
+Sj = max 10 , 100 −
+
+> m
+
+X
+
+> ℓ=1
+
+w(σj,ℓ ) cexist  
+
+> j,ℓ
+
+cexploit 
+
+> j,ℓ
+
+!
+
+(8) We report Pass when Sj = 100 , Caution when 80 ≤ Sj < 100 , and Risky otherwise, following the threshold convention in SkillTester Wang et al. [2026]. 
+
+Final Report. The evaluation scores computed above are consolidated into a unified per-skill deployment report: 
+
+Report j =  PRG j , EG j , CG j , ECG j , ∆tj , ∆˜ qj , S j , diag j
+
+, (9) where diag j retains the full supporting evidence, including per-scenario breakdowns and per-finding safety records, ensuring every judgment is traceable to concrete executions. 
+
+Browser Extension. Beyond the per-skill deployment report, SkillAudit surfaces these results at the moment developers actually decide whether to install a skill. To this end, we implement a browser extension prototype that integrates with mainstream skill-hosting pages. When a developer visits a supported skill page, the extension detects the skill package, displays a SkillAudit action button, and either retrieves an existing report or submits the skill to the assessment backend, opening a report page that surfaces utility gain, efficiency score, safety status, and supporting execution evidence (Figure 3). This interface provides two practical benefits. First, it reduces the friction between evaluation and 8Figure 3: SkillAudit report page showing utility gain, efficiency score, and safety status for an evaluated skill. The screenshots use the Fitness Log skill as a running example. 
+
+adoption: developers do not need to manually download a skill, run the assessment framework, and inspect logs. Second, it turns SkillAudit reports into community-facing artifacts that can be shared, compared, and audited across the open skill ecosystem. We provide a demo to illustrate the full assessment flow, see project homepage 2.
+
+5 Empirical Evaluation of SkillAudit 
+
+This section evaluates SkillAudit on 226 top-ranked real-world skill packages collected from public skill repositories, spanning 23 occupational categories . Utility and efficiency/cost are evaluated across six agent–model configurations, while dynamic safety is evaluated on three representative configurations that support probe instrumentation: Claude Code / Sonnet 4.6, Codex / GPT-5.1, and Codex / GPT-5.4. Detailed scanner statistics, dynamic-probe diagnostics, and full configuration settings are deferred to the appendices. 
+
+5.1 Utility across Agent–Model Configurations 
+
+For each utility scenario, we executed both the no-skill and with-skill conditions once under different agent-model configurations. Scenarios were excluded if either condition timed out or encountered a judge failure. After filtering, a total of 643 scenarios were retained in the Codex/GPT-5.4 configura-tion. Table 3 reports category-level utility, efficiency/cost, and security scores under Codex / GPT-5.4. Mean with-skill pass rate is 0.946, but PRG spans 0.051–0.395, from building-grounds-cleaning 
+
+to educational-instruction . The overall efficiency-cost gain is ECG =-0.186, indicating that on average enabling a skill increases both agent execution time and token consumption relative to the no-skill baseline. Only office-administrative (EG =+0.055, CG =+0.115, ECG =+0.085) and farming-fishing-forestry (ECG ≈ 0) show non-negative efficiency-cost gain across both dimensions. Safety is likewise uneven: the overall score is 95.0, but architecture-engineering and personal-care-service 
+
+together account for 39.8% of all high-severity static findings. Moreover, PRG and security score show little correlation, with a Pearson correlation of 0.111. Figure 4 reports category-level mean PRG across the six configurations. The top row gives each configuration’s overall mean PRG , and the column headers report the corresponding no-skill baseline  
+
+> 2A video demo is available at https://skillaudit.github.io/#demo . The complete implementation is coming soon.
+
+9Table 3: Utility, efficiency/cost and security scores by occupation category under Codex / GPT-5.4. wi = with skill; wo = without skill. PRG = pass rate gain; EG = efficiency gain; CG = cost gain; ECG = efficiency-cost gain ( α = 0 .5). PRG ∈ [−1, 1] ; EG, CG, ECG ∈ [−1, 1] ; safety score ∈ [10 , 100] . Static findings H/M/L = 
+
+total count across all skills in the category. Dynamic runtime tests are conducted under Codex / GPT-5.4.                                                                                                                                                                                                                                                                                                                                                                    
+
+> Pass Rate Time (s) Tokens Efficiency & Cost Security Static Findings Category wi wo PRG wi wo wi wo EG CG ECG Score HML
+> educational-instruction 0.911 0.516 0.395 164 121 55K 36K −0.270 −0.302 −0.286 90.6 735community-social-service 0.944 0.581 0.363 118 102 12K 10K −0.181 −0.498 −0.340 96.3 325office-administrative 0.934 0.655 0.279 132 160 48K 60K +0.055 +0.115 +0.085 92.9 704management 0.969 0.680 0.289 184 168 38K 43K −0.197 −0.197 −0.197 99.7 011computer-mathematical 0.902 0.648 0.254 109 113 29K 31K −0.104 −0.055 −0.080 96.6 331arts-design-media 0.976 0.736 0.241 109 94 16K 15K −0.238 −0.267 −0.253 99.6 002military-specific 0.935 0.737 0.198 163 152 25K 25K −0.094 −0.259 −0.176 97.0 151transportation-material-moving 0.931 0.770 0.161 192 217 41K 40K +0.029 −0.155 −0.063 96.4 1210 sales-related 0.963 0.754 0.209 171 140 41K 21K −0.233 −0.431 −0.332 99.3 112protective-service 0.943 0.738 0.205 144 124 46K 31K −0.242 −0.329 −0.286 95.5 243food-preparation-serving 0.916 0.715 0.202 119 93 20K 16K −0.257 −0.352 −0.304 95.6 258healthcare-practitioners 0.958 0.790 0.168 193 188 68K 72K −0.058 −0.047 −0.053 99.8 001personal-care-service 0.911 0.779 0.132 132 117 20K 21K −0.142 −0.143 −0.142 82.2 18 59life-physical-social-science 0.937 0.855 0.082 276 299 86K 75K −0.070 −0.284 −0.177 91.3 487business-financial 0.982 0.800 0.182 213 192 42K 39K −0.154 −0.251 −0.202 99.1 013legal 0.984 0.813 0.171 266 259 117K 122K −0.054 −0.088 −0.071 98.1 064construction-extraction 0.914 0.779 0.135 179 191 38K 31K −0.043 −0.282 −0.163 98.9 023architecture-engineering 0.982 0.868 0.114 167 162 33K 53K −0.118 −0.160 −0.139 78.9 15 215 installation-maint-repair 0.933 0.815 0.118 163 146 44K 30K −0.163 −0.368 −0.266 99.3 011farming-fishing-forestry 0.973 0.871 0.102 167 207 54K 68K +0.032 −0.030 +0.001 98.1 031production 0.937 0.864 0.073 167 152 46K 32K −0.157 −0.389 −0.273 86.5 10 17healthcare-support 0.954 0.879 0.074 155 117 39K 35K −0.250 −0.368 −0.309 95.2 532building-grounds-cleaning 0.963 0.913 0.051 119 123 21K 18K −0.122 −0.248 −0.185 96.0 414
+> Overall 0.946 0.763 0.183 165 157 43K 40K −0.133 −0.238 −0.186 95.0 83 59 99
+
+pass rate ( wo ). Three findings are most important. Cross-configuration mean PRG decreases as the no-skill baseline strengthens. Across the six configurations, mean PRG and mean wo 
+
+are strongly negatively correlated ( r = −0.90 ). Configurations with weaker baselines (Codex / GPT-5.1, wo = 0 .630 ; Claude Code / Sonnet 4, wo = 0 .647 ) report the highest mean PRG (0.248 
+
+and 0.207 ), whereas configurations with stronger baselines (Claude Code / Sonnet 4.6, wo = 0 .799 ;OpenCode / Sonnet 4.6, wo = 0 .794 ) report the lowest ( 0.164 and 0.130 ). This pattern is consistent with a ceiling effect: stronger no-skill baselines leave less residual headroom for a skill to unlock additional passes. Cross-configuration differences in PRG should therefore be interpreted relative to the no-skill baseline, not as a standalone measure of skill quality. The same ceiling effect appears within shared harnesses. The same ordering holds when the harness is fixed. Codex / GPT-5.1 (0.248 ) exceeds Codex / GPT-5.4 ( 0.183 ), Claude Code / Sonnet 4 ( 0.207 ) exceeds Claude Code / Sonnet 4.6 ( 0.164 ), and OpenCode / GPT-5.4 ( 0.185 ) exceeds OpenCode / Sonnet 4.6 ( 0.130 ). This within-harness ordering again suggests that stronger backbones compress observable skill-induced pass-rate gains by reducing available headroom. Categories and harnesses contribute additional structured variation. Some categories remain consistently high across configurations: educational-instruction , community-social-service , and computer-mathematical all sustain high PRG across all six configurations, whereas building-grounds-cleaning and farming-fishing-forestry remain low across all six. Mid-range categories, such as office-administrative and transportation-material-moving ,reorder substantially across configurations. The harness itself also contributes independent variation: under the same backbone, PRG on office-administrative differs by 0.31 between Claude Code / Sonnet 4.6 ( 0.425 ) and OpenCode / Sonnet 4.6 ( 0.118 ), indicating that skill–harness compatibility is task-type dependent. Taken together, these patterns indicate that PRG should be interpreted relative to baseline headroom and execution context, rather than in isolation. Appendix C.1–C.3 provide the ceiling-effect decomposition, Codex / GPT-5.4 baseline-stratified results, and within-category scenario-level PRG distributions. 
+
+5.2 Static Scanner Validation 
+
+We validate the static security scanner introduced in Section 4.4 against expert-labeled findings on a separate controlled subset of 29 skills comprising 186 ground-truth findings. This controlled subset serves as a measurement-validation step: before using the scanner for the large-scale safety profile on the 226-skill set in Section 5.3, we first test whether it can detect expert-injected risks. 10 codex 
+
+gpt-5.4 
+
+> wo 0.763
+
+codex 
+
+gpt-5.1 
+
+> wo 0.630
+
+cc 
+
+sonnet-4-6 
+
+> wo 0.799
+
+cc 
+
+sonnet-4 
+
+> wo 0.647
+
+opencode 
+
+gpt-5.4 
+
+> wo 0.718
+
+opencode 
+
+sonnet-4-6                                                                                                                                                  
+
+> wo 0.794
+> Mean PRG 0.183 0.248 0.164 0.207 0.185 0.130
+> educational-instruction 0.395 0.244 0.383 0.423 0.408 0.328
+> community-social-service 0.363 0.375 0.321 0.426 0.378 0.274
+> offi ce-administrative 0.279 0.553 0.425 0.402 0.044 0.118
+> management 0.289 0.198 0.157 0.138 0.234 0.259
+> computer-mathematical 0.254 0.433 0.359 0.416 0.444 0.408
+> arts-design-media 0.241 0.173 0.211 0.089 0.256 0.238
+> military-speci fi c0.198 0.342 0.184 0.165 0.088 0.103
+> transportation-material-moving 0.161 0.374 0.108 0.180 0.162 0.154
+> sales-related 0.209 0.198 0.131 0.181 0.124 0.126
+> protective-service 0.205 0.266 0.181 0.168 0.176 0.034
+> food-preparation-serving 0.202 0.218 0.149 0.151 0.252 0.219
+> healthcare-practitioners 0.168 0.230 0.108 0.184 0.232 0.074
+> personal-care-service 0.132 0.142 0.126 0.161 0.019 -0.042
+> life-physical-social-science 0.082 0.286 0.164 0.225 0.088 0.154
+> business-fi nancial 0.182 0.315 0.136 0.299 0.232 0.133
+> legal 0.171 0.258 0.124 0.344 0.204 0.157
+> construction-extraction 0.135 0.106 0.151 -0.005 0.208 0.144
+> architecture-engineering 0.114 0.225 0.073 0.149 0.128 -0.123
+> installation-maintance-repair 0.118 0.344 0.155 0.337 0.157 0.103
+> farming-fi shing-forestry 0.102 0.162 0.087 0.070 0.096 0.101
+> production 0.073 0.154 0.004 0.033 0.165 0.011
+> healthcare-support 0.074 0.177 0.139 0.195 0.087 0.055
+> building-grounds-cleaning 0.051 0.009 0.037 0.034 0.006 -0.025
+> 0.0 ≥0.5
+> Mean PRG (colour scale)
+
+Figure 4: Mean PRG across agent-model configurations and occupation categories. Cells report category-level mean PRG over 23 occupational categories and six agent–model configurations. The top row gives the configuration-level mean, and column headers give the no-skill baseline pass rate ( wo ). 
+
+Table 4: Static-scanner validation on controlled findings. Detection performance on 29 skills with 186 expert-labeled, human-injected findings. Recall is the primary signal; precision and F1 are reported for completeness. 
+
+#G and #P denote ground-truth and scanner-reported counts. #G #P TP FP FN P (%) R (%) F1 (%) 
+
+Overall 186 219 169 50 17 77.2 90.9 83.5 
+
+High 66 72 64 8 2 88.9 97.0 92.8 Medium 50 67 48 19 2 71.6 96.0 82.1 Low 70 80 57 23 13 71.2 81.4 76.0 
+
+Table 4 shows that the scanner is intentionally recall-oriented on controlled human-injected risks, recovering 90 .9% of all findings and maintaining especially high recall on high- and medium-severity cases ( 97 .0% and 96 .0% ). Its main limitation is the expected recall–precision trade-off: the scanner over-reports some findings, especially among lower-severity patterns. For a security scanner, missing a real vulnerability is costlier than flagging a spurious warning. The detailed per-pattern breakdown is reported in Appendix F. 
+
+5.3 Safety Profile of Evaluated Skills 
+
+We evaluate the dataset of 226 skills using the static semantic scanner validated in Section 5.2 and the dynamic probes of Section 4.4. Table 5 illustrates the distribution of security scores across 226 skills under the Codex/GPT-5.4 dynamic testing configuration. A total of 128 skills (56.6%) achieve the maximum score of 100, indicating no risk findings detected by the static semantic scan. Another 76 skills (33.6%) fall in the range 86~99 and 12 skills score below 70. Following the threshold 11 27 40 41 55 56 70 71 85 86 99 100 
+
+Security score    
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> 140
+> 160
+> Number of skills
+> 45310
+> 76
+> 128
+
+Figure 5: Skill-level safety-score distribution. Security score distribution of 226 skills under the Codex/GPT-5.4 dynamic testing configuration. 0    
+
+> 50
+> 100
+> 150
+> 200
+> 40
+> (23%)
+> 64
+> (37%)
+> 91
+> (53%)
+> 107
+> 27
+> n=173 n=175 n=173
+> 0
+> 15
+> 30
+> 45
+> 60
+> 75
+> 18%
+> 32%
+> 21%
+> 30%
+> 47%
+> 35%
+> 46%
+> 57%
+> 62%
+> Claude
+> Sonnet 4.6
+> Codex
+> GPT5.1
+> Codex
+> GPT5.4
+> Number of dynamic tests
+> High (H) Medium (M) Low (L)
+> Confirmed rate (%)
+> Claude Sonnet 4.6
+> Codex GPT5.1
+> Codex GPT5.4
+> Confirmed
+> Agent refused
+> Path not triggered
+> Suspected
+> Likely false positive
+
+Figure 6: Dynamic safety outcomes across agent backbones and risk severity levels. Dynamic probes are executed on the same static-finding set under three representative agent backbones. Both the verdict distribution and the confirmed rate vary substantially across agent configurations. 
+
+convention in SkillTester Wang et al. [2026], we adopt θs = 80 as a risky boundary. Under this standard, 17 skills (7.5%) are flagged as risky and require further review before deployment. Since different agent harnesses and models vary in their underlying security policies, it is necessary to examine how configuration choices affect dynamic runtime testing outcomes. In addition to Codex / GPT-5.4, we also evaluate another two configurations (Claude Code / Claude Sonnet 4.6 and Codex / GPT-5.1). As illustrated in Figure 6, dynamic runtime outcomes vary significantly with the agent-model configurations. The confirmed rate varies substantially across configurations: 23% for Claude Code / Claude Sonnet 4.6, 37% for Codex / GPT-5.1, and 53% for Codex / GPT-5.4. Notably, Claude Sonnet 4.6 exhibits a considerably higher agent_refused rate than the others, indicating stronger proactive identification and rejection of risky operations. Codex / GPT-5.1 shows the highest 
+
+path_exists_not_triggered rate, suggesting that while it can enter risky execution paths, it less frequently completes the full attack chain. We further analyze the performance across different risk severity levels. GPT-5.4 achieves the highest confirmed rate at all severity levels (H: 46% ,M: 57% , L: 62% ). Notably, its confirmed rate for L-level findings ( 62% ) exceeds that for H-level (46% ), suggesting that GPT-5.4’s high trigger rate reflects broad task completion capability rather than targeted sensitivity to high-risk operations. In contrast, Claude Sonnet 4.6 records the lowest 
+
+confirmed rate for H-level findings ( 18% ), consistent with its strong tendency to reject high-risk operations. 12 6 Conclusion 
+
+We introduced SkillAudit , a skill-centered framework for evaluating arbitrary agent skills. Across 226 real-world skills, utility varies with baseline headroom, occupational category, and agent–model configuration, while safety remains distinct from utility: the scanner attains high recall on controlled findings and dynamic exploitability shifts across backbones. These results motivate reporting pass-rate gain, efficiency/cost gain, and safety as separate axes at adoption time. And we surface this view through a browser extension. Future work will broaden risk coverage and calibration. 
+
+Limitations. Our evaluation covers only 226 public skills and a small set of agent–model configu-rations. It uses single matched runs per condition and safety checks limited to scanner/probe-covered patterns, so the reported profiles may shift as ecosystems evolve and do not capture run-to-run variance or uncovered risks. 
+
+References 
+
+Anthropic. Equipping agents for the real world with Agent Skills. Anthropic En-gineering Blog, October 2025. URL https://www.anthropic.com/engineering/ equipping-agents-for-the-real-world-with-agent-skills . Published October 16, 2025; Agent Skills open standard update published December 18, 2025. Tingxu Han, Yi Zhang, Wei Song, Chunrong Fang, Zhenyu Chen, Youcheng Sun, and Lijie Hu. Swe-skills-bench: Do agent skills actually help in real-world software engineering? arXiv preprint arXiv:2603.15401 , 2026. Zisu Huang, Jingwen Xu, Yifan Yang, Ziyang Gong, Qihao Yang, Muzhao Tian, Xiaohua Wang, Changze Lv, Xuemei Gao, Qi Dai, et al. From raw experience to skill consumption: A systematic study of model-generated agent skills. arXiv preprint arXiv:2605.23899 , 2026. Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R. Narasimhan. SWE-bench: Can language models resolve real-world github issues? In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/ forum?id=VTF8yNQM66 . Oral presentation. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. Retrieval-augmented generation for knowledge-intensive NLP tasks. In 
+
+Advances in Neural Information Processing Systems , volume 33, pages 9459–9474. Cur-ran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper/2020/hash/ 6b493230205f780e1bc26945df7481e5-Abstract.html .Xiangyi Li, Wenbo Chen, Yimin Liu, Shenghan Zheng, Xiaokun Chen, Yifeng He, Yubo Li, Bingran You, Haotian Shen, Jiankai Sun, Shuyi Wang, Binxu Li, Qunhong Zeng, Di Wang, Xuandong Zhao, Yuanli Wang, Roey Ben Chaim, Zonglin Di, Yipeng Gao, Junwei He, Yizhuo He, Liqiang Jing, Luyang Kong, Xin Lan, Jiachen Li, Songlin Li, Yijiang Li, Yueqian Lin, Xinyi Liu, Xuanqing Liu, Haoran Lyu, Ze Ma, Bowei Wang, Runhui Wang, Tianyu Wang, Wengao Ye, Yue Zhang, Hanwen Xing, Yiqi Xue, Steven Dillmann, and Han-chung Lee. SkillsBench: Benchmarking how well agent skills work across diverse tasks, 2026. URL https://arxiv.org/abs/2602.12670 .Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Aohan Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen, Tianjun Zhang, Yu Su, Huan Sun, Minlie Huang, Yuxiao Dong, and Jie Tang. AgentBench: Evaluating LLMs as agents. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=zAdUB0aCTQ .Yongliang Miao, Ziyang Yu, Liang Zhao, Bowen Zhu, and Hasibul Haque. Skilllens: Adaptive multi-granularity skill reuse for cost-efficient llm agents. arXiv preprint arXiv:2605.08386 , 2026. Shishir G. Patil, Huanzhi Mao, Fanjia Yan, Charlie Cheng-Jie Ji, Vishnu Suresh, Ion Stoica, and Joseph E. Gonzalez. The berkeley function calling leaderboard (BFCL): From tool use to agentic evaluation of large language models. In Proceedings of the 42nd International Conference on 
+
+13 Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 48371–48392. PMLR, 2025. URL https://proceedings.mlr.press/v267/patil25a.html .Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu, and Maosong Sun. ToolLLM: Facilitating large language models to master 16000+ real-world APIs. In The Twelfth International Conference on Learning Representations ,2024. URL https://openreview.net/forum?id=dHng2O0Jjr . Spotlight. Jiawen Shi, Zenghui Yuan, Guiyao Tie, Pan Zhou, Neil Zhenqiang Gong, and Lichao Sun. Prompt injection attack to tool selection in LLM agents. In Network and Distributed System Security Sym-posium (NDSS) , 2026. doi: 10.14722/ndss.2026.230675. URL https://www.ndss-symposium. org/ndss-paper/prompt-injection-attack-to-tool-selection-in-llm-agents/ .Theodore R. Sumers, Shunyu Yao, Karthik Narasimhan, and Thomas L. Griffiths. Cognitive ar-chitectures for language agents. Transactions on Machine Learning Research , 2024. URL 
+
+https://openreview.net/forum?id=1i6ZCvflQJ .Leye Wang, Zixing Wang, and Anjie Xu. SkillTester: Benchmarking utility and security of agent skills, 2026. URL https://arxiv.org/abs/2603.28815 .Frank F. Xu, Yufan Song, Boxuan Li, Yuxuan Tang, Kritanjali Jain, Mengxue Bao, Zora Zhiruo Wang, Xuhui Zhou, Zhitong Guo, Murong Cao, Mingyang Yang, Hao Yang Lu, Amaad Martin, Zhe Su, Leander Melroy Maben, Raj Mehta, Wayne Chi, Lawrence Keunho Jang, Yiqing Xie, Shuyan Zhou, and Graham Neubig. TheAgentCompany: Benchmarking LLM agents on consequential real world tasks. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2025. URL https://openreview.net/forum?id=LZnKNApvhG .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. ReAct: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations , 2023. URL https://openreview.net/forum?id= WE_vluYUL-X .Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik R. Narasimhan. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=roNSXZpUDN .Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. InjecAgent: Benchmarking indirect prompt injections in tool-integrated large language model agents. In Findings of the Asso-ciation for Computational Linguistics: ACL 2024 , pages 10471–10506, Bangkok, Thailand, 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.findings-acl.624. URL 
+
+https://aclanthology.org/2024.findings-acl.624/ .Yifan Zhou, Zhentao Zhang, Ziming Cheng, Shuo Zhang, Qizhen Lan, Zhangquan Chen, Zhi Yang, Ronghao Chen, Huacan Wang, Sen Hu, et al. Skillgenbench: Benchmarking skill generation pipelines for llm agents. arXiv preprint arXiv:2605.18693 , 2026. 14 A Related Work 
+
+Table 1 provides a compact property-level comparison with representative prior benchmarks. This appendix expands that comparison along four lines of related work: benchmarking LLM agents, evaluating tool use and procedural augmentation, benchmarking skills as artifacts, and studying the security of agent ecosystems. 
+
+Benchmarking LLM Agents. A large body of work evaluates agents on fixed task suites. Agent-Bench Liu et al. [2024], τ -bench Yao et al. [2025], TheAgentCompany Xu et al. [2025], and SWE-bench Jimenez et al. [2024] differ in domain and emphasis, but they share the same unit of evaluation: an agent tested on pre-specified tasks. Our concern is adjacent but different: not how strong an agent is on a fixed benchmark, but how much a particular skill package changes what that agent can reliably do. 
+
+Tool Use and Procedural Augmentation. Another line of work studies how models use external capabilities. ToolLLM/ToolBench Qin et al. [2024] and BFCL Patil et al. [2025] evaluate whether models can correctly invoke tools, while work on retrieval-augmented generation Lewis et al. [2020], ReAct-style reasoning Yao et al. [2023], and agent architectures such as CoALA Sumers et al. [2024] explores ways to augment agent behavior. These studies establish that augmentation matters, but they are mostly concerned with mechanisms of tool use or reasoning rather than with evaluating a concrete skill package as a deployable artifact. 
+
+Skills as First-Class Evaluation Artifacts. The closest prior work is SkillsBench Li et al. [2026], which, to our knowledge, is the first benchmark to explicitly treat skills as evaluation artifacts. We share that starting point, but differ in evaluation framing. SkillsBench studies curated skills on a curated task suite, whereas our setting is the open skill ecosystem, where the central question is how arbitrary real-world skills should be assessed at adoption time. The two works are therefore complementary rather than competitive. 
+
+Security Evaluation of Agent Ecosystems. A parallel literature studies the security of tool-augmented agents. InjecAgent Zhan et al. [2024] and later attack studies such as ToolHijacker Shi et al. [2026] focus on prompt injection, tool poisoning, and related robustness failures. This line of work is essential, but it is centered on adversarial failure modes rather than the routine deployment question of whether a seemingly benign skill should be enabled. Capability benchmarks, by contrast, often leave security outside the evaluation scope. Our work is motivated by the need to consider both when assessing skills for real-world use. 
+
+B Experimental Setup 
+
+This appendix summarizes the experimental setup used in Section 5. Items already summarized at the start of Section 5, including the skill set size, sources, occupational partition, and reported metrics, are not repeated here.         
+
+> Table A1: Experimental settings for the end-to-end evaluation in Section 5.
+> Component Setting
+> Agent and model configurations Codex / GPT-5.4, Codex / GPT-5.1, Claude Code / Sonnet 4.6 Claude Code / Sonnet 4, OpenCode / GPT-5.4, OpenCode / Sonnet 4.6 Utility scenarios per skill 3Valid utility scenarios 581–652 across six configurations (after filtering invalid scenarios); 643 for Codex / GPT-5.4 Trials per condition 1 (with skill) and 1 (without skill) Shared judge model Claude Sonnet 4.6 (used across all configurations) Scanner validation set 29 skills, 186 expert-labeled findings
+
+15 C Utility Analysis 
+
+C.1 Ceiling Effects Across Configurations 
+
+We report the ceiling-effect analysis across six configurations in Figure 4. A ceiling scenario is one in which the no-skill baseline already passes every judge item ( wo = 1 .0), leaving no headroom for skill-induced gain and mechanically forcing PRG ≤ 0 regardless of skill quality. Figure A1(a) shows that the ceiling rate varies substantially across configurations, ranging from 23 .9% under Claude Code / Sonnet 4 ( wo = 0 .647 ) to 50 .3% under Claude Code / Sonnet 4.6 ( wo = 0 .799 ), consistent with the pattern that stronger backbones saturate more scenarios. Figure A1(b) shows the PRG distribution across the six configurations. Three observations follow. The PRG = 0 bin dominates across all configurations , and its mass is overwhelmingly attributable to ceiling scenarios on stronger backbones. A non-trivial regression tail (PRG < 0) is present in every configuration. Regression rates range from 3.8% (Claude Code / Sonnet 4.6) to 10 .9% (Claude Code / Sonnet 4), indicating that skills occasionally interfere with agent execution rather than merely failing to help. Notably, weaker backbones exhibit higher regression rates, suggesting that less capable agents are more susceptible to skill-induced interference. Positive gains concentrate in the (0 , 0.5] range for most configurations, with a right tail in (0 .5, 1] that is most pronounced under weaker baselines where ceiling effects are less dominant. Codex                                            
+
+> GPT-5.4
+> Codex
+> GPT-5.1
+> Claude Code
+> Sonnet 4.6
+> Claude Code
+> Sonnet 4
+> OpenCode
+> GPT-5.4
+> OpenCode
+> Sonnet 4.6
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> % of valid scenarios
+> 38.3%
+> (n=643)
+> 31.1%
+> (n=652)
+> 50.3%
+> (n=581)
+> 23.9%
+> (n=644)
+> 31.8%
+> (n=610)
+> 47.0%
+> (n=630)
+> (a) Ceiling rate across con fi gurations (wo =1.0)
+> [−1, −0.5) [−0.5, −0.2) [−0.2, 0) = 0 (0, 0.2] (0.2, 0.5] (0.5, 1]
+> PRG bin
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> % of valid scenarios
+> PRG < 0 (regression) PRG = 0 PRG > 0 (skill helps) Regression rate (PRG <0):
+> Codex GPT-5.4 3.9%
+> Codex GPT-5.1 8.9%
+> Claude Code Sonnet 4.6 3.8%
+> Claude Code Sonnet 410.9%
+> OpenCode GPT-5.4 6.4%
+> OpenCode Sonnet 4.6 7.1%
+> (b) Full PRG distribution across con fi gurations
+> Codex GPT-5.4 (wo=0.763)
+> Codex GPT-5.1 (wo=0.630)
+> Claude Code Sonnet 4.6 (wo=0.799)
+> Claude Code Sonnet 4 (wo=0.647)
+> OpenCode GPT-5.4 (wo=0.718)
+> OpenCode Sonnet 4.6 (wo=0.794)
+
+Figure A1: Ceiling effects across configurations. (a) Ceiling rate across configurations: share of valid scenarios in which the no-skill baseline already achieves full score ( wo = 1 .0). (b) PRG distribution across six agent–model configurations. The PRG=0 bin is shown separately (dashed boundaries). 
+
+C.2 PRG Stratified by Baseline Strength 
+
+We stratify Codex / GPT-5.4 scenarios by no-skill baseline pass rate into low (wo < 0.5), mid 
+
+(0.5 ≤ wo ≤ 0.8), and high (wo > 0.8), as illustrated in Table A2. The high stratum ( wo > 0.8)accounts for 59 .7% of valid scenarios and dominates the unstratified mean ( PRG = 0 .183 ). The low stratum ( wo < 0.5, n = 93 ) achieves a mean PRG of 0.648 , confirming that skills deliver substantial gains precisely where the backbone needs help the most. Figure A2 breaks down the same analysis by occupational category. The low-stratum bars (green) are substantially longer than the mid- and high-stratum bars in nearly every category, and the high-stratum bars (grey) shrink to near zero across the board, reflecting pervasive ceiling effects. The unstratified category mean (black line) is substantially lower than the low-stratum bars (green) across all categories, because the high stratum dominates the scenario count while delivering only modest gains. The stratum-conditional breakdown provides a more complete picture of skill contribution across different baseline regimes. 16 Table A2: Stratum-conditional PRG summary for Codex / GPT-5.4 ( n = 643 ). zero% counts scenarios with 
+
+|PRG | < 0.001 , and neg% counts scenarios with PRG < −0.001 .
+
+Stratum n rate mean PRG median PRG zero% neg% 
+
+Low ( wo < 0.5) 93 14.5% 0.648 0.667 2.2 0.0 Mid ( 0.5 ≤ wo ≤ 0.8) 166 25.8% 0.269 0.286 5.4 4.2 High ( wo > 0.8) 384 59.7% 0.034 0.000 67.2 4.7 All (unstratified) 643 100% 0.183 0.143 41.8 3.9 0.0 0.2 0.4 0.6 0.8 1.0 
+
+Mean PRG 
+
+> building-grounds-cleaning
+> healthcare-support
+> production
+> farming-fi shing-forestry
+> installation-maint-repair
+> architecture-engineering
+> construction-extraction
+> legal
+> business-fi nancial
+> life-physical-social-science
+> personal-care-service
+> healthcare-practitioners
+> food-preparation-serving
+> protective-service
+> sales-related
+> transportation-material-moving
+> military-speci fi c
+> arts-design-media
+> computer-mathematical
+> management
+> offi ce-administrative
+> community-social-service
+> educational-instruction
+
+mean 
+
+low ( wo < 0.5) 
+
+mid (0.5 –0.8) 
+
+high ( wo > 0.8) 
+
+Figure A2: Stratified mean PRG by occupational category. Rows report the low, mid, and high baseline strata for Codex / GPT-5.4. The black line marks the unstratified category mean. 
+
+17 C.3 Category-wise PRG Distribution in One Configuration 
+
+Figure A3 reports the full within-category distribution of scenario-level PRG for Codex / GPT-5.4, complementing the mean heatmap in Figure 4. The distribution separates three regimes that the category mean alone conceals: knowledge-structured (high mean, small zero-gain share, e.g. 
+
+educational-instruction and community-social-service ), where skills consistently unlock new ca-pabilities. bimodal (moderate mean coexisting with a large zero-gain share and a right tail, e.g. 
+
+office-administrative , management , and computer-mathematical ), where skills deliver large gains in some scenarios but are redundant in others. And operational (low mean, majority zero-gain, e.g. healthcare-support and building-grounds-cleaning ), where the baseline already handles most scenarios and skills add little on average. 0% 20% 40% 60% 80% 100% 
+
+% of scenarios       
+
+> building-grounds-cleaning
+> healthcare-support
+> production
+> farming-fi shing-forestry
+> installation-maint-repair
+> architecture-engineering
+> construction-extraction
+> legal
+> business-fi nancial
+> life-physical-social-science
+> personal-care-service
+> healthcare-practitioners
+> food-preparation-serving
+> protective-service
+> sales-related
+> transportation-material-moving
+> military-speci fi c
+> arts-design-media
+> computer-mathematical
+> management
+> offi ce-administrative
+> community-social-service
+> educational-instruction
+> mean PRG
+> 0.051
+> 0.074
+> 0.073
+> 0.102
+> 0.118
+> 0.114
+> 0.135
+> 0.171
+> 0.182
+> 0.082
+> 0.132
+> 0.168
+> 0.202
+> 0.205
+> 0.209
+> 0.161
+> 0.198
+> 0.241
+> 0.254
+> 0.289
+> 0.279
+> 0.363
+> 0.395
+> PRG < 0 0.0 (no gain) (0, 0.2] (0.2, 0.4] (0.4, 0.6] (0.6, 0.8] (0.8, 1.0]
+
+Figure A3: Per-scenario PRG distribution by occupational category. Bars are stacked by gain bucket. The leftmost red segment indicates scenarios where PRG < 0 (skill-induced regression). Right-side labels report category mean PRG .
+
+18 D Safety Calibration 
+
+This appendix gives the calibration table used by the dynamic security judge when converting behavioral evidence into exploitability scores. 
+
+Table A3: Exploitability calibration for dynamic safety findings. The security judge maps each dynamic verdict to the exploitability range used in Eq. 8. 
+
+Verdict and score Interpretation 
+
+confirmed (0.86–1.00) End-to-end attack path is executed with observed evidence. 
+
+suspected (0.51–0.85) Strong behavioral signal exists, but evidence is incomplete. 
+
+agent_refused (0.50) The agent blocks the risky path, but the package-level risk remains. 
+
+path_exists_not_triggered 
+
+(0.20–0.49) The path appears reachable but is not exercised in this run. 
+
+likely_false_positive 
+
+(0.10–0.19) The trajectory shows little engagement with the predicted path. 
+
+no_probe (0.60) No dynamic probe was executed. Exploitability defaults to a conserva-tive prior. 
+
+19 E Safety Profile 
+
+This appendix complements the safety-profile analysis of Section 5.3. The main text reports agent-conditioned dynamic outcomes in Figure 6; the figures below extend that analysis with pattern-level, occupation-level, and agent-level breakdowns. Figure A4 reports the static-finding frequency by risk pattern, and Figure A5 summarizes the aggregate occupational profile by separating triggered risks, finding-only risks, and skills with no finding. Figure A6 further breaks down the dynamic-probe triggered rate by occupational category and agent backbone, on the same fixed finding set used in Figure 6, so that cross-agent differences reflect agent behavior rather than differences in the underlying risk set. 0 10 20 30 40 50 60 
+
+Number of fi ndings                  
+
+> SC2 Namespace collision
+> PE3 Privilege escalation path
+> R2 Dependency failure
+> E2 Env. variable harvesting
+> E3 File system enumeration
+> P1 Instruction override
+> P3 Ex fi ltration commands
+> E1 External data transmission
+> R3 Resource exhaustion
+> R4 Env. path injection
+> SC5 Unveri fi able install source
+> SC1 Unpinned dependencies
+> PE1 Excessive permissions
+> R5 Serialization integrity
+> SC4 Namespace mismatch
+> P4 Behavior manipulation
+> R1 Malformed input handling
+> 1
+> 2
+> 3
+> 3
+> 4
+> 4
+> 6
+> 7
+> 11
+> 13
+> 13
+> 15
+> 20
+> 23
+> 27
+> 33
+> 56
+> Robustness (R)
+> Prompt Injection (P)
+> Supply chain (SC)
+> Ex fi ltration (E)
+> Permissions (PE)
+
+Figure A4: Static-scan finding frequency by risk pattern. Bars report the number of static findings for each risk pattern over the 226-skill set, color-coded by risk family: Robustness ( R), Prompt Injection ( P ), Supply chain ( SC ), Exfiltration ( E), and Permissions ( P E ). 
+
+20 0 2 4 6 8 10 
+
+Number of skills 
+
+computer-mathematical 
+
+protective-service 
+
+office-administrative 
+
+construction-extraction 
+
+transportation-material-moving 
+
+sales-related 
+
+management 
+
+arts-design-media 
+
+community-social-service 
+
+building-grounds-cleaning 
+
+installation-maint-repair 
+
+healthcare-practitioners 
+
+business-financial 
+
+production 
+
+farming-fishing-forestry 
+
+healthcare-support 
+
+personal-care-service 
+
+life-physical-social-science 
+
+legal 
+
+educational-instruction 
+
+food-preparation-serving 
+
+military-specific 
+
+architecture-engineering 
+
+Triggered 
+
+Finding only 
+
+No finding Figure A5: Risk profile by occupational category. For each of the 23 occupational categories, skills are partitioned into triggered (a dynamic probe confirms exploitability), finding only (the scanner reports at least one static finding but no dynamic probe triggers), and no finding . Categories are sorted by the number of triggered skills. 
+
+21 Claude 
+
+Sonnet 4.6 
+
+Codex 
+
+GPT-5.1 
+
+Codex 
+
+GPT-5.4 
+
+personal-care-service 
+
+architecture-engineering 
+
+military-specific 
+
+food-preparation-serving 
+
+healthcare-support 
+
+life-physical-social-science 
+
+educational-instruction 
+
+legal 
+
+building-grounds-cleaning 
+
+farming-fishing-forestry 
+
+production 
+
+protective-service 
+
+community-social-service 
+
+installation-maint-repair 
+
+business-financial 
+
+construction-extraction 
+
+office-administrative 
+
+transportation-material-moving 
+
+computer-mathematical 
+
+arts-design-media 
+
+healthcare-practitioners 
+
+management 
+
+sales-related                                               
+
+> 5/10 4/10 6/10
+> 4/9 5/9 4/9
+> 3/10 3/10 5/10
+> 3/10 3/10 3/10
+> 2/9 4/9 3/9
+> 2/10 3/10 3/10
+> 2/10 2/10 3/10
+> 2/10 2/10 2/10
+> 2/10 1/10 2/10
+> 1/10 2/10 2/10
+> 1/10 3/10 3/10
+> 0/10 2/10 2/10
+> 0/10 1/10 2/10
+> 1/10 0/10 1/10
+> 1/9 0/9 1/9
+> 0/10 1/10 1/10
+> 0/10 1/10 1/10
+> 0/10 1/10 1/10
+> 0/9 0/9 1/9
+> 0/10 0/10 0/10
+> 0/10 0/10 0/10
+> 0/10 0/10 0/10
+> 0/10 0/10 0/10
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+> Triggered rate
+
+Figure A6: Triggered rate by occupational category and agent. Each cell reports triggered count over the number of tested skills in the category, on the same finding set as Figure 6(b). Rows are sorted by total triggered count across the three agents. Some categories remain consistently high-risk across agents, while others expose risk only under stronger execution backbones. 
+
+22 F Pattern-Level Scanner Diagnostics 
+
+Table A4 reports the full per-pattern detection breakdown on the controlled subset of 29 skills. The pattern-level error decomposition in Figure A7 highlights the asymmetry between over-reporting and missed-detection error modes: P4, R1, and SC4 are dominated by false positives (over-reporting), while R5, R2, and PE3 are dominated by false negatives (missed detections). 
+
+Table A4: Full per-pattern detection breakdown on the controlled subset of 29 skills. 
+
+ID Pattern Sev #G #P TP FP FN P (%) R (%) F1 (%) 
+
+Prompt Injection 
+
+P1 Instruction Override H 11 11 11 0 0 100.0 100.0 100.0 P2 Hidden Instructions H 14 15 14 1 0 93.3 100.0 96.5 P3 Exfiltration Commands H 13 16 13 3 0 81.2 100.0 89.7 P4 Behavior Manipulation M 18 26 17 9 1 65.4 94.4 77.3 
+
+Data Exfiltration 
+
+E1 External Data Transmission M 16 17 16 1 0 94.1 100.0 97.0 E2 Env Var Harvesting H 8 9 8 1 0 88.9 100.0 94.1 E3 FS Enumeration M 2 5 1 4 1 20.0 50.0 28.6 E4 Context Leakage H 3 4 3 1 0 75.0 100.0 85.7 
+
+Privilege Escalation 
+
+PE1 Excessive Permissions L 2 3 2 1 0 66.7 100.0 80.0 PE2 Sudo / Root Execution M 1 1 1 0 0 100.0 100.0 100.0 PE3 Credential Access H 6 5 4 1 2 80.0 66.7 72.7 
+
+Supply Chain 
+
+SC1 Unpinned Dependencies L 16 15 13 2 3 86.7 81.2 83.9 SC2 External Script Fetching H 8 9 8 1 0 88.9 100.0 94.1 SC3 Obfuscated Code H 3 3 3 0 0 100.0 100.0 100.0 SC4 Namespace Mismatch L 8 13 7 6 1 53.8 87.5 66.7 SC5 Unverifiable Install Source M 7 10 7 3 0 70.0 100.0 82.3 
+
+Robustness 
+
+R1 Malformed Input Handling L 18 25 18 7 0 72.0 100.0 83.7 R2 Network Timeout Missing L 12 10 8 2 4 80.0 66.7 72.7 R3 Retry / Loop Bounds L 2 3 2 1 0 66.7 100.0 80.0 R4 Error Handling M 6 8 6 2 0 75.0 100.0 85.7 R5 Resource Cleanup L 12 11 7 4 5 63.6 58.3 60.9 
+
+23 −5.0 −2.5 0.0 2.5 5.0 7.5 10.0 12.5        
+
+> 1
+> 2
+> 3
+> 3
+> 21
+> 32
+> 14
+> 42
+> 7
+> 16
+> 54
+> 19
+
+PE1 
+
+R4 
+
+P3 
+
+SC5 
+
+PE3 
+
+SC1 
+
+E3 
+
+R2 
+
+R1 
+
+SC4 
+
+R5 
+
+P4 
+
+> F1 80.0
+> F1 85.7
+> F1 89.7
+> F1 82.3
+> F1 72.7
+> F1 83.9
+> F1 28.6
+> F1 72.7
+> F1 83.7
+> F1 66.7
+> F1 60.9
+> F1 77.3
+
+False negatives (missed) False positives (spurious) Figure A7: Per-pattern error decomposition for the 12 patterns with the largest total error ( FP + FN ). Negative bars indicate missed findings (false negatives); positive bars indicate spurious findings (false positives); pattern-level F1 is annotated on the right. The error profile is asymmetric: P4, R1, and SC4 are dominated by over-reporting, while R5, R2, and PE3 are dominated by missed detections. 
+
+24

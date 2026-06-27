@@ -1,0 +1,463 @@
+Title: Select-to-Act: Hierarchical Reinforcement Learning via Adaptive Language Guidance
+
+URL Source: https://arxiv.org/pdf/2606.22350v1
+
+Published Time: Tue, 23 Jun 2026 02:01:04 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Select-to-Act: Hierarchical Reinforcement Learning via Adaptive Language Guidance 
+
+Hanping Zhang 1, Adam Koziak 1, and Yuhong Guo 1,2 
+
+> 1
+
+School of Computer Science, Carleton University, Ottawa, Canada  
+
+> 2
+
+Canada CIFAR AI Chair, Amii, Canada 
+
+{jagzhang@cmail., adamkoziak@cmail., yuhong.guo@}carleton.ca 
+
+Abstract. Reinforcement Learning (RL) has been widely applied to se-quential decision-making, yet it often suffers from poor sample efficiency due to costly interactions with the environment. A limited line of recent work has started exploring improving RL efficiency by leveraging exter-nal knowledge expressed in natural-language instructions. However, the few existing approaches typically treat the entire instruction as a single conditioning input, failing to account for the stage-dependent nature of language guidance, especially in complex environments. In this paper, we propose Hierarchical Reinforcement Learning with Language Instructions (HRLLI) , a hierarchical RL framework that explicitly models natural-language instructions as dynamically selectable semantic guidance during decision-making. HRLLI decomposes instructions into a set of piecewise guidance elements, where each instruction piece may become relevant at different stages of interaction with the environment. A novel hierarchi-cal RL policy structure is then formulated in a Select-to-Act paradigm: a high-level semantic policy acts as a guidance selector that selects the most relevant instruction piece to the current state to guide the low-level agent’s decision, while a low-level policy executes environment actions conditioned on the selected guidance. The two-level policies are learned simultaneously to maximize augmented expected returns from interac-tions with the environment. This design enables the agent to adaptively ground language instructions into stage-specific decisions during interac-tion. Experiments on the instruction-intensive RTFM benchmark show that HRLLI consistently outperforms strong instruction-conditioned RL baselines, demonstrating that explicitly modeling adaptive instruction selection significantly improves the effectiveness of RL. 
+
+Keywords: Reinforcement Learning · Language-instructed Reinforce-ment Learning · Instruction-based Reinforcement Learning. 
+
+## 1 Introduction 
+
+Reinforcement learning (RL), as a powerful framework for sequential decision making, has been successfully applied in many domains, including robotics [17], video games [8], autonomous driving [4], and even large language model (LLM) training [9]. Despite these successes, RL often suffers from poor sample efficiency  
+
+> arXiv:2606.22350v1 [cs.LG] 21 Jun 2026 2H. Zhang et al.
+
+due to the large number of interactions required with the environment, partic-ularly in long-horizon or sparse-reward tasks [15]. Prior works have considered improving the sample efficiency of RL by incorporating additional sources of knowledge beyond reward signals, such as offline demonstration data [10, 22] and human feedback [3]. Compared with carefully designed reward functions, such auxiliary data are often easier to obtain in many real-world scenarios. In many realistic settings, such auxiliary knowledge is often available in natu-ral language [6]. Prior studies have explored various ways of integrating language into RL, including using human language feedback [3], full textual descriptions of the environment [14], or a single sentence of language descriptions of tasks to facilitate policy learning for complex robotic manipulation tasks [7] and improve generalization across multiple tasks [21]. While language has been widely ex-plored in RL, language-instructed RL —which leverages textual instructions that provide high-level semantic guidance, or piecewise descriptions of how a task can be completed—remains largely underexplored, with only a very limited number of prior works [23, 2]. This setting is particularly interesting and practical in real-world scenarios, where humans can often easily provide a set of piecewise tips for completing a task rather than a single long sentence describing the task or a fully specified step-by-step instruction sequence. In such cases, each instruction tip in the set may only be relevant at a particular stage of exploration rather than throughout the entire interaction. However, prior work has not yet explicitly formalized such an instruction set, nor studied how to effectively utilize the knowledge contained in it. Existing language-instructed RL approaches typically encode all instruc-tions together and condition the policy on an aggregated instruction represen-tation [2, 23], implicitly assuming that all instructions are equally relevant at every stage of decision making. This assumption overlooks the stage-dependent nature of instruction usefulness, where different instruction pieces may become relevant at different phases of interaction with the environment. As a result, en-coding the entire instruction set without distinguishing their relevance can lead to ineffective language grounding and limit the potential benefits of language guidance for improving RL training efficiency. In this paper, we formally formulate the setting of language-instructed RL, where, in addition to the standard environment dynamics and reward signals, a set of natural language instructions is provided to guide the agent. Each instruc-tion can offer high-level semantic guidance that may become relevant at differ-ent stages of task completion. To address this problem, we propose Hierarchical 
+
+Reinforcement Learning with Language Instructions (HRLLI), a hierarchical se-lector–executor framework that learns separate policies for instruction selection and action execution. At the high level, an instruction policy acts as a selector 
+
+that chooses the most relevant instruction based on the current state observation. At the low level, an action policy acts as an executor that follows the selected instruction to produce actions for several environment steps. This hierarchical de-sign allows the agent to effectively utilize guidance from the instruction set while improving interpretability compared to traditional instruction-conditioned poli-Select-to-Act: Hierarchical RL via Adaptive Language Guidance 3
+
+cies. We evaluate HRLLI on the instruction-heavy RTFM benchmark [23]. Ex-perimental results show that HRLLI consistently outperforms strong instruction-conditioned baselines, txt 2π [23] and Reader [2], across multiple environment settings. Our main contributions are summarized as follows: 
+
+– We study an underexplored setting of language-instructed RL in which the agent receives an instruction set consisting of multiple pieces of guidance whose relevance depends on the given state. 
+
+– We propose HRLLI, a novel hierarchical select-to-act framework for language-instructed RL that decomposes instruction usage into a high-level instruction selection policy and a low-level instruction-guided action execution policy. 
+
+– We conduct experiments on the instruction-heavy RTFM benchmark across multiple settings, demonstrating that HRLLI consistently outperforms mul-tiple state-of-the-art language-instructed RL baselines. 
+
+## 2 Related Work 
+
+2.1 Reinforcement Learning with Language as Auxiliary Information 
+
+To improve the training efficiency of RL, many prior works have explored incor-porating natural language as auxiliary information during training. Luketina et al. [6] provide a comprehensive survey of RL methods that integrate natural lan-guage, categorizing them into two main types: language-conditional RL, where natural language is essential to policy learning and forms part of the problem formulation, and language-assisted RL, where language is used to facilitate RL training but is not strictly required for solving the task. Following this line of work, a variety of benchmarks and approaches have been developed to incorpo-rate language as auxiliary guidance in RL. Mees et al. [7] introduced the CALVIN challenge, which provides a natural-language description of each robotic manipu-lation task alongside complex environment interactions, enabling agents to learn manipulation skills more efficiently. Similarly, Meta-World provides language de-scriptions of tasks as auxiliary information within the environment [21]. Unlike CALVIN, Meta-World consists of a diverse set of tasks, each associated with a short language description, allowing agents to learn meta-RL policies that can generalize or rapidly adapt across tasks. ALFWorld [14] and ALFRED [13] are two closely related benchmarks that provide textual task descriptions and align state observations and actions with natural language, facilitating the integration of language into RL learning. With the rapid development of LLMs, language in-formation can be incorporated into RL in more sophisticated ways. For example, Wang et al. [18] proposed the LLM-Empowered State Representation (LESR) method, which leverages LLMs to generate code for constructing task-relevant state representations that improve RL training efficiency. Yan et al. [20] further proposed incorporating language inputs into an LLM and using the resulting LLM policy as a prior to guide RL policy learning. 4 H. Zhang et al. 
+
+2.2 Language-instructed Reinforcement Learning 
+
+Although incorporating language as auxiliary information for RL has been widely studied, using natural language as explicit instructions to guide RL training re-mains relatively underexplored. Zhong et al. [23] initiated the study of language-instructed RL and proposed the Read to Fight Monsters (RTFM) environ-ment, which provides textual instructions describing how to complete tasks alongside standard environment dynamics, serving as a benchmark for studying language-instructed RL. They also proposed the txt 2π method to address the RTFM challenge. Subsequent work by Dainese et al. [2] proposed REinforcement learning Agent for Discrete Environments with wRitten instructions (Reader), which builds a world model in the RTFM environment to learn an instruction-conditioned reward model and then applies Monte Carlo Tree Search (MCTS) [5] for planning. More recent studies have explored related directions of language-instructed RL in different settings. Hu and Sadigh [3] introduced InstructRL, which aligns RL policies with human preferences using natural language in-structions, although their approach relies heavily on real human interactions. Baek et al. [1] proposed Instruction-based Procedural Content Generation via RL (IPCGRL), which leverages language instructions to guide procedural level generation for RL training. However, their focus is on procedural environment generation rather than instruction-guided decision making, making it fundamen-tally different from our setting and thus not directly comparable. 
+
+## 3 Problem Setting 
+
+We consider an RL setting where the agent is provided with additional knowl-edge in the form of language instructions. Formally, we model the problem as an instruction-augmented version of the standard Markov Decision Process (MDP) [15], defined as M = ( S, A, T , R, γ, I), where S and A denote the state and action spaces, T : S × A → P (S) represents the transition dynamics, 
+
+R : S × A → R is the reward function, γ ∈ (0 , 1) is the discount factor, and I
+
+denotes the additional natural-language instruction set. The textual instructions in I provide guidance information on how to com-plete the target task of RL. We assume that the instruction can be decomposed into a set of semantic tips, such as I = {I1, . . . , I |I| }, where the instruction set has variable length |I| . Each element Ii is a sentence-level textual description that provides useful, often stage-dependent guidance for accomplishing the task. Importantly, these descriptions typically do not form a complete step-by-step procedure for solving the task. Instead, each tip provides short-term guidance for achieving a subgoal of the task (e.g., Figure 1). Such a formulation is common in real-world scenarios, where tasks are rarely specified as fully detailed proce-dures but are instead described through a collection of partial hints or useful tips. The instruction set is accessible throughout the RL as auxiliary information for decision making. The objective is to learn an optimal policy π⋆ that maximizes the expected long-term discounted return by exploiting the instruction set. Select-to-Act: Hierarchical RL via Adaptive Language Guidance 5....Cold monsters are defeated by grandmasters, soldiers items. Blessed, gleaming items are good against fire monsters.... Grandmasters → Cold monsters Soldiers → Cold monsters Blessed  →Fire monsters Gleaming  →Fire monsters 
+
+Fig. 1. Example of an instruction set in RTFM environment. 
+
+## 4 Method 
+
+In this section, we present our proposed Hierarchical Reinforcement Learning with Language Instructions (HRLLI) framework to tackle language-instructed RL. HRLLI exploits the high-level semantic knowledge in the instruction set to improve RL through a novel hierarchical policy learning paradigm. At the high level, both instructions and current state observations are encoded into a shared embedding space, where each instruction is scored with respect to the given state. The high-level policy then selects the most relevant instruction, which serves as guidance for the next few timesteps of low-level action execution. At the low level, the action policy takes the selected instruction as additional contextual information and outputs actions to interact with the environment. An overview of the overall framework is illustrated in Figure 2, while the design philosophy and methodological details are presented below. 
+
+4.1 Design of the Hierarchical Select-to-Act Paradigm 
+
+Under the language-instructed RL setting formalized in Section 3, the instruc-tions in I serve as stage-dependent semantic guidance. Consequently, under a given state, only a subset of instructions may be relevant, while the remaining ones may be irrelevant or even distracting. In such cases, consuming the entire instruction set and conditioning the policy on a single aggregated representation (e.g., via pooling or attention), as in prior works, is undesirable. Such aggre-gation can blur the semantics of individual instruction tips and make it more difficult for the policy to infer useful guidance at the current stage of interaction. Motivated by this observation, we view the language-instructed RL prob-lem as a dual decision-making problem: selecting the relevant instruction from a variable-length instruction set and selecting the corresponding action to execute in the environment. However, these two decisions operate at different temporal scales and require different learning signals. Instruction selection is a discrete decision whose effect should be evaluated at the segment level (i.e., over an ac-tion sequence), whereas action control requires fine-grained step-level feedback. Optimizing both decisions under a single objective with sparse rewards is there-fore difficult, as the policy must simultaneously infer the relevant instruction and execute actions, leading to unstable credit assignment. 6 H. Zhang et al. Select Instruction                   
+
+> hi
+> High-Level Instruction Policy
+> (Selector, every Tsteps)
+> Relevance Scoring
+> score 1
+> score 2
+> score 3
+> score 4
+> Softmax
+> over instructions
+> State st
+> State Encoder
+> Low-Level Action Policy
+> (Executor, every step)
+> hs
+> +
+> zk
+> Action Policy
+> Reward Model
+> Environment
+> Instruction Set
+> 📄 I1: Gleaming 🗡 🔥 monster
+> 📄 I2: Blessed 🗡 🔥 monster
+> 📄 I3: Grandmasters 🗡 ❄monster
+> 📄 I4: Soldiers 🗡 ❄monster
+> Instruction Encoder
+> hs
+> at
+
+Fig. 2. Overview of our hierarchical instruction-based RL framework. At every high-level decision point, the selector encodes the instruction set and the current state into a shared latent representation space, computes relevance scores for all instructions, and selects an instruction from a softmax distribution, which is used to produce the guidance vector zk . For the subsequent T environment steps, the low-level executor conditions on both the current state embedding and zk to take actions. A reward model is learned to provide dense shaping signals to facilitate policy training under sparse environment rewards. 
+
+To address this challenge, we propose a bi-level hierarchical policy learning paradigm, HRLLI, that learns two interdependent policies with distinct objec-tives. A high-level instruction policy, acting as a guidance selector, operates at a slower timescale and only reselects the instruction most relevant to the current state for every T environment timesteps, a low-level action policy, acting as an executor, performs action selection conditioned on the selected instruction for the next T timesteps. Correspondingly, the selector is trained using segment-level outcomes from T timesteps, whereas the executor is optimized using step-level reward feedback. This design aligns the optimization objectives with the roles of the two policies, resulting in more stable learning and credit assignment. 
+
+4.2 High-Level Instruction Policy: Selector 
+
+For the high-level policy, we aim to learn a selector that can choose the most appropriate instruction for the current state st. To enable state-dependent selec-tion, we embed instructions and states in a shared latent representation space, so the selector can measure their compatibility directly, allowing the high-level pol-icy to better align the two modalities and select instructions that are informative for the current state. 
+
+Instruction and State Encoders Given the instruction set I = {I1, . . . , I |I| },each instruction Ii is first processed by a pretrained language model (LM). We Select-to-Act: Hierarchical RL via Adaptive Language Guidance 7
+
+adopt MiniLM [19] as our base model due to its efficiency and strong semantic representations. Directly fine-tuning a large LM within RL is computationally expensive and can destabilize training because RL gradients are noisy and non-stationary. Therefore, we freeze the base LM and only learn a lightweight MLP projection head as an adaptor, parameterized by ϕI . This adaptor serves two purposes: (i) it maps LM features into the task-specific latent space used by the RL agent; and (ii) it provides sufficient capacity to align language embeddings with state representations without overfitting the LM. Specifically, the embed-ding vector hIi for instruction Ii is computed as: 
+
+hIi = f ϕI
+
+> inst
+
+(Ii) ∈ Rd, where f ϕI
+
+> inst
+
+(·) = MLP ϕI (MiniLM( ·)) . (1) Similarly, the state is encoded through a state encoder f ϕS 
+
+> state
+
+parameterized by 
+
+ϕS . Following the language-conditioned residual CNN architecture in txt2 π [23], the state encoder maps a state st to a d-dimensional state embedding hSt :
+
+hSt = f ϕS
+
+> state
+
+(st) ∈ Rd. (2) Using a shared dimension d allows the selector to compare state and instruction embeddings with a simple compatibility function. Moreover, the same state en-coder is used in the low-level executor policy learning as well. The state encoder is updated using gradients from both the selector and executor objectives. This shared training facilitates effective state embeddings to preserve information use-ful for both instruction grounding (high-level) and action execution (low-level). 
+
+Instruction Selection Policy As completing a subtask in an RL environment typically requires a short sequence of actions, a high-level semantic instruction tip can often provide informative guidance for executing such an action sequence. For simplicity, we introduce a horizon T to denote the fixed influential range of a selected instruction over sequential action executions. That is, the high-level instruction is reselected every T environment timesteps. When T = 1 , the problem degenerates into a simple setting where the instruction is reselected at every environment timestep, which may lead to lower efficiency as well as poten-tial confusion and inconsistency in selecting and executing instruction guidance. Therefore, the k-th high-level instruction selection step corresponds to the kT -th low-level environment timestep. At this point, an instruction is selected based on the current state embedding hSkT . Specifically, at each selection step k, we first compute the compatibility scores between the state embedding and each instruction embedding as follows: 
+
+ℓk,i = score θH
+
+ hSkT , h Ii
+
+ , ∀i ∈ { 1, 2, · · · , |I|} , (3) where score θH (·, ·) is a learnable scoring function parameterized by θH . Intu-itively, ℓk,i captures the compatibility between the current state skT and the semantic content of instruction Ii. Based on the compatibility scores, the in-struction selection policy is computed using the following softmax function: 
+
+πsel (i|skT , I) = exp( ℓk,i )
+
+P|I|  
+
+> j=1
+
+exp( ℓk,j ) . (4) 8 H. Zhang et al. 
+
+The softmax converts scores into a normalized categorical distribution over the instructions in set I. Therefore, during training we sample an instruction from the resulting categorical distribution, i.e., 
+
+i∗ 
+
+> k
+
+∼ πsel (·| skT , I), (5) which enables stochastic exploration while stabilizing learning. During evalua-tion, we adopt a hard selection rule by choosing the most relevant instruction with the highest score, 
+
+i∗ 
+
+> k
+
+= arg max 
+
+> i∈[1 ,2,..., |I| ]
+
+ℓk,i , (6) ensuring deterministic and consistent instruction selection in evaluation. To facilitate low-level policy learning, we map the selected instruction embed-ding to a guidance vector. Since the instruction embeddings are already repre-sented in the same embedding space as the state representations, we empirically find that directly using the selected instruction embedding is sufficient and does not require additional transformations: 
+
+zk = g(hIi∗ 
+
+> k
+
+) = hIi∗ 
+
+> k
+
+. (7) This choice avoids introducing an extra transformation that may distort the semantic geometry of pretrained language embeddings. 
+
+Training Objective of High-Level Policy As each selected instruction guides the action selection of the low-level executor for the next T environment timesteps, the selector should prefer instructions that lead to better reward outcomes from its guided episode segment. Accordingly, we define the following segment return to align credit assignment with instruction selection: 
+
+Rk = 
+
+> T−1
+
+X
+
+> t=0
+
+rkT +t, (8) which aggregates rewards over the next T -step episode segment after committing to the selected instruction at selection step k.However, environment rewards in language-instructed benchmarks are often sparse and delayed. If the selector is trained only from Rk, learning can be very slow because many segments may receive zero reward even if the selector makes correct decisions. To provide denser learning signals, we deploy a learnable re-ward model ˆrψ to compute a predicted segment return ˆRk = PT −1 
+
+> t=0
+
+ˆrkT +t. This is expected to improve training efficiency by providing informative gradients even when the environment reward is sparse. Even so, since the reward model is learned from environment feedback, its quality depends heavily on the per-formance of the low-level executor. Early in training, when the executor is still immature, segment reward outcomes are often noisy, which can lead the reward model to provide inaccurate estimates and consequently misguide the selector. To address this issue, we further introduce an auxiliary reward that directly mea-sures the alignment between the selected instruction and the trajectory segment Select-to-Act: Hierarchical RL via Adaptive Language Guidance 9
+
+it induces. Specifically, the auxiliary reward is defined as the cosine similarity be-tween the embedding of the selected instruction and the average state embedding over the corresponding segment. This design is motivated by the shared latent representation space: when an instruction is relevant to the agent’s behavior, the states visited while following that instruction should produce embeddings that are well aligned with the instruction embedding. Following this definition, we compute the average state embedding over the segment as 
+
+uk = 1
+
+T 
+
+> (k+1) T−1
+
+X
+
+> t=kT
+
+hSt , (9) and compute the auxiliary reward as: 
+
+Raux  
+
+> k
+
+= cos( uk, z k). (10) By providing a dense and low-variance training signal, this auxiliary reward en-courages consistency between the selected instruction and the induced trajectory, thereby stabilizing selector learning in environments with sparse feedback. By integrating both the predicted segment-reward and the auxiliary reward, we define the selector training objective as 
+
+Jπsel (θH , ϕ S , ϕ I ) = Eτ ∼πsel 
+
+"K−1X
+
+> k=0
+
+γkH
+
+ ˆRk + λsel Raux 
+
+> k
+
+#
+
+, (11) where γH is the discount factor at the instruction level. We optimize the high-level policy by maximizing this objective using the REINFORCE algorithm [16], which provides a simple and effective optimization strategy for this setting. 
+
+4.3 Low-Level Action Policy: Executor 
+
+The selected instruction represents a subtask-specific guidance signal. We con-dition the low-level action policy πact on the selected instruction embedding zk,guiding the low-level decision making for the next T timesteps with the selected instruction. At each timestep t ∈ [kT, (k+1) T −1] , the low-level executor samples an action as 
+
+at ∼ πact (·| hSt , z k; θL), (12) where θL denotes the parameters of the executor network. Conditioning the executor on zk provides additional semantic context beyond the raw state, help-ing the policy disambiguate which behaviors are currently relevant. Without this conditioning, the executor would need to infer the intended subtask solely from environment observations, significantly increasing the difficulty of policy learning. Moreover, conditioning on a single selected instruction instead of an aggregated instruction embedding simplifies policy learning: the executor learns a consistent mapping from (st, z k) to actions, where zk remains fixed for T
+
+timesteps. This stabilizes exploration and prevents the low-level policy from chasing a moving target caused by rapidly changing instruction representations. 10 H. Zhang et al. 
+
+Algorithm 1 Hierarchical Reinforcement Learning with Language Instructions 
+
+1: Input: instruction set I, horizon T , discount factors γL, γ H
+
+2: Init: encoders ϕS , ϕ I , selector θH , executor θL, buffers BH , BL
+
+3: for each epoch do 
+
+4: for each episode do 
+
+5: Encode all instructions {hIi }|I|  
+
+> i=1
+
+using f ϕI
+
+> inst
+
+6: k ← 0
+
+7: while episode not finished do 
+
+8: Compute state embedding hSkT = f ϕS
+
+> state
+
+(skT )
+
+9: Compute scores ℓk,i = score θH (hSkT , h Ii ) and sample i∗ 
+
+> k
+
+∼ Softmax( ℓk,i )
+
+10: Set instruction guidance zk ← hIi∗
+
+> k
+
+11: for t = kT to (k + 1) T − 1 do 
+
+12: Sample at ∼ πact (·| f ϕS
+
+> state
+
+(st), z k ), step env, store (st, a t, r t, s t+1 ) in BL
+
+13: if episode ends then break 
+
+14: end for 
+
+15: Update reward model ˆr using BL to minimize Eq. (15) 16: Compute predicted segment return ˆRk = PT −1 
+
+> t=0
+
+ˆrkT +t
+
+17: Compute auxiliary reward Raux  
+
+> k
+
+using Eq. (10) 18: Store (skT , i ∗ 
+
+> k
+
+, ˆRk , R aux  
+
+> k
+
+, s (k+1) T ) in BH ; k ← k + 1 
+
+19: end while 
+
+20: end for 
+
+21: Update selector (ϕI , θ H ) using BH via REINFORCE to maximize Eq. (11) 22: Update executor θL using BL via PPO to maximize Eq. (13) 23: Update state encoder ϕS using gradients from both (Eq. (11) and Eq. (13)) 24: end for 
+
+Low-Level Training Objective We train the low-level executor using an aug-mented reward signal that combines the environment reward with the predicted reward, yielding the following objective: 
+
+Jπact (θL, ϕ S ) = Eτ ∼πact 
+
+ 
+
+> |τ|− 1
+
+X
+
+> t=0
+
+γtL (rt + λact ˆrt)
+
+ . (13) The augmentation term λact ˆrt serves as a dense shaping signal that improves sample efficiency under sparse rewards. Importantly, we still keep the envi-ronment reward rt in the objective to ensure that the learned policy remains grounded in the true task objective, while ˆrt provides additional guidance dur-ing training. The low-level policy is optimized by maximizing the accumulative discounted reward in Eq. (13) using the PPO algorithm [12]. 
+
+4.4 Reward Model 
+
+Language-instructed RL environments often suffer from sparse and delayed re-wards, where feedback is only provided after completing a subtask or satisfying a language-conditioned objective. Such sparse supervision makes optimization difficult for both the high-level selector and the low-level executor, particularly during early training when successful trajectories are rarely observed. Select-to-Act: Hierarchical RL via Adaptive Language Guidance 11 
+
+To mitigate this issue, we introduce an auxiliary reward model that learns a dense approximation of the environment reward from collected transitions. Concretely, the reward model is implemented as a lightweight MLP head on top of the latent representations produced by the residual CNN state encoder. As mentioned in the previous subsections, the reward model is used in two ways: (i) to provide step-wise predicted rewards ˆrt for augmenting the executor’s training signal; and (ii) to estimate segment-level returns ˆRk for training the selector. Empirically, we observe that conditioning the reward model on the transition tuple (st, a t, s t+1 ) better captures subtask completion signals than using only 
+
+(st, a t). This matches the common structure of rewards in language-instructed RL environments, where rewards often depend on state changes rather than static states alone, such as reaching a target location, collecting an item, or triggering a valid interaction specified by the instruction. Formally, the reward model is defined as 
+
+ˆrt = ˆ rψ (st, a t, s t+1 ), (14) where ψ denotes the reward model parameters and ˆrt is the predicted immediate reward. The model is trained on transitions sampled from the replay buffer by minimizing the mean squared error (MSE): 
+
+LRM = E(st,a t,s t+1 ,r t)∼B L
+
+h
+
+(ˆ rψ (st, a t, s t+1 ) − rt)2i
+
+, (15) where BL denotes the replay buffer containing transitions collected through low-level policy interactions with the environment. 
+
+4.5 HRLLI Algorithm 
+
+Algorithm 1 summarizes the training procedure of the proposed HRLLI. At each segment k, the selector evaluates the state embedding hSkT and computes rele-vance scores ℓk,i over instruction embeddings {hIi }, selecting the i∗
+
+> k
+
+-th instruction whose embedding forms the guidance vector zk. Conditioned on zk, the executor interacts with the environment for T steps and stores transitions (st, a t, r t, s t+1 )
+
+in the low-level buffer BL. The reward model produces the predicted segment return ˆRk, while the auxiliary reward Raux  
+
+> k
+
+is computed according to Eq. (10). The resulting high-level transition (skT , i ∗
+
+> k
+
+, ˆRk, R aux  
+
+> k
+
+, s (k+1) T ) is then stored in the high-level buffer BH . The reward model is updated by minimizing Eq. (15). The selector, executor, and state encoder are optimized according to the objec-tives in Eq. (11) and Eq. (13). 
+
+## 5 Experiments 
+
+5.1 Experimental Settings Evaluation Benchmark We evaluate our approach on the instruction-heavy decision-making benchmark RTFM [23]. RTFM is a text-based gridworld con-taining a player, monsters, and collectible items placed on a discrete 2D map. 12 H. Zhang et al. 
+
+The agent receives three types of inputs: a textual state observation describing the gridworld, a short task description specifying the goal, and a wiki docu-ment containing instructions on how to complete the task, which we split into sentence-level instructions. The environment is procedurally generated across episodes, with varying instructions and randomized configurations of players, items, and monsters, requiring agents to extract task-relevant knowledge from the document rather than memorize dynamics. The difficulty varies along three dimensions: the number of monsters (One or Two), the language style of task de-scriptions (SL–Simple Language or NL–Natural Language), and the ordering of instruction sentences (fixed or shuffled). We conduct experiments across multiple different settings. 
+
+Baselines We compare our proposed HRLLI against multiple state-of–the-art instruction-based RL methods: 
+
+– txt2 π [23]: an instruction-based RL method that models the three-way in-teractions among the goal, document, and observations. 
+
+– Reader [2]: a model-based language-instructed RL approach that learns a world model of the target environment and performs decision making via MCTS planning over the learned model. It also introduces a Transformer-based baseline using a standard Transformer-based reward model. 
+
+– Oracle MCTS : an upper-bound baseline that assumes access to the ground-truth environment simulator and makes decisions using MCTS planning. 
+
+Implementation Details Experiments are conducted on the RTFM bench-mark [23] using the official Gym environment. The environment is created with room size 10 × 10 , and no partial observability by default. The maximum num-ber of candidate instructions is capped at 64. Training runs for 10 6 environment steps, and evaluation is performed every 5,000 steps using 20 episodes. 
+
+Instruction and state encoding. Instruction texts are encoded using the pre-trained MiniLM encoder ( sentence-transformers/all-MiniLM-L6-v2 ) [19], producing 384-dimensional normalized sentence embeddings. These embeddings are cached and then projected to 256 dimensions by a two-layer MLP adapter with hidden size 256 and ReLU activation. State encoder is adapted from txt 2π,where text inputs are encoded with a token embedding layer (dim 64) followed by a bidirectional GRU (hidden size 64 per direction) and attention pooling. The resulting features are combined with observation features and processed by a convolutional encoder with two 3 × 3 layers (64 channels), followed by global max pooling and a linear projection to a 256-dimensional state representation. The task description is encoded together with the state using the state encoder. 
+
+Policy architecture and training. The high-level instruction selector is imple-mented as a scoring network with alternating Linear and ReLU layers, where 
+
+d = 256 . It scores each candidate instruction conditioned on the current state Select-to-Act: Hierarchical RL via Adaptive Language Guidance 13 
+
+Table 1. Experimental results on the single-monster RTFM task under different lan-guage and instruction settings. Results are reported as average win rate (%) over five runs.                                                                              
+
+> Methods One SL One SL (Shuffle) One NL One NL (Shuffle)
+> txt2 π0.38 ±0.04 0.41 ±0.02 0.39 ±0.03 0.42 ±0.01
+> txt2 π(100M) 0.99 ±0.01 0.68 ±0.22 0.50 ±0.01 0.50 ±0.01
+> Reader 0.99 ±0.01 0.85 ±0.17 0.79 ±0.19 0.63 ±0.18
+> Reader (Transformer) 0.97 ±0.01 0.90 ±0.15 0.75 ±0.19 0.59 ±0.17
+> HRLLI (Ours) 0.99 ±0.01 0.92 ±0.19 0.83 ±0.21 0.79 ±0.15
+> Oracle MCTS 0.97 ±0.01 0.97 ±0.01 0.97 ±0.01 0.97 ±0.01
+
+Table 2. Experimental results on the two-monster RTFM task under different language and instruction settings. Results are reported as average win rate (%) over five runs.                                                                              
+
+> Methods Two SL Two SL (Shuffle) Two NL Two NL (Shuffle)
+> txt2 π0.09 ±0.02 0.09 ±0.02 0.07 ±0.01 0.08 ±0.02
+> txt2 π(100M) 0.24 ±0.00 0.24 ±0.00 0.24 ±0.01 0.24 ±0.01
+> Reader 0.50 ±0.07 0.47 ±0.16 0.24 ±0.01 0.24 ±0.01
+> Reader (Transformer) 0.50 ±0.07 0.39 ±0.10 0.23 ±0.03 0.23 ±0.01
+> HRLLI (Ours) 0.60 ±0.08 0.55 ±0.06 0.30 ±0.03 0.29 ±0.02
+> Oracle MCTS 0.83 ±0.01 0.83 ±0.01 0.83 ±0.01 0.83 ±0.01
+
+representation and selects one instruction every T = 10 steps. The high-level se-lector is updated every 2,000 environment steps with discount factor γH = 0 .99 .The low-level controller is trained with PPO using Stable-Baselines3 [11]. Its pol-icy and value networks both use two hidden layers of size 256. The learning rate is 3 × 10 −4 and the discount factor is γL = 0 .99 . The weighting coefficients for reward combinations are set as λsel = 0 .01 and λact = 0 .1. The overall objective used for state encoder update is Jenc (ϕS ) = ξH Jπsel (θH , ϕ S , ϕ I )+ ξLJπact (θL, ϕ S ),while the trade-off coefficients ξH = 1 and ξL = 0 .01 are used to balance the contributions of the high-level and low-level objectives. 
+
+Reward model. The reward model is implemented as an MLP with hidden size 256 and alternating Linear and ReLU layers. The replay buffer capacity is 200,000 and the batch size for reward-model training is 256. Each update performs 100 gradient steps using Adam with learning rate 3 × 10 −4.
+
+5.2 Experimental Results 
+
+Tables 1 and 2 report the experimental results on the single-monster and two-monster RTFM tasks under different language and instruction settings. The proposed method consistently achieves the best performance across different set-tings, demonstrating the effectiveness of explicitly modeling instruction selection in language-instructed RL. 14 H. Zhang et al.                            
+
+> Table 3. Ablation study on different variants in the Two NL setting. Results are reported as win rate (%) and averaged over three runs.
+> Methods Two NL Two NL (Shuffle)
+> HRLLI (Full method) 0.30 ±0.03 0.29 ±0.02
+> w/o hard selection 0.29 ±0.03 0.28 ±0.04
+> w/o high-level encoder update 0.24 ±0.05 0.25 ±0.03
+> value-diff auxiliary 0.27 ±0.02 0.27 ±0.03
+
+On the simpler single-monster setting (Table 1), most approaches are able to achieve relatively strong performance when structured language instructions are available. However, performance degrades noticeably under shuffled or natural language settings, indicating that existing methods remain sensitive to irrelevant or poorly aligned instructions. In contrast, our method maintains strong and stable performance across all settings, achieving the highest win rates in every configuration. This suggests that dynamically selecting state-relevant instruc-tions allows the agent to better utilize useful guidance while avoiding distraction from irrelevant instructions. The advantage of our approach becomes more evident in the more challeng-ing two-monster environment shown in Table 2. Compared with Reader and its Transformer baseline, which condition the policy on the entire instruction set, our hierarchical framework achieves consistent improvements across all language set-tings. In particular, the performance gain is more pronounced in natural language scenarios, where instructions are less structured and contain higher variability. These results indicate that treating instructions as state-dependent instructions and explicitly learning when to use them significantly improves decision making under complex environments. Furthermore, while Oracle MCTS achieves the highest performance by as-suming the MCTS has access to the ground-truth simulator, our method sub-stantially narrows the gap without relying on environment planning or privileged information. This highlights the benefit of separating instruction reasoning and action execution through the proposed hierarchical optimization framework. 
+
+5.3 Ablation Study 
+
+We conduct an ablation study to evaluate several variants of our HRLLI method. Specifically, we compare the full HRLLI method with three variants: w/o hard selection , where instructions are sampled from the high-level policy during eval-uation rather than selected via hard selection; (2) w/o high-level encoder update ,which updates the shared state encoder only through the low-level objective, without gradients from the high-level policy objective (i.e., ξH = 0 ); (3) value-diff auxiliary , which replaces the cosine-similarity auxiliary reward with a value-difference reward Raux  
+
+> k
+
+= VL(s(k+1) T ) − VL(skT ).The results are summarized in Table 3. We observe that replacing hard se-lection with sampling in the evaluation slightly degrades the performance in the Select-to-Act: Hierarchical RL via Adaptive Language Guidance 15  
+
+> Fig. 3. Ablation study on different reward designs in the Two NL (Shuffle) setting. Bars show the mean performance (Win rate) and the shaded area indicates the standard deviation. Results are averaged over three runs.
+
+w/o hard selection variant. When the state encoder is updated only through the low-level policy ( w/o high-level encoder update ), the performance drops signifi-cantly, indicating that the shared state encoder benefits from joint updates from both high-level and low-level policies. The value-diff auxiliary variant also con-sistently reduces performance on both Two NL and Two NL (Shuffle), suggesting that the cosine-similarity auxiliary reward provides more effective guidance for training the high-level instruction policy, although the value-difference reward can still provide a reasonable learning signal. We further conduct an ablation study on the design and utilization of the reward model in the Two NL (Shuffle) setting. We compare the following vari-ants: (1) HRLLI ˆr(st, a t, s t+1 ), our full method that learns a transition-based reward model; (2) ˆr(st, a t), which learns a reward model conditioned only on the state–action pair (st, a t); (3) ˆr(st, a t, s t+1 , z k), which additionally conditions the reward model on the instruction guidance zk; (4) HL-env w/o RM , which removes the reward model from high-level policy learning and instead uses the environment reward; (5) w/o RM , which removes the reward model entirely from both high-level and low-level policy learning. The results are summarized in Figure 3. From the figure, we observe that the full HRLLI method achieves the best performance, demonstrating the ef-fectiveness of the proposed reward model design. The reward model performs best when conditioned on the transition (st, a t, s t+1 ), which is consistent with the sparse-reward setting of the environment. Conditioning the reward model on the instruction guidance zk does not provide additional performance gains. Interestingly, replacing the reward model with the environment reward in the high-level policy learning ( HL-env w/o RM ) does not significantly degrade the performance. We hypothesize that the high-level policy already captures long-term signals through the cumulative segment reward, while the reward model provides additional guidance that leads to further performance gains. In con-trast, removing the reward model entirely ( w/o RM ) leads to a significant drop in win rate, indicating that the reward model plays a crucial role in low-level pol-icy learning. Without a well-trained reward model, the low-level policy cannot effectively learn from the sparse reward signal. The performance degradation in 16 H. Zhang et al.        
+
+> Fig. 4. Sensitivity analysis of key hyperparameters in the Two NL (Shuffle) setting.
+> Left: sensitivity to the high-level horizon T.Right: sensitivity to the auxiliary reward weight λsel . Results are averaged over three runs.
+
+the variants ˆr(st, a t) and ˆr(st, a t, s t+1 , z k) further highlights the importance of an appropriate reward model design for low-level policy learning. 
+
+5.4 Hyperparameter Sensitivity Analysis 
+
+We further conduct a hyperparameter sensitivity analysis on the high-level hori-zon T and the auxiliary reward weight λsel on the Two NL (Shuffle) setting to evaluate how our method behaves under different choices of key parameters. The results are summarized in Figure 4. From the left panel, we observe that the choice of horizon T has a moderate impact on the overall win rate. In particular, values of T between 5 and 20 lead to similar performance. When the horizon becomes too large ( T = 40 ), the selected instruction remains unchanged for a long duration, which reduces the flexibility of guidance and slightly degrades performance. On the other hand, when T = 1 , the method effectively degrades to a standard instruction-conditioned policy where a new instruction is selected at every timestep. In this case, the hierarchical structure collapses into a single-level policy, leading to noticeably worse performance and higher variance. This suggests that overly frequent changes in instruction guidance may destabilize the decision process. This result demonstrates the effectiveness of our hierarchical design, where a high-level instruction policy provides short-horizon semantic guidance that improves the decision making of the low-level action policy. From the right panel, we observe that the trade-off parameter λsel also affects performance. As λsel increases, the overall win rate decreases, suggesting that an overly strong auxiliary reward may dominate the learning signal and negatively impact training. However, removing the auxiliary reward entirely ( λsel = 0 )also leads to a clear performance drop. This indicates that the auxiliary signal provides useful guidance during training, while a moderate weight achieves the best overall performance, indicating that our chosen value provides an effective balance between the environment reward and the auxiliary objective. Select-to-Act: Hierarchical RL via Adaptive Language Guidance 17 
+
+## 6 Conclusion 
+
+In this paper, we study a relatively underexplored setting of language-instructed RL, where an RL agent can exploit external language knowledge provided as a set of instructions. Unlike standard instruction-conditioned policies that con-sume the entire instruction globally, our setting requires the agent to determine which parts of the available language instructions are relevant at different stages of interaction. To address this challenge, we propose Hierarchical Reinforcement 
+
+Learning with Language Instructions (HRLLI), a hierarchical selector–executor framework that treats language instructions as high-level semantic guidance and uses them to guide low-level policy learning. Experiments show that HRLLI con-sistently outperforms state-of-the-art language-instructed RL methods on the strong instruction-conditioned RTFM benchmarks, particularly in more chal-lenging natural-language and shuffled-document settings. These results suggest that, in instruction-heavy RL environments, effective use of language depends not only on multimodal grounding, but also on explicit control over which in-struction to use and when to use it. 
+
+## References 
+
+1. Baek, I.C., Kim, S.H., Lee, S.Y., Kim, D.H., Kim, K.J.: IPCGRL: Language-instructed reinforcement learning for procedural level generation. In: IEEE Con-ference on Games (CoG) (2025) 2. Dainese, N., Marttinen, P., Ilin, A.: Reader: Model-based language-instructed re-inforcement learning. In: Conference on Empirical Methods in Natural Language Processing (EMNLP) (2023) 3. Hu, H., Sadigh, D.: Language instructed reinforcement learning for human-ai co-ordination. In: International Conference on Machine Learning (ICML) (2023) 4. Kiran, B.R., Sobh, I., Talpaert, V., Mannion, P., Al Sallab, A.A., Yogamani, S., Pérez, P.: Deep reinforcement learning for autonomous driving: A survey. IEEE Transactions on Intelligent Transportation Systems (T-ITS) (2021) 5. Kocsis, L., Szepesvári, C.: Bandit based monte-carlo planning. In: European Con-ference on Machine Learning (ECML) (2006) 6. Luketina, J., Nardelli, N., Farquhar, G., Foerster, J., Andreas, J., Grefenstette, E., Whiteson, S., Rocktäschel, T.: A survey of reinforcement learning informed by natural language. In: International Joint Conference on Artificial Intelligence (IJCAI) (2019) 7. Mees, O., Hermann, L., Rosete-Beas, E., Burgard, W.: CALVIN: A benchmark for language-conditioned policy learning for long-horizon robot manipulation tasks. IEEE Robotics and Automation Letters (RA-L) (2022) 8. OpenAI, Berner, C., Brockman, G., Chan, B., Cheung, V., Dębiak, P., Dennison, C., Farhi, D., Fischer, Q., Hashme, S., Hesse, C., Józefowicz, R., Gray, S., Olsson, C., Pachocki, J., Petrov, M., de Oliveira Pinto, H.P., Raiman, J., Salimans, T., Schlatter, J., Schneider, J., Sidor, S., Sutskever, I., Tang, J., Wolski, F., Zhang, S.: Dota 2 with large scale deep reinforcement learning (2019) 9. Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al.: Training language models to follow instructions with human feedback. In: Advances in Neural Information Processing Systems (NeurIPS) (2022) 18 H. Zhang et al. 10. Pertsch, K., Lee, Y., Lim, J.: Accelerating reinforcement learning with learned skill priors. In: Conference on Robot Learning (CoRL) (2021) 11. Raffin, A., Hill, A., Gleave, A., Kanervisto, A., Ernestus, M., Dormann, N.: Stable-Baselines3: Reliable reinforcement learning implementations. Journal of Machine Learning Research (JMLR) (2021) 12. Schulman, J., Wolski, F., Dhariwal, P., Radford, A., Klimov, O.: Proximal policy optimization algorithms (2017) 13. Shridhar, M., Thomason, J., Gordon, D., Bisk, Y., Han, W., Mottaghi, R., Zettle-moyer, L., Fox, D.: ALFRED: A benchmark for interpreting grounded instructions for everyday tasks. In: IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) (2020) 14. Shridhar, M., Yuan, X., Côté, M.A., Bisk, Y., Trischler, A., Hausknecht, M.: ALF-World: Aligning text and embodied environments for interactive learning. In: In-ternational Conference on Learning Representations (ICLR) (2021) 15. Sutton, R.S., Barto, A.G.: Reinforcement Learning: An Introduction. MIT Press (1998) 16. Sutton, R.S., McAllester, D., Singh, S., Mansour, Y.: Policy gradient methods for reinforcement learning with function approximation. In: Advances in Neural Information Processing Systems (NeurIPS) (1999) 17. Tang, C., Abbatematteo, B., Hu, J., Chandra, R., Martín-Martín, R., Stone, P.: Deep reinforcement learning for robotics: A survey of real-world successes. Annual Review of Control, Robotics, and Autonomous Systems (ARCRAS) (2025) 18. Wang, B., Qu, Y., Jiang, Y., Shao, J., Liu, C., Yang, W., Ji, X.: LLM-empowered state representation for reinforcement learning. In: International Conference on Machine Learning (ICML) (2024) 19. Wang, W., Wei, F., Dong, L., Bao, H., Yang, N., Zhou, M.: MiniLM: Deep self-attention distillation for task-agnostic compression of pre-trained transformers. In: Advances in Neural Information Processing Systems (NeurIPS) (2020) 20. Yan, X., Song, Y., Feng, X., Yang, M., Zhang, H., Ammar, H.B., Wang, J.: Ef-ficient reinforcement learning with large language model priors. In: International Conference on Learning Representations (ICLR) (2025) 21. Yu, T., Quillen, D., He, Z., Julian, R., Hausman, K., Finn, C., Levine, S.: Meta-World: A benchmark and evaluation for multi-task and meta reinforcement learn-ing. In: Conference on Robot Learning (CoRL) (2020) 22. Zhang, H., Guo, Y.: Skill-enhanced reinforcement learning acceleration from het-erogeneous demonstrations. In: European Conference on Artificial Intelligence (ECAI) (2025) 23. Zhong, V., Rocktäschel, T., Grefenstette, E.: RTFM: Generalising to novel envi-ronment dynamics via reading. In: International Conference on Learning Repre-sentations (ICLR) (2020)
