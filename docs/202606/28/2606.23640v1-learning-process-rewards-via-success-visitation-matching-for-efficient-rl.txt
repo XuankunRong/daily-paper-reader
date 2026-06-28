@@ -1,0 +1,1140 @@
+Title: Learning Process Rewards via Success Visitation Matching for Efficient RL
+
+URL Source: https://arxiv.org/pdf/2606.23640v1
+
+Published Time: Tue, 23 Jun 2026 03:40:42 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Learning Process Rewards via Success Visitation Matching for Efficient RL 
+
+Raymond Tsao ∗
+
+UC Berkeley 
+
+Andrew Wagenmaker 
+
+UC Berkeley 
+
+Sergey Levine 
+
+UC Berkeley 
+
+## Abstract 
+
+In many modern applications of reinforcement learning (RL), the natural reward for a task of interest is inherently sparse : a reward of 0 is given everywhere except when the task is completed, when a reward of +1 is given. Training a policy to maximize such a sparse reward requires solving a challenging credit assignment problem, leading to slow or ineffective RL improvement. We propose a simple approach to transform a sparse outcome reward into a dense process reward. Our approach relies on training a discriminator to distinguish between previous successful and unsuccessful episodes, and using this discriminator to incentivize the RL-learned policy to match the state-action visitations of successful episodes, while avoiding those of unsuccessful episodes. By incentivizing the policy to match the visitations over all states, not just those that correspond to task success, this reward provides dense feedback on whether progress is being made towards task completion, and, we show, provably achieves this without changing the optimal policy. Focusing on finetuning of robotic control policies, we demonstrate that our approach leads to significantly faster RL finetuning performance on both simulated and real-world manipulation tasks, as compared to simply maximizing the sparse outcome reward. Website: https://success-visitation-matching.github.io 
+
+## 1 Introduction 
+
+Efficiently training a policy to maximize a scalar reward function via reinforcement learning (RL) is critical to achieving high-quality performance in modern AI systems. To ensure that maximizing the reward corresponds to completing the task of interest, modern applications of RL often rely on 
+
+outcome rewards that assign a reward of 0 until the task of interest is successfully completed, at which point a reward of +1 is given. While such outcome rewards have enabled recent progress both in LLM “reasoning” (the “reinforcement learning with verifiable rewards” setting) [ 27 , 81 ], and the successful application of RL to improving robotic control policies [ 58 , 48 , 14 , 86 , 90 ], they are inherently 
+
+sparse —reward is only received if the task is successfully accomplished. Learning to maximize such a sparse reward requires solving a difficult credit assignment problem—we must determine which actions, perhaps taken significantly before any reward is received, lead to reward—often resulting in slow or ineffective RL improvement. To mitigate the challenge of maximizing a sparse reward and enable faster RL improvement, we might hope our reward would correspond not just to task completion , but to task progress , rewarding the agent at intermediate states if they are making progress towards completing the task, and reducing the challenge of credit assignment. While obtaining such process rewards has been an active area of research, it has proven challenging to develop rewards that both provide an accurate estimate of task progress, and ensure that the maximizing policy also effectively completes the task. Indeed, existing approaches for specifying process rewards (“reward shaping”) typically require side knowledge about the nature of the task [ 83 , 89 ] or significant human hand-engineering or supervision [ 4, 75 ], greatly 
+
+> ∗Correspondence to: Raymond Tsao { r112358@berkeley.edu } and Andrew Wagenmaker { ajwagen@berkeley.edu }
+> arXiv:2606.23640v1 [cs.LG] 22 Jun 2026
+
+Figure 1: (a) Given trajectories labeled with sparse outcome reward rout , we train a discriminator to distinguish between state-actions in successful vs. unsuccessful trajectories. (b) This yields a dense process reward—the success visitation matching reward rsvm —that rewards visiting state-actions likely to be in successful trajectories. (c) Finetuning a policy with RL on a combination of the process reward and outcome reward enables fast RL improvement. (d) Our approach scales to real-world robotic control settings, enabling fast real-world RL. limiting their application to domains such as robotics where side information is often not available and hand-engineering rewards is time-consuming and expensive. In this work, we propose a simple method to transform a sparse outcome reward into a dense process reward that provides intermediate feedback on whether progress is being made towards accomplishing the task. Our approach, which we refer to as success visitation matching (S VM ) process rewards, is fully automated, does not require additional human engineering or side knowledge, and provably ensures the policy that maximizes the process reward also maximizes the original outcome reward. SVM process rewards are motivated by the insight that training a policy to match the state-action visitations of observed trajectories that receive outcome reward of +1 will lead the policy to also achieve outcome reward of +1 , and produces a process reward by computing a step-level signal indicating whether the current state-action is likely under the visitations of successful trajectories or unlikely under the visitations of unsuccessful trajectories, thereby encouraging the learned policy to match successful behaviors and avoid unsuccessful ones. As we can estimate the visitation likelihood at all states, not just states where the task has been completed, this reward provides dense feedback on whether progress is being made towards the goal, guiding the learner to task completion. See Figure 1 for an overview of our approach. We first show that S VM process rewards are provably correct, in that an optimal policy for the S VM 
+
+process reward is also optimal for the original sparse outcome reward. Focusing on RL improvement of pretrained robotic control policies, we then show that S VM rewards can enable significantly faster and more stable convergence of standard RL finetuning algorithms in both simulation and the real world. In particular, S VM rewards enable roughly 2× faster converge of RL finetuning on VLAs (π0 [10 ]), and significantly faster convergence of RL finetuning on real-world multi-task diffusion policies, in many cases enabling learning on tasks where RL with only sparse outcome rewards fails to learn. Furthermore, instantiating S VM rewards simply requires training a discriminator over observed successful and unsuccessful trajectories, and using the log-probability induced by the discriminator to shape the reward, making it an easy-to-implement addition to existing RL training pipelines. 
+
+## 2 Related Work 
+
+We highlight the most relevant related work here; see Appendix A for additional related work. 
+
+Reward shaping for RL. Designing rewards to enable more efficient RL improvement—reward shaping—has a long history, going back to the seminal work of Ng et al. [63] . Approaches include uti-lizing human feedback to design a reward [ 16 , 65 , 66 , 30 ], adapting the reward based on uncertainty to induce exploration [ 64 , 80 , 67 , 11 ], and shaping the reward based on a given distance-to-goal function [83 ]. These approach all require access to information we do not assume (human feedback or distance functions) or target different objectives (exploration). Several other approaches to reward shaping have considered a setting similar to ours, where the learner is not given access to any information other than a success signal. In particular, Ma et al. [52] , Adamczyk et al. [1] rely on an outcome reward, and utilize the Q-function or future success probability to shape the reward, Memarian et al. [59] apply preference learning over trajectories to obtain a dense reward that is consistent with the ordering on 2trajectories induced by the outcome reward, Stadie et al. [78] treat the reward as a hyperparameter and apply hyperparameter optimization approaches to it, and Ma et al. [53] apply RL to design the reward itself. In addition, Fu et al. [26] , Li et al. [41] shape the reward with a success classifier, yet instead of assuming access to an outcome reward, assume access to a set of successful states and, furthermore, these works as well as Durugkar et al. [23] simply train a success classifier on whether a state is suc-cessful (i.e. in effect they aim to train an outcome reward), rather than whether a state-action is likely to lead to a successful state. We will show that our approach significantly outperforms these methods. 
+
+Rewards in robotics. While many recent works in RL for robotics rely on only sparse outcome rewards [ 58 , 61 , 48 , 49 , 14 , 86 , 5, 94 , 34 , 90 ], significant attention has also been given to obtaining denser rewards to enable more efficient RL. Existing work has shown success engineering such rewards by hand [ 38 , 4, 75 ] and learning them from human demonstration videos [ 12 , 73 , 54 ] or large-scale robot demonstrations [ 55 , 2 , 91 , 13 , 95 , 96 ]. Other approaches include utilizing internet-pretrained vision-language models (VLMs) to provide both outcome and process rewards [ 22 , 71 , 8,77 , 36 , 85 , 92 , 89 , 56 , 84 , 79 , 51 , 37 , 42 ]. While showing promise, these approaches all rely on addi-tional sources of supervision—large-scale demonstrations, internet pretraining, human annotations or engineering—which are not in general available. In contrast, our approach operates under standard RL assumptions, only assuming access to an outcome reward and no additional sources of supervision. 
+
+RL for robotics. While the focus of this work is on designing more effective rewards rather than more effective RL algorithms, the utility of such rewards in robotics is only made possible by significant progress over the last several years in robotic RL. Early works on RL for robotics include Riedmiller et al. [70] , Levine et al. [39 , 40] , while more recently we have seen RL successfully applied to learn powerful policies for both locomotion [ 74 , 75 ] and manipulation [ 98 , 60 , 48 , 49 ]. With the advent of robot foundation models [ 82 , 35 , 10 , 9], much attention has been given to RL approaches that aim to finetune such pretrained policies [ 97 , 58 , 61 , 69 , 14 , 32 , 5, 86 , 21 , 28 , 46 , 45 , 94 , 34 , 3, 20 , 90 ]. In this work, we consider, in particular, RL finetuning approaches that modify the sampling process of the pretrained policy [ 86 ], and that learn a residual policy on top of the pretrained policy [ 33 , 5, 94 ,34, 20, 90]; we will show that S VM improves the performance of both of these RL approaches. 
+
+## 3 Preliminaries 
+
+We consider Markov decision processes (MDPs) denoted by a tuple M = ( S, A, P, P init , H, r out )
+
+where S is the set of states, A the set of actions, P : S × A → △ S the transition probabilities, 
+
+P0 ∈ △ S the initial state distribution, H the horizon, and rout : S → { 0, 1} the reward. We let rout 
+
+denote the true outcome reward , and assume that it is 0 at all states except for states that correspond to task completion (“successful” states), when it is 1. Each episode proceeds by sampling a state 
+
+s1 ∼ Pinit , selecting an action a0, transitioning to state s2 ∼ P (s1, a 1) and so on for H steps, at which point the episode terminates. We are primarily interested in task completion and so assume that, once a reward of 1 is reached in an episode (a “successful” episode), the MDP enters a terminal state that has a reward of 0 for the remainder of the episode. We let π : S → △ A denote a policy, a mapping from states to actions. For any π, we denote Eπ [·] the expectation over episodes induced by deploying π in our environment, and J (π) := Eπ [PHh=1 rout (sh)] the expected reward collected by 
+
+π on M (equivalently, the probability that π succeeds). Our goal is to learn a policy that maximizes 
+
+J (π), and we say a policy π+ is an optimal policy if J (π+) = max π J (π).
+
+## 4 Success Visitation Matching Process Rewards 
+
+We wish to obtain a process reward that (a) preserves the optimal policies under the outcome reward 
+
+rout —so a policy which maximizes the process reward also maximizes rout —while (b) providing dense, step-level feedback that guides the learner to successful states. In this section we describe our approach and show that it provably satisfies these desiderata. 
+
+4.1 Visitation Matching Preserves Outcome Reward Maximization 
+
+Our choice of process reward is based on a simple principle: given past observations from our environment, reward the learner for visiting states that previously led to success and penalize the learner for visiting states that previously led to failure. 3To formalize this, assume we have access to a collection of episodes from our environment, D, and let D+ denote the successful episodes (episodes that have non-zero reward) and D− the unsuccessful episodes (episodes that have zero reward) in D. Furthermore, let bw+ 
+
+> h
+
+(s, a ) (resp. bw− 
+
+> h
+
+(s, a )) denote an estimate of the state-action visitation distribution at step h for episodes in D+ (resp. D−)—that is, 
+
+bw+ 
+
+> h
+
+(s, a ) is an estimate of the density of state-actions at step h of successful episodes. Given this, we propose the following reward: 
+
+rsvm  
+
+> h
+
+(s, a ) := rout (s) + λ · clip β
+
+
+
+log bw+ 
+
+> h
+
+(s, a )
+
+bw− 
+
+> h
+
+(s, a )
+
+
+
+for clip β (x) := 
+
+β · sign( x) |x| > β x |x| ≤ β (1) and λ, β > 0. Here we define log 0 := −∞ and log 0 /0 := −∞ . We refer to rsvm as the success visitation matching (S VM ) process reward for reasons that will become clear shortly. 
+
+rsvm has two key components. First, it includes the original outcome reward, rout (s), rewarding the learner for reaching successful states. Second, it includes the difference in log-probabilities of the state-action visitations of previous successful and unsuccessful episodes. In particular, note that log bw+   
+
+> h(s,a )
+> bw−
+> h(s,a )
+
+is positive when bw+ 
+
+> h
+
+(s, a ) > bw− 
+
+> h
+
+(s, a )—when (s, a ) is more likely to have been visited in a previous successful than unsuccessful episode—and negative otherwise. In addition to incentivizing the learner to reach successful states, then, rsvm also incentivizes the learner to visit states likely to lead to success and avoid states likely to lead to failure. The following result shows that, in deterministic environments, any policy that maximizes rsvm also maximizes rout .
+
+Theorem 4.1. Assume our environment has deterministic transitions (but potentially stochastic initial state distribution) and S and A are countable. Let D be any set of episodes collected in our environ-ment and bw+/ bw− the count-based visitation estimates: bw+ 
+
+> h
+
+(s, a ) := 1 
+
+> |D+|
+
+· P
+
+> (s′,a ′)∈D+
+> h
+
+I{(s′, a ′) = (s, a )}, where D+ 
+
+> h
+
+is all observations at step h of D+, and bw− is defined similarly with respect to 
+
+D−. Then for any λ, β > 0, any policy maximizing rsvm  
+
+> h
+
+(s, a ) also maximizes rout (s).
+
+We provide the proof of Theorem 4.1 in Appendix B. We emphasize that this result holds for any 
+
+previous set of episodes D, regardless of which policy collected them, and that it holds for the 
+
+empirical visitation estimates—it does not require access to oracle estimates of the visitations. Theorem 4.1 relies on the fact that, if we have previously visited some (s, a ) and succeeded from that 
+
+(s, a ) (so that bw+ 
+
+> h
+
+(s, a ) > 0), then we will be able to succeed from that (s, a ) again. Thus, increasing the reward at such states incentivizes the learner to visit states where future success is likely, which is aligned with the original objective of reaching successful states, preserving policy optimality. Critically, however, this reward now provides a dense progress signal—rather than only rewarding success, the learner is rewarded for making progress towards success by visiting states the previously led to success. As we will see, this leads to significant sample efficiency gains without sacrificing final performance. We note that, while Theorem 4.1 requires that our environment has deterministic transitions, as we show in Section 5.3, our approach scales effectively to real-world settings that are not strictly deterministic. Furthermore, the requirement that S and A are countable is purely for convenience of the proof, and the result can be extended to uncountable spaces by representing the visitation estimates with appropriate function approximators. 
+
+Success visitation matching process reward as KL-regularized RL. We next show that the policy optimization landscape induced by the S VM process reward admits a close connection to a form of KL-regularized RL. Taking β → ∞ , so that rsvm is no longer clipped, we have that the expected SVM reward collected by some policy π is: 
+
+Eπ [PHh=1 rsvm  
+
+> h
+
+(sh, a h)] = J (π) + λ · PHh=1 Eπ [log bw+   
+
+> h(sh,a h)
+> bw−
+> h(sh,a h)
+
+]= J (π) + λ · PHh=1 Eπ [log wπh (sh,a h)  
+
+> bw−
+> h(sh,a h)
+
+− log wπh (sh,a h)  
+
+> bw+
+> h(sh,a h)
+
+]
+
+for wπh (s, a ) = Pπ [sh = s, a h = a] the state-action visitations for policy π. However, 
+
+Eπ [log wπh (sh,a h)  
+
+> bw−
+> h(sh,a h)
+
+] = KL( wπh ∥ bw− 
+
+> h
+
+), so 
+
+Eπ [PHh=1 rsvm  
+
+> h
+
+(sh, a h)] = J (π) + λ · PHh=1 [KL( wπh ∥ bw− 
+
+> h
+
+) − KL( wπh ∥ bw+ 
+
+> h
+
+)] .
+
+In other words, without clipping, rsvm can be seen as inducing a policy optimization objective that is a combination of the original outcome reward objective, and a term encouraging the state-action 4Algorithm 1 Reinforcement Learning with S VM Process Reward  
+
+> 1:
+
+input: rsvm weight λ, rsvm clipping β, pretrained πpre (optional), initial rollouts N0 (optional)  
+
+> 2:
+
+Collect N0 episodes with πpre , set D+ to successful episodes, D− to all others  
+
+> 3:
+
+Initialize discriminator bfh on D+ 
+
+> h
+
+and D− 
+
+> h
+
+, following (2)  
+
+> 4:
+
+Initialize π1 to π0 or random policy  
+
+> 5:
+
+for t = 1 , 2, 3, . . . do  
+
+> 6:
+
+Run πt for one episode, add episode to D+ if it is successful, otherwise to D− 
+
+> 7:
+
+Update bf on D+ and D−, following (2)  
+
+> 8:
+
+Update πt to πt+1 by maximizing reward rsvm  
+
+> h
+
+(s, a ) = rout (s) + λ · clip β
+
+
+
+log bfh(s,a )1− bfh(s,a )
+
+ 
+
+> 9:
+
+end for 
+
+visitations to have low KL divergence between the distribution of successful episodes—to match the visitations of successful episodes—and high KL divergence with unsuccessful episodes. Critically, this provides dense, step-level feedback: rather than only being rewarded for succeeding, the learner is rewarded for staying close to successful episodes and avoiding unsuccessful episodes at each step in an episode. Furthermore, by lightly regularizing this objective with clipping, Theorem 4.1 shows that this objective has the same optimal policy as the original outcome reward objective. 
+
+4.2 Reinforcement Learning with Success Visitation Matching Process Rewards 
+
+Our ultimate goal is to enable fast RL improvement. The above discussion shows that the S VM 
+
+reward provides a dense reward signal without changing the optimal policy. In this section we show how to estimate rsvm in large state spaces and present our full approach combining the S VM process reward with RL improvement. 
+
+Estimating visitation ratios in large state spaces. Theorem 4.1 relies on the count-based visitation estimate natural in countable state spaces, yet this visitation estimator does not scale to real-world set-tings with large state-spaces. Here we show how we can compute rsvm in such more general settings. Note that rsvm in (1) only requires knowing the ratio of the visitation densities. Critically, to estimate the ratio of densities, it often suffices to simply solve a classification problem rather than explicitly estimating the full density. To see this, consider some distributions P and Q, and let 
+
+f ⋆ := arg min f EX∼P [log f (X)] + EX∼Q[log(1 − f (X))] .
+
+Assuming f is chosen from an expressive enough function class, f ⋆(x) = P (x)  
+
+> P(x)+ Q(x)
+
+, so f ⋆(x)1−f ⋆(x) =  
+
+> P(x)
+> Q(x)
+
+. In other words, to estimate the ratio of visitations P (x) 
+
+> Q(x)
+
+, it suffices to simply train a discriminator on observations from P and Q, and use the ratio of values the discriminator assigns, avoiding the need for explicit density estimation. In our setting, we can therefore compute rsvm by first fitting 
+
+bfh := arg min f E(s,a )∼D+
+
+> h
+
+[log f (s, a )] + E(s,a )∼D−
+
+> h
+
+[log(1 − f (s, a ))] , (2) and then using bfh(s,a )1− bfh(s,a ) in place of bw+   
+
+> h(s,a )
+> bw−
+> h(s,a )
+
+in (1) . This allows us to easily scale the computation of 
+
+rsvm to more general settings by simply training a classifier on past observations. 
+
+RL with success visitation matching process rewards. We present our full approach in Algorithm 1. Algorithm 1 alternates between updating the policy with RL to maximize the S VM reward, and refining the discriminator bf on new data. For every episode, it adds the episode collected to the positive examples D+ if it contains outcome reward > 0, and otherwise to the negative examples 
+
+D−, and trains bf to distinguish the state-actions in these datasets. Algorithm 1 optionally takes as input an initial policy πpre (for example, a pretrained policy to finetune) and, if such a policy is given, collects an initial set of rollouts from this policy in order to initialize bf . While we will demonstrate Algorithm 1 can be effectively instantiated with several commonly used approaches for robotic RL (D SRL , residual RL, and R LPD ), in principle any RL algorithm can be used. 
+
+Connection to adversarial inverse RL. Adversarial inverse RL is an imitation learning approach that seeks to learn a reward function which, when maximized with RL, leads to a policy that has visitations 5matching that of a given set of expert demonstrations DE [ 24 , 31 , 25 ]. In particular, the approach of Fu et al. [25] trains a discriminator bf as we do in (2) , yet replacing D+ with DE , the expert demonstrations, and D− with all episodes collected online. It then trains a policy with RL to maximize the reward log bf (s,a )1− bf (s,a ) , and alternates between updating bf (keeping D+ fixed but expanding D−
+
+to include all episodes collected during online RL), and the RL policy maximizing this reward. Note that this form of reward is precisely the form of the S VM process reward, with the key difference that, instead of being given a set of expert demonstrations, we set D+ to observed episodes with positive outcome reward and D− to observed episodes with zero outcome reward. Thus, S VM can alternatively be seen as applying adversarial inverse RL to obtain a dense process reward in the setting where outcome rewards are observed, and replacing the demonstrations with episodes that obtain positive outcome reward. Critically, though, S VM continues to update D+ online, using the observed outcome reward to determine which episodes to place in D+, whereas adversarial inverse RL assumes access to a fixed set of positive examples. As we show in Section 5, this continual update is necessary to achieving effective performance. Theorem 4.1, furthermore, shows that this approach leads to a policy that also maximizes the original outcome reward. 
+
+## 5 Experiments 
+
+Finally, we seek to understand whether S VM rewards enable effective RL improvement in practice, in particular in robotic control domains. We aim to investigate (a) if S VM process rewards enable faster RL improvement than running RL only on a sparse outcome reward and (b) if the optimal policy under the S VM reward also maximizes the outcome reward. 
+
+5.1 Experiment Details 
+
+We implement RL with S VM rewards as described in Algorithm 1, with the only modification that we train a single discriminator for all steps h together rather than an individual discriminator for each step. For all simulated experiments, results are averaged across three random seeds, and error bars denote one standard error. We provide further details on our experimental setup below; see Section D for additional details, and Section C for per-task results from aggregated curves. 
+
+RL algorithm. We focus primarily on the RL finetuning setting, and test S VM with two different commonly utilized RL finetuning algorithms: D SRL [86 ] and R ESIDUAL RL [ 33 , 5, 94 ]. Both approaches assume access to a pretrained policy πpre . D SRL applies specifically to settings in which 
+
+πpre is a diffusion or flow policy, and learns a “noise” policy πDSRL (z | s) that selects the input noise to the pretrained policy’s denoising process. R ESIDUAL RL applies to any type of pretrained policy, and learns an additive correction to the action produced by the pretrained policy. That is, at each state the pretrained policy first produces an action a0 = πpre (s), and the residual policy πres (s, a 0)
+
+then predicts a correction, yielding the final action: a = a0 + γ · πres (s, a 0). For both algorithms, we roll out the pretrained policy N0 episodes on the task prior to finetuning, and utilize the rollouts to initialize both the discriminator bf , as described in Algorithm 1, and the replay buffer for RL training. In Section 5.5, we also apply S VM to settings where a set of demonstrations are given rather than a pretrained policy, and consider the R LPD [7] algorithm. 
+
+Figure 2: Robomimic ,
+
+LIBERO , and Robocasa 
+
+scenes. 
+
+Environments. For our RL finetuning experiments, we evaluate our method on the LIBERO-90 [ 44 ] and RoboCasa [ 62 ] benchmarks, and in the real world on the WidowX 250 6-DoF robot arm. The LIBERO-90 
+
+benchmark is an image-based simulated robotic manipulation benchmark consisting of 90 total tasks distributed across 20 scenes. We focus pri-marily on Kitchen Scenes 1-3 , comprising a total of 16 tasks. In addition, we evaluate on RoboCasa , an image-based simulated manipu-lation benchmark with visually diverse, realistic kitchen environments. We use the PnPCounterToCab task suite, where the robot must pick an object from the counter and place it inside a cabinet, and consider 3 such tasks. For our experiments learning from demonstrations, we consider the 
+
+Robomimic benchmark [ 57 ], focusing on the Can and Square tasks. See Figure 2 for examples of the LIBERO , RoboCasa , and Robomimic scenes used in our experiments. All three benchmarks provide a sparse reward signal, taking value +1 upon 6SVM (Ours) Gail-Reward Rnd Sors Sasr Gvl Outcome 0 1 2       
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0 Success Rate
+> LIBERO Scene 1 012
+> Timesteps ×10 5
+> LIBERO Scene 2 012
+> Timesteps ×10 5
+> LIBERO Scene 3
+
+Figure 3: Aggregated results of RL finetun-ing with D SRL and S VM on LIBERO-90 Scenes 1-3 (16 tasks). 0 1 2          
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0 Success Rate
+> LIBERO Scene 1 012
+> Timesteps ×10 5
+> LIBERO Scene 2 012
+> Timesteps ×10 5
+> LIBERO Scene 3 036
+> Timesteps ×10 4
+> RoboCasa
+
+Figure 4: Aggregated results of RL finetuning with RESIDUAL RL and S VM on LIBERO-90 Scenes 1-3 
+
+(16 tasks) and Robocasa (3 tasks). successful task completion and 0 otherwise, which we utilize as the outcome reward. For the WidowX experiments, a human provides a sparse outcome reward on successful completion of the task. 
+
+Baselines. We compare S VM rewards to several other reward shaping methods, focusing primarily on approaches that only require access to an outcome reward and no other information: • SORS [ 59 ]: Trains a reward function using the Bradley-Terry preference model to produce an ordering on trajectories consistent with the discounted return received in each trajectory. • SASR [ 52 ]: Estimates how likely a state is to be in a successful trajectory by applying kernel density estimation to the observed trajectories. Utilizes the estimated density to shape the reward. • GAIL [31 ]: Uses a discriminator to distinguish a provided set of expert demonstrations from policy rollouts. Note that G AIL does not assume access to an outcome reward. We consider two variants of G AIL . In Section 5.5, where we assume access to a set of expert demonstrations, we run G AIL 
+
+exactly as described in Ho and Ermon [31] , and do not utilize the outcome reward at all. In other results, where we do not assume access to a set of demonstrations, we adapt G AIL to our setting by making two modifications: (i) we treat successful transitions from the initial N0 policy rollouts as expert demonstrations and all online policy rollouts as negative examples, and (ii) we combine the G AIL reward with the outcome reward during finetuning. This approach, then, can be seen as a variant of S VM rewards, but where instead of updating the positive examples online with the successful trajectories collected, we use only the successful trajectories in the initial rollouts, simulating the role of a fixed set of demonstrations. We refer to this variant as G AIL -REWARD .• RND [11 ]: Provides an intrinsic reward based on prediction error in a fixed random network in order to induce exploration. • GVL [56 ]: Uses a frozen VLM ( gemini-3.1-pro-preview ) to estimate task progress from shuffled video frames; we use the predicted task progress rate as the reward. Due to budget constraints, we only run this baseline on D SRL LIBERO settings. • O UTCOME : Utilizes the outcome reward with no shaping. For all baselines (with the exception of G AIL , as described above), we maximize the shaped reward combined with the outcome reward. 
+
+5.2 SVM Process Rewards Enable Efficient RL Finetuning 
+
+We first consider the performance of RL with S VM rewards in the RL finetuning regime on the LIBERO 
+
+and RoboCasa benchmarks. For the LIBERO tasks, we set πpre to a diffusion transformer policy [ 18 ]pretrained with behavioral cloning on the entire LIBERO-90 suite using the provided demonstrations. For the RoboCasa tasks, we pretrain a BC-Transformer following the official codebase [ 62 ] on the 
+
+PnPCounterToCab task suite using the provided human demonstrations. Figures 3 and 4 report the RL finetuning performance on LIBERO (aggregated by scene) and RoboCasa 
+
+(aggregated by task). Across all three LIBERO kitchen scenes and both RL finetuning algorithms (D SRL and R ESIDUAL RL), S VM rewards consistently improve both the final converged success rate and the sample efficiency, as compared to prior reward shaping methods and performance without shaping. In particular, we see that with D SRL , S VM leads to a significantly higher final success rate after 2 · 10 5 timesteps and much faster convergence than other approaches. With R ESIDUAL RL, SVM rewards either require 2× or more fewer samples to converge, or achieves a significantly higher 7SVM (Ours) Gail-Reward Outcome 0 3.0 6.0 Timesteps ( ×10 3)00.5 1.0 Success Rate     
+
+> Pick and Place 01.4 2.8 Timesteps ( ×10 3)
+> Open Drawer 03.5 7.0 Timesteps ( ×10 3)
+> Cover Knife
+
+Figure 6: RL finetuning with D SRL and S VM 
+
+reward on 3 real-world tasks on WidowX robot arm (Figure 9). 0 1 2 
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate
+> LIBERO
+
+Figure 7: RL finetun-ing of π0 with D SRL 
+
+and S VM .0 1   
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate
+> Can 02
+> Timesteps ×10 5
+> Square
+
+Figure 8: RL from demonstra-tions with RLPD and S VM pro-cess reward on Robomimic .success rate than baselines. Furthermore, for both RL finetuning approaches, the final performance achieved by S VM rewards consistently reaches over 80%, demonstrating that S VM rewards do not significantly diminish the ability of the final policy to maximize the outcome reward, while leading to much faster convergence. These trends continue to hold on RoboCasa —across all three tasks, S VM substantially improves RL finetuning, quickly achieving a success rate of approximately 90% , while other methods fail to enable RL improvement at all. Note that we only consider R ESIDUAL RL on RoboCasa as the official RoboCasa policy is not a diffusion or flow policy, which is required for D SRL .
+
+5.3 SVM Process Rewards Enable Efficient Real-World RL for Robotic Control Policies 
+
+We next demonstrate that S VM scales to real-world robotic RL finetuning settings. For the pretrained policy, we train a multi-task diffusion policy on the BridgeData V2 dataset [ 87 ], which contains over 60,000 trajectories on a diverse set of tasks and scenes. Pick and Place Open Drawer Cover Knife 
+
+Figure 9: Visualization of real-world tasks on WidowX robotic arm. Pick and Place : pick up the corn and place it in the silver pot. Open Drawer : open the red drawer. Cover Knife with Cloth : lift the cloth and cover the knife. We run D SRL on three real-world tasks on the WidowX robotic arm: Pick and Place , Open Drawer , and Cover Knife with Cloth . Fig-ure 9 shows the scene setup and Figure 6 the RL finetuning results, where each point is averaged across 20 evaluation rollouts. Across all tasks, the SVM process reward substantially improves fine-tuning performance, enabling the policy to reach over 80% success within a much smaller number of environment steps than running RL with only the outcome reward and, on Pick and Place 
+
+and Open Drawer , enabling online improvement when training only on the outcome reward fails to learn. These results demonstrate the scalability of S VM rewards, and its utility in enabling efficient real-world robotic RL. 
+
+5.4 Finetuning VLAs with S VM Process Rewards 
+
+Next, we demonstrate that S VM can improve the efficiency of running RL finetuning on pretrained generalist policies. Here, we consider π0 [10 ], a 3.3B-parameter VLA with a VLM-based backbone and a flow-based action head. In particular, we use the publicly available LIBERO finetune of π0.Following [ 86 ], we consider RL finetuning on four LIBERO-90 tasks for which π0 achieves success in the 10-30% range—tasks that leave room for RL improvement—and compare running RL with SVM rewards to running RL with only outcome rewards. Figure 7 shows the finetuning performance of π0 with D SRL , aggregated across these tasks. We see that the S VM process reward again yields substantial gains in sample efficiency, requiring roughly 2× fewer environment steps to reach 90% 
+
+success, as compared to RL without reward shaping. 
+
+5.5 RL from Demonstrations with S VM Process Rewards 
+
+While we have focused primarily on the finetuning regime, here we seek to understand whether SVM rewards can also lead to improvement when running RL from scratch given a set of successful 80 1 2   
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate SVM (Ours)
+> DSRL-BC ̂
+> fsampling ̂
+> fmaximization Outcome Outcome
+
+Figure 10: Ablation of policy ex-traction approach. 0 1 2             
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate log( ̂f / (1 −̂f)) log( ̂f)log 1 /(1 −̂f)̂
+> f / (1 −̂f)̂
+> f
+> Outcome Outcome
+
+Figure 11: Ablation of func-tional form of S VM .0 2       
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate α= 0
+> α= 0 .25
+> α= 0 .5
+> α= 0 .75
+> α= 1 α= 1
+
+Figure 12: Ablation of % suc-cessful trajectories in D−.demonstrations. We focus on the Robomimic benchmark [ 57 ], in particular the Can and Square 
+
+tasks, and utilize R LPD [7] as the base algorithm. We provide 200 successful demonstrations, which are placed in the initial replay buffer. We compare RL performance with the S VM process reward to G AIL and RL on only the outcome reward. As noted previously, here we run G AIL exactly as described in Ho and Ermon [31] , utilizing the given demonstrations as positive examples and ignoring the outcome reward. For S VM , we utilize the demonstrations to initialize D+.Our results are given in Figure 8. We see that S VM leads to substantial gains over running RL on only the outcome reward, enabling the agent to successfully learn to solve the task. However, the performance of S VM is essentially identical to that of G AIL . We hypothesize that in this case, the rewards obtained by G AIL and S VM are approximately equivalent—since the RL policy is trained from scratch and starts with success rate of 0%, the discriminator learned by S VM and G AIL is trained on similar sets of positive and negative examples. Furthermore, due to the simplicity of the Robomimic 
+
+tasks, simply observing a handful of successful examples is likely sufficient to correctly classify a successful example without an outcome reward. Nonetheless, these results demonstrate that S VM 
+
+is an effective approach for reward shaping in RL regimes where we have access to demonstrations. 
+
+5.6 Understanding S VM Process Rewards 
+
+Finally, we ablate several of the key design choices in S VM and seek to understand how it leads to improved RL performance. Please see Section C.5 for additional ablations. 
+
+How can we most effectively extract a policy from bf ? Our approach utilizes the learned discrimina-tor bf to define a process reward that we then learn to maximize with RL. However, other approaches for extracting a policy from bf could be considered. Here we ablate our choice of policy extraction approach, and consider three alternate policy extraction approaches: • First, instead of running standard RL, we consider training a policy to maximize bf directly. In particular, rather than training the D SRL actor πDSRL to maximize a learned Q-function, we train it to maximize bf , thereby encouraging the actor to directly maximize the estimated probability of an action leading to a success. We refer to this approach as “ bf maximization”. • Second, we utilize bf to filter actions produced by the base policy πpre —at each step in deployment sampling N actions from πpre , and then executing the action with the maximum value of bf . We note that this strategy is quite similar to the approach proposed in Attarian et al. [6] , and we refer to it as “ bf sampling”. • Finally, rather than training a discriminator bf at all, we instead simply add a behavioral cloning term over D+ to the D SRL actor loss. This encourages the D SRL actor to increase the probability of re-producing the actions that were taken in D+ and led to success. We refer to this as “D SRL -BC”. For the first two approaches, we train bf as in Algorithm 1, but use the alternate approach to policy extraction described above in place of the RL training proposed in Algorithm 1. We compare these approaches to our proposed approach of running RL with the S VM process reward, and also compare to running RL with only the outcome reward, using D SRL as our RL algorithm. We illustrate our results on LIBERO Kitchen Scene 2 (all 7 tasks) in Figure 10. As these results illustrate, 9SVM GAIL -REWARD RND SORS SASR OUTCOME 
+
+Figure 13: State visitation heatmaps for different process reward methods at step 20000, estimated from 100 training trajectories. 
+
+Figure 14: S VM 
+
+reward at step 
+
+20 ,000 .running RL with S VM process rewards is significantly more effective than other approaches to policy extraction given bf or successful episodes. 
+
+How does the functional form of the process reward impact performance? SVM trains a discrim-inator bf to define the process reward log bf / (1 − bf ). While we show in Section 4 that this form of the reward corresponds to (a clipped version of) the KL-divergence between policy visitations, simply increasing bf itself should encourage the policy to visit states likely to be in successful trajectories. Given this, we ablate several monotone transformations of the discriminator probability bf to deter-mine whether the exact form is critical. Here we consider LIBERO Kitchen Scene 2 (all 7 tasks) and utilize D SRL as the RL algorithm. As shown in Figure 11, log bf / (1 − bf ) in general performs the best, yet all forms of process reward lead to significant gains over only maximizing outcome reward. 
+
+How does negative feedback impact S VM performance? While it is obvious that rewarding the learner for visiting states that are likely to lead to success (the bw+ term in (1) ) should mitigate the credit assignment problem, it is not immediately clear that penalizing the learner for visiting states in unsuccessful trajectories (the bw− term in (1) ) is necessary. Here we test whether this form of negative feedback is important to the performance of S VM rewards. To test this, rather than setting D− in (2) to only negative trajectories, we set it to include proportion α successful trajectories, and 1 − α
+
+unsuccessful trajectories. Thus, α interpolates between explicitly penalizing the learner for visiting states in unsuccessful trajectories, and simply encouraging the learner to visit positive states relative to a neutral baseline. We consider different choice of α, running on Robomimic Can in the RL from demonstrations setting of Section 5.5, and provide our results in Figure 12. As can be seen, negative feedback does significantly impact performance—the more the learner is penalized for visiting states in unsuccessful trajectories, the faster S VM rewards enable improvement. 
+
+Visualizing S VM process rewards. Finally, we seek to visualize the process reward obtained from SVM , and how the trajectories it induces behave. We consider the task Put the black bowl on the plate , which requires picking up the bowl at the center of the scene and setting it on the plate to the right. Figure 14 visualizes the estimated S VM reward at step 20 ,000 computed along several trajectories. We see that the learned reward assigns high values to state-action pairs that lead to correct behavior (moving the bowl in the center to the plate on the right): approaching the bowl is rewarded, whereas moving toward irrelevant objects (e.g., the drawer) is penalized. In Figure 13 we illustrate the state visitation heatmap, comparing S VM to the baseline reward shaping approaches and only training on outcome reward. We see that the visitations induced by S VM rapidly concentrate around regions corresponding to successful trajectories, while other approaches either lead to less focused trajectories (that visit successful regions but also visit unsuccessful regions), or trajectories that focus on unsuccessful regions. 
+
+## 6 Conclusion 
+
+In this work, we have shown that by augmenting a sparse outcome reward with a reward that incentivizes staying close to previous successful trajectories and avoiding previous unsuccessful tra-jectories, we can obtain much faster RL convergence without changing the optimal policy. A primary limitation of our theoretical contribution is the assumption that the environment is deterministic. While many environments of interest are deterministic, and our experimental results show that even in non-deterministic real-world settings our approach leads to large improvements, extending the theoretical results to non-deterministic settings is of interest. In addition, while we have focused primarily on robotic control settings, our approach could apply equally well to settings such as RLVR for LLMs, which is an interesting direction for future work. 10 Acknowledgments 
+
+This research was partly supported by DARPA ANSR, AFOSR FA9550-22-1-0273, and ONR N00014-25-1-2060. This research used the Savio computational cluster resource provided by the Berkeley Research Computing program at UC Berkeley. 
+
+## References 
+
+[1] Jacob Adamczyk, Volodymyr Makarenko, Stas Tiomkin, and Rahul V Kulkarni. Bootstrapped reward shaping. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 15302–15310, 2025. [2] Minttu Alakuijala, Reginald McLean, Isaac Woungang, Nariman Farsad, Samuel Kaski, Pekka Marttinen, and Kai Yuan. Video-language critic: Transferable reward functions for language-conditioned robotics. arXiv preprint arXiv:2405.19988 , 2024. [3] Ali Amin, Raichelle Aniceto, Ashwin Balakrishna, Kevin Black, Ken Conley, Grace Connors, James Darpinian, Karan Dhabalia, Jared DiCarlo, Danny Driess, et al. π∗
+
+> 0.6
+
+: a vla that learns from experience. arXiv preprint arXiv:2511.14759 , 2025. [4] OpenAI: Marcin Andrychowicz, Bowen Baker, Maciek Chociej, Rafal Jozefowicz, Bob Mc-Grew, Jakub Pachocki, Arthur Petron, Matthias Plappert, Glenn Powell, Alex Ray, et al. Learning dexterous in-hand manipulation. The International Journal of Robotics Research , 39(1):3–20, 2020. [5] Lars Ankile, Anthony Simeonov, Idan Shenfeld, Marcel Torne, and Pulkit Agrawal. From imitation to refinement-residual rl for precise assembly. In 2025 IEEE International Conference on Robotics and Automation (ICRA) , pages 01–08. IEEE, 2025. [6] Maria Attarian, Ian Vyse, Claas Voelcker, Jasper Gerigk, Evgenii Opryshko, Anas Almasri, Sumeet Singh, Yilun Du, and Igor Gilitschenski. Update-free on-policy steering via verifiers. 
+
+arXiv preprint arXiv:2603.10282 , 2026. [7] Philip J. Ball, Laura Smith, Ilya Kostrikov, and Sergey Levine. Efficient online reinforcement learning with offline data, 2023. URL https://arxiv.org/abs/2302.02948 .[8] Kate Baumli, Satinder Baveja, Feryal Behbahani, Harris Chan, Gheorghe Comanici, Sebastian Flennerhag, Maxime Gazeau, Kristian Holsheimer, Dan Horgan, Michael Laskin, et al. Vision-language models as a source of rewards. arXiv preprint arXiv:2312.09187 , 2023. [9] Johan Bjorck, Fernando Castañeda, Nikita Cherniadev, Xingye Da, Runyu Ding, Linxi Fan, Yu Fang, Dieter Fox, Fengyuan Hu, Spencer Huang, et al. Gr00t n1: An open foundation model for generalist humanoid robots. arXiv preprint arXiv:2503.14734 , 2025. [10] Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, et al. π0: A vision-language-action flow model for general robot control. arXiv preprint arXiv:2410.24164 , 2024. [11] Yuri Burda, Harrison Edwards, Amos Storkey, and Oleg Klimov. Exploration by random network distillation. arXiv preprint arXiv:1810.12894 , 2018. [12] Annie S Chen, Suraj Nair, and Chelsea Finn. Learning generalizable robotic reward functions from" in-the-wild" human videos. arXiv preprint arXiv:2103.16817 , 2021. [13] Qianzhong Chen, Justin Yu, Mac Schwager, Pieter Abbeel, Yide Shentu, and Philipp Wu. Sarm: Stage-aware reward modeling for long horizon robot manipulation. arXiv preprint arXiv:2509.25358 , 2025. [14] Yuhui Chen, Shuai Tian, Shugao Liu, Yingting Zhou, Haoran Li, and Dongbin Zhao. Con-rft: A reinforced fine-tuning method for vla models via consistency policy. arXiv preprint arXiv:2502.05450 , 2025. [15] Sanjiban Choudhury. Process reward models for llm agents: Practical framework and directions. 
+
+arXiv preprint arXiv:2502.10325 , 2025. 11 [16] Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei. Deep reinforcement learning from human preferences. Advances in neural information processing systems , 30, 2017. [17] Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Yuchen Zhang, Jiacheng Chen, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, et al. Process reinforcement through implicit rewards. 
+
+arXiv preprint arXiv:2502.01456 , 2025. [18] Sudeep Dasari, Oier Mees, Sebastian Zhao, Mohan Kumar Srirama, and Sergey Levine. The ingredients for robotic diffusion transformers, 2024. URL https://arxiv.org/abs/2410. 10088 .[19] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep bidirectional transformers for language understanding, 2019. URL https://arxiv.org/ abs/1810.04805 .[20] Perry Dong, Qiyang Li, Dorsa Sadigh, and Chelsea Finn. Expo: Stable reinforcement learning with expressive policies. arXiv preprint arXiv:2507.07986 , 2025. [21] Perry Dong, Suvir Mirchandani, Dorsa Sadigh, and Chelsea Finn. What matters for batch online reinforcement learning in robotics? arXiv preprint arXiv:2505.08078 , 2025. [22] Yuqing Du, Ksenia Konyushkova, Misha Denil, Akhil Raju, Jessica Landon, Felix Hill, Nando De Freitas, and Serkan Cabi. Vision-language models as success detectors. arXiv preprint arXiv:2303.07280 , 2023. [23] Ishan Durugkar, Mauricio Tec, Scott Niekum, and Peter Stone. Adversarial intrinsic motivation for reinforcement learning. Advances in Neural Information Processing Systems , 34:8622–8636, 2021. [24] Chelsea Finn, Paul Christiano, Pieter Abbeel, and Sergey Levine. A connection between generative adversarial networks, inverse reinforcement learning, and energy-based models. 
+
+arXiv preprint arXiv:1611.03852 , 2016. [25] Justin Fu, Katie Luo, and Sergey Levine. Learning robust rewards with adversarial inverse reinforcement learning. arXiv preprint arXiv:1710.11248 , 2017. [26] Justin Fu, Avi Singh, Dibya Ghosh, Larry Yang, and Sergey Levine. Variational inverse control with events: A general framework for data-driven reward definition. Advances in neural information processing systems , 31, 2018. [27] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. [28] Yanjiang Guo, Jianke Zhang, Xiaoyu Chen, Xiang Ji, Yen-Jen Wang, Yucheng Hu, and Jianyu Chen. Improving vision-language-action model with online reinforcement learning. arXiv preprint arXiv:2501.16664 , 2025. [29] Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In International conference on machine learning , pages 1861–1870. Pmlr, 2018. [30] Donald Joseph Hejna III and Dorsa Sadigh. Few-shot preference learning for human-in-the-loop rl. In Conference on Robot Learning , pages 2014–2025. PMLR, 2023. [31] Jonathan Ho and Stefano Ermon. Generative adversarial imitation learning. Advances in neural information processing systems , 29, 2016. [32] Jiaheng Hu, Rose Hendrix, Ali Farhadi, Aniruddha Kembhavi, Roberto Martín-Martín, Peter Stone, Kuo-Hao Zeng, and Kiana Ehsani. Flare: Achieving masterful and adaptive robot policies with large-scale reinforcement learning fine-tuning. In 2025 IEEE International Conference on Robotics and Automation (ICRA) , pages 3617–3624. IEEE, 2025. 12 [33] Tobias Johannink, Shikhar Bahl, Ashvin Nair, Jianlan Luo, Avinash Kumar, Matthias Loskyll, Juan Aparicio Ojea, Eugen Solowjow, and Sergey Levine. Residual reinforcement learning for robot control, 2018. URL https://arxiv.org/abs/1812.03201 .[34] Tobias Jülg, Wolfram Burgard, and Florian Walter. Refined policy distillation: From vla generalists to rl experts. arXiv preprint arXiv:2503.05833 , 2025. [35] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla: An open-source vision-language-action model. arXiv preprint arXiv:2406.09246 , 2024. [36] Olivia Y Lee, Annie Xie, Kuan Fang, Karl Pertsch, and Chelsea Finn. Affordance-guided reinforcement learning via visual prompting. arXiv preprint arXiv:2407.10341 , 2024. [37] Tony Lee, Andrew Wagenmaker, Karl Pertsch, Percy Liang, Sergey Levine, and Chelsea Finn. Roboreward: General-purpose vision-language reward models for robotics. arXiv preprint arXiv:2601.00675 , 2026. [38] Youngwoon Lee, Jingyun Yang, and Joseph J Lim. Learning to coordinate manipulation skills via skill behavior diversification. In International conference on learning representations , 2019. [39] Sergey Levine, Chelsea Finn, Trevor Darrell, and Pieter Abbeel. End-to-end training of deep visuomotor policies. Journal of Machine Learning Research , 17(39):1–40, 2016. [40] Sergey Levine, Peter Pastor, Alex Krizhevsky, Julian Ibarz, and Deirdre Quillen. Learning hand-eye coordination for robotic grasping with deep learning and large-scale data collection. 
+
+The International journal of robotics research , 37(4-5):421–436, 2018. [41] Kevin Li, Abhishek Gupta, Ashwin Reddy, Vitchyr H Pong, Aurick Zhou, Justin Yu, and Sergey Levine. Mural: Meta-learning uncertainty-aware rewards for outcome-driven reinforcement learning. In International conference on machine learning , pages 6346–6356. PMLR, 2021. [42] Anthony Liang, Yigit Korkmaz, Jiahui Zhang, Minyoung Hwang, Abrar Anwar, Sidhant Kaushik, Aditya Shah, Alex S Huang, Luke Zettlemoyer, Dieter Fox, et al. Robometer: Scaling general-purpose robotic reward models via trajectory comparisons. arXiv preprint arXiv:2603.02115 , 2026. [43] Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In The Twelfth International Conference on Learning Representations , 2023. [44] Bo Liu, Yifeng Zhu, Chongkai Gao, Yihao Feng, Qiang Liu, Yuke Zhu, and Peter Stone. Libero: Benchmarking knowledge transfer for lifelong robot learning, 2023. URL https: //arxiv.org/abs/2306.03310 .[45] Jijia Liu, Feng Gao, Bingwen Wei, Xinlei Chen, Qingmin Liao, Yi Wu, Chao Yu, and Yu Wang. What can rl bring to vla generalization? an empirical study. arXiv preprint arXiv:2505.19789 ,2025. [46] Guanxing Lu, Wenkai Guo, Chubin Zhang, Yuheng Zhou, Haonan Jiang, Zifeng Gao, Yansong Tang, and Ziwei Wang. Vla-rl: Towards masterful and general robotic manipulation with scalable reinforcement learning. arXiv preprint arXiv:2505.18719 , 2025. [47] Haipeng Luo, Qingfeng Sun, Can Xu, Pu Zhao, Jianguang Lou, Chongyang Tao, Xiubo Geng, Qingwei Lin, Shifeng Chen, and Dongmei Zhang. Wizardmath: Empowering mathematical rea-soning for large language models via reinforced evol-instruct. arXiv preprint arXiv:2308.09583 ,2023. [48] Jianlan Luo, Zheyuan Hu, Charles Xu, You Liang Tan, Jacob Berg, Archit Sharma, Stefan Schaal, Chelsea Finn, Abhishek Gupta, and Sergey Levine. Serl: A software suite for sample-efficient robotic reinforcement learning. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 16961–16969. IEEE, 2024. 13 [49] Jianlan Luo, Charles Xu, Jeffrey Wu, and Sergey Levine. Precise and dexterous robotic manip-ulation via human-in-the-loop reinforcement learning. Science Robotics , 10(105):eads5033, 2025. [50] Liangchen Luo, Yinxiao Liu, Rosanne Liu, Samrat Phatale, Meiqi Guo, Harsh Lara, Yunxuan Li, Lei Shu, Yun Zhu, Lei Meng, et al. Improve mathematical reasoning in language models by automated process supervision. arXiv preprint arXiv:2406.06592 , 2024. [51] Tung Minh Luu, Younghwan Lee, Donghoon Lee, Sunho Kim, Min Jun Kim, and Chang D Yoo. Enhancing rating-based reinforcement learning to effectively leverage feedback from large vision-language models. arXiv preprint arXiv:2506.12822 , 2025. [52] Haozhe Ma, Zhengding Luo, Thanh Vinh Vo, Kuankuan Sima, and Tze-Yun Leong. Highly effi-cient self-adaptive reward shaping for reinforcement learning. arXiv preprint arXiv:2408.03029 ,2024. [53] Haozhe Ma, Kuankuan Sima, Thanh Vinh Vo, Di Fu, and Tze-Yun Leong. Reward shaping for reinforcement learning with an assistant reward agent. In Forty-first international conference on machine learning , 2024. [54] Yecheng Jason Ma, Shagun Sodhani, Dinesh Jayaraman, Osbert Bastani, Vikash Kumar, and Amy Zhang. Vip: Towards universal visual reward and representation via value-implicit pre-training. arXiv preprint arXiv:2210.00030 , 2022. [55] Yecheng Jason Ma, Vikash Kumar, Amy Zhang, Osbert Bastani, and Dinesh Jayaraman. Liv: Language-image representations and rewards for robotic control. In International Conference on Machine Learning , pages 23301–23320. PMLR, 2023. [56] Yecheng Jason Ma, Joey Hejna, Chuyuan Fu, Dhruv Shah, Jacky Liang, Zhuo Xu, Sean Kirmani, Peng Xu, Danny Driess, Ted Xiao, et al. Vision language models are in-context value learners. In The Thirteenth International Conference on Learning Representations , 2024. [57] Ajay Mandlekar, Danfei Xu, Josiah Wong, Soroush Nasiriany, Chen Wang, Rohun Kulkarni, Li Fei-Fei, Silvio Savarese, Yuke Zhu, and Roberto Martín-Martín. What matters in learning from offline human demonstrations for robot manipulation, 2021. URL https://arxiv.org/ abs/2108.03298 .[58] Max Sobol Mark, Tian Gao, Georgia Gabriela Sampaio, Mohan Kumar Srirama, Archit Sharma, Chelsea Finn, and Aviral Kumar. Policy agnostic rl: Offline rl and online rl fine-tuning of any class and backbone. arXiv preprint arXiv:2412.06685 , 2024. [59] Farzan Memarian, Wonjoon Goo, Rudolf Lioutikov, Scott Niekum, and Ufuk Topcu. Self-supervised online reward shaping in sparse-reward environments. In 2021 IEEE/RSJ Interna-tional Conference on Intelligent Robots and Systems (IROS) , pages 2369–2375. IEEE, 2021. [60] Russell Mendonca, Emmanuel Panov, Bernadette Bucher, Jiuguang Wang, and Deepak Pathak. Continuously improving mobile manipulation with autonomous real-world rl. arXiv preprint arXiv:2409.20568 , 2024. [61] Mitsuhiko Nakamoto, Oier Mees, Aviral Kumar, and Sergey Levine. Steering your generalists: Improving robotic foundation models via value guidance. arXiv preprint arXiv:2410.13816 ,2024. [62] Soroush Nasiriany, Abhiram Maddukuri, Lance Zhang, Adeet Parikh, Aaron Lo, Abhishek Joshi, Ajay Mandlekar, and Yuke Zhu. Robocasa: Large-scale simulation of everyday tasks for generalist robots, 2024. URL https://arxiv.org/abs/2406.02523 .[63] Andrew Y Ng, Daishi Harada, and Stuart Russell. Policy invariance under reward transforma-tions: Theory and application to reward shaping. In Icml , volume 99, pages 278–287. Citeseer, 1999. [64] Ian Osband, Charles Blundell, Alexander Pritzel, and Benjamin Van Roy. Deep exploration via bootstrapped dqn. Advances in neural information processing systems , 29, 2016. 14 [65] Malayandi Palan, Nicholas C Landolfi, Gleb Shevchuk, and Dorsa Sadigh. Learning reward func-tions by integrating human demonstrations and preferences. arXiv preprint arXiv:1906.08928 ,2019. [66] Jongjin Park, Younggyo Seo, Jinwoo Shin, Honglak Lee, Pieter Abbeel, and Kimin Lee. Surf: Semi-supervised reward learning with data augmentation for feedback-efficient preference-based reinforcement learning. arXiv preprint arXiv:2203.10050 , 2022. [67] Deepak Pathak, Pulkit Agrawal, Alexei A Efros, and Trevor Darrell. Curiosity-driven exploration by self-supervised prediction. In International conference on machine learning , pages 2778– 2787. PMLR, 2017. [68] Yuxiao Qu, Matthew YR Yang, Amrith Setlur, Lewis Tunstall, Edward Emanuel Beeching, Ruslan Salakhutdinov, and Aviral Kumar. Optimizing test-time compute via meta reinforcement fine-tuning. arXiv preprint arXiv:2503.07572 , 2025. [69] Allen Z Ren, Justin Lidard, Lars L Ankile, Anthony Simeonov, Pulkit Agrawal, Anirudha Majumdar, Benjamin Burchfiel, Hongkai Dai, and Max Simchowitz. Diffusion policy policy optimization. arXiv preprint arXiv:2409.00588 , 2024. [70] Martin Riedmiller, Thomas Gabel, Roland Hafner, and Sascha Lange. Reinforcement learning for robot soccer. Autonomous Robots , 27(1):55–73, 2009. [71] Juan Rocamonde, Victoriano Montesinos, Elvis Nava, Ethan Perez, and David Lindner. Vision-language models are zero-shot reward models for reinforcement learning. arXiv preprint arXiv:2310.12921 , 2023. [72] Amrith Setlur, Chirag Nagpal, Adam Fisch, Xinyang Geng, Jacob Eisenstein, Rishabh Agarwal, Alekh Agarwal, Jonathan Berant, and Aviral Kumar. Rewarding progress: Scaling automated process verifiers for llm reasoning. arXiv preprint arXiv:2410.08146 , 2024. [73] Lin Shao, Toki Migimatsu, Qiang Zhang, Karen Yang, and Jeannette Bohg. Concept2robot: Learning manipulation concepts from instructions and human demonstrations. The International Journal of Robotics Research , 40(12-14):1419–1434, 2021. [74] Laura Smith, J Chase Kew, Xue Bin Peng, Sehoon Ha, Jie Tan, and Sergey Levine. Legged robots that keep on learning: Fine-tuning locomotion policies in the real world. In 2022 international conference on robotics and automation (ICRA) , pages 1593–1599. IEEE, 2022. [75] Laura Smith, Ilya Kostrikov, and Sergey Levine. A walk in the park: Learning to walk in 20 minutes with model-free reinforcement learning. arXiv preprint arXiv:2208.07860 , 2022. [76] Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling llm test-time compute opti-mally can be more effective than scaling model parameters. arXiv preprint arXiv:2408.03314 ,2024. [77] Sumedh Sontakke, Jesse Zhang, Séb Arnold, Karl Pertsch, Erdem Bıyık, Dorsa Sadigh, Chelsea Finn, and Laurent Itti. Roboclip: One demonstration is enough to learn robot policies. Advances in Neural Information Processing Systems , 36:55681–55693, 2023. [78] Bradly Stadie, Lunjun Zhang, and Jimmy Ba. Learning intrinsic rewards as a bi-level optimiza-tion problem. In Conference on Uncertainty in Artificial Intelligence , pages 111–120. PMLR, 2020. [79] Huajie Tan, Sixiang Chen, Yijie Xu, Zixiao Wang, Yuheng Ji, Cheng Chi, Yaoxu Lyu, Zhongxia Zhao, Xiansheng Chen, Peterson Co, Shaoxuan Xie, Guocai Yao, Pengwei Wang, Zhongyuan Wang, and Shanghang Zhang. Robo-dopamine: General process reward modeling for high-precision robotic manipulation. arXiv preprint arXiv:2512.23703 , 2025. [80] Haoran Tang, Rein Houthooft, Davis Foote, Adam Stooke, OpenAI Xi Chen, Yan Duan, John Schulman, Filip DeTurck, and Pieter Abbeel. # exploration: A study of count-based exploration for deep reinforcement learning. Advances in neural information processing systems , 30, 2017. 15 [81] Kimi Team, Angang Du, Bofei Gao, Bowei Xing, Changjiu Jiang, Cheng Chen, Cheng Li, Chenjun Xiao, Chenzhuang Du, Chonghua Liao, et al. Kimi k1. 5: Scaling reinforcement learning with llms. arXiv preprint arXiv:2501.12599 , 2025. [82] Octo Model Team, Dibya Ghosh, Homer Walke, Karl Pertsch, Kevin Black, Oier Mees, Sudeep Dasari, Joey Hejna, Tobias Kreiman, Charles Xu, et al. Octo: An open-source generalist robot policy. arXiv preprint arXiv:2405.12213 , 2024. [83] Alexander Trott, Stephan Zheng, Caiming Xiong, and Richard Socher. Keeping your dis-tance: Solving sparse reward tasks using self-balancing shaped rewards. Advances in Neural Information Processing Systems , 32, 2019. [84] Sreyas Venkataraman, Yufei Wang, Ziyu Wang, Navin Sriram Ravie, Zackory Erickson, and David Held. Real-world offline reinforcement learning from vision language model feedback. 
+
+arXiv preprint arXiv:2411.05273 , 2024. [85] David Venuto, Sami Nur Islam, Martin Klissarov, Doina Precup, Sherry Yang, and Ankit Anand. Code as reward: Empowering reinforcement learning with vlms. arXiv preprint arXiv:2402.04764 , 2024. [86] Andrew Wagenmaker, Mitsuhiko Nakamoto, Yunchu Zhang, Seohong Park, Waleed Yagoub, Anusha Nagabandi, Abhishek Gupta, and Sergey Levine. Steering your diffusion policy with latent space reinforcement learning. Conference on Robot Learning , 2025. [87] Homer Walke, Kevin Black, Abraham Lee, Moo Jin Kim, Max Du, Chongyi Zheng, Tony Zhao, Philippe Hansen-Estruch, Quan Vuong, Andre He, Vivek Myers, Kuan Fang, Chelsea Finn, and Sergey Levine. Bridgedata v2: A dataset for robot learning at scale, 2024. URL 
+
+https://arxiv.org/abs/2308.12952 .[88] Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Yu Wu, and Zhifang Sui. Math-shepherd: Verify and reinforce llms step-by-step without human annotations. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 9426–9439, 2024. [89] Yufei Wang, Zhanyi Sun, Jesse Zhang, Zhou Xian, Erdem Biyik, David Held, and Zackory Erickson. Rl-vlm-f: Reinforcement learning from vision language foundation model feedback. 
+
+arXiv preprint arXiv:2402.03681 , 2024. [90] Wenli Xiao, Haotian Lin, Andy Peng, Haoru Xue, Tairan He, Yuqi Xie, Fengyuan Hu, Jimmy Wu, Zhengyi Luo, Linxi Fan, et al. Self-improving vision-language-action models with data generation via residual rl. arXiv preprint arXiv:2511.00091 , 2025. [91] Daniel Yang, Davin Tjia, Jacob Berg, Dima Damen, Pulkit Agrawal, and Abhishek Gupta. Rank2reward: Learning shaped reward functions from passive video. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 2806–2813. IEEE, 2024. [92] Jingyun Yang, Max Sobol Mark, Brandon Vu, Archit Sharma, Jeannette Bohg, and Chelsea Finn. Robot fine-tuning made easy: Pre-training rewards and policies for autonomous real-world reinforcement learning. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 4804–4811. IEEE, 2024. [93] Lifan Yuan, Wendi Li, Huayu Chen, Ganqu Cui, Ning Ding, Kaiyan Zhang, Bowen Zhou, Zhiyuan Liu, and Hao Peng. Free process rewards without process labels. arXiv preprint arXiv:2412.01981 , 2024. [94] Xiu Yuan, Tongzhou Mu, Stone Tao, Yunhao Fang, Mengke Zhang, and Hao Su. Policy decora-tor: Model-agnostic online refinement for large policy model. arXiv preprint arXiv:2412.13630 ,2024. [95] Shaopeng Zhai, Qi Zhang, Tianyi Zhang, Fuxian Huang, Haoran Zhang, Ming Zhou, Shengzhe Zhang, Litao Liu, Sixu Lin, and Jiangmiao Pang. A vision-language-action-critic model for robotic real-world reinforcement learning. arXiv preprint arXiv:2509.15937 , 2025. 16 [96] Jiahui Zhang, Yusen Luo, Abrar Anwar, Sumedh Anand Sontakke, Joseph J Lim, Jesse Thoma-son, Erdem Biyik, and Jesse Zhang. Rewind: Language-guided rewards teach robot policies without new demonstrations. arXiv preprint arXiv:2505.10911 , 2025. [97] Zijian Zhang, Kaiyuan Zheng, Zhaorun Chen, Joel Jang, Yi Li, Siwei Han, Chaoqi Wang, Mingyu Ding, Dieter Fox, and Huaxiu Yao. Grape: Generalizing robot policy via preference alignment. arXiv preprint arXiv:2411.19309 , 2024. [98] Henry Zhu, Justin Yu, Abhishek Gupta, Dhruv Shah, Kristian Hartikainen, Avi Singh, Vikash Kumar, and Sergey Levine. The ingredients of real-world robotic reinforcement learning. arXiv preprint arXiv:2004.12570 , 2020. 17 A Additional Related Work 
+
+Process rewards for LLMs. With the recent success of the “RL with verifiable rewards” paradigm in language domains [ 27 , 81 ], significant attention has been given to designing process rewards in order to enable more efficient RL for LLM reasoning. Early works in this direction learn process reward from dense human or AI feedback [ 43 , 47 ]. More recently, works such as [ 93 , 17 ] learn “implicit” process rewards, by training an outcome reward model, and utilizing the log probabilities this induces as a dense reward signal. Most similar to our approach are works such as [ 76 , 50 , 88 , 72 , 15 , 68 ], which utilize a learned classifier or advantage function that models the future success probability from a given state, providing the learner with a signal of progress as a dense source of supervision. While conceptually similar to our approach, these approaches are not, in general, implementable in robotic settings, as they require the ability to roll out many episodes from each state to compute success probabilities; in robotic settings, where we cannot reset at will, such approaches cannot be instantiated. Furthermore, the functional form for the process reward these works propose differs significantly from our proposed reward and, as we show in the following, our form outperforms those proposed in the LLM literature. 
+
+## B Proof of Theorem 4.1 
+
+For Theorem 4.1, we make one additional modification to the environment definition. As stated in Section 3, if a state with rout (s) = 1 is reached, the environment transitions to a terminal state and remains there for the rest of the episode, getting a reward of 0. We denote this state as sterm and assume that sterm can only be transitioned to after a reward of 1 has been obtained, so that sterm is only reached on successful episodes. Note that an environment can be trivially modified to satisfy this criteria. We say an episode is “successful” if it has a reward of 1, and “unsuccessful” otherwise. Let 
+
+N + := |D+| and N − := |D−| the number of successful and unsuccessful episodes, respectively, and 
+
+N + 
+
+> h
+
+(s, a ) := P
+
+> (s′,a ′)∈D+
+> h
+
+I{s′ = s, a ′ = a} (similarly N − 
+
+> h
+
+(s, a )). Given this notation, the reward stated in Theorem 4.1 can be rewritten as: 
+
+rsvm  
+
+> h
+
+(s, a ) := rout (s) + λ · clip 
+
+
+
+log N + 
+
+> h
+
+(s, a )/N +
+
+N − 
+
+> h
+
+(s, a )/N − , β 
+
+
+
+for some λ, β > 0. We also adopt the convention that log 0 /0 = −∞ . For notational convenience, we say an episode starts at h = 1 and finishes at h = H. We say that (s, h ) is “success reachable” if there exists some s′ with rout (s′) = 1 such that s′ can be reached from s in at most H − h steps. 
+
+Proof of Theorem 4.1. Let eV denote the value function under rsvm (that is, eVh(s) =
+
+Eπ [PHh′=h rsvm  
+
+> h
+
+(sh, a h)] ). To show this result, we aim to show that for any (s, h ), for h ∈{1, . . . , H }, any policy that maximizes rsvm from (s, h ) will also maximize rout . We consider two cases, and assume that s̸ = sterm for simplicity, since if s = sterm by assumption the episode has already succeeded so the actions that the policy plays do not affect its optimality. 
+
+Case 1: (s, h ) is not success reachable. If (s, h ) is not success reachable and s̸ = sterm , then it is not possible to reach a successful state from (s, h ), by the definition of success reachability. Thus, any policy achieves the same outcome reward from (s, h ), so its trivially true that a policy maximizing rsvm from (s, h ) also maximizes rout .Furthermore, no successful state would have been reached before (s, h ) (since all successful states immediately transition to sterm and remain there). Thus, N + 
+
+> h
+
+(s, a ) = 0 The definition of success reachability also implies rout (s) = 0 . Thus, rsvm  
+
+> h
+
+(s) = −λβ (using the convention that log 0 /0 = 
+
+−∞ to handle the case when N − 
+
+> h
+
+(s) = 0 ). By the definition of success reachability, once we are in (s, h ) that is not success reachable and s̸ = sterm , then we will be in states that are not success reachable for all subsequent steps in the episode. Altogether this implies that, if we are in (s, h ) that is not success reachable and s̸ = sterm , then we will have eV πh (s) = −λβ (H − h + 1) for all π.
+
+Case 2: (s, h ) is success reachable. Consider some (s, h ) that is success reachable. We now prove by backward induction that any trajectory starting from (s, h ) that maximizes rsvm must be successful 18 (reach a state with rout (s) = 1 ). For the base case, with h = H, by definition of success reachability 
+
+rout (s) = 1 , so the trajectory is successful. Assume now that for all (s, h + 1) that are success reachable, any trajectory starting from (s, h + 1) 
+
+that maximizes rsvm is successful. Consider some (s, h ) that is success reachable. By definition of success reachability, either rout (s) = 1 , or there exists some a+ such that for s′ = P (s, a +),
+
+(s′, h + 1) is success reachable. In the former case we are already done since the trajectory is already successful, so assume we are in the latter case. By the inductive assumption, any trajectory starting from (s′, h + 1) which maximizes rsvm succeeds. Thus, since rsvm  
+
+> h
+
+(s) ≥ − λβ , and we will visit a successful state in the episode, any trajectory maximizing rsvm that starts from (s′, h + 1) must have reward at least 1 − λβ (H − h). Consider some a such that s′′ = P (s, a ) is not success reachable. As shown above, eV πh+1 (s′′ ) = −λβ (H − h) for any π. Thus, taking action a+ and then playing a policy that maximizes rsvm will lead to a reward of at least 1 − λβ (H − h), while taking an action a
+
+that leads to a state which is not success reachable will lead to a reward of −λβ (H − h).It follows that either rout (s) = 1 , or any policy that maximizes rsvm from (s, h ) must take an action that ensures the next state is also success reachable. By the inductive assumption, for all (s, h + 1) 
+
+that are success reachable, any trajectory starting from (s, h + 1) that maximizes rsvm is successful. It follows that any trajectory that maximizes rsvm from (s, h ) is successful, which proves the inductive hypothesis. 
+
+Concluding the proof. Thus, if (s, 1) is success reachable, any trajectory maximizing rsvm from 
+
+(s, 1) succeeds. Under the original outcome reward, this trajectory achieves a reward of 1. As this is the maximum possible reward, it follows that any trajectory maximizing rsvm from (s, 1) maximizes the original outcome reward. This proves the result. 
+
+## C Additional Experimental Results 
+
+In this section we provide additional experimental results, including base policy success rates, individual per-task learning curves, and additional ablations. See Figure 15 for a visualization of all simulated experimental environments we consider. 
+
+Figure 15: Robomimic , LIBERO , and Robocasa scenes. 
+
+C.1 Additional information on LIBERO tasks 
+
+For our D SRL and R ESIDUAL RL experiments, we evaluate on LIBERO Kitchen Scene 1–3 ,covering tasks 6–21 . Specifically, Scene 1 contains tasks 6–10 , Scene 2 contains tasks 11 –17 , and Scene 3 contains tasks 18 –21 . We also provide the initial success rate of the diffusion transformer base policy and the π0 base policy used in our experiments in Table 1 and 2. Task ID 6 7 8 9 10 11 12 13 Success Rate 0.05 0.52 0.40 0.10 0.20 0.32 0.02 0.08 Task ID 14 15 16 17 18 19 20 21 Success Rate 0.01 0.03 0.22 0.02 0.44 0.15 0.55 0.26 Table 1: Average success rate of the base policy before RL finetuning on each LIBERO task. 19 Task ID 20 22 38 79 Success Rate 0.30 0.30 0.10 0.10 Table 2: Average success rate of the π0 base policy before RL finetuning on each LIBERO task. 
+
+C.2 Individual results for DSRL and Residual RL on Libero 
+
+We provide the individual task results for D SRL and R ESIDUAL RL on Libero Kitchen Scene 1-3 
+
+in Figure 16 and 17. Colors correspond to the same methods as in the main text. SVM (Ours) Gail-Reward Rnd Sors Sasr Gvl Outcome 0 1 2 
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0 Success Rate
+
+Task 6 0 1 2 
+
+> Timesteps ×10 5
+
+Task 7 0 1 2 
+
+> Timesteps ×10 5
+
+Task 8 0 1 2 
+
+> Timesteps ×10 5
+
+Task 9 0 1 2 
+
+> Timesteps ×10 5
+
+Task 10 0 1 2 
+
+> Timesteps ×10 5
+
+Task 11 0 1 2 
+
+> Timesteps ×10 5
+
+Task 12 0 1 2 
+
+> Timesteps ×10 5
+
+Task 13 0 1 2 
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0 Success Rate
+
+Task 14 0 1 2 
+
+> Timesteps ×10 5
+
+Task 15 0 1 2 
+
+> Timesteps ×10 5
+
+Task 16 0 1 2 
+
+> Timesteps ×10 5
+
+Task 17 0 1 2 
+
+> Timesteps ×10 5
+
+Task 18 0 1 2 
+
+> Timesteps ×10 5
+
+Task 19 0 1 2 
+
+> Timesteps ×10 5
+
+Task 20 0 1 2 
+
+> Timesteps ×10 5
+
+Task 21 
+
+Figure 16: Per-task results of RL finetuning with D SRL and S VM process reward on LIBERO Kitchen Scene 1–3 .SVM (Ours) Gail-Reward Rnd Sors Sasr Gvl Outcome 0 1 2 
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0
+> Success Rate
+
+Task 6 0 1 2 
+
+> Timesteps ×10 5
+
+Task 7 0 1 2 
+
+> Timesteps ×10 5
+
+Task 8 0 1 2 
+
+> Timesteps ×10 5
+
+Task 9 0 1 2 
+
+> Timesteps ×10 5
+
+Task 10 0 1 2 
+
+> Timesteps ×10 5
+
+Task 11 0 1 2 
+
+> Timesteps ×10 5
+
+Task 12 0 1 2 
+
+> Timesteps ×10 5
+
+Task 13 0 1 2 
+
+> Timesteps ×10 5
+> 0.0
+> 0.5
+> 1.0
+> Success Rate
+
+Task 14 0 1 2 
+
+> Timesteps ×10 5
+
+Task 15 0 1 2 
+
+> Timesteps ×10 5
+
+Task 16 0 1 2 
+
+> Timesteps ×10 5
+
+Task 17 0 1 2 
+
+> Timesteps ×10 5
+
+Task 18 0 1 2 
+
+> Timesteps ×10 5
+
+Task 19 0 1 2 
+
+> Timesteps ×10 5
+
+Task 20 0 1 2 
+
+> Timesteps ×10 5
+
+Task 21 
+
+Figure 17: Per-task results of RL finetuning with R ESIDUAL RL and S VM process reward on LIBERO Kitchen Scene 1–3 .
+
+C.3 Individual results for Residual RL on Robocasa SVM (Ours) Gail-Reward Rnd Sors Sasr Gvl Outcome 0.0 2.5 5.0
+
+Timesteps ×10 4
+
+0.0 
+
+0.5 
+
+1.0 Success Rate 
+
+Banana 0.0 2.5 5.0
+
+Timesteps ×10 4
+
+Mushroom 0.0 2.5 5.0
+
+Timesteps ×10 4
+
+Tomato 
+
+Figure 18: Per task results for RL finetuning with R ESIDUAL RL and SVM process reward on 
+
+RoboCasa 
+
+20 C.4 Individual Results for π0 Experiments 0.0 0.5 1.0 1.5 2.0                
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate
+> Task 20
+> SVM (Ours)
+> Outcome 0.00.51.01.52.0
+> Timesteps ×10 5
+> Task 22 0.00.51.01.52.0
+> Timesteps ×10 5
+> Task 38 0.00.51.01.52.0
+> Timesteps ×10 5
+> Task 79
+
+Figure 19: Per task results for RL finetuning of π0 with D SRL and S VM process reward on LIBERO 
+
+C.5 Additional Ablation Results 
+
+Here we provide several additional ablations of design choices for S VM process rewards. Unless otherwise stated, the experiments reported here are averaged over tasks from LIBERO Kitchen Scene 2 .
+
+How can we most effectively extract a policy from bf ? We provide additional results for this ablation on LIBERO Kitchen Scene 1-3 in Figure 20. For each approach, we train the discriminator bf
+
+online. We describe the ablated policy extraction methods below. • bf -MAXIMIZATION : We train the policy to directly maximize the discriminator score, 
+
+max  
+
+> π
+
+E(s,a )∼π
+
+h bf (s, a )
+
+i
+
+instead of learning a separate Q function. • bf -SAMPLING : During evaluation, at each step, we sample K = 64 candidate actions from the policy and execute the action with the highest discriminator score. We swept over 
+
+K ∈ { 8, 32 , 64 , 128 } and found that K ≥ 64 generally performs well. • DSRL +BC: We train the policy using the standard D SRL objective with an additional behavior cloning regularizer: 
+
+max  
+
+> π
+
+E(s,a )∼π [Q(s, a )] + λE(s,a )∼D+ [log π(a | s)] 
+
+Here, λ controls the strength of the behavior cloning regularization. We swept over λ ∈{0.25 , 0.5, 0.75 , 1, 2, 3, 10 , 30 } and found that the method does not perform well across a wide range of values. We report results with λ = 1 .0 1 2 
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate
+
+LIBERO Scene 1 0 1 2 
+
+> Timesteps ×10 5
+
+LIBERO Scene 2 0 1 2 
+
+> Timesteps ×10 5
+
+LIBERO Scene 3 SVM (Ours)   
+
+> DSRL-BC ̂
+> fsampling ̂
+> fmaximization Outcome Outcome
+
+Figure 20: Ablation of policy extraction approach on LIBERO Kitchen Scene 1-3 .
+
+How does the functional form of the process reward impact performance? We provide additional ablation results for R ESIDUAL RL in Figure 21. In particular, we note that while the current form bears a close relationship to KL-regularized RL and adversarial imitation learning, Theorem 4.1 remains true for a variety of monotonic transformations of the visitation probabilities. Figure 21 illustrates the performance of RL with various transformations of bf , the discriminator score. We see in particular that, while many such transformations do lead to improved performance over only outcome rewards, the specific form of S VM , log bf / (1 − bf ) leads to the most consistently effective performance. 
+
+Does S VM require timestep conditioning? Our theoretical analysis motivates conditioning the classifier on the timestep h. Here we explore whether this impacts performance in practice. We 21 0 1 2                
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success Rate 012
+> Timesteps ×10 5log( ̂f / (1 −̂f)) log( ̂f)log 1 /(1 −̂f)̂
+> f / (1 −̂f)̂
+> f
+> Outcome Outcome
+
+Figure 21: Aggregated success rates for D SRL (Left) and R ESIDUAL RL (Right) using different monotone transformations of the predicted success probability bf .0 1 2 
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success No Timestep Conditioning
+> Timestep Conditioning
+> Outcome Outcome
+
+Figure 22: Timestep conditioning with D SRL .illustrate S VM with and without timestep conditioning in Figure 22, and see that timestep conditioning does not on average improve performance. 
+
+Does S VM require symmetric sampling? Our theory in Section 4 suggests that to train the discriminator bf we should sample symmetrically from D+ and D−. If we instead rely on asymmetric sampling, where we sample from D+ and D− proportional to their size, the learned bf instead corresponds, effectively, to a Q-function. Here we evaluate whether S VM is sensitive to the form of sampling. As shown in Figure 23, symmetric sampling yields on average slightly higher aggregate performance. However, while the aggregate performance difference is not substantial, on 3/7 tasks in Kitchen Scene 2 , we find that symmetric sampling is essential to achieving effective RL improvement and, furthermore, see a larger aggregate gap between symmetric and asymmetric sampling when using R ESIDUAL RL as opposed to D SRL . Thus, using a “discriminator” as opposed to a Q-function to shape the reward is in general important for achieving the best performance. 0 1 2   
+
+> Timesteps ×10 5
+> 0
+> 0.5
+> 1.0 Success 012Timesteps Symmetric
+> Asymmetric
+> Outcome Outcome
+
+Figure 23: Symmetric sampling ablation with D SRL (Left) and R ESIDUAL RL (Right). 
+
+## D Experimental Details 
+
+Finally, we provide additional experimental details on each approach we consider. 
+
+D.1 Details of Libero Experiments Base Policy Training. We instantiate the base policy πpre as a diffusion transformer policy [ 18 ]. The policy is pretrained via behavioral cloning on the full LIBERO-90 dataset. For task conditioning, we use BERT language embeddings [ 19 ] of the task descriptions. The hyperparameters used for base policy pretraining are reported in Table 3. 
+
+DSRL Implementation. For D SRL , we use the official implementation from [ 86 ], specifically the DSRL-SAC algorithm. The noise policy πDSRL (z | s) is trained using the standard SAC algorithm, performing k gradient steps per training update. We additionally constrain the noise action magnitude 
+
+bW by clipping each output dimension of πDSRL (z | s) to the interval [−bW , b W ].22 Residual RL Implementation. For R ESIDUAL RL, the residual policy πres is also trained using SAC [29 ], likewise performing k gradient steps per training update. The residual policy is conditioned on both the observation s and the base policy action a0. The final action executed in the environment is given by a = a0 + γ · πres (s, a 0), with γ controlling the residual scale. Prior to the main experiments, we perform a hyperparameter sweep over the number of gradient steps 
+
+k, the process reward scale λ, and the action magnitude bW for D SRL , as well as the residual scale γ
+
+for R ESIDUAL RL. We observe comparable performance across D SRL and R ESIDUAL RL for the shared hyperparameters, and therefore use the same set of values for both methods. We evaluate S VM 
+
+on Kitchen Scene 1-3 , and for each task we use the same set of hyperparameters. The full set of hyperparameters used for D SRL and R ESIDUAL RL is reported in Table 4. 
+
+Discriminator Implementation. We parameterize the discriminator bf as a three-layer MLP with hidden size 256 . The discriminator takes as input the image representations extracted by the ResNet encoder of the pretrained diffusion policy, concatenated with the actions. The discriminator is updated 
+
+K times every T environment steps using the Adam optimizer with a learning rate of 10 −4. The discriminator training hyperparameters are reported in Table 5. Table 3: Base policy pretraining hyperparameter for LIBERO experiments. 
+
+Hyperparameter Value Batch size 150 
+
+Learning rate 0.0003 
+
+Training steps 50000 
+
+LR scheduler cosine Warmup steps 2000 
+
+Action chunk size 4
+
+Train denoising steps 100 
+
+Inference denoising steps 8
+
+Image encoder ResNet-18 Hidden size 256 
+
+Number of Heads 8
+
+Number of Layers 4
+
+Feedforward dimension 512 
+
+Token dimension 256 
+
+Table 4: DSRL and R ESIDUAL RL hyperparameter for LIBERO experiments. 
+
+Hyperparameter Value 
+
+Learning rate 0.0003 
+
+Batch size 256 
+
+Activation Tanh Target entropy 0
+
+Target update rate ( τ ) 0.005 
+
+Number of actor and critic layers 3
+
+Layer size 1024 
+
+Number of critics 2
+
+Number of environments 1
+
+Gradient steps per update k 20 
+
+Discount factor 0.99 
+
+Initial episode rollouts N0 20 
+
+Reward clipping ¯r 20 
+
+Reward scale λ 0.05 
+
+(D SRL ) Action magnitude bW 1.5
+
+(R ESIDUAL RL) Residual scale γ 0.01 
+
+For all baseline methods except SASR, we parameterize the reward model using the same architecture as our discriminator and update it at the same frequency during training and used the same training hyperparameters reported in Table 5. Similar to S VM , the reward model takes as input the image 23 Table 5: Discriminator hyperparameter for LIBERO experiments.            
+
+> Hyperparameter Value
+> Number of layers 3
+> Layer size 256
+> Batch size 64
+> Learning rate 10 −4
+> Activation ReLU Optimizer Adam Gradient steps per update K32
+> Update frequency T1000
+
+representations extracted by the ResNet encoder of the pretrained diffusion policy. Prior to the main experiments, we sweep the reward scale for each baseline over the range {0.05 , 0.1, 0.15 , 0.2} for SVM , SORS, RND, and GAIL-R EWARD , and over the range {0.25 , 0.5, 0.75 , 1} for SASR. We find that a reward scale of 0.05 generally performs best (or yields no significant difference) for the former methods, while a reward scale of 0.5 works best for SASR. We detail the implementation of each baseline below. • SORS: For each trajectory τ , let R(τ ) denote its discounted return. We train the reward model using the Bradley-Terry preference objective. For trajectory pairs (τi, τ j ) ∼ D with preference label y = I[R(τi) > R (τj )] , we minimize 
+
+L(f ) = E(τi,τ j )∼D 
+
+h
+
+− y log σ(R(τi) − R(τj )) − (1 − y) log σ(R(τj ) − R(τi)) 
+
+i
+
+.
+
+• SASR: We used the publicly available implementation of Ma et al. [ 52 ], using random Fourier features to approximate the Gaussian kernel, with a retention rate of 0.1 and a KDE bandwidth of 1.• RND: We instantiate a frozen target network and a trainable predictor network, both following the architecture and update frequency specified in Table 5. • GAIL-R EWARD : We implement GAIL-R EWARD using the same discriminator architecture and training procedure as S VM , differing only in the sampling strategy used to construct positive and negative examples. 
+
+D.2 Details of RoboCasa Experiments Base Policy Training. We instantiate the base policy πpre as a BC-Transformer policy with a GMM output head, pretrained via behavioral cloning on the PnPCounterToCab task using 50 
+
+demonstrations from the RoboCasa dataset. We use the hyperparameters provided by their codebase without modification [62]. 
+
+Residual RL Implementation. We use the same R ESIDUAL RL implementation as in Section D.1. Before running the main experiments, we perform a hyperparameter sweep over the number of gradient steps k, the process reward scale λ, and the residual scale γ. Unless otherwise stated, we use the same hyperparameters as in Table 4, except that the residual scale is set to 0.1.
+
+Discriminator Implementation. We adopt the same discriminator architecture as in Section D.1. The discriminator takes as input the concatenation of the image and proprioceptive representations from the last timestep of the BC transformer’s context, the base policy action, and the residual action. We use the same training hyperparameters as before, reported in Table 5. 
+
+D.3 Details of π0 Experiments 
+
+We use the public checkpoint s3://openpi-assets/checkpoints/pi0_libero for our π0 exper-iments and select four tasks for which the base policy has a nonzero success rate: Task 20 , Task 22 ,
+
+Task 38 , and Task 79 . The scene setup and task description for these tasks is shown in Figure 24. 24 Discriminator Implementation. For the π0 experiments, we adopt an image-based discriminator. We experiment with two discriminator architectures: a CNN-based model and a pretrained ResNet-based model. We find that the CNN-based architecture generally performs better across most tasks, and therefore use it for all subsequent experiments. The CNN-based discriminator consists of three convolutional blocks with channel dimensions of 
+
+64 , 128 , and 256 . Each block applies a convolution followed by batch normalization and a ReLU activation. The final feature map is projected to a 512 -dimensional embedding, which is concatenated with the action and passed to a three-layer MLP. We additionally sweep the update frequency T and the reward scale λ, and find that T = 100 and λ = 0 .1 work best for most tasks. We report the hyperparameters for the discriminator and D SRL in Tables 6 and 7, respectively. 
+
+Figure 24: Selected tasks for π0 experiments. Task 20: Turn on the stove , Task 22: Close the bottom drawer of the cabinet , Task 38: Put the right moka pot on the stove , Task 79: pick up the book and place it in the left compartment of the caddy .Table 6: Discriminator hyperparameter for LIBERO π0 experiments          
+
+> Hyperparameter Value
+> Batch size 64
+> Learning rate 10 −4
+> Activation ReLU Optimizer Adam Gradient steps per update K8
+> Update frequency T100
+
+Table 7: DSRL hyperparameter for LIBERO π0 experiments           
+
+> Hyperparameter Value
+> Number of critics 10
+> Gradient steps per update 20
+> Discount factor 0.99
+> Action Magnitude bW2
+> Reward Scale λ0.1
+> Initial episode rollouts N020
+
+D.4 Details of Real World Experiments 
+
+For our real-world experiments, we select three tasks: • Pick and Place : The goal is to pick up the corn and place it into the silver pot. • Open Drawer : The goal is to open the red drawer. • Cover Knife with Cloth task: The goal is to cover the knife on the table with the cloth. For each task, we use a sparse 0–1 reward and employ D SRL as the fine-tuning algorithm. The hyperparameters used for D SRL training are reported in Table 8. 25 Base Policy Training. In the WidowX experiments, we again use a diffusion transformer architecture for the base policy [ 18 ]. The policy is pretrained on the BridgeData V2 dataset with image-based goal conditioning. The pretraining hyperparameters are provided in Table 9. 
+
+Discriminator Implementation. For the real-world experiments, the discriminator follows the same architecture as in the Libero experiments (Table 5). The remaining discriminator training hyperparameters are listed in Table 8. Table 8: DSRL hyperparameter for WidowX experiments. 
+
+Hyperparameter Value 
+
+Hidden size 1024 
+
+Gradient steps per update 30 
+
+Discount factor 0.97 
+
+Action Magnitude 2
+
+Reward clipping ¯r 20 
+
+Reward scale λ 0.1
+
+Initial episode rollouts N0 20 
+
+Table 9: Base policy pretraining hyperparameters for WidowX experiments. 
+
+Hyperparameter Value 
+
+Batch size 2048 
+
+Learning rate 0.0003 
+
+Training steps 100000 
+
+LR scheduler cosine Warmup steps 2000 
+
+Action chunk size 1
+
+Training denoising steps 100 
+
+Inference denoising steps 8
+
+Image encoder ResNet-34 Hidden size 256 
+
+Number of heads 1
+
+Number of layers 3
+
+Feedforward dimension 512 
+
+Table 10: Discriminator hyperparameter for WidowX experiments. 
+
+Hyperparameter Value 
+
+Number of layers 3
+
+Layer size 1024 
+
+Batch size 64 
+
+Learning rate 10 −4
+
+Activation ReLU Optimizer Adam Gradient steps per update K 8Update frequency T 100 
+
+D.5 Details of Robomimic Experiments 
+
+For Robomimic experiments we follow the RLPD implementation in the SERL codebase [ 48 ]. We initialize the buffer with the full set of proficient human demonstrations, which consists of 200 
+
+trajectories. 
+
+Discriminator Implementation. Similar to Section D.1, the discriminator consists of a three-layer MLP that takes state observations and actions as input. We use the same hyperparameter 26 configuration as S VM , as shown in Table 5. GAIL uses the same hyperparameters and differs only in the composition of the training dataset, and does not incorporate the outcome reward. The full set of hyperparameters is provided in Table 11. Table 11: RLPD hyperparameters for Robomimic experiments.               
+
+> Hyperparameter Value
+> Learning rate 0.0003
+> Batch size 64
+> Target update rate ( τ)0.005
+> Critic to actor ratio 4
+> Number of critics 2
+> Number of environments 1
+> Gradient steps per update 30
+> Discount factor 0.99
+> Reward clipping ¯r20
+> Reward scale λ0.1
+
+D.6 Details of Ablation Experiments 
+
+For all ablation experiments, we follow the same hyperparameter setup as described in Section D. 
+
+D.7 Details of Compute Resource 
+
+For the simulation experiments on LIBERO , RoboCasa , and Robomimic , we use NVIDIA RTX A5000 24GB GPU, four CPU cores, and 60GB of CPU memory. Both the D SRL and R ESIDUAL RL experiments take approximately 10 hours of wall-clock time to complete per training run. For the real-world experiments, we run each experiment on an NVIDIA GeForce RTX 4090 GPU, taking approximately 1–1.5 hours to complete. 27

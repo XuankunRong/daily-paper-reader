@@ -1,0 +1,383 @@
+Title: Hypothesis-Driven Skill Optimization for LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.22330v1
+
+Published Time: Tue, 23 Jun 2026 02:22:00 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Hypothesis-Driven Skill Optimization for LLM Agents 
+
+Shang Fangxin 1 and Yehui Yang 1
+
+> 1AI Lab, Qifu Technology, Beijing, China
+
+External skills can improve action-oriented LLM agents without changing model weights, but persistent skill updates are risky when they are distilled from sparse or noisy trajectories. A plausible reflection may encode a useful procedure, a spurious shortcut, or a rule that the target executor cannot reliably follow. We propose Hypothesis-Driven Skill Optimization ( HDSO ), a train-free framework in which both the skill curator and the agent executor are frozen inference endpoints. The curator observes executor traces, proposes a falsifiable hypothesis with an explicit validation plan, instantiates the hypothesis as a candidate skill package, validates the package through paired control/treatment executions, reviews behavior differences, and consolidates only supported candidates into an approved repository. The executor consumes approved skills through progressive disclosure, preserving the executor-only path when no skill is selected. On ALFWorld, HDSO improves executor-only baselines by +6.9 Avg. SR points for Qwen3-8B and +4.0 points for Qwen3.6-27B. Under 20% randomly flipped success/failure feedback during skill discovery and validation, HDSO preserves a +7.1-point gain for Qwen3-8B. Transfer and heterogeneous-pair diagnostics further show that validated repositories can be useful beyond the run that produced them, but cross-model curation succeeds only when curator diagnosis, executor capability, and validation evidence align. HDSO provides an auditable skill lifecycle for frozen action agents rather than an unconstrained memory accumulation procedure. 
+
+## 1. Introduction 
+
+LLM agents are increasingly deployed as long-running systems that interact with environments, call tools, and face recurring task patterns. In action-oriented settings, many failures are procedural: the executor repeats an unproductive search, chooses an invalid action format, uses an object before satisfying a precondition, or fails to apply a known state transformation. A natural way to improve such agents without changing model weights is to maintain external skills: reusable procedures, invocation rules, output repairs, or small deterministic helpers that can be inspected and revised. This is attractive in private or enterprise deployments where the serving model is fixed because of cost, compliance, latency, or vendor constraints. The central difficulty is not writing a skill, but deciding when a written skill should become durable agent knowledge. A failed trajectory may reflect a missing domain rule, weak exploration, an invalid action format, a poor invocation condition, an executor limitation, or unreliable success/failure feedback. If every reflection is appended to the prompt, the repository can accumulate over-general and contradictory rules. If skill optimization requires training a curator model, the approach becomes harder to deploy in inference-only settings. We argue that persistent skill updates should be treated as hypotheses. A candidate skill should state what behavior it is expected to change, when it applies, what evidence motivated it, what risks it introduces, and what observations would falsify it. The system should then test the candidate prospectively: compare the current repository against the repository plus the candidate on matched tasks, inspect behavior differences, and promote the candidate only when the evidence supports the proposed mechanism. 
+
+> Main contact: Yehui Yang, Contact: yangyehuisw@126.com
+> arXiv:2606.22330v1 [cs.AI] 21 Jun 2026 Hypothesis-Driven Skill Optimization for LLM Agents
+
+Figure 1 | HDSO overview. Online execution uses a frozen executor and records task inputs, obser-vations, actions, and outcomes. Offline optimization is controlled by a frozen curator that observes traces, proposes falsifiable skill hypotheses, validates them through paired control/treatment ex-ecutions, and reviews the resulting behavior differences. Only approved skills enter the runtime repository; rejected hypotheses remain as auditable negative evidence. We instantiate this idea as Hypothesis-Driven Skill Optimization ( HDSO ), summarized in Figure 1. 
+
+HDSO decouples a frozen skill curator from a frozen agent executor . The curator observes compact executor traces and outcome feedback, proposes structured hypotheses, validates candidate skills by paired execution, reviews behavior differences, and maintains a hypothesis ledger. The executor consumes approved skills through progressive disclosure: it first sees compact skill cards and requests full details only when a skill appears relevant. When no skill is available or selected, the executor uses the same action loop as the executor-only baseline. The train-free design targets a practical operating mode. A deployed executor can serve tasks online, while logs are used asynchronously to improve an external skill repository during low-load periods. The update does not require fine-tuning, reward-model training, or modifying the serving endpoint. It produces artifacts that can be audited: approved skills, rejected hypotheses, validation pairs, and failure attributions. The paper makes three contributions. 1. We formulate persistent skill updates as a hypothesis lifecycle that separates observation, proposal, validation, review, consolidation, and rejection. 2. We instantiate this lifecycle in a train-free curator-executor framework with paired validation and progressive skill disclosure; both curator and executor parameters remain fixed. 3. We evaluate HDSO on ALFWorld, showing positive gains over executor-only baselines, robust-ness under noisy success/failure feedback during discovery and validation, transfer evidence for validated repositories, and diagnostics for when cross-model curation fails. 
+
+> 2Hypothesis-Driven Skill Optimization for LLM Agents
+
+## 2. Related Work 
+
+Self-evolving agents and external skills. External skills are a common substrate for agent self-improvement. Voyager-style agents store executable skills for future environment interaction (Wang et al., 2023). Tool-creation work studies how LLMs synthesize reusable functions or APIs for subsequent tasks (Cai et al., 2023; Qian et al., 2023). Recent self-evolving systems optimize skill content, skill invocation, or skill-aware reflection (Jin et al., 2026; Ju et al., 2026; Yang et al., 2026; Zhang et al., 2026). HDSO shares the premise that persistent artifacts can improve frozen agents, but focuses on the admission rule: a skill is not accepted because it sounds plausible, but because a falsifiable hypothesis survives prospective validation. 
+
+Automatic skill optimization. SkillOS is the closest comparison because it separates a skill curator from an agent executor and studies skill repositories as the substrate for self-evolving agents (Ouyang et al., 2026). Its full system includes a learned curator, but its reported SkillOS -base setting is closer to the comparison we use: skills are produced without the trained curator policy. SkillOpt also treats executive strategy as an optimizable skill object for self-evolving agents (Yang et al., 2026). We therefore do not frame HDSO as merely “untrained SkillOS.” The difference is the update rule. HDSO requires each proposed skill to pass an explicit observe–hypothesize–validate– review–consolidate lifecycle, producing validation artifacts and rejected-hypothesis records rather than only an accumulated skill set. 
+
+Reflection and memory. Reflection and experiential learning methods convert completed trajectories into verbal lessons or memories (Shinn et al., 2023; Zhao et al., 2023). Context-evolution methods update an operating context directly from new evidence (Zhang et al., 2025). ReasoningBank is a strong memory baseline that reports large gains from distilled reasoning memories (Ouyang et al., 2025). Our claim is not that hypothesis-driven skills dominate all memory methods on raw score. Instead, HDSO targets trust management for persistent agent knowledge: each approved skill has scope, expected effect, validation evidence, and rollback rationale. 
+
+## 3. Method 
+
+3.1. Problem Setup 
+
+Let 𝐸 𝜃 be a frozen executor LLM and 𝐶 𝜙 a frozen curator LLM, with fixed parameters 𝜃 and 𝜙 . Let 
+
+D𝑡𝑟𝑎𝑖𝑛 be a task stream used for skill optimization, D𝑒𝑣𝑎𝑙 a held-out evaluation stream, and S the approved skill repository. For a task 𝑥 , the executor policy conditioned on repository S samples a trajectory  
+
+> 𝜏
+
+= (𝑜 1, 𝑎 1, . . . , 𝑜 𝑇 , 𝑎 𝑇 ), 𝜏 ∼ 𝜋 𝐸 𝜃 (· | 𝑥, S) , (1) where 𝑜 𝑡 is the environment observation at step 𝑡 and 𝑎 𝑡 is the executor action. The trajectory induces metrics 𝑚 (𝜏 ) = ( 𝑦 (𝜏 ), 𝑣 (𝜏 ), ℓ (𝜏 )) , where 𝑦 ∈ { 0, 1} is task success, 𝑣 counts invalid actions, and ℓ is the number of environment steps. The curator observes task inputs, executor actions, environment observations, outcomes, approved skills, and validation summaries, but not executor private reasoning. The goal is to update only S so that expected evaluation utility improves: 
+
+max  
+
+> S′
+
+𝔼 𝑥 ∼D 𝑒𝑣𝑎𝑙 𝔼 𝜏 ∼𝜋 𝐸 𝜃 (· | 𝑥, S′ ) [𝑈 (𝜏 )] s.t. 𝜃, 𝜙 remain fixed , (2) where 𝑈 is primarily success rate with invalid-action and step-count diagnostics. The executor-only baseline is the special case S = ∅.
+
+> 3Hypothesis-Driven Skill Optimization for LLM Agents
+
+HDSO is built around four invariants. First, the no-skill executor path is the executor-only baseline. Second, candidate skills are structured artifacts with scope and falsification conditions. Third, validation is prospective and paired: control and treatment arms run on the same task indices. Fourth, rejected candidates remain in a hypothesis ledger, so future cycles can avoid rediscovering the same failed rule or can narrow a promising direction. 
+
+3.2. Executor with Skill Conditioning 
+
+The executor is a standard ReAct-style environment policy augmented with an optional skill interface. At each step, the runtime retrieves at most a small number of compact skill cards from S using the task, current observation, and visible interaction history. The executor may either emit an environment action directly or request the full content of one relevant skill. If it requests a skill, the runtime discloses only that skill and then asks for the next action. This interface is a delivery mechanism rather than a new learning algorithm; its role is to make approved skills available without appending the entire repository to every prompt. This design preserves the executor-only baseline. When S = ∅, or when the executor does not request a skill, the action-generation path is the same as the no-skill ReAct executor. Skill usage is also observable: each request for a full skill body becomes an uptake event recorded in the trajectory. Optional skill payloads may provide restricted pre-prompt or post-action helpers, but they are skill-owned helpers rather than a general tool-call API, and they must preserve baseline behavior when uncertain. 
+
+Algorithm 1 Skill-Conditioned ReAct Executor 
+
+Require: Task 𝑥 , instruction 𝐼 , environment, repository S, selector 𝑅 , executor 𝐸 𝜃 
+
+Ensure: Trajectory 𝜏 and metrics 𝑚  
+
+> 1:
+
+Initialize history ℎ ← ∅  
+
+> 2:
+
+for 𝑡 = 1, . . . , 𝑇 do  
+
+> 3:
+
+Observe 𝑜 𝑡 and retrieve compact cards 𝐾 𝑡 ← 𝑅 (S , 𝑥, 𝑜 𝑡 , ℎ ) 
+
+> 4:
+
+Query 𝐸 𝜃 with (𝐼, 𝑜 𝑡 , ℎ, 𝐾 𝑡 ) 
+
+> 5:
+
+if the output requests skill 𝑠 ∈ 𝐾 𝑡 then  
+
+> 6:
+
+Disclose 𝑠 and query 𝐸 𝜃 again for one action  
+
+> 7:
+
+end if  
+
+> 8:
+
+Parse one action 𝑎 𝑡 and apply any safe skill-owned payload transform  
+
+> 9:
+
+Execute the action; append transition to ℎ 
+
+> 10:
+
+end for  
+
+> 11:
+
+Compute metrics 𝑚 = ( 𝑦, 𝑣, ℓ ) from the completed trajectory  
+
+> 12:
+
+return 𝜏, 𝑚 
+
+3.3. Curator Optimization Loop 
+
+HDSO maintains three state objects: an approved repository S, a hypothesis bank H , and an evidence ledger L. Figure 2 shows the optimization loop. Each cycle begins with discovery traces generated by the current executor and repository. The curator receives compact behavior evidence rather than executor private reasoning: task instructions, observations, admissible-action samples, chosen actions, final states, invalid-action markers, success/failure labels, repeated actions, task-type statistics, approved skill summaries, rejected hypothesis summaries, and later paired validation behavior. A curator proposal is a structured hypothesis with a candidate skill. It states the behavioral claim, supporting evidence, intended scope, expected metric or behavior change, risks and rollback 
+
+> 4Hypothesis-Driven Skill Optimization for LLM Agents
+
+Figure 2 | Detailed HDSO lifecycle. The curator turns discovery traces into candidate skill hypotheses, evaluates each candidate through staged paired validation, reviews treatment-specific behavior changes, and consolidates only candidates with supported mechanisms and acceptable guardrail risk. conditions, and the skill artifact to test. The skill artifact contains the text body, invocation conditions, retrieval metadata, and optional payloads; the implementation schema is given in Appendix A. Candidate validation is staged for efficiency. Screening-small checks for an initial positive effect, screening-medium removes fragile candidates, and confirmation uses independent task indices. For a validation set 𝑉 , the control arm uses S and the treatment arm uses S ∪ { 𝑠 } on the same tasks: 
+
+𝜏 0 
+
+> 𝑖
+
+∼ 𝜋 𝐸 𝜃 (𝑥 𝑖 , S) , 𝜏 1 
+
+> 𝑖
+
+∼ 𝜋 𝐸 𝜃 (𝑥 𝑖 , S ∪ { 𝑠 }) . (3) Let 𝑏 = Í𝑖 𝟙 [ 𝑦 (𝜏 1 
+
+> 𝑖
+
+) = 1, 𝑦 (𝜏 0 
+
+> 𝑖
+
+) = 0] be treatment-only wins and 𝑐 = Í𝑖 𝟙 [ 𝑦 (𝜏 1 
+
+> 𝑖
+
+) = 0, 𝑦 (𝜏 0 
+
+> 𝑖
+
+) = 1] be control-only wins. The core effect statistic is 
+
+net (𝑠 ; 𝑉 ) = 𝑏 − 𝑐, ΔSR (𝑠 ; 𝑉 ) = 1
+
+|𝑉 |∑︁ 𝑖 
+
+
+
+𝑦 (𝜏 1 
+
+> 𝑖
+
+) − 𝑦 (𝜏 0 
+
+> 𝑖
+
+)
+
+
+
+. (4) The promotion gate records these paired outcomes, success delta, step delta, invalid-action delta, guardrail regressions, per-scope regressions, skill uptake, and an exact one-sided McNemar/binomial statistic. We use the p-value 
+
+𝑝 binom = Pr [Binom (𝑏 + 𝑐, 0.5) ≥ 𝑏 ] (5) as a diagnostic of paired-evidence strength. It is logged for analysis and audit, but it is not a hard promotion threshold in the main experiments. Promotion depends on minimum effect, guardrails, invalid-action behavior, per-scope regression checks, and curator review. The review stage classifies each candidate as a validated direction, a promising direction that needs revision, a wrong direction, or insufficient evidence. Accepted candidates are consolidated into S; rejected candidates remain in 
+
+H with failure attribution. 
+
+> 5Hypothesis-Driven Skill Optimization for LLM Agents
+
+Algorithm 2 Hypothesis-Driven Skill Curator 
+
+Require: Executor 𝐸 𝜃 , curator 𝐶 𝜙 , train pool D𝑡𝑟𝑎𝑖𝑛 , repository S, hypothesis bank H , cycle budget 
+
+> 𝑁 cyc
+
+Ensure: Updated repository S, hypothesis bank H , evidence ledger L 
+
+> 1:
+
+for 𝑟 = 1, . . . , 𝑁 cyc do  
+
+> 2:
+
+Collect discovery traces 𝐷 𝑟 with 𝐸 𝜃 and S 
+
+> 3:
+
+Ask 𝐶 𝜙 for candidate hypotheses {ℎ𝑗 } and their skills {𝑠 𝑗 } 
+
+> 4:
+
+for each candidate ℎ𝑗 with skill 𝑠 𝑗 do  
+
+> 5:
+
+Run paired screening stages for S vs. S ∪ { 𝑠 𝑗 } 
+
+> 6:
+
+if any screening gate fails then  
+
+> 7:
+
+Store screening evidence in H and L; continue  
+
+> 8:
+
+end if  
+
+> 9:
+
+Run paired confirmation on independent train tasks  
+
+> 10:
+
+Ask 𝐶 𝜙 to review behavior pairs and assign a direction label  
+
+> 11:
+
+if metric gate and review criteria pass then  
+
+> 12:
+
+S ← S ∪ { 𝑠 𝑗 } 
+
+> 13:
+
+else  
+
+> 14:
+
+Store rejection or revision evidence in H and L 
+
+> 15:
+
+end if  
+
+> 16:
+
+end for  
+
+> 17:
+
+end for  
+
+> 18:
+
+return S, H , L
+
+## 4. Experiments 
+
+The experiments separate three questions. First, can a frozen curator improve an executor powered by the same LLM? Second, once a repository is validated, can the skills transfer to another executor without an active curator? Third, can one frozen LLM autonomously curate skills for an executor powered by a different LLM? The first question tests homogeneous curator-executor optimization; the latter two diagnose transfer and heterogeneous-pair generalization. 
+
+4.1. Setup 
+
+We evaluate on ALFWorld (Shridhar et al., 2021). HDSO optimization uses tasks from ALFWorld’s official train split: the curator observes train-split trajectories, proposes skills, and validates candidates on held-out pools sampled from the same split. We report metrics on the ALFWorld evaluation set following the standard evaluation protocol used by SkillOS and related ALFWorld agent studies. We report Avg. SR and Avg. Steps, with Avg. Steps measured as environment steps per episode. To reduce sensitivity to task ordering and stochastic generation, each run fixes the seed for train-task shuffling, validation-pool construction, and model sampling; unless stated otherwise, results are averaged over three seeds. The curator receives compact evidence extracted from executor runs. A discovery trace contains the task instruction, environment observations, executed actions, final success/failure outcome, and compact failure evidence. ALFWorld HDSO uses 𝑁 cyc = 3 curator cycles. At the beginning of each cycle, discovery collects three fresh traces per task type; later cycles use discovery refill to add non-overlapping traces before proposal. Each proposal call can return up to eight candidate hypotheses, each paired with a candidate skill, an intended scope, expected effect, validation plan, and guardrails.                                                   
+
+> 6Hypothesis-Driven Skill Optimization for LLM Agents Method Curator Executor Avg. SR Delta Avg. Steps Executor-only none Qwen3-8B 40.5 0.0 22.3 Executor-only none Qwen3.5-9B 44.3 0.0 21.9 Executor-only none Qwen3.6-27B 61.7 0.0 17.9 MemP Qwen3-8B Qwen3-8B –+1.8 21.0
+> SkillOS -base Qwen3-8B Qwen3-8B –+5.2 20.4 ReasoningBank Qwen3-8B Qwen3-8B –+7.8 20.1
+> HDSO Qwen3-8B Qwen3-8B 47.4 +6.9 20.9
+> HDSO Qwen3-8B Qwen3.5-9B 52.1 +7.8 20.8
+> HDSO Qwen3.6-27B Qwen3.6-27B 65.7 +4.0 17.3
+
+Table 1 | Main ALFWorld results. Avg. SR is computed over 140 episodes per seed; Avg. Steps is normalized per episode. External baselines are interpreted primarily by their reported gains over their own executor-only baselines because serving stacks and prompts are not byte-identical. Candidate skills are validated prospectively through paired control/treatment runs on train-split tasks. The control run uses the current approved repository, while the treatment run adds the candidate under review. Validation proceeds through screening-small, screening-medium, and confirmation. Screening-small uses four target tasks and two guardrail tasks; screening-medium uses eight target tasks and four guardrail tasks; confirmation uses 32 target tasks and 12 guardrail tasks. We define net wins as treatment-only successes minus control-only successes, and guardrail regressions as paired losses outside the candidate’s intended scope. Screening requires at least one net win and at least a 0.05 success-rate improvement, with zero guardrail regression in screening-small and at most one afterward; confirmation uses the same success-rate threshold and at most one guardrail regression. A one-sided McNemar/binomial p-value at 𝛼 = 0.05 is logged as an audit statistic rather than a hard promotion gate. Executor episodes are capped at 30 environment steps. The skill selector exposes at most three compact skill cards per step, and full skill bodies are disclosed only when requested by the executor. Curator calls use temperature 0.3, top-𝑝 = 1.0, native model reasoning, and 12,288 output tokens. Executor sampling follows the corresponding model configuration; all HDSO and executor-only runs share the same ReAct environment interface. Models include Qwen-family checkpoints (Yang et al., 2025): Qwen3-8B, Qwen3.5-9B, and Qwen3.6-27B. For active HDSO runs, 𝐶 → 𝐸 denotes curator model 𝐶 and executor model 𝐸 ; in frozen transfer experiments, a Repository Source of 𝐶 → 𝐸 denotes a repository produced by that active run and reused for a later executor. Qwen3.5-9B is retained for executor baselines and heterogeneous-pair diagnostics. External SkillOS and ReasoningBank values are cited from prior work, and cross-paper comparisons emphasize deltas relative to each method family’s executor-only baseline. 
+
+4.2. ALFWorld Main Results 
+
+Table 1 evaluates whether HDSO can improve frozen ALFWorld agents under both homogeneous and heterogeneous curator-executor pairings. In the homogeneous setting, the curator and executor are powered by the same LLM, so the result isolates train-free self-improvement with fixed curator and executor parameters. Qwen3-8B improves from 40.5 to 47.4 Avg. SR (+6.9), and Qwen3.6-27B improves from 61.7 to 65.7 (+4.0). Avg. Steps also decreases in both rows, indicating that HDSO improves success while keeping the interaction budget efficient. The heterogeneous 8B →9B result shows that the active HDSO optimization loop can operate when the curator and executor use different LLMs. A Qwen3-8B curator raises the Qwen3.5-9B executor from 44.3 to 52.1 Avg. SR, the largest HDSO gain in Table 1. This supports the view that the                                           
+
+> 7Hypothesis-Driven Skill Optimization for LLM Agents Task type Baseline HDSO Delta HDSO-wins Baseline-wins Dominant mechanism
+> look_at_obj 46.2 53.8 +7.6 10acquisition before illumination
+> pick_and_place 85.7 88.6 +2.9 21search and placement checks
+> pick_clean_then_place 44.4 44.4 0.0 22progress tracking
+> pick_cool_then_place 48.0 56.0 +8.0 20progress tracking
+> pick_heat_then_place 43.8 62.5 +18.7 41direct heating action selection
+> pick_two_obj 75.0 75.0 0.0 11multi-object tracking
+
+Table 2 | Task-type behavior analysis for the homogeneous Qwen3.6-27B curator-executor setting. HDSO-wins counts paired episodes solved only by HDSO , while Baseline-wins counts paired episodes solved only by the executor-only baseline. The largest gain comes from pick_heat_then_place ,where approved skills change a concrete action-selection mechanism.                         
+
+> Method Repository Source Executor Delivery Interface Avg. SR Delta Avg. Steps frozen transfer HDSO(8B →8B) Qwen3-8B Full skill context 42.1 +1.6 21.8 frozen transfer HDSO(27B →27B) Qwen3-8B Progressive disclosure 46.2 +5.7 21.1 frozen transfer HDSO(27B →27B) Qwen3.6-27B Full skill context 62.9 +1.2 17.3
+
+Table 3 | frozen transfer evaluation of approved HDSO skill repositories with the curator disabled at evaluation time. The table compares two delivery interfaces and tests whether a repository discovered in one curator-executor configuration remains useful for another executor. Repository Source identifies the active HDSO run that produced the approved repository. Delta is computed against the corresponding executor-only baseline. Full skill context places the complete approved repository in the executor context throughout evaluation, whereas progressive disclosure exposes compact skill cards and reveals full skill details only on request. curator can diagnose another executor’s failures and produce a target-executable intervention, not only optimize the behavior of an executor powered by the same LLM. At the same time, heterogeneous curation should be treated as a pairwise alignment problem rather than a monotonic function of curator scale. We return to difficult heterogeneous pairings in the discussion. The external rows position HDSO against prior skill and memory approaches. Because serving stacks, prompts, and baselines are not byte-identical across papers, the most stable comparison is the reported delta over each method’s executor-only baseline. HDSO’s homogeneous 8B gain (+6.9) exceeds the reported SkillOS -base gain (+5.2) and MemP gain (+1.8), while the heterogeneous 8B →9B gain (+7.8) matches the reported ReasoningBank delta. The comparison positions HDSO as a train-free, validation-gated skill lifecycle that reaches competitive improvements while retaining explicit evidence, rejection records, and rollback context for each admitted skill. Table 2 provides mechanism-level evidence for the main result. Gains concentrate in task fam-ilies with recurring procedural failures, especially heating, cooling, and look-at tasks. The largest improvement appears in pick_heat_then_place , where the approved skill changes a concrete action-selection rule around the heating transformation. This pattern is consistent with the intended role of a skill: reusable procedural knowledge that applies across episodes, rather than a one-off reflection. The unchanged clean and multi-object rows also explain why HDSO requires scoped validation and guardrails; persistent skills must be admitted with evidence about where they help and where invocation remains limited. 
+
+4.3. Skill Delivery 
+
+Table 3 examines how an approved repository should be delivered to an executor after the active HDSO loop has produced it. In frozen transfer, the curator is disabled at evaluation time: the repository is                         
+
+> 8Hypothesis-Driven Skill Optimization for LLM Agents Method Curator Executor Optimization Feedback Avg. SR Delta Avg. Steps Executor-only none Qwen3-8B none 40.5 0.0 22.3
+> HDSO Qwen3-8B Qwen3-8B clean success/failure 47.4 +6.9 20.9
+> HDSO Qwen3-8B Qwen3-8B 20% label flip 47.6 +7.1 20.7
+
+Table 4 | Feedback-corruption ablation on ALFWorld for the Qwen3-8B curator-executor setting. Label flipping is applied only to success/failure feedback observed during skill optimization; reported final evaluation uses uncorrupted environment success. fixed, no new discovery or validation occurs, and the executor only consumes the approved skills. We compare two delivery interfaces. Full skill context places the complete repository in the executor context throughout evaluation. Progressive disclosure exposes compact skill cards first and reveals full skill content only when the executor requests a specific skill. Full skill context is a useful but limited baseline. With the repository discovered in the homogeneous Qwen3-8B run, the Qwen3-8B executor improves from 40.5 to 42.1 Avg. SR. With the repository discovered in the homogeneous Qwen3.6-27B run, the Qwen3.6-27B executor improves from 61.7 to 62.9 Avg. SR. These gains show that the approved skill text carries actionable information even when it is delivered as static context. However, the effect is modest, suggesting that simply appending the full repository does not reliably make the executor use the right skill at the right state. Progressive disclosure provides a stronger use pattern in the available transfer setting. Reusing the repository discovered in the homogeneous Qwen3.6-27B curator-executor run with the Qwen3-8B executor improves Avg. SR from 40.5 to 46.2, a gain of +5.7 points. This row supports two points. First, the repository contains reusable procedural knowledge rather than only executor-specific prompt artifacts. Second, skill delivery matters: exposing compact cards before full skill bodies gives the executor a mechanism to select relevant skills without unconditionally polluting every prompt with the entire repository. Thus, Table 3 complements the active HDSO results in Table 1. Active HDSO is the optimization procedure that discovers and validates skills; frozen transfer is a deployment mode for reusing the resulting repository. The results indicate that approved repositories have standalone value, but that value is realized more effectively when the executor accesses skills through progressive disclosure rather than full skill context alone. 
+
+4.4. Noisy Feedback 
+
+We test whether HDSO can still produce useful skills when optimization feedback is unreliable. During discovery, screening, and confirmation, 20% of success/failure labels are randomly flipped. Raw uncorrupted traces are stored separately, and final full evaluation uses true environment success. The curator prompt is informed that feedback may be noisy. This setting simulates corrupted optimization logs rather than a corrupted test set. Table 4 directly tests the deployment motivation. In real applications, success/failure may be the only available preference signal, but it may be produced by brittle scripts, delayed user behavior, or noisy downstream outcomes. Under 20% label corruption during optimization, the Qwen3-8B setting reaches 47.6 Avg. SR on clean final evaluation, compared with 47.4 under clean optimization feedback and 40.5 for the executor-only baseline. Avg. Steps also remains comparable to the clean-feedback run. The result indicates that the HDSO lifecycle does not collapse when the optimization signal is moderately unreliable. The mechanism is also important. The noisy-feedback run does not promote a broad set of 
+
+> 9Hypothesis-Driven Skill Optimization for LLM Agents
+
+generic reminders. It consolidates a narrow cleaning skill, Sinkbasin Navigation Optimization , and the executor requests skills in only 28 of 420 evaluation episodes. Those requests concentrate on 
+
+pick_clean_then_place , the task family targeted by the approved skill, rather than spreading across unrelated task types. This behavior is consistent with the intended role of hypothesis-gated skill optimization: noisy observations may affect proposal search, but durable repository updates still pass through scoped validation, behavior review, and progressive disclosure. We do not interpret label noise as beneficial. The 20% label-flip result should be read as robustness evidence for this model pair and noise level, not as a general claim that corrupted feedback improves skill learning. The key point is that HDSO avoids the failure mode of directly absorbing every noisy reflection into the executor prompt; when evidence is unreliable, the lifecycle tends to admit narrow, testable skills rather than unconstrained memory. 
+
+## 5. Discussion 
+
+HDSO reframes skill optimization as hypothesis testing for frozen LLM agents. On ALFWorld, the homogeneous curator-executor results show that a frozen curator can improve an executor powered by the same LLM, while transfer experiments show that validated repositories can contain reusable external knowledge. Heterogeneous-pair diagnostics show the boundary: autonomous curation across model scales is harder than reusing a validated repository, because the curator must write skills that match the target executor’s capabilities. 
+
+Failure analysis. Heterogeneous active curation is more demanding than frozen transfer because the curator must not only identify a reusable intervention, but also write one that the target executor can reliably execute. In the 27B →8B run, logs show non-trivial skill uptake during screening, but small positive effects reversed or vanished in medium validation, indicating that plausible high-level procedures from a stronger curator may exceed the weaker executor’s stable execution capability. The same issue appears when Qwen3.5-9B is used as the executor for skills proposed by Qwen3.6-27B: the accepted skill was locally valid for a narrow look_at_obj slice, but did not cover the executor’s dominant failures on multi-step state-change tasks and therefore did not improve full evaluation. In the 8B →27B run, the proposed rules were either already covered by the stronger executor’s baseline behavior or too local to survive confirmation. Runs with Qwen3.5-9B as curator are also excluded from the main plan. Across 9B →8B, 9B →9B, and 9B →27B attempts, verified serving and sampling settings still did not produce a stable approved repository, suggesting that this checkpoint is not reliable as an autonomous curator in our setting. These failures are useful because HDSO records where the lifecycle breaks, including proposal quality, executor uptake, action reliability, validation robustness, coverage mismatch, and review conservatism. 
+
+Benchmark scope. Our empirical evidence is limited to ALFWorld, a multi-step action and planning benchmark with explicit observations, environment actions, and terminal success feedback. This setting is well aligned with the HDSO abstraction: skills can modify state tracking, action selection, loop avoidance, and post-action checks, and their effects can be inspected through paired trajectories. The same lifecycle may extend naturally to other action-centric or planning-centric agent benchmarks where behavior changes are observable over multiple steps. It should not be assumed, however, that the same skill interface transfers unchanged to single-turn question answering or pure reasoning tasks. In those settings, the observable trajectory is often a one-shot answer trace rather than a sequence of environment decisions, so skill applicability, uptake, and validation evidence require a different adapter design. 
+
+> 10 Hypothesis-Driven Skill Optimization for LLM Agents
+
+## 6. Conclusion 
+
+HDSO casts persistent skill updates as a train-free hypothesis lifecycle for action-oriented LLM agents. A frozen curator observes executor traces, proposes falsifiable hypotheses and validation plans, instantiates candidate skills, and promotes only skills supported by paired execution evidence and behavior review. On ALFWorld, this lifecycle improves executor-only baselines, remains effective under noisy success/failure feedback during discovery and validation, and produces transfer and failure records that expose when cross-model curation does or does not align with the target executor. These results support HDSO as an auditable alternative to unvalidated prompt or memory accumulation for frozen action agents, while leaving broader question-answering and pure reasoning settings to future adapter designs. 
+
+> 11 Hypothesis-Driven Skill Optimization for LLM Agents
+
+## References 
+
+T. Cai et al. Large language models as tool makers. arXiv preprint arXiv:2305.17126 , 2023. S. Jin, L. Wang, and Z. Zhang. Se-ga: Memory-augmented self-evolution for gui agents. arXiv preprint arXiv:2605.16883 , 2026. R. Ju et al. Embodiskill: Skill-aware reflection for self-evolving embodied agents. arXiv preprint arXiv:2605.10332 , 2026. S. Ouyang, J. Yan, Y. Chen, R. Han, Z. Wang, et al. Skillos: Learning skill curation for self-evolving agents. arXiv preprint arXiv:2605.06614 , 2026. S. Ouyang et al. Reasoningbank: Scaling agent self-evolving with reasoning memory. arXiv preprint arXiv:2509.25140 , 2025. C. Qian et al. Creator: Tool creation for disentangling abstract and concrete reasoning of large language models. arXiv preprint arXiv:2305.14318 , 2023. N. Shinn et al. Reflexion: Language agents with verbal reinforcement learning. arXiv preprint arXiv:2303.11366 , 2023. M. Shridhar, X. Yuan, M.-A. Côté, Y. Bisk, A. Trischler, and M. Hausknecht. ALFWorld: Aligning text and embodied environments for interactive learning. In International Conference on Learning Representations , 2021. G. Wang et al. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 , 2023. A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Y. Yang et al. Skillopt: Executive strategy for self-evolving agent skills. arXiv preprint arXiv:2605.23904 ,2026. G. Zhang, E. Zhu, J. Zhou, C. Jia, and H. Wang. Skillevolver: Skill learning as a meta-skill. arXiv preprint arXiv:2605.10500 , 2026. Q. Zhang et al. Agentic context engineering: Evolving contexts for self-improving language models. 
+
+arXiv preprint arXiv:2510.04618 , 2025. A. Zhao et al. Expel: Llm agents are experiential learners. arXiv preprint arXiv:2308.10144 , 2023. 
+
+> 12 Hypothesis-Driven Skill Optimization for LLM Agents
+
+## A. Curator Prompt and Output Schemas 
+
+The curator uses a static benchmark-neutral system prompt and task-specific user prompts that provide the current trace evidence, repository state, and validation summaries. The static prompt used in our experiments is reproduced below. 
+
+You are the Curator in Hypothesis-Driven Skill Evolution. Your responsibility is to improve a frozen Executor by producing narrowly scoped, evidence-backed task skills. Observe completed Executor traces, approved skills, the Hypothesis Bank, and prospective paired-validation results. Follow this method: 1. Separate execution lapses from recurring, skill-addressable failure modes. 2. Ground every hypothesis in concrete observed trace evidence. Require a same-task-type contrast between at least one successful trace and one failed trace. A failure alone can diagnose a symptom but cannot establish that the proposed policy is better. 3. State an observable applicability condition and explicit risks. 4. Compile concise optional guidance that is safe to ignore when inapplicable. The compiled skill must directly operationalize the claimed mechanism. 5. Treat every proposed skill as uncertain until prospective paired validation. 6. In review, reject skills without attributable treatment wins or with guardrail regressions, invalid-action regressions, or harmful overreach. Separately judge whether the underlying direction is wrong, promising but implemented poorly, or merely underpowered. A promising label requires paired-trace evidence for a specific correctable defect, not plausibility. Any revised skill is a new unvalidated candidate and must be tested again. 7. Explicitly inspect inefficient search, repeated choices, lost multi-stage progress, incomplete transformations or reasoning steps, and premature assumptions that a goal or answer has been completed. 8. Inspect executor I/O contract failures, including empty outputs, malformed outputs, invalid final answers, or actions outside the reported admissible action set when the benchmark exposes one. A post-output parser, formatter, or resolver can be a valid skill when it is evidence-backed, benchmark-neutral, and leaves uncertain cases unchanged. Do not use benchmark-oracle knowledge, invent hidden environment rules, approve a skill from a single anecdote, or give broad advice that cannot be validated. Scope each candidate to the minimum task scope justified by the evidence. A candidate may cover multiple task types only when the same mechanism is supported by per-scope trace evidence and the validation plan can test each declared scope. Treat rejected hypotheses and their paired metrics as negative evidence for future proposals. Candidate skill bodies must explain a policy, progress check, or output-contract repair. Never output a single task answer, environment command, invented action, or placeholder command such as `look under [object] `.For reasoning benchmarks, a skill must be an executable reasoning procedure with a concrete trigger, state/progress check, and decision rule; do not propose generic reminders such as "think carefully" or "verify the answer" unless the skill specifies exactly what to verify and how that changes the solution path. Candidate skills may include pure code payloads for `pre_prompt ` or 
+
+`post_action ` hooks. Code must inspect only provided context fields and must not encode a task runner, oracle, external calls, or benchmark-specific hidden knowledge. For each turn, follow the concrete JSON schema and required fields specified in the current proposal or review prompt exactly. 
+
+> 13 Hypothesis-Driven Skill Optimization for LLM Agents
+
+The proposal call supplies compact runtime evidence rather than changing the static system prompt. Its input object has the following shape. 
+
+{"task_type_outcome_stats": ..., "trace_evidence": ..., "approved_skills": [...], "existing_hypotheses": [...] }
+
+The curator must return a JSON array of proposal objects. Each proposal is a falsifiable hypothesis plus one candidate skill package. 
+
+{"hypothesis_id": string, "claim": string, "evidence": string, "source_trace_ids": [string], "attribution": string, "applicability_condition": string, "expected_improvements": string, "guardrails": string, "risks": string, "falsification_plan": string, "promotion_condition": string, "rollback_condition": string, "confidence": string, "candidate_skill": { "candidate_id": string, "name": string, "description": string, "body": string, "invocation_rule": string, "task_types": [string], "keywords": [string], "payloads": [ {"kind": "text" | "tool" | "code", "name": string, "content": string, "activation": string, "entrypoint": string?, "safety": string, "metadata": object? }]? }}
+
+The review call receives compact hypotheses and paired validation summaries. It is asked to separate the accept/reject decision from the diagnosis of the underlying direction. 
+
+{"validation_stage": "screening" | "confirmation", "hypotheses": [...], "paired_validation_results": [ 
+
+> 14 Hypothesis-Driven Skill Optimization for LLM Agents
+
+{"metrics_summary": ..., "informative_pair_outcomes": ..., "behavior_pairs": ..., "skill_uptake": ... }]}
+
+The required review output is: 
+
+{"hypothesis_id": string, "decision": "accept" | "reject", "direction_assessment": "validated_direction" | "promising_needs_revision" | "wrong_direction" | "insufficient_evidence", "failure_attribution": "hypothesis" | "skill_content" | "invocation_scope" | "executor_variance" | "validation_power" | "none", "review": string, "revision_plan": string, "revised_skill": object? }
+
+In noisy-feedback experiments, the review prompt states that promotion decisions must use the observed success/failure channel visible to the curator and gate. Hidden oracle metrics are reserved for post-hoc diagnosis and are not included in the curator review input. 
+
+## B. Representative Approved Skills 
+
+Below are representative approved skills produced by the curator and copied from the final HDSO 
+
+repository. Run-specific metadata is omitted, but the task scope, skill body, invocation rule, payload, and safety condition are preserved. 
+
+source: HDSO(27B -> 27B) candidate_id: skill_heat_direct_action name: Direct Heating Action Selection task_types: [pick_heat_then_place] keywords: [pick_heat_then_place, heating_loop, composite_action, transformation] description: Prioritizes the composite "heat [obj] with [microwave]" action over move/open/close sequences to complete heating transformations efficiently. invocation_rule: Trigger during action selection for pick_heat_then_place tasks. Activate when holding the target object and current location is the microwave. 
+
+> 15 Hypothesis-Driven Skill Optimization for LLM Agents
+
+body: This skill targets an inefficient search and incomplete transformation pattern in pick_heat_then_place tasks. The executor frequently moves the object into the microwave, then cycles through "open", "close", and "examine" actions, failing to trigger the actual heating process. The policy introduces a location and inventory check: when the agent is holding the target object and arrives at the microwave, suppress "move [obj] to microwave", "open microwave", "close microwave", and "examine microwave". Instead, directly select "heat [target_obj] with microwave". This composite action encapsulates the placement and activation steps, bypassing the state-toggle loop. The skill activates only when the target is in inventory and the current location matches the microwave. It stops applying once the heat action is executed or the task completes. By enforcing this direct interaction, the skill aligns with successful trace patterns and eliminates redundant navigation and examination steps. Baseline behavior is preserved if the agent is not at the microwave or does not hold the target. payload: kind: text name: Heating Interaction Guide activation: Activate when the agent is holding the target object and standing at the microwave. content: 1. Check inventory for target object. 2. Verify current location is "microwave". 3. If both true, suppress "move", "open", "close", "examine" for microwave. 4. Queue "heat [obj] with microwave" as highest priority. 5. Reset state after heating completes or task ends. safety: Do not apply if the microwave is locked or broken. Do not override if the agent is not holding the target. source: HDSO(27B -> 27B) candidate_id: skill_look_at_obj_acquire_first name: Acquire Target Before Illumination task_types: [look_at_obj] keywords: [look_at_obj, desklamp, acquire, loop_prevention, inventory_check] description: Ensures the target object is held before activating a light source to prevent examination loops and satisfy task conditions efficiently. invocation_rule: Trigger when task_type is "look_at_obj" and the instruction mentions a light source. Activate before selecting actions at any location containing the target object or light source. body: When the task requires looking at an object with a light source, check inventory first. If the target object is not held, prioritize "take [object] from [location]" over "use [light]" or "examine [location]". Once the object is confirmed in inventory, proceed to "use [light]". Stop applying this rule once the object is held or the light is activated. Preserve baseline action selection if the object is already in inventory. payload: kind: text name: Acquisition Priority Guide activation: Activate when the agent is at a location containing the target object or 
+
+> 16 Hypothesis-Driven Skill Optimization for LLM Agents
+
+light source and has not yet acquired the target. content: 1. Parse instruction for target object and light source. 2. Query current inventory state. 3. If target not in inventory and visible in location description, queue "take [target] from [location]". 4. Suppress "use [light]" and "examine [location]" until "take" succeeds. 5. After successful "take", queue "use [light]". 6. Reset policy state after light activation or task completion. safety: Do not force "take" if the object is already in inventory. Do not block "use [light]" if the environment indicates the object is already positioned correctly.

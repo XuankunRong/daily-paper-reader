@@ -1,0 +1,543 @@
+Title: Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+URL Source: https://arxiv.org/pdf/2606.27180v1
+
+Published Time: Fri, 26 Jun 2026 01:25:08 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Automating Potential-based Reward Shaping with Vision Language Model Guidance 
+
+Henrik M¨ uller hmueller@l3s.de 
+
+L3S Research Center Leibniz University Hannover Hannover, 30167, Germany 
+
+Daniel Kudenko kudenko@l3s.de 
+
+L3S Research Center Leibniz University Hannover Hannover, 30167, Germany 
+
+Abstract 
+
+Sparse rewards are inherently challenging for reinforcement learning agents as they lack intermediate feedback to guide exploration and to correctly attribute the sparse success rewards to relevant parts of the trajectory. Naive reward shaping can induce reward hack-ing, yielding policies that exploit auxiliary signals instead of solving the intended task. Potential-based reward shaping (PBRS) guarantees preservation of the optimal policy set, but requires the definition of a heuristic potential function over the state space. In this work, we introduce the VLM-guided PBRS framework VLM-PBRS that learns the poten-tial function directly from vision language model (VLM) feedback. We query a lightweight VLM to obtain preferences over image pairs and train a model of the potential function using these preferences. As this approach is based on potential-based reward shaping, it preserves the original optimal policies, and removes the need for expert-designed reward shaping terms. Because large VLMs are prohibitively expensive to invoke repeatedly during policy learning, we employ smaller, more computationally efficient VLMs. Although the resulting preference labels are less accurate, empirical evidence shows that the preference labels can still be used to accelerate learning. We validate our method empirically in the Meta-World and Franka Kitchen environments and highlight the connection between VLM preference label accuracy and sample efficiency improvements. Our contributions are three-fold: (1) the first application of VLM preference-based learning to synthesize a potential function for PBRS, (2) a principled, low-cost solution that leverages small VLMs, and (3) extensive empirical demonstration of improved sample efficiency and robustness to reward hacking. 
+
+Keywords: reinforcement learning, potential-based reward shaping, VLM preference-based learning 
+
+1 Introduction 
+
+Reward is the single objective that drives all reinforcement learning (RL) agents, yet de-signing a reward function that both captures the intended behavior and can be learned efficiently remains a challenge, which can be domain-specific and labor-intensive. In prin-ciple, a sparse reward that simply signals task completion could suffice in many cases and an agent would learn to achieve the task by maximizing its expected return. In practice, however, sparse rewards are challenging to optimize as most trajectories have the same  
+
+> ©2026 Henrik M¨ uller and Daniel Kudenko. License: CC-BY 4.0, see https://creativecommons.org/licenses/by/4.0/ .
+> arXiv:2606.27180v1 [cs.LG] 25 Jun 2026 M¨ uller and Kudenko
+
+return and therefore cannot guide exploration before reaching the goal for the first time by chance. As a result, RL agents tend to require many samples to discover a successful strat-egy given a sparse reward. This problem is commonly alleviated through reward shaping, wherein auxiliary signals are added to the base reward to guide exploration and accelerate learning (Hu et al., 2020; Memarian et al., 2021; Trott et al., 2019; Devidze et al., 2022). But, arbitrary shaping can give rise to reward hacking, wherein maximizing the expected reward no longer corresponds to the original objective (Randløv and Alstrøm, 1998). Potential-based reward shaping (PBRS) offers a theoretically sound alternative: by adding the difference of a potential function between successive states, PBRS preserves the optimal policy set while supplying richer learning signals. The challenge, however, is that PBRS still demands a carefully engineered potential function that captures the true structure of the task. Crafting such a potential function typically requires expert knowledge and substantial engineering effort. Recent years have seen an explosion of vision language models (VLMs) capable of rea-soning about both images and natural language (Radford et al., 2021; Sontakke et al., 2023; Lu et al., 2024). In RL-VLM-F (Wang et al., 2024), human input for reward design was re-placed with VLMs, demonstrating that VLM-based reward learning can reduce the burden of hand-crafted reward design and can generalize across domains. But the correctness of the learned reward function depends on accurate VLM output, which leads to an inherent risk of reward hacking. Building on that line of research, we propose a novel VLM-guided reward shaping framework called VLM-PBRS that learns from VLM-generated preference labels over images to automatically construct a PBRS function. A key practical consideration is the computational cost of invoking large VLMs during RL training. State-of-the-art models are prohibitively expensive for repeated query cycles, which are necessary as new parts of the state space are explored. Due to the inherent policy invariance of PBRS, VLM-PBRS does not share the strict label accuracy requirement of RL-VLM-F. As a result, we are able to use small, less expensive VLMs that still retain a significant fraction of the vision-language reasoning capabilities and, in contrast to RL-VLM-F, are able to avoid additional LLM calls to generate the preference labels. Although the resulting preference labels are potentially less accurate, in potential-based reward shap-ing, this will only reduce the improvement in sample efficiency, rather than risking to worsen the learned policy (M¨ uller et al., 2025). In summary, our contributions are: 
+
+• We introduce VLM-PBRS, which learns a potential function for PBRS based on VLM preference-based learning, requiring only a textual description of the goal and the visual observations of the environment. 
+
+• We establish that the policy invariance guarantee of PBRS relaxes the label accuracy requirements of direct reward modeling, enabling the use of smaller, computationally efficient VLMs without compromising policy optimality. 
+
+• We verify the efficacy of our proposed method empirically in the Meta-World and Franka Kitchen environments and analyze the connection between label accuracy and sample efficiency improvements. 
+
+> 2Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Figure 1: Overview of VLM-PBRS. 
+
+2 Related Work 
+
+We organize the related work around two themes central to this paper: foundational ap-proaches to reward shaping from domain knowledge, and the emerging literature on learning reward functions from scratch using foundation models. 
+
+2.1 Reward Shaping from Domain Knowledge 
+
+Potential-based reward shaping (PBRS) is commonly used to incorporate prior knowledge of the task to guide the agent in solving difficult tasks. To do so, the prior knowledge is encoded in the so-called potential function, which is a heuristic for the goodness of a state. Previous works have built on different knowledge representations to automate the definition of potential functions. They created the potential function from automata specifying a sequence of goals to achieve (Hasanbeig et al., 2021), from user provided linear temporal logic formulas (Elbarbari et al., 2022), or directly from demonstrations in imitation learning settings (Wang et al., 2023; Brys et al., 2015; Suay et al., 2016; Wu et al., 2021). A first approach has started to use large language models (LLMs) to generate domain knowledge to encode in a potential function (Zhang et al., 2025). But, they rely on a hand-crafted translation of the environment state and actions into text to ground the LLM interactions. This adds a significant amount of manual labor when adapting the method to new environments, and producing meaningful translations of low-level actions and states can be a challenge in itself. In contrast to these works, our approach requires far less human input and design. Rather than designing the abstract domain knowledge and having to ground it in the envi-ronment observations, or directly demonstrating the desired behaviors, the human only has to input a short high-level goal description for our method. 
+
+> 3M¨ uller and Kudenko
+
+2.2 Reward Learning using Foundation Models 
+
+Building on vision language models, like CLIP (Radford et al., 2021) and RoboCLIP (Son-takke et al., 2023), there have been works on automatically creating rewards for image observations using a textual goal description (Chan et al., 2023; Cui et al., 2022; Mah-moudieh et al., 2022; Ma et al., 2023; Sontakke et al., 2023; Adeniji et al., 2023; Rocamonde et al., 2023). These works define the reward through alignment measures between image em-beddings and the language goal embedding in a learned latent space. The resulting reward functions tend to be very noisy and are often poorly aligned with the intended reward (Son-takke et al., 2023; Mahmoudieh et al., 2022). Accordingly, some works did task-specific fine-tuning (Ma et al., 2023; Mahmoudieh et al., 2022), which we can avoid by using larger, more general VLMs in a more noise robust framework. Recent works in learning reward functions from scratch using foundation models have found success in querying for preference labels over states and learning the reward model from these labels. In RL-VLM-F (Wang et al., 2024), reward functions are learned given a natural lan-guage description of the goal by querying VLMs for preferences over pairs of environment observations, which are then used to learn a proxy reward model that can be used by an RL agent to learn a policy achieving the goal. We modify RL-VLM-F to provide guidance towards a goal through reward shaping instead of using it to define the policy and goal. We reuse the reward model as a potential function for potential-based reward shaping, which additionally softens the requirements on the correctness of the reward model and therefore the correctness of the labels provided by the VLM. Lin et al. (2024) use LLM preference labels to learn a reward model. Notably, their approach is based on score differences similar to our use in potential-based reward shaping. But as they differ from the potential-based reward shaping framework their method can learn sub-optimal policies. Due to their use of LLMs, they also require a hand-crafted translation of the observations into natural language. A comparison of different approaches using LLMs as reward sources can be found in Klissarov et al. (2025). Their study contrasts several reward-generation strategies: learning reward models from AI preferences, embedding-based reward signals (created through a similarity metric over the state and goal embeddings), reward as code approaches, and directly querying an LLM for either scalar rewards or actions. The authors find that embedding-based rewards do not align well with the ground truth task objectives, and that reward-as-code, although better aligned, is limited by requiring a useful symbolic rep-resentation of the environment. Direct scalar reward outputs, while straightforward, fail to capture the nuances required in more complex environments. Finally, they observe that LLMs exhibit unreliable zero-shot reasoning about environmental dynamics, which under-mines the model’s effectiveness as generic reward providers. In contrast, the most effective approach was learning reward models from AI feedback, though still facing problems with learning noisy reward functions and unintentionally incentivizing unwanted behaviors. Previous approaches on using foundation models to create intrinsic reward functions to shape an otherwise uninformative reward have been based on LLMs (Klissarov et al., 2024; Chu et al., 2023). They created their shaping reward based on preference labels over pairs of textual descriptions of environment states. In contrast to our work, they have to 
+
+> 4Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+create a manual grounding function to translate the low-level states into text, which can be non-trivial as the exact ground-truth state information can be difficult to capture and similarly be challenging to accurately describe using language. This challenge is inherently solved by the innate grounding capabilities of VLMs. Moreover, these works are not based on potential-based reward shaping and can therefore (in contrast to our approach) bias the policy that is being learned. 
+
+3 Preliminaries 
+
+3.1 Reinforcement Learning 
+
+A Markov Decision Process (MDP) M is a tuple M = ( S, A, T, γ, R ), where S is the set of states, A is the set of actions, T : S × A → S is the transition function defining the new state after executing an action in the current state, γ ∈ (0 , 1] is the discount factor, and 
+
+R is the reward function assigning a scalar feedback to any transition in the environment. The goal of reinforcement learning is to learn a policy (of which action to choose depending on the current state) to maximize the discounted sum of returns: P 
+
+> t
+
+γtrt.We focus in this work on goal-directed environments with sparse rewards. In this case, the reward function only assigns a reward of one for transitions into a small set of goal states. Otherwise, for all other transitions, the reward is zero. Due to the lack of dense reward feedback, all unsuccessful trajectories have the same sum of rewards. Therefore, the RL agent has no intermediate information to guide its search before reaching any goal state. Moreover, once a trajectory is successful, correctly attributing the success to the relevant parts of the trajectory adds another challenge. 
+
+3.2 Potential-based Reward Shaping 
+
+A potential function Φ( s) is a heuristic of goodness of a state. For the sparse, goal-directed MDPs we are focusing on, it is used to evaluate how close a state is to the goal. Given a potential function Φ( s), the potential-based shaping function F is defined as: 
+
+F (s, a, s ′) = γΦ( s′) − Φ( s) (1) The shaping function is then added to the original reward to get the shaped reward function R′:
+
+R′(s, a, s ′) = R(s, a, s ′) + F (s, a, s ′) (2) The potential-based reward function can then be used by an RL agent to guide its in-termediate exploration by trying to maximize the potential function. The MDP M ′ =(S, A, T, γ, R ′) with the shaped reward function has the same set of optimal policies as the original, unshaped MDP M (Ng et al., 1999). Independent of the exact potential function (and its correctness), the shaped MDP M ′ will have the same ordering of policies and as such also the same set of optimal policies. The only requirement on the potential function Φ( s) in MDPs with finite episode lengths is that the potential of all terminal states must be zero in order to guarantee policy invariance (Grze´ s, 2017). Notably, even if the potential function dynamically changes over time, the theoretical guarantee of policy invariance still holds (Devlin and Kudenko, 2012), which allows us 
+
+> 5M¨ uller and Kudenko
+
+to continuously improve our potential function over the entire training duration without introducing a bias towards suboptimal policies. 
+
+3.3 Preference-based Reward Learning 
+
+Preference-based reward learning (Wirth et al., 2017; Christiano et al., 2017) uses human preference annotations of policy examples to automatically learn a reward function that when optimized by reinforcement learning learns the desired behavior. Following the RL-VLM-F (Wang et al., 2024) approach, we use VLMs as a scalable proxy for the human annotators to generate preference labels in this work. Formally, the input is a pair of segments ( σi, σ j ). The annotator then assigns a prefer-ence to the pair σi ≻ σj , where ≻ indicates that segment σi is preferred over segment σj .For this work, the segments have a length of one and are single images. A preference label 
+
+y is assigned according to: 
+
+y =
+
+
+
+0 , if σi ≻ σj
+
+1 , if σi ≺ σj
+
+−1 , no preference The probability of preferring one segment over the other is based on the Bradley-Terry model (Bradley and Terry, 1952) and defined using a parameterized preference function rψ:
+
+Pψ[σi ≻ σj ] = exp( rψ(σi)) exp( rψ(σi)) + exp( rψ(σj )) The parameterized preference function rψ is then commonly optimized via binary cross-entropy loss: 
+
+LCE = −E(σ1,σ 0,y )∼D[I(σ0 ≻ σ1) log Pψ[σ0 ≻ σ1] + I(σ1 ≻ σ0) log Pψ[σ1 ≻ σ0]] (3) Alternatively, it has been shown that the mean absolute error (MAE) loss is better suited for noisy labels (Ghosh et al., 2017), which has also been applied in the context of reward learning from VLM preference labels (Luu et al., 2025). We experiment with the MAE loss in Section 6.5, but find no improvement in performance. In this case, the loss function is defined by: 
+
+LMAE = −E(σ1,σ 0,y )∼D
+
+12
+
+h
+
+(|y − 1|) − Pψ[σ0 ≻ σ1] + |y − Pψ[σ1 ≻ σ0]|
+
+i
+
+(4) 
+
+4 Method 
+
+In VLM-PBRS, we follow the general structure used in reward learning from preference labels. We iterate between querying for new preference labels, learning the preference proxy model, and improving the policy via reinforcement learning to collect new data (Christiano et al., 2017; Lee et al., 2021; Wang et al., 2024). An overview of our method can be found in Figure 1. During an initial unguided exploration phase (without VLM preference labeling or pref-erence model learning) the initial sets of trajectories and environment images are collected. 
+
+> 6
+
+Automating Potential-based Reward Shaping with Vision Language Model Guidance Consider the following two images: Image 1: Image 2: 1. Describe the common elements in both images. 2. The goal is: Open the drawer. What is the difference between Image 1 and Image 2 in terms of achieving the goal? 3. Is the goal better achieved in Image 1 or Image 2? Answer this question with 0 if the goal is better achieved in Image 1, with 1 if it is better achieved in Image 2, and with -1 if there is no difference. Conclude with 'the answer is' followed by the final solution. VLM Output: 1. Both images feature a red robotic arm with white grippers positioned above a wooden surface. There is agreen drawer with a handle in both images. The background includes atiled floor and a gray border around the wooden surface. 2. In Image 1, the drawer is open, while in Image 2, the drawer is closed. The robotic arm's position and orientation differ slightly between the two images. 3. The goal is to open the drawer. In Image 1, the drawer is already open, indicating that the goal has been achieved. In Image 2, the drawer is closed, and the robotic arm is positioned as if it is about to open it. Therefore, the goal is better achieved in Image 1. The answer is 0. 
+
+VLM   
+
+> label: y=0
+
+Figure 2: Prompt pipeline for an example image pair from the drawer-open task of the Meta-World environment. The images and goal description are added to the prompt template on the left. The filled template is input to the VLM. The final label is then extracted from the VLM output on the right. After the unguided exploration phase, the main potential learning and policy improvement loop begins. First, we sample pairs of images uniform at random from the set of images collected during the previous environment interactions. These image pairs together with the goal description of the task (in natural language) are then added to the prompt. The prompt template is task agnostic with the only task grounding being provided through the task de-scription. The prompt is structured to first ground the output vocabulary through common elements in the image pair, then describing the differences between the images with respect to the goal, and lastly decide on the label in a machine-readable output (”the answer is y”). The filled prompt is then fed into the VLM, the label y is extracted from the output text, and the labeled image pair is added to the preference training set. An example of the VLM labeling pipeline can be found in Figure 2. The prompt template can be found in the Appendix in Figure 9 for the Meta-World experiments and in Figure 10 for the Franka Kitchen experiments. To achieve more accurate labels in the visually more challenging Franka Kitchen environment, we extended the prompt with a system prompt describing the task to improve the label accuracy adapted from Zhao et al. (2025). In contrast to RL-VLM-F, we simply extract the label y from a single VLM call rather than using an additional LLM call to generate it from the VLM output. This enables us to improve computational efficiency at the cost of potentially lower labeling accuracy. The training of the preference model rψ is continued whenever a batch of new preference labels is available. The model is trained following the cross entropy loss defined in Eq. (3) (or respectively for the MAE loss in Eq. (4)). 
+
+7M¨ uller and Kudenko 
+
+Algorithm 1 VLM-PBRS 
+
+Require: text description of goal l
+
+Require: environment interaction steps T , policy gradient update steps Nπ, potential up-date steps Nr, VLM labeling frequency K, number of preference queries per labeling batch M 
+
+> 1:
+
+Initialize policy πθ and preference model rψ 
+
+> 2:
+
+Initialize the preference buffer D ← ∅ , replay buffer B ← ∅ , image observation buffer 
+
+I ← ∅  
+
+> 3:
+
+// Initial exploration  
+
+> 4:
+
+for each exploration iteration do  
+
+> 5:
+
+πθ, B, I ← Reinforcement learning loop in Algorithm 2  
+
+> 6:
+
+end for  
+
+> 7:
+
+for each iteration do  
+
+> 8:
+
+// VLM labeling and preference model learning  
+
+> 9:
+
+if iteration % K == 0 then  
+
+> 10:
+
+for m = 1 to M do  
+
+> 11:
+
+Randomly sample two images ( σ0, σ 1) from buffer I 
+
+> 12:
+
+Query VLM with ( σ0, σ 1) and task goal l for label y 
+
+> 13:
+
+Store preference D ← D ∪ { (σ0, σ 1, y )} 
+
+> 14:
+
+end for  
+
+> 15:
+
+for n = 1 to Nr do  
+
+> 16:
+
+Sample minibatch {(σ0, σ 1, y )j }Dj=1 ∼ D  
+
+> 17:
+
+Optimize rψ via loss in Equation (3)  
+
+> 18:
+
+end for  
+
+> 19:
+
+Recompute shaping rewards in replay buffer B using updated rψ 
+
+> 20:
+
+end if  
+
+> 21:
+
+// Policy improvement and data collection  
+
+> 22:
+
+πθ, B, I ← Reinforcement learning loop in Algorithm 2  
+
+> 23:
+
+end for 
+
+Following the considerations of M¨ uller and Kudenko (2025), the potential function should be bounded and its maximum should be smaller than the goal reward to ensure that the shaped goal reward remains positive, which creates an incentive to reach and ter-minate in the goal state to enable the RL agent to properly exploit the original goal rewards. To this end, we add a sigmoid activation function ( σ) and a scaling factor λ to transform the preference model into the potential function. The potential function is therefore defined as follows: Φ( s) = 
+
+(
+
+0 , if s is a terminal state 
+
+λσ (rψ(s)) , otherwise (5) In our experiments, the reward for reaching a goal state is always one, so we set λ = 0 .9. Once the potential function is (re-)trained, the shaped rewards in the replay buffer are recomputed to make use of the most recent, most informed version of the potential function. The algorithm then continues with standard reinforcement learning using the new shaping 
+
+> 8Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Algorithm 2 Reinforcement Learning Loop 
+
+Require: policy πθ and preference model rψ, replay buffer B, image observation buffer I
+
+Require: environment interaction steps T , policy gradient update steps Nπ 
+
+> 1:
+
+for t = 1 to T do  
+
+> 2:
+
+Collect state st+1 , image It+1 , reward rt+1 by taking at ∼ πθ(at|st) 
+
+> 3:
+
+Compute next potential Φ( st+1 ) ← rψ(It+1 ) 
+
+> 4:
+
+Compute shaped reward r′ 
+
+> t+1
+
+according to Eq. (1) and (2)  
+
+> 5:
+
+Add transition B ← B ∪ { (st, a t, s t+1 , r ′
+
+> t+1
+
+)} 
+
+> 6:
+
+Add image observation I ← I ∪ { It+1 } 
+
+> 7:
+
+end for  
+
+> 8:
+
+for n = 1 to Nπ do  
+
+> 9:
+
+Sample minibatch {(st, a t, s t+1 , r ′
+
+> t+1
+
+)j }Bj=1 ∼ B  
+
+> 10:
+
+Optimize policy πθ using minibatch with any RL algorithm  
+
+> 11:
+
+end for  
+
+> 12:
+
+return πθ, B, I
+
+rewards to guide its exploration, to improve its policy, and to collect new data. Thus, our method trades additional VLM computations for a reduction in required environment interactions. 
+
+4.1 Reward Shaping Reduces Label Accuracy Requirements 
+
+The central advantage of our approach over the dense reward modeling in RL-VLM-F lies in relaxing the accuracy requirements on the learned preference model. In RL-VLM-F, the learned preference model rψ serves directly as the reward function and must therefore closely approximate the true task. We instead use rψ as the potential function for potential-based reward shaping. Since PBRS preserves the set of optimal policies for any potential function, the optimality of the learned policies does not hinge on rψ perfectly capturing the ground truth reward. Even incomplete or partially incorrect shaping functions can nonetheless improve the convergence speed of the agent (M¨ uller et al., 2025). VLM-PBRS can therefore leverage smaller, computationally efficient VLMs whose label accuracy would be insufficient for direct reward modeling. This relaxed accuracy requirement motivates a corresponding simplification of the la-beling pipeline. RL-VLM-F uses a two-stage process: a VLM first describes and compares two observed images, and a second query to an LLM (or the same VLM) derives the final preference label from that output. We instead query the VLM in a single prompt to provide the common elements in both images, the difference between the images regarding the goal description, and the output label in the form ”The answer is y”, where y ∈ − 1, 0, 1 is the final label as described in Section 3.3. An example of the full prompt pipeline can be found in Figure 2. 
+
+5 Experiment Setup 
+
+In this section, we first describe the environments used in our experiments, then the methods we compared, and finally the open-weight vision language models we used.    
+
+> 9M¨ uller and Kudenko
+> (a) button-press (b) window-open
+> (c) microwave (d) top-burner (e) light-switch
+
+Figure 3: Example observations from Meta-World (top) and Franka Kitchen (bottom). 
+
+5.1 Environments 
+
+In Meta-World (Yu et al., 2020), the agent controls a robot arm and has to interact with the object on the table in front of it to solve a number of different tasks. The 4-dimensional action specifies the 3-dimensional displacement of the end-effector and one value to adjust the gripper. Each observation is 18-dimensional, and describes the position of the robot and the target objects. We include experiments on the following four tasks: door-open , window-open , drawer-open , and button-press . At the beginning of each episode, the position of the object to interact with is randomized. To evaluate how well our method generalizes to a more realistic and visually challenging setting, we adopt the Franka Kitchen (Gupta et al., 2019; Fu et al., 2020) environment. In Franka Kitchen , the agent controls a 9-DoF Franka robot arm placed in a simulated kitchen environment containing numerous distractor objects. Each task is to interact with one of the objects in the environment and move it into its goal position. All other objects serve as visual noise for the VLM preference labeling. Each observation is represented as a 59-dimensional vector, encapsulating the joint state of the robot and all objects in the kitchen environment. We experiment on the following tasks: microwave , light-switch , and 
+
+top-burner .We use the original goal descriptions for most tasks, which can be found in the Appendix in Table 5. In Franka Kitchen , we adapt the task descriptions for two tasks to clearly define the goal for the VLM. We extend the description for light-switch to specify the unusual location of the light switch on the panel above the stove, and corrected the descriptions for top-burner to specify the top left burner. We slightly modify the visual rendering for 
+
+Meta-World , which is only used for the VLM querying approaches. We remove the green and red orbs that originally highlighted the ends of the gripper and the goal position in order to mitigate potential artificial distractions. For all tasks within each environment, we 
+
+> 10 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+use the same default camera view. Every episode consists of 500 time steps for Meta-World and 280 time steps for Franka Kitchen. All tasks have the same reward structure with a reward of one per step once the target object has reached its goal position and rewards of zero for all other transitions. Episodes only end after the set number of steps to encourage policies able to reach and remain in the goal position. 
+
+5.2 Baselines 
+
+We use SAC (Haarnoja et al., 2018) as the underlying RL algorithm for all baselines. The hyperparameters are based on the choices from RL-VLM-F (Wang et al., 2024). An exten-sive overview of the hyperparameters can be found in Tables 2, 3, and 4 in the Appendix. In our experiments, we compare the following approaches: 
+
+• Sparse : The original goal-directed sparse reward. Reward of one when moving into goal states, and reward of zero for all other transitions. 
+
+• Dense : Human-designed dense rewards specifically designed to accelerate the sample efficiency of RL algorithms in these environments with the potential risk of leading to a sub-optimal learned policy. These reward functions include additional terms based on privileged task information (otherwise not available to the agent) to directly incentivize moving the robot gripper to the object or respectively its handle, and moving the object towards the goal position. These reward functions were provided in the Meta-World environment. In the Franka Kitchen environment, we defined the dense reward as the sum of the negative distances between gripper and object handle, and object to target position. 
+
+• RL-VLM-F : Reward learning from VLM feedback (Wang et al., 2024). Intended to learn a reward model given a task description from VLM preference labels over image pairs when no external environment reward function is available. For a fair comparison, we add the sparse reward signal to the reward model output. The main difference to our approach is in the direct use of the reward model rather than using potential-based reward shaping. 
+
+• VLM-PBRS : Our method for automatically constructing a potential-based reward shaping from VLM preference labels as described in Section 4. 
+
+5.3 VLM 
+
+We use two open-weight VLMs: Ovis2 (Lu et al., 2024) for the Meta-World experiments and Qwen3-VL (Yang et al., 2025) for the Franka Kitchen experiments. To improve com-putational efficiency, we use the 16B parameter version of Ovis2 and the 8B parameter version of Qwen3-VL. Both can be run locally on a single 40GB A100 GPU. They are the smallest versions that still reliably followed the prompt template and produced the label output statement (”the answer is y.”) correctly, which enables us to avoid having to query an additional LLM on the VLM output to generate the preference labels (as was done in 
+
+RL-VLM-F (Wang et al., 2024)).   
+
+> 11 M¨ uller and Kudenko
+> (a) button-press (b) window-open
+> (c) microwave (d) top-burner
+> (e) light-switch
+
+Figure 4: Results of Meta-World (button-press, window-open) and Franka Kitchen (mi-crowave, top-burner, light-switch). VLM-PBRS (in green) outperforms the dense reward baseline in button-press and improves over the sparse reward baseline in all other tasks. We report the mean and standard error of the mean of five inde-pendent, repeated training runs. 
+
+6 Results 
+
+Instead of success rates, which are commonly used in Meta-World, we report the discounted episodic return on the sparse ground truth reward of evaluation episodes to measure the effect of the policy invariance of our approach on the optimality of the learned policy. Our approach not only accelerates successfully completing a task, but is able to still leverage the strength of reinforcement learning to optimize the sparse ground truth reward function when combined with incomplete or (partially) incorrect VLM feedback. For all experiments 
+
+> 12 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+on the Meta-World and Franka Kitchen tasks, we report the mean and standard error of the mean of five independent, repeated training runs per configuration. 
+
+6.1 Does VLM-PBRS Accelerate Learning? 
+
+First, we compare the learning curves of the four methods on two example tasks of the Meta-World environment (button-press, window-open) and on three tasks of the Franka Kitchen environment (microwave, top-burner, light-switch) to evaluate whether VLM-PBRS can be used to automatically accelerate learning given a simple textual goal description. The results on the learning efficiency of the methods can be found in Figure 4. In each subplot the four training configurations are plotted in parallel: the ground-truth sparse 
+
+reward baseline, the human-designed dense reward, the VLM-based reward learning frame-work RL-VLM-F (added to the sparse reward), and our approach VLM-PBRS .The ground truth sparse reward is challenging to solve with standard RL in all tasks. The average discounted returns are low and their variance is high because they depend on reaching the goal state by chance. After reaching the goal state, the optimal policy can be learned. In the repeated runs, runs that reach the goal state by chance quickly converge to the optimal policy, but in many runs the goal state will never be reached by chance, so no policy improvement can be observed, which leads to runs with discounted returns of zero over the entire training duration. Directly using the reward function learning approach RL-VLM-F to create a denser reward improves over the sparse baseline similar to VLM-PBRS in the window-open, and microwave tasks, but interferes with learning well performing policies in the button-press, top-burner, and light-switch tasks. In contrast to the sparse baseline and VLM-PBRS, RL-VLM-F can converge to sub-optimal policies due to errors during the VLM labeling that create incorrect incentives. Across all tasks, VLM-PBRS accelerates learning over the sparse reward baseline. The labels generated by the small VLMs encode sufficient knowledge to accelerate learning without requiring the computational overhead associated with larger VLMs. In the Meta-World tasks, all runs converge quickly towards the optimal policy in the early learning stages (within the first 200,000 training steps). In the button-press task, VLM-PBRS is even able to consistently learn a PBRS function during the training that converges to the optimal policy faster than the given human-designed dense reward. In general, the human designed dense reward should be an upper bound on performance given that it builds on privileged information of the state and is given before the training starts rather than being learned during training. But, as seen in the button-press environment, as the dense reward is not potential-based and hand-crafted, it can lead to sub-optimal policies. The Franka Kitchen tasks are more complex due to their higher-dimensional action and state spaces and are therefore more challenging to explore and learn. In the Franka Kitchen tasks, VLM-PBRS still offers an advantage over the sparse baseline without extensive human engineering or supervision, though convergence is slower and less reliable than in the Meta-World tasks. In summary, our approach of automatically creating a potential-based reward shaping from VLM preference labels consistently improves the sample efficiency compared to the original sparse rewards in both environments. But, the benefit of our method depends on the accuracy of the labels provided by the VLM. Notably, if the VLM provides incorrect 
+
+> 13
+
+M¨ uller and Kudenko                                          
+
+> button-press window-open drawer-open door-open microwave top-burner light-switch
+> total 10,000 10,000 10,000 10,000 10,000 10,000 10,000
+> pref. Image 1 1,906 639 567 1,117 5436 5356 3703
+> pref. Image 2 8,094 9,361 9,335 8,857 3951 4081 5590
+> no preference 0098 26 613 563 707
+> accuracy (excl. no pref.) 0.594 0.547 0.477 0.485 0.753 0.702 0.604
+
+Table 1: VLM label distributions and accuracy for all combinations and orderings of 100 sample images across the four Meta-World and three Franka Kitchen tasks. 
+
+(a) drawer-open (b) door-open 
+
+Figure 5: Results of tasks with at chance VLM label accuracy. VLM-PBRS (in green) improves slightly over the sparse baseline, but given the lack of accurate labels, fails to match the performance of the dense human-designed reward. labels, our method could also decrease the sample efficiency below the performance of the original reward, which we will explore next in Section 6.2. 
+
+6.2 VLM Label Quality 
+
+To evaluate the reliability of the VLM-derived preference labels, we constructed example datasets of images that span the entire spectrum of task progress for all four tasks of Meta-World and all three Franka Kitchen tasks. Expert policies are executed for 50 time steps, during which the goal state is reached in each environment. This ensures that the visual cues presented to the VLM are significant representatives of realistic decision points. We sampled a total of 100 images per environment, which equates to two separate trajectories for the Meta-World tasks. In the Franka Kitchen tasks, the policies achieve the goal in less than 50 steps. The datasets therefore consist of three trajectories for the microwave task and of four trajectories for the top-burner and light-switch tasks. We queried the VLM for both orderings of each image pair for a total of 10000 comparisons, and therefore labels, per environment. The results can be found in Table 1. We report the accuracy with regard to the ground truth labels excluding pairs labeled with no preference by the VLM as these pairs would be ignored in reward shaping model learning. Ground truth preference labels were computed independently for each environment. The ground truth preference consists of two parts. First, the distance between gripper and object (or its handle). Second, the distance from the object to its goal position. For our calculations, we used the distance between object and goal as the primary metric. We 
+
+14 Automating Potential-based Reward Shaping with Vision Language Model Guidance 
+
+only used the gripper-to-object distance if both states had the same object-to-goal distance (most commonly before the object was moved). As only the comparison of each image with itself has a ground truth label of ”-1”, the trivial baseline chance accuracy of always preferring the first (or always preferring the second) image is 49 .5%. For most tasks, the labels produced by the small VLMs surpass the baseline chance accuracy and can accelerate learning in our method as seen in Figure 4. But, in the drawer-open and door-open tasks, the VLM does not perform better than trivial majority labeling. This may be caused by the artificial setups with the bright green drawer and the solid black door with an unusual handle shape that might be outside of the training distribution of the VLM or the issue of correctly identifying the target cabinet when presented with kitchen layout zero-shot. Notably, Ovis2 shows a systematic order bias. Across all four Meta-World environments, at least 80% of labels chosen by the VLM indicate a preference for the second image. As we test both orderings of each image pair, each image should only be preferred in half of the tests. The no preference label ”-1” is rarely used. Within each VLM fewer no preference labels are observed when the overall label accuracy is higher. In our setup, fewer no preference labels could therefore also be used as an indicator for higher label quality, though this may be specific to the used VLMs, environments, and prompt setup. In Figure 5, we explore the effect of VLM-PBRS given low quality VLM labels, where the VLM labeling accuracy is close to random chance guessing. In both the drawer-open and door-open tasks, VLM-PBRS shows a slight improvement over the sparse reward baseline possibly originating from a small number of well labeled examples or more general explo-ration incentives. Notably, in contrast to the non-potential-based reward shaping baseline RL-VLM-F, even given the low quality labels the discounted returns do not drop below the sparse baseline. 
+
+6.3 Ablation of VLM Preference Label Accuracy 
+
+The VLM preference labeling task is inherently challenging, as preference labels can be ambiguous when multiple task-relevant dimensions compete. For instance, consider two states: one in which the agent has lost contact with the handle but the object is closer to the goal, and one in which the agent maintains a firm grip but has made less task progress. Depending on whether object control or goal proximity are valued higher, opposite labels would be assigned. Since we use two-dimensional images from a fixed position to represent the environment, it may even be impossible for the VLM to match ground truth labels due to the loss of information. To measure the effect of VLM label quality on the convergence speed of our method, we replace the VLM with an oracle with a fixed label accuracy. We use the ground truth distance of gripper to target object and distance of the target object to its goal position to compute the oracle label. The preference labels are first based on the improvement of the state of the target object. If the target object is in the same state in both images, the distance of the gripper to the object handle defines the preference label. Given a target accuracy level a, labels are randomly flipped during the oracle labeling with a chance of (1 − a). 
+
+> 15 M¨ uller and Kudenko
+
+Figure 6: Ablation results for fixed VLM label accuracies of an oracle labeler in VLM-PBRS in the door-open task of Meta-World. We report the mean discounted evaluation returns and standard error of the mean of 20 repeated training runs. Figure 6 shows average ground truth returns for repeated runs with different target accuracy values. Overall, higher target accuracy values lead to quicker convergence to well performing policies. Accuracy levels below 0 .5 imply that the labels are likely to indicate preference for the incorrect image, which leads to a reward shaping that instead encourages to avoid achieving the goal. As a result, these runs tend to perform worse than the sparse baseline in the initial stages of learning. But given the use of PBRS, our method still learns to optimize the sparse ground truth reward even when all labels are incorrect (for a = 0 .0) relying on the inherent exploration of the underlying RL algorithm. Notably, there appears to be a positive effect on learning even with incorrect VLM feedback, where all VLM-PBRS runs outperform the sparse baseline. This may be caused by more efficient exploration even if the exploration does not align with the goal. Sample efficiency improvements can be observed for better-than-chance accuracies starting with a = 0 .6. In general, VLM-PBRS will not reach the sample efficiency of a predefined dense reward function, as the shaping function has to be learned during training, but it does not require manual human effort beyond the simple high-level task description. 
+
+6.4 Ablation of Number of VLM Preference Labels 
+
+Figure 7 shows the impact of the number of VLM preference labels queried in each labeling batch on learning performance for the button-press , window-open , drawer-open , and door-open tasks of Meta-World. We evaluated four different numbers of queries per VLM labeling batch: 5, 10, 20, and 40 labels per batch. The results show that using only five labels per batch consistently yields the poorest performance across all environments. But, for larger numbers of labels per batch, little differences in sample efficiency improvements can be observed. For these choices, the mean success rates and discounted returns converge to the same asymptotic value within a similar number of steps.   
+
+> 16 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+> (a) button-press (b) window-open
+> (c) drawer-open (d) door-open
+
+Figure 7: Ablation results for number of queries per VLM labeling batch for VLM-PBRS in the Meta-World environment. Given the negligible performance gap and the lower computational overhead, we adopt 20 VLM labels per batch as our default setting in all experiments instead of the 40 VLM labels per batch used in RL-VLM-F. This choice balances efficiency with robust learning, ensuring that learning the shaping function remains effective without incurring unnecessary labeling cost. 
+
+6.5 Ablation of Loss Function 
+
+Figure 8 shows the results of the ablation of the loss function in VLM-PBRS for the button-press , window-open , drawer-open , and door-open tasks of Meta-World. Cross entropy (CE) is the default loss function used in many previous works on learning reward models from preference labels (Christiano et al., 2017; Lee et al., 2021; Wang et al., 2024; Lin et al., 2024; Klissarov et al., 2024). In Ghosh et al. (2017) it was shown that mean absolute error (MAE) is more robust when learning from noisy labels, due to which it was used in Luu et al. (2025) in the context of learning reward models from VLM preference labels. In our ablation results, both loss functions perform similar across the four tested envi-ronments, and therefore we adopted the CE loss for all other experiments. This might be caused by the bias of the VLM to default to a preference for the second image rather than generating more arbitrarily noisy labels. As we sample the image examples uniformly at   
+
+> 17 M¨ uller and Kudenko
+> (a) button-press (b) window-open
+> (c) drawer-open (d) door-open
+
+Figure 8: Ablation results for choice of loss function for VLM-PBRS in the Meta-World environment. random, the label for a pair is either correct or preferring either image (as the second input image) is equally likely. With the CE loss, multiple repetitions of similar image pairs with flipped labels will cause the learned potential values of these pairs to move towards zero, which can cause the output distribution to move towards zero. But, this is not detrimen-tal to our method as we focus on sparse reward settings where only the order of shaping rewards matters rather than their absolute value. In fact, the shaping rewards should be comparatively smaller than the environment sparse rewards to accelerate convergence towards optimizing the sparse, ground truth environment reward once the goal has been reached. 
+
+7 Conclusion and Future Work 
+
+In this work, we introduced VLM-PBRS, a novel approach towards automating the con-struction of potential-based reward shaping functions by using vision language models to accelerate reinforcement learning in sparse reward settings. By querying a VLM with a short textual description of the goal for preference labels over pairs of images, VLM-PBRS constructs a dense shaping reward guaranteed to preserve the optimal policy of the un-derlying sparse-reward task. The policy invariance makes it inherently resilient against 
+
+> 18 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+reward hacking and ensures that only the sample efficiency is influenced by the VLM label quality. This allows VLM-PBRS to reduce the cost of querying large VLMs and operate effectively with smaller VLMs (up to 16 billion parameters) and sub-optimal labeling accu-racy. The shaping signal improves exploration without altering the set of optimal policies of the original MDP, offering a practical pathway for resource-constrained deployment. Empirical evaluation in the Meta-World and Franka Kitchen environments demonstrated that VLM-PBRS consistently improves on the sparse reward baseline and outperforms the naive application of the reward learning framework RL-VLM-F (Wang et al., 2024) as reward shaping. The sample efficiency gains correlate with VLM labeling accuracy: in the button-press environment with a sub-optimal accuracy (of 59.4%), VLM-PBRS even surpasses the human-designed dense reward baseline, indicating that automated potential-based reward shaping is a viable and scalable alternative to hand-crafted reward engineering. Both the benefit and generality of VLM-PBRS are expected to grow alongside the continuing progress of multi-modal foundation models. Following this work, multiple directions for future work remain. The preference label-ing pipeline could be further improved to enable the application for more complex tasks and ambiguous goals, and to include additional input modalities, for instance by replacing the images with (short) videos, or other richer state representations. The example selec-tion could also be made more principled: while the current approach biases only towards frequently visited states, a more sophisticated strategy could enable more efficient VLM labeling. Finally, since the potential function is updated dynamically, the shaped rewards change frequently during training, which may hinder convergence. Designing agents that inherently account for non-stationary shaping rewards thus represents a natural avenue for further improvement. 
+
+Acknowledgments and Disclosure of Funding 
+
+This work was supported by the Lower Saxony Ministry of Science and Culture (MWK), in the zukunft.niedersachsen program of the Volkswagen Foundation (HybrInt). The authors gratefully acknowledge the computing time granted by the KISSKI project. The calculations for this research were conducted with computing resources under the project kisski rl vlm f. 
+
+> 19 M¨ uller and Kudenko
+
+Hyperparameter Value 
+
+Initial temperature 0.1Hidden units per layer 256 Number of hidden layers 3Actor learning rate 0.0003 ( Meta-World ), 0 .001 ( Franka Kitchen )Critic learning rate 0.0003 Batch Size 512 Optimizer Adam (Kingma and Ba, 2015) Critic target update freq 2Critic EMA τ 0.005 ( Meta-World ), 0 .001 ( Franka Kitchen )(β1, β 2) (0 .9, 0.999) Discount factor γ 0.99 Replay buffer size 200,000 ( Rl-VLM-F, VLM-PBRS ), 1,000,000 ( sparse, dense )Initial exploration steps 10,000 Table 2: Hyperparameters of SAC used in VLM-PBRS and the baselines. 
+
+Hyperparameter Value 
+
+Queries per VLM labeling batch M 20 Frequency of VLM labeling K every 4000 steps Maximum VLM query budget N 20,000 Potential scaling factor λ 0.9Preference Model Architecture CNN ( Meta-World ), ResNet-18 ( Franka Kitchen )Output activation sigmoid Learning rate 0.0003 Image size 300 × 300 ( Meta-World ), 360 × 360 ( Franka Kitchen )CNN kernel sizes [5, 3, 3 ,3] CNN channels [16, 32, 64, 128] CNN strides [3, 2, 2, 2] Table 3: Hyperparameters of VLM-PBRS and RL-VLM-F, and their preference models. 
+
+Appendix A. 
+
+A.1 Training Details 
+
+Tables 2, 3, and 4 list the default values of all hyperparameters used for VLM-PBRS unless explicitly changed in the ablation studies. The baselines used the same hyperparameter choices, where applicable. The hyperparameter values are based on the ones in RL-VLM-F (Wang et al., 2024), which builds on PEBBLE (Lee et al., 2021). The learning rate 
+
+> 20 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Hyperparameter Value 
+
+model name Qwen3-VL-8B-Instruct 
+
+greedy false top p 0.8 top k 20 temperature 0.7 repetition penalty 1.0 presence penalty 1.5 output sequence length 16384 Table 4: Generation hyperparameters of Qwen3-VL following the official recommendation for vision-language generation. Task Name Goal Description 
+
+button-press Press a button. 
+
+window-open Push and open a window. 
+
+drawer-open Open a drawer. 
+
+door-open Open a door with a revolving joint. 
+
+microwave Open the microwave door. 
+
+light-switch Flip the switch on the panel to turn on the stove light. 
+
+top-burner Turn the oven knob that activates the top left burner. Table 5: Goal description used in VLM-PBRS and the RL-VLM-F baseline. and critic EMA τ were optimized in Franka Kitchen on the dense reward for more stable convergence. With the training budgets of 1,000,000 environment steps in our experiments, the maximum VLM query budget N is never reached and therefore effectively unlimited. 
+
+A.2 VLM Prompt Templates 
+
+Table 5 lists the original goal descriptions for each task in Meta-World (Yu et al., 2020) and partially specified goal descriptions for the Franka Kitchen (Gupta et al., 2019; Fu et al., 2020) tasks. In light-switch , the description was extended to include the unusual position of the light switch on the panel above the stove. In top-burner , the description was specified to explicitly state, which of the two top burners to activate. These goal descriptions are then added to the templates in Figure 9 for the Meta-World environment and to the template in Figure 10 for the Franka Kitchen environment. The same prompt template is used across all tasks of one environment for both VLM-PBRS and RL-VLM-F. The core modification of the Franka Kitchen template is the inclusion of a system prompt with additional guidance on the labeling task. 
+
+> 21 M¨ uller and Kudenko
+
+Meta-World Prompt Template 
+
+Consider the following two images: Image 1: [Image 1] Image 2: [Image 2] 1. Describe the common elements in both images. 2. The goal is: [task description]. What is the difference between Image 1 and Image 2 in terms of achieving the goal? 3. Is the goal better achieved in Image 1 or Image 2? Answer this question with 0 if the goal is better achieved in Image 1, with 1 if it is better achieved in Image 2, and with -1 if there is no difference. Conclude with ’the answer is’ followed by the final solution. 
+
+Figure 9: The single stage prompt template for VLM-PBRS and the RL-VLM-F baseline used for Meta-World. 
+
+> 22 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Franka Kitchen Prompt Template 
+
+System: You are an intelligent vision-language assistant agent operating within a virtual envi-ronment. Your primary objective is to give preference labels over pairs of images given a description of a goal the robot should achieve. To describe the state of target objects accurately, use spatial relationship terms like: inside, on top of, on the bottom of, on the left of, on the right of and so on. Additionally, use motion terms like open, or closed to describe the object status. To describe the object position, use the position of the object in the respective image. Make sure that each description captures the essential status needed to accurately compare the images and correctly assign a preference label. The preference label should primarily be based on the state of the target object with respect to fulfilling the goal. If the target object is in the same state in both images, the preference label should be based on how close the robot gripper is to the object. If the gripper is not visible in either image, label the pair as no difference. User: Goal description: [task description] Consider the following two images: Image 1: [Image 1] Image 2: [Image 2] 1. Describe the common elements in both images. 2. The goal is: [task description]. What is the difference between Image 1 and Image 2 in terms of achieving the goal? 3. Is the goal better achieved in Image 1 or Image 2? Answer this question with 0 if the goal is better achieved in Image 1, with 1 if it is better achieved in Image 2, and with -1 if there is no difference. Conclude with ’the answer is’ followed by the final solution. Think step by step before answering. 
+
+Figure 10: The single stage prompt template for VLM-PBRS and the RL-VLM-F baseline used for Franka Kitchen. 
+
+> 23 M¨ uller and Kudenko
+
+References 
+
+Ademi Adeniji, Amber Xie, Carmelo Sferrazza, Younggyo Seo, Stephen James, and Pieter Abbeel. Language reward modulation for pretraining reinforcement learning, 2023. Ralph Allan Bradley and Milton E Terry. Rank analysis of incomplete block designs: I. the method of paired comparisons. Biometrika , 39(3/4):324–345, 1952. Tim Brys, Anna Harutyunyan, Halit Bener Suay, Sonia Chernova, Matthew E. Taylor, and Ann Now´ e. Reinforcement learning from demonstration through shaping. In Proceedings of the 24th International Conference on Artificial Intelligence , IJCAI’15, page 3352–3358. AAAI Press, 2015. ISBN 9781577357384. Harris Chan, Volodymyr Mnih, Feryal Behbahani, Michael Laskin, Luyu Wang, Fabio Pardo, Maxime Gazeau, Himanshu Sahni, Dan Horgan, Kate Baumli, Yannick Schroecker, Stephen Spencer, Richie Steigerwald, John Quan, Gheorghe Comanici, Sebastian Flen-nerhag, Alexander Neitz, Lei M Zhang, Tom Schaul, Satinder Singh, Clare Lyle, Tim Rockt¨ aschel, Jack Parker-Holder, and Kristian Holsheimer. Vision-language models as a source of rewards. In Second Agent Learning in Open-Endedness Workshop , 2023. URL 
+
+https://openreview.net/forum?id=Xw1hVTWxxQ .Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei. Deep reinforcement learning from human preferences. In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, edi-tors, Advances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ d5e2c0adad503c91f91df240d0cd4e49-Paper.pdf .Kun Chu, Xufeng Zhao, Cornelius Weber, Mengdi Li, and Stefan Wermter. Accelerating reinforcement learning of robotic manipulations via feedback from large language models. 
+
+arXiv preprint arXiv:2311.02379 , 2023. Yuchen Cui, Scott Niekum, Abhinav Gupta, Vikash Kumar, and Aravind Rajeswaran. Can foundation models perform zero-shot task specification for robot manipulation? In Roya Firoozi, Negar Mehr, Esen Yel, Rika Antonova, Jeannette Bohg, Mac Schwager, and Mykel Kochenderfer, editors, Proceedings of The 4th Annual Learning for Dynamics and Control Conference , volume 168 of Proceedings of Machine Learning Research , pages 893– 905. PMLR, 23–24 Jun 2022. URL https://proceedings.mlr.press/v168/cui22a. html .Rati Devidze, Parameswaran Kamalaruban, and Adish Singla. Exploration-guided re-ward shaping for reinforcement learning under sparse rewards. In S. Koyejo, S. Mo-hamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, editors, Advances in Neu-ral Information Processing Systems , volume 35, pages 5829–5842. Curran Associates, Inc., 2022. URL https://proceedings.neurips.cc/paper_files/paper/2022/file/ 266c0f191b04cbbbe529016d0edc847e-Paper-Conference.pdf .Sam Devlin and Daniel Kudenko. Dynamic potential-based reward shaping. In International Conference on Autonomous Agents and Multiagent Systems, AAMAS 2012, Valencia, 
+
+> 24 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Spain, June 4-8, 2012 (3 Volumes) , pages 433–440. IFAAMAS, 2012. URL http://dl. acm.org/citation.cfm?id=2343638 .Mahmoud Elbarbari, Florent Delgrange, Ivo Vervlimmeren, Kyriakos Efthymiadis, Bram Vanderborght, and Ann Nowe. A framework for flexibly guiding learning agents. Neural Computing and Applications , 06 2022. doi: 10.1007/s00521-022-07396-x. Justin Fu, Aviral Kumar, Ofir Nachum, George Tucker, and Sergey Levine. D4rl: Datasets for deep data-driven reinforcement learning, 2020. Aritra Ghosh, Himanshu Kumar, and P. S. Sastry. Robust loss functions under label noise for deep neural networks. In Proceedings of the Thirty-First AAAI Conference on Artificial Intelligence , AAAI’17, page 1919–1925. AAAI Press, 2017. Marek Grze´ s. Reward shaping in episodic reinforcement learning. In Proceedings of the 16th Conference on Autonomous Agents and MultiAgent Systems , AAMAS ’17, page 565–573, Richland, SC, 2017. International Foundation for Autonomous Agents and Multiagent Systems. Abhishek Gupta, Vikash Kumar, Corey Lynch, Sergey Levine, and Karol Hausman. Relay policy learning: Solving long-horizon tasks via imitation and reinforcement learning. 
+
+arXiv preprint arXiv:1910.11956 , 2019. Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In Jen-nifer Dy and Andreas Krause, editors, Proceedings of the 35th International Confer-ence on Machine Learning , volume 80 of Proceedings of Machine Learning Research ,pages 1861–1870. PMLR, 10–15 Jul 2018. URL https://proceedings.mlr.press/v80/ haarnoja18b.html .Mohammadhosein Hasanbeig, Natasha Yogananda Jeppu, Alessandro Abate, Tom Mel-ham, and Daniel Kroening. Deepsynth: Automata synthesis for automatic task seg-mentation in deep reinforcement learning. Proceedings of the AAAI Conference on Ar-tificial Intelligence , 35(9):7647–7656, May 2021. doi: 10.1609/aaai.v35i9.16935. URL 
+
+https://ojs.aaai.org/index.php/AAAI/article/view/16935 .Yujing Hu, Weixun Wang, Hangtian Jia, Yixiang Wang, Yingfeng Chen, Jianye Hao, Feng Wu, and Changjie Fan. Learning to utilize shaping rewards: A new approach of reward shaping. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Ad-vances in Neural Information Processing Systems , volume 33, pages 15931–15941. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/ 2020/file/b710915795b9e9c02cf10d6d2bdb688c-Paper.pdf .Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In 
+
+International Conference on Learning Representations , 2015. Martin Klissarov, Pierluca D’Oro, Shagun Sodhani, Roberta Raileanu, Pierre-Luc Bacon, Pascal Vincent, Amy Zhang, and Mikael Henaff. Motif: Intrinsic motivation from artificial 
+
+> 25 M¨ uller and Kudenko
+
+intelligence feedback. In The Twelfth International Conference on Learning Representa-tions , 2024. URL https://openreview.net/forum?id=tmBKIecDE9 .Martin Klissarov, R Devon Hjelm, Alexander T Toshev, and Bogdan Mazoure. On the modeling capabilities of large language models for sequential decision making. In The Thirteenth International Conference on Learning Representations , 2025. URL https: //openreview.net/forum?id=vodsIF3o7N .Kimin Lee, Laura M Smith, and Pieter Abbeel. Pebble: Feedback-efficient interactive reinforcement learning via relabeling experience and unsupervised pre-training. In Marina Meila and Tong Zhang, editors, Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pages 6152– 6163. PMLR, 18–24 Jul 2021. URL https://proceedings.mlr.press/v139/lee21i. html .Muhan Lin, Shuyang Shi, Yue Guo, Behdad Chalaki, Vaishnav Tadiparthi, Ehsan Moradi Pari, Simon Stepputtis, Joseph Campbell, and Katia P. Sycara. Navigating noisy feedback: Enhancing reinforcement learning with error-prone language models. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen, editors, Findings of the Associa-tion for Computational Linguistics: EMNLP 2024 , pages 16002–16014, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024. findings-emnlp.939. URL https://aclanthology.org/2024.findings-emnlp.939/ .Shiyin Lu, Yang Li, Qing-Guo Chen, Zhao Xu, Weihua Luo, Kaifu Zhang, and Han-Jia Ye. Ovis: Structural embedding alignment for multimodal large language model. 
+
+arXiv:2405.20797 , 2024. Tung Minh Luu, Younghwan Lee, Donghoon Lee, Sunho Kim, Min Jun Kim, and Chang D. Yoo. Enhancing rating-based reinforcement learning to effectively leverage feedback from large vision-language models. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/forum?id=k77bq8AJVy .Yecheng Jason Ma, Vikash Kumar, Amy Zhang, Osbert Bastani, and Dinesh Jayaraman. LIV: Language-image representations and rewards for robotic control. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning ,volume 202 of Proceedings of Machine Learning Research , pages 23301–23320. PMLR, 23–29 Jul 2023. URL https://proceedings.mlr.press/v202/ma23b.html .Parsa Mahmoudieh, Deepak Pathak, and Trevor Darrell. Zero-shot reward specification via grounded natural language. In International Conference on Machine Learning , pages 14743–14752. PMLR, 2022. Farzan Memarian, Wonjoon Goo, Rudolf Lioutikov, Scott Niekum, and Ufuk Topcu. Self-supervised online reward shaping in sparse-reward environments. In 2021 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 2369–2375, 2021. doi: 10.1109/IROS51168.2021.9636020. 
+
+> 26 Automating Potential-based Reward Shaping with Vision Language Model Guidance
+
+Henrik M¨ uller and Daniel Kudenko. Improving the effectiveness of potential-based reward shaping in reinforcement learning. In Proceedings of the 24th International Conference on Autonomous Agents and Multiagent Systems , AAMAS ’25, page 2684–2686, Richland, SC, 2025. International Foundation for Autonomous Agents and Multiagent Systems. ISBN 9798400714269. Henrik M¨ uller, Lukas Berg, and Daniel Kudenko. Using incomplete and incorrect plans to shape reinforcement learning in long-sequence sparse-reward tasks. Neural Computing and Applications , Jan 2025. ISSN 1433-3058. doi: 10.1007/s00521-024-10615-2. URL 
+
+https://doi.org/10.1007/s00521-024-10615-2 .Andrew Y. Ng, Daishi Harada, and Stuart J. Russell. Policy invariance under reward trans-formations: Theory and application to reward shaping. In Proceedings of the Sixteenth International Conference on Machine Learning , ICML ’99, page 278–287, San Francisco, CA, USA, 1999. Morgan Kaufmann Publishers Inc. ISBN 1558606122. Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervision. In International Conference on Machine Learning , pages 8748–8763. PMLR, 2021. Jette Randløv and Preben Alstrøm. Learning to drive a bicycle using reinforcement learn-ing and shaping. In Proceedings of the Fifteenth International Conference on Machine Learning , ICML ’98, page 463–471, San Francisco, CA, USA, 1998. Morgan Kaufmann Publishers Inc. ISBN 1558605568. Juan Rocamonde, Victoriano Montesinos, Elvis Nava, Ethan Perez, and David Lind-ner. Vision-language models are zero-shot reward models for reinforcement learn-ing. In NeurIPS 2023 Foundation Models for Decision Making Workshop , 2023. URL 
+
+https://openreview.net/forum?id=JUwczEJY8I .Sumedh A Sontakke, Jesse Zhang, S´ ebastien M. R. Arnold, Karl Pertsch, Erdem Bıyık, Dorsa Sadigh, Chelsea Finn, and Laurent Itti. Roboclip: one demonstration is enough to learn robot policies. In Proceedings of the 37th International Conference on Neural Information Processing Systems , NIPS ’23, Red Hook, NY, USA, 2023. Curran Associates Inc. Halit Bener Suay, Tim Brys, Matthew E. Taylor, and Sonia Chernova. Learning from demonstration for shaping through inverse reinforcement learning. In Proceedings of the 2016 International Conference on Autonomous Agents & Multiagent Systems , AAMAS ’16, page 429–437, Richland, SC, 2016. International Foundation for Autonomous Agents and Multiagent Systems. ISBN 9781450342391. Alexander Trott, Stephan Zheng, Caiming Xiong, and Richard Socher. Keeping your dis-tance: Solving sparse reward tasks using self-balancing shaped rewards. In H. Wal-lach, H. Larochelle, A. Beygelzimer, F. d 'Alch´ e-Buc, E. Fox, and R. Garnett, editors, 
+
+Advances in Neural Information Processing Systems , volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/file/ 64c26b2a2dcf068c49894bd07e0e6389-Paper.pdf .
+
+> 27 M¨ uller and Kudenko
+
+Caroline Wang, Garrett Warnell, and Peter Stone. D-shape: Demonstration-shaped rein-forcement learning via goal-conditioning. In Proceedings of the 2023 International Con-ference on Autonomous Agents and Multiagent Systems , AAMAS ’23, page 1267–1275, Richland, SC, 2023. International Foundation for Autonomous Agents and Multiagent Systems. ISBN 9781450394321. Yufei Wang, Zhanyi Sun, Jesse Zhang, Zhou Xian, Erdem Biyik, David Held, and Zackory Erickson. Rl-vlm-f: reinforcement learning from vision language foundation model feed-back. In Proceedings of the 41st International Conference on Machine Learning , ICML’24. JMLR.org, 2024. Christian Wirth, Riad Akrour, Gerhard Neumann, and Johannes F¨ urnkranz. A survey of preference-based reinforcement learning methods. Journal of Machine Learning Research ,18(136):1–46, 2017. URL http://jmlr.org/papers/v18/16-634.html .Yuchen Wu, Melissa Mozifian, and Florian Shkurti. Shaping rewards for reinforcement learn-ing with imperfect demonstrations using generative models. In 2021 IEEE International Conference on Robotics and Automation (ICRA) , page 6628–6634. IEEE Press, 2021. doi: 10.1109/ICRA48506.2021.9561333. URL https://doi.org/10.1109/ICRA48506.2021. 9561333 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report. 
+
+arXiv preprint arXiv:2505.09388 , 2025. Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Hausman, Chelsea Finn, and Sergey Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning. In Leslie Pack Kaelbling, Danica Kragic, and Komei Sugiura, editors, Proceedings of the Conference on Robot Learning , volume 100 of Proceedings of Machine Learning Research , pages 1094–1100. PMLR, 30 Oct–01 Nov 2020. URL 
+
+https://proceedings.mlr.press/v100/yu20a.html .Fuxiang Zhang, Junyou Li, Yi-Chen Li, Zongzhang Zhang, Yang Yu, and Deheng Ye. Im-proving sample efficiency of reinforcement learning with background knowledge from large language models. IEEE Transactions on Neural Networks and Learning Systems , pages 1–12, 2025. doi: 10.1109/TNNLS.2025.3590731. Yinuo Zhao, Jiale Yuan, Zhiyuan Xu, Xiaoshuai Hao, Xinyi Zhang, Kun Wu, Zhengping Che, Chi Harold Liu, and Jian Tang. Training-free generation of temporally consistent rewards from vlms. In Proceedings of the IEEE/CVF International Conference on Com-puter Vision (ICCV) , pages 8133–8143, October 2025.

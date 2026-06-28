@@ -1,0 +1,667 @@
+Title: Beyond Trajectory Imitation: Strategy-Guided Policy Optimization for LLM Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.24064v1
+
+Published Time: Wed, 24 Jun 2026 00:23:54 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+Preprint. Under review. 
+
+# Beyond Trajectory Imitation: Strategy-Guided Policy Opti-mization for LLM Reasoning 
+
+Tianyuan Shi 1, Canbin Huang 1, Bei Li 2, Xin Chen 2, Xiaojun Quan 3∗, Jingang Wang 2
+
+Qifan Wang 41School of Computer Science and Engineering, Sun Yat-sen University, China 
+
+> 2
+
+Meituan, Inc., China, 3Shenzhen Loop Area Institute, China, 4Meta AI, USA 
+
+{shity6,huangcb3 }@mail2.sysu.edu.cn , xiaojunquan@slai.edu.cn 
+
+{libei17,chenxin148,wangjingang02 }@meituan.com , wqfcr@fb.com 
+
+Abstract 
+
+Distilling reasoning capabilities from strong to weak language models typi-cally involves imitating specific solution trajectories, effectively transferring 
+
+what to answer rather than how to reason . This trajectory-level imitation en-courages memorization of instance-specific steps rather than acquisition of transferable problem-solving skills, limiting generalization to novel prob-lems. We propose Strategy-Guided Policy Optimization (SGPO), which replaces instance-level trajectory imitation with reusable strategy distilla-tion . SGPO extracts structured strategy descriptions from strong-model responses and, for each problem, constructs both autonomous and strategy-guided trajectories to enable direct comparison of the model’s behavior with and without strategic guidance. The framework then addresses two key questions. For how to distill, a token-level forward-KL objective selec-tively transfers the distributional shift induced by strategy conditioning into the unguided policy, with proximal constraints ensuring stability. For 
+
+when to distill, adaptive instance-level weighting strengthens guidance when autonomous exploration falls short and reduces it as the model’s own competence grows. Experiments on four mathematical benchmarks across two model families show that SGPO consistently outperforms SFT, on-policy RL, and hybrid-policy baselines, improving the average score by 2.2 points over the strongest baseline on Qwen2.5-7B-Instruct. Analysis reveals that the forward-KL objective provides an inherently selective distil-lation signal that outperforms direct trajectory imitation, and that strategy distillation exhibits complementary scaling with base model capability. 
+
+1 Introduction 
+
+Large language models (LLMs) have demonstrated remarkable reasoning capabilities (Daya et al., 2025; OpenAI et al., 2024), motivating a range of methods to transfer these capabilities to smaller models. Whether through supervised fine-tuning on expert traces (Daya et al., 2025; Ye et al., 2025; Wu et al., 2026; Zhu et al., 2025) or hybrid objectives that integrate expert demonstrations into policy optimization (Yan et al., 2025; Lv et al., 2026; Fu et al., 2025), existing approaches operate on the same unit of knowledge transfer: instance-level solution trajectories . The student is trained to reproduce what the expert wrote, that is, specific sequences of reasoning steps for specific problems, but is never taught the reusable problem-solving strategy that explains why those steps were chosen. This trajectory-level imitation encourages memorization of instance-specific patterns rather than acquisition of transferable skills, limiting generalization to novel problems. A natural question arises: Can we shift the distillation target from specific solutions to the reusable problem-solving strategies that make those solutions effective? 
+
+> ∗
+
+Corresponding author 
+
+1
+
+> arXiv:2606.24064v1 [cs.AI] 23 Jun 2026
+
+Preprint. Under review. We propose Strategy-Guided Policy Optimization (SGPO), a framework designed to accomplish this shift. SGPO extracts structured strategy descriptions from strong-model responses. Each description specifies the problem type, the solving approach, and the general procedural steps, without carrying out computations or revealing the answer. Rather than asking the student to reproduce what the expert generates, SGPO uses these descriptions to reshape the student’s own reasoning distribution, distilling how to reason 
+
+rather than what to answer .A central design principle is that strategic knowledge should be internalized into the model’s unguided policy rather than remain an external dependency unavailable at inference time. To this end, SGPO constructs both autonomous and strategy-guided trajectories for each problem (§3.1), enabling direct comparison of the model’s behavior with and without strategic guidance. This dual construction serves as the foundation for addressing two com-plementary questions: (1) How to distill. A token-level forward-KL objective measures the divergence between guided and unguided next-token distributions and selectively distills strategy-critical information back into the unguided policy, while proximal constraints at both trajectory and token levels ensure stability (§3.3, §3.4). (2) When to distill. Adaptive per-instance weighting modulates distillation strength based on the marginal benefit of strategy guidance, strengthening distillation when autonomous exploration falls short and reducing it as the model’s own competence grows (§3.4). This naturally transitions training from strategy-driven rapid improvement in early stages to autonomous-policy-dominated steady optimization in later stages, without manual scheduling. Crucially, SGPO never imitates any trajectory, whether autonomous or guided. Instead, it distills the distributional shift caused by strategy conditioning, operating at the level of token-level probability changes rather than sequence matching. This enables selective transfer of strategic knowledge while preserving the reasoning diversity the model has already acquired through autonomous exploration. Experiments on four mathematical benchmarks across two model families (Qwen2.5 and Llama-3.2) show that SGPO consistently outperforms strong baselines including SFT, on-policy RL, and state-of-the-art hybrid-policy methods, improving the average score by 2.2 points over the strongest baseline on Qwen2.5-7B-Instruct. Analysis reveals two findings. First, the forward-KL objective provides an inherently selective distillation signal: without any token-level annotation, optimization pressure concentrates on tokens whose probability shifts most under strategy conditioning, which empirically correspond to strategy-critical decision points rather than routine linguistic tokens. Second, strategy distillation exhibits complementary scaling with base model capability: as foundational reasoning competence grows, the ability to internalize strategic guidance increases at a faster rate, suggesting that a minimum reasoning competence is needed to benefit from strategy-level transfer. 
+
+2 Related Work 
+
+2.1 Supervised Fine-Tuning for LLM Reasoning 
+
+Training a weaker model on expert reasoning traces is the most common form of reasoning distillation (Daya et al., 2025; Ye et al., 2025). While simple and effective, this trajectory-level distillation is sensitive to data quality (Ye et al., 2025), prone to memorization (Chu et al., 2025), and vulnerable to exposure bias (Wu et al., 2026). Recent work mitigates these issues from RL perspectives along two directions. The first introduces proximal constraints: Wu et al. (2026) downweight the loss on well-learned tokens using the model’s own predictions, while PSFT (Zhu et al., 2025) applies proximal clipping to bound update magnitudes. The second recasts SFT through a reward-optimization lens; for example, IW-SFT (Qin & Springenberg, 2025) tightens the RL lower bound via importance weighting on policy probability ratios. These methods improve how the teacher’s output is transferred but do not change what is transferred: the student still imitates specific solutions. In contrast, our work operates at a higher level of abstraction, distilling reusable strategies rather than concrete trajectories. 2Preprint. Under review. Problem                                  
+
+> 𝑞
+> Strategy
+> s
+> Extract from strong -
+> model responses
+> Policy Model
+> 𝜋 !
+> 𝑜 !
+> 𝑜 "
+> 𝑜 #
+> 𝑜 $
+> GRPO
+> Truncation 𝑤 !=𝟏 𝑑 !≤𝛿
+> Adaptive Weighting ℒ=ℒ"#$% +𝛼 (𝑞 )ℒ&'
+> ()*+
+> ✗
+> ✓
+> ✓
+> ✗
+> 𝜋 ∗𝑞
+> Autonomous Group
+> %𝑜 !
+> %𝑜 "
+> %𝑜 #
+> %𝑜 $
+> ✓
+> ✓
+> ✗𝜋 ∗𝑞 ,s
+> Strategy -Guided Group
+> ✓
+> ℒ+,-.
+> 𝛼 (𝑞 )
+> ℒ/0
+> 1234
+> Update 𝜃
+> Proximal KL Distillation
+> Compare 𝜋 ∗𝑞 ,swith 𝜋 ∗𝑞
+> Auto .group performs well ⇒α↓
+> Auto. group performs poorly ⇒α↑
+> 𝑜 C
+> Reachable
+> Target Selection
+
+Figure 1: Overview of the SGPO framework. For each problem, we jointly construct an autonomous group and a strategy-guided group. The autonomous group is optimized with GRPO. Correct trajectories from the strategy-guided group provide proximal KL distillation signals to the unguided policy. An adaptive weight α(q) controls distillation strength. 
+
+2.2 Hybrid Policy Optimization for LLM Reasoning 
+
+Incorporating expert demonstrations into policy optimization is a long-standing theme in RL (Rajeswaran et al., 2018; Nair et al., 2018). Recent LLM methods follow two directions. 
+
+Unified-loss methods mix expert data into the RL objective: LUFFY (Yan et al., 2025) adds off-policy expert trajectories to GRPO rollout groups with regularized importance sampling; AMPO (Yuan et al., 2025) replaces incorrect on-policy samples with diverse off-policy alternatives; other approaches interleave RL and SFT updates (Ma et al., 2026; Chen et al., 2025); and SRFT (Fu et al., 2025) unifies these ideas in a single-stage framework with sample-level modulation. Prefix-guided methods use expert trajectories to structure generation: UFT (Liu et al., 2025) progressively masks expert suffixes to encourage autonomy, while BREAD (Zhang et al., 2025) branches rollouts from intermediate expert steps. All these methods transfer knowledge at the level of specific solution steps. Our approach differs in two respects: (i) it conditions on strategy descriptions that specify problem-solving direction without prescribing concrete computations, and (ii) rather than imitating the teacher’s output, it distills the distributional shift that strategy conditioning induces in the student’s own policy, making the transfer inherently adapted to the student’s current capability while removing dependence on external hints at inference time. 
+
+3 Method 
+
+3.1 Problem Formulation and Overview 
+
+Let πθ (· | q) denote the policy of the target model for a reasoning problem q. For each prob-lem, we assume access to a strategy description s extracted from a strong-model response. A strategy description is a concise natural-language summary that specifies the problem type, the solving approach, and the general procedural steps, without carrying out intermediate computations or revealing the final answer. It encodes actionable strategic information while omitting solution-specific details, occupying a middle ground between a generic hint and a complete solution. Details of the extraction pipeline and prompt templates are provided in Appendix B. For each training problem q, we construct two trajectory groups: (1) Autonomous group 
+
+{oi}G1
+
+> i=1
+
+, sampled from πθ (· | q); and (2) Strategy-guided group { ˜oj}G2
+
+> j=1
+
+, sampled from 
+
+πθ (· | q, s) where s is prepended to the prompt. The central challenge is to convert the information gained under the guided condition into reusable reasoning ability under the original unguided condition. The remainder of this section describes three mechanisms that jointly address this challenge: autonomous GRPO optimization (§3.2), token-level forward-KL distillation (§3.3), and proximal constraints with adaptive weighting (§3.4). 3Preprint. Under review. 
+
+3.2 Autonomous Exploration with GRPO 
+
+The autonomous trajectory group is optimized with Group Relative Policy Optimization (GRPO; Shao et al. 2024). For each problem q, the G1 sampled responses are scored by a verifiable reward function R(oi, q) ∈ { 0, 1 }. Rewards within each group are normalized to zero-mean, unit-variance advantages ˆAi, and the policy is updated via the clipped objective: 
+
+LGRPO (θ) = Eq, {oi }
+
+"
+
+1
+
+G1
+
+> G1
+
+# ∑
+
+> i=1
+
+1
+
+|oi| 
+
+> |oi|
+
+# ∑
+
+> t=1
+
+min 
+
+
+
+ρi,t ˆAi, clip  ρi,t, 1 −ε, 1 +ε ˆAi
+
+#
+
+, (1) where ρi,t = πθ (oi,t | q, oi,<t)πθold (oi,t | q, oi,<t) is the token-level importance ratio. This objective ensures continued improvement on the model’s own distribution independently of strategy guidance. 
+
+3.3 Strategy-Guided Distillation 
+
+Rather than directly applying SFT to successful guided trajectories— which would collapse back into trajectory imitation and fail to separate strategic knowledge from surface realiza-tion—we construct a distillation signal that captures how strategy conditioning shifts the model’s own token-level distribution. Concretely, let C = {j : R( ˜oj, q) = 1} be the set of correct guided trajectories. We define the token-level KL distillation objective over C as: 
+
+LKD (θ) = 1
+
+|C| ∑
+
+> j∈C
+
+1
+
+| ˜oj|  
+
+> |˜oj|
+
+# ∑
+
+> t=1
+
+dj,t(θ), (2) where 
+
+dj,t(θ) = DKL 
+
+ sg πθ (· | q, s, ˜ oj,<t) πθ (· | q, ˜ oj,<t) . (3) Strategy space 
+
+> Probability
+> Strategy
+> A
+> Strategy
+> B
+> Strategy
+> C
+> (a) Before distillation
+> Strategy space
+> (b) After reverse KL
+> Strategy space
+> Guided
+> Unguided
+> (c) After forward KL
+
+Figure 2: KL direction. (a) The unguided policy covers multiple strategies; the guided distribu-tion reflects one. (b) Reverse KL collapses onto the guided mode. (c) Forward KL absorbs the guided strategy while preserving alternatives. 
+
+First , we adopt the forward KL direc-tion (guided as reference). The strategy-guided distribution concentrates on a par-ticular strategy, whereas the unguided policy may cover multiple effective strate-gies discovered through autonomous ex-ploration (Figure 2). Reverse KL would actively penalize mass outside the guided mode, collapsing the policy onto a sin-gle strategy. Forward KL only encourages coverage of the guided mode without sup-pressing alternatives, and together with the GRPO objective that continuously re-inforces independently discovered strate-gies, preserves existing reasoning diversity while absorbing new strategic insight (empirical comparison in Appendix F). Second , the stop-gradient sg [·] restricts gradients to the un-guided distribution. Both distributions in Eq. (3) share the same output prefix ˜oj,<t but differ in prompt context: (q, s) for the guided side vs. q alone for the unguided side. Without the stop-gradient, the shared θ could trivially reduce the KL by shifting the guided distribution toward the unguided one. The resulting objective has a natural selectivity property: at each token position, the KL value is large when the next-token distribution shifts substantially under strategy condi-tioning (e.g., choosing to apply the quadratic formula vs. factoring), and small when the token mainly reflects generic linguistic realization (e.g., formatting). (§3.3) Distillation pres-sure thus automatically concentrates on positions that encode strategic decisions, without requiring any explicit token-level annotation. 4Preprint. Under review. 
+
+3.4 Proximal Constraints and Adaptive Weighting 
+
+Directly minimizing the KL term in Eq. (2) can be unstable when the guided and unguided distributions diverge substantially, risking entropy collapse (§5.2). We introduce proximal constraints for training stability and an adaptive weighting mechanism for distillation efficiency, operating at three complementary levels. 
+
+Trajectory level: reachable target selection. Rather than averaging over all correct guided trajectories as in Eq. (2) , we select the single trajectory most reachable by the current unguided policy: 
+
+o+ = arg max    
+
+> ˜oj∈C |˜oj|
+
+# ∑
+
+> t=1
+
+log πθ ( ˜oj,t | q, ˜ oj,<t). (4) Here we evaluate the guided trajectory under the unguided policy (without s in the condi-tioning) to measure how easily the model could produce this trajectory on its own. This preserves correctness while minimizing the distributional gap that the distillation step must bridge. When |C| = 0, the distillation term is skipped entirely. 
+
+Token level: KL clipping. We mask token positions where the guided–unguided diver-gence exceeds a threshold δ, yielding the clipped objective over the selected trajectory: 
+
+Lclip KD (θ) = 1
+
+|o+| 
+
+> |o+|
+
+# ∑
+
+> t=1
+
+wt dt(θ), wt = 1[dt(θ) ≤ δ] , (5) where dt(θ) denotes the per-token KL from Eq. (3) evaluated on o+. This prevents outlier positions from dominating optimization. 
+
+Instance level: adaptive weighting. Let pauto = 1 
+
+> G1
+
+∑i R(oi, q) and pguide = 1 
+
+> G2
+
+∑j R( ˜oj, q)
+
+denote the autonomous and guided pass rates. We modulate the per-instance distillation strength as: 
+
+α(q) = clip 
+
+
+
+α0 · pguide − pauto + γ
+
+pauto + γ , 0, αmax 
+
+
+
+, (6) where α0 is a base coefficient, γ > 0 a smoothing constant, and αmax a cap. The weight is large when strategy guidance substantially raises the pass rate and vanishes when the model already solves the problem autonomously. A comparison with alternative weighting strategies is given in Appendix G. 
+
+3.5 Overall Objective 
+
+For each problem q, the training loss combines autonomous GRPO with proximal strategy distillation: 
+
+L(θ; q) = LGRPO (θ; q) + α(q) Lclip KD (θ; q), (7) and is averaged over the mini-batch. Conceptually, strategy extraction determines what to transfer; the token-level forward-KL objective identifies where to transfer by concentrating on strategy-critical positions; and the three-level proximal constraints control how much to transfer at the trajectory, token, and instance granularity. The full training algorithm is given in Appendix D. 
+
+4 Experimental Setup 
+
+4.1 Models and Data 
+
+We conduct experiments on two model families: Qwen2.5-{1.5B, 7B }-Instruct (Yang et al., 2025) and Llama-3.2-8B-Instruct (Dubey et al., 2024), covering both different architectures and different scales. Training data consist of 8.5K problems randomly sampled from the LUFFY dataset (Yan et al., 2025), with reference solutions generated by DeepSeek-R1. Each RL training instance requires (G1+G2)= 12 sampled trajectories, yet stable gains are already observed at this moderate scale, indicating favorable data efficiency. Strategy descriptions 5Preprint. Under review. are extracted from the corresponding reference solutions via the procedure described in Appendix B. An analysis of strategy description quality is provided in Appendix H. 
+
+4.2 Evaluation Benchmarks 
+
+We evaluate on four mathematical reasoning benchmarks of increasing difficulty: MATH500 (Hendrycks et al., 2021), AMC 23, OlympiadBench (He et al., 2024) and AIME 24. Because AMC 23 and AIME 24 are relatively small test sets, we report avg@32 (the ac-curacy averaged over 32 independent samples per problem) to reduce variance; for the larger MATH500 and OlympiadBench, we report avg@4. All evaluations use a maximum generation length of 32K tokens, temperature 0.6, and top-p=0.95. 
+
+4.3 Baselines 
+
+We compare against four baselines. SFT performs supervised fine-tuning on expert rea-soning traces only. SFT + GRPO follows SFT with standard on-policy GRPO. These two baselines test whether strategy distillation provides gains beyond conventional supervised and reinforcement learning. HPT (Lv et al., 2026) combines on-policy RL with an auxiliary SFT loss on expert trajectories within a unified objective. LUFFY (Yan et al., 2025) incorpo-rates off-policy expert trajectories into GRPO rollout groups with regularized importance sampling. HPT and LUFFY are the most directly relevant comparisons, as they also leverage strong-model knowledge during policy optimization. 
+
+4.4 Implementation Details 
+
+We split the 8.5K training problems into roughly one third for SFT warm-up and the remainder for RL training. The SFT stage uses learning rate 1 ×10 −5 for 10 epochs to equip base models with basic long-chain reasoning ability. The RL stage uses learning rate 1×10 −6 for 10 epochs with total group size 12 ( G1=8 autonomous, G2=4 strategy-guided). Key hyperparameters include GRPO clipping bounds εlow =0.2 and εhigh =0.28 (Yu et al., 2025), KL threshold δ=1.0, base adaptive coefficient α0=0.5, smoothing constant γ=0.1, and maximum adaptive weight αmax =0.8. All baselines share the same SFT warm-up configuration and total sample budget to ensure fair comparison. Full details are provided in Appendix E. 
+
+5 Results 
+
+5.1 Main Results 
+
+We summarize the main results in Table 1 and discuss two key observations. 
+
+Consistent improvements over all baselines. SGPO achieves the best average performance across all three base models and both model families. Notably, HPT and LUFFY also leverage strong-model knowledge during RL, yet SGPO consistently outperforms them by transferring knowledge at the strategy level rather than the trajectory level. The mechanism underlying this advantage is examined in §5.3.2. 
+
+Complementary scaling with base model capability. The gains from SGPO scale with the strength of the base model: on Qwen2.5-7B-Instruct, the average score improves by 9.9 points over the base model (42.2 →52.1), compared with 6.7 points for Qwen2.5-1.5B-Instruct (23.2 →29.9). This suggests that stronger models are better able to convert strategy descriptions into effective guided exploration and internalize the resulting gains into the unguided policy. 
+
+5.2 Ablation Studies Autonomous GRPO and strategy distillation are complementary. Removing the strategy distillation term ( α(q)= 0, reducing to SFT+GRPO) lowers the average score from 52.1 to 6Preprint. Under review. Table 1: Main results on four mathematical reasoning benchmarks. Average is the arithmetic mean of the four benchmark scores.                                                                                                
+
+> Model MATH500 AMC23 Olympiad AIME24 Average
+> Qwen2.5-1.5B-Instruct 50.1 21.3 18.4 3.0 23.2 SFT 48.4 19.7 16.1 4.7 22.2 SFT+GRPO 54.1 26.2 21.7 5.5 26.9 HPT 53.8 28.5 22.6 7.7 28.2 LUFFY 54.4 27.9 23.1 8.4 28.5 SGPO 57.7 29.0 23.7 9.0 29.9
+> Qwen2.5-7B-Instruct 75.2 43.0 38.8 11.8 42.2 SFT 76.4 42.1 40.0 12.4 42.7 SFT+GRPO 80.3 52.7 48.4 18.0 49.9 HPT 79.1 53.5 48.8 17.0 49.6 LUFFY 78.0 53.0 47.6 16.4 48.8 SGPO 82.7 55.9 50.0 19.7 52.1
+> Llama-3.2-8B-Instruct 43.7 20.3 14.5 3.0 20.4 SFT 45.1 21.7 16.7 6.0 22.4 SFT+GRPO 50.0 23.4 19.3 8.0 25.2 HPT 51.3 24.0 20.1 9.8 26.3 LUFFY 50.7 24.3 21.9 9.4 26.5 SGPO 52.0 25.6 22.9 10.0 27.6
+
+Table 2: Ablation study on Qwen2.5-7B-Instruct.                                         
+
+> Setting MATH500 AMC23 Olympiad AIME24 Average
+> SGPO 82.7 55.9 50.0 19.7 52.1
+> w/o strategy distillation 80.3 52.7 48.4 18.0 49.9 w/o autonomous GRPO 78.0 53.1 47.1 16.3 48.6 w/o all proximal constraints 76.9 47.3 42.4 14.4 45.3 w/o KL clipping 79.2 52.1 47.1 16.3 48.7 w/o target selection 78.8 50.4 47.0 16.0 48.1 w/o adaptive weighting 81.0 54.8 48.9 18.7 50.9
+
+49.9, confirming that strategy-level transfer provides gains beyond on-policy RL alone. Removing autonomous GRPO (i.e., training with only the KL distillation objective on strategy-guided trajectories) leads to a larger drop (52.1 →48.6). As shown in Figure 3(a)(b), this setting yields fast early reward growth but the progress is unsustainable: entropy drops sharply and reward subsequently stagnates. A plausible explanation is that without autonomous rollouts, the policy loses the distributional diversity needed to explore beyond the strategies prescribed by the extracted, causing optimization to plateau once the easily exploitable strategy descriptions are exhausted. These results demonstrate the necessity of combining both objectives: GRPO maintains broad exploration while distillation injects targeted strategic knowledge. 
+
+Proximal constraints are essential for stable distillation. Removing all proximal con-straints causes the largest single-component drop (52.1 →45.3, −6.8). Both sub-components contribute, with reachable target selection ( −4.0) slightly more impactful than KL clipping (−3.4), indicating that whether the distillation target is reachable has a particularly direct ef-fect on performance. Unlike the w/o GRPO setting where entropy declines gradually due to lack of exploration diversity, removing proximal constraints triggers abrupt entropy collapse driven by excessively large KL updates, as shown in Figure 3(a)(b). The two constraints address complementary failure modes: target selection limits excessive distributional shifts at the trajectory level, while KL clipping suppresses local token-level outliers. 
+
+Adaptive weighting improves efficiency and ceiling. Removing adaptive weighting leads to a moderate drop (52.1 →50.9). Figure 3(c) further shows that adaptive weighting acceler-ates optimization, reaching the same reward level in fewer steps. This confirms that strategy guidance is not equally useful across instances, and concentrating distillation budget on 7Preprint. Under review. high-marginal-benefit problems improves both convergence speed and final performance. A comparison with alternative weighting strategies is provided in Appendix G. 0 50 100 150 200 250 300 350 400                     
+
+> Training Step
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Reward
+> (a)
+> Proximal Constraint Ablation
+> 050 100 150 200 250 300 350 400
+> Training Step
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Policy Entropy
+> (b)
+> Proximal Constraint Ablation
+> 050 100 150 200 250 300 350 400
+> Training Step
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> Reward
+> 0.51
+> x1.78
+> +11.7%
+> (c)
+> Adaptive Weighting Ablation
+> SGPO SFT+GRPO w/o all proximal w/o autonomous GRPO w/o adaptive weighting
+
+Figure 3: Training dynamics under ablation settings. (a)(b) Removing either autonomous GRPO or all proximal constraints leads to a rapid entropy collapse. (c) Adaptive weighting accelerates convergence and raises the final reward ceiling. 0 100 200 300 400               
+
+> Training Step
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> Policy Entropy
+> (a)
+> 0100 200 300 400
+> Training Step
+> 1500
+> 2000
+> 2500
+> 3000
+> 3500
+> 4000
+> 4500
+> 5000
+> 5500
+> Response Length
+> (b)
+> 0100 200 300 400
+> Training Step
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> Reward
+> (c)
+> 0100 200 300 400
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Adaptive Weight
+> Method-driven
+> phase
+> Autonomous
+> phase
+> (d)
+> SGPO SFT+GRPO Adaptive Weight
+
+Figure 4: Training dynamics of SGPO and SFT+GRPO. (a) Policy entropy: SGPO maintains consistently higher entropy. (b) Response length: SGPO reaches longer, more structured responses faster. (c) Reward: SGPO achieves a higher final reward. (d) Average adaptive weight ¯α: the weight decreases as the autonomous policy improves, reflecting a natural transition from strategy-driven exploration to autonomous optimization. 
+
+5.3 Further Analysis 
+
+5.3.1 Training Dynamics 
+
+Figure 4(a)(b)(c) compares SGPO with SFT+GRPO. SGPO maintains higher policy entropy throughout training. Two factors likely contribute: the KL distillation objective introduces new high-probability options at strategy-critical positions, enriching the unguided policy’s distribution, while the proximal constraints prevent this distillation from over-concentrating the distribution. Both response length and reward increase rapidly in early training for both methods, but SGPO exhibits faster growth, suggesting that strategy conditioning helps the policy discover structured solution patterns earlier. Figure 4(d) tracks the average adaptive weight ¯α across training steps. In early training, the gap between guided and autonomous pass rates is large, yielding high ¯α and strong distillation pressure. As the autonomous policy improves and the pass-rate gap narrows, ¯α
+
+decreases steadily. This confirms the intended training dynamics: the framework transitions naturally from strategy-driven fast improvement in early stages to autonomous-policy-dominated steady optimization in later stages, with no manual scheduling required. 
+
+5.3.2 Selective Amplification of Strategy-Critical Tokens 
+
+To validate that KL-based distillation is more effective than uniform imitation, we replace the forward-KL objective with direct SFT on the same successful strategy-guided trajec-tories, keeping all other components identical. Table 3 shows that KL-based distillation 8Preprint. Under review. Parse problem       
+
+> & identify
+> denominators
+> Determine
+> LCD = 6 Multiply
+> left side
+> by LCD
+> Simplify
+> right side
+> term 1
+> Expand
+> right side
+> term 2
+> Combine
+> like terms Isolate
+> variable Solve
+> x = 1/4 Verify
+> LHS = 5 Verify
+> RHS = 5
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> Average Step-Level KL  dstep
+> 1.65
+> 1.48
+> 0.30
+> 1.72
+> 0.18 0.15
+> Direct SFT loss (monotonically declining)
+> Forward-KL signal (high: method-critical)
+> Forward-KL signal (medium)
+> Forward-KL signal (low: routine tokens)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> Forward-KL Value
+
+Figure 5: Step-level KL analysis on a training example. Gray bars: direct SFT loss, declining monotonically. Colored bars: forward-KL signal, peaking at strategy-critical steps (red, e.g., determining the LCD, isolating the variable) and minimal at routine steps (blue). Table 3: KL-based distillation vs. direct SFT on successful strategy-guided trajectories. 
+
+Distillation type MATH500 AMC23 Olympiad AIME24 Average 
+
+KL distillation 82.7 55.9 50.0 19.7 52.1 
+
+Direct SFT 79.8 53.0 47.0 17.3 49.3 
+
+outperforms direct SFT by 2.8 points on average (52.1 vs. 49.3), and Figure 6 confirms that the advantage holds throughout training in both convergence speed and final ceiling. 0 50 100 150 200 250 300 350 400 
+
+> Training Step
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> Reward
+> 0.49
+> x2.1
+> +18.1%
+> KL Distillation
+> Direct SFT
+
+Figure 6: KL-based distillation yields faster convergence and a higher re-ward ceiling than direct SFT on guided trajectories. The performance gap arises from the granularity of the learning signal. Direct SFT applies uniform fit-ting pressure across all tokens, whereas the KL ob-jective automatically concentrates optimization on tokens whose generation probability shifts most un-der strategy conditioning. Figure 5 illustrates this on a training example involving a linear equation with fractional coefficients, where none of the 8 au-tonomous samples are correct while 2 of 4 strategy-guided samples succeed. We segment the successful trajectory into ten semantic steps and compute the average KL within each step. The KL signal peaks at strategy-critical steps such as determining the least common denominator and distributing it across both sides, all corresponding directly to the extracted strat-egy. In contrast, the SFT loss declines monotonically across steps, reflecting generic token prediction difficulty rather than strategy relevance. This confirms that the forward-KL objective provides an inherently strategy-aware signal that distinguishes strategic decisions from routine verbalization. 
+
+6 Conclusion 
+
+We presented SGPO, a framework that distills reusable strategy descriptions from strong-model responses and transfers them into the target model’s reasoning policy through token-level forward-KL distillation between strategy-guided and unguided distributions. Combined with autonomous GRPO exploration, proximal constraints at the trajectory and token levels, and adaptive instance-level weighting, the framework consistently outperforms strong baselines across mathematical benchmarks and model families. Our analysis further shows that the forward-KL objective provides an inherently selective distillation signal that concentrates on strategy-critical tokens without requiring any explicit annotation, offering a more effective alternative to uniform trajectory imitation. Moreover, strategy distillation and base model capability scale complementarily, with gains increasing as the model’s foundational reasoning competence grows. Together, these findings suggest 9Preprint. Under review. that transferring knowledge at the strategy level, rather than the trajectory level, represents a promising direction for reasoning distillation. 
+
+Ethics Statement 
+
+This work focuses on improving the reasoning capabilities of language models through strategy distillation. All training data are drawn from publicly available mathematical problem datasets, and no human subjects or personally identifiable information are involved. The strong-model responses used for strategy extraction are generated by existing publicly accessible models. We acknowledge that improved reasoning capabilities could in principle be misused, but the mathematical reasoning setting studied here poses minimal direct risk. We will release our code and strategy extraction prompts to support reproducibility. 
+
+References 
+
+Aobo Kong et.al Ailin Huang, Ang Li. Step 3.5 flash: Open frontier-level intelligence with 11b active parameters, 2026. URL https://arxiv.org/abs/2602.10604 .Hardy Chen, Haoqin Tu, Fali Wang, Hui Liu, Xianfeng Tang, Xinya Du, Yuyin Zhou, and Cihang Xie. Sft or rl? an early investigation into training r1-like reasoning large vision-language models, 2025. URL https://arxiv.org/abs/2504.11468 .Tianzhe Chu, Yuexiang Zhai, Jihan Yang, Shengbang Tong, Saining Xie, Dale Schuurmans, Quoc V. Le, Sergey Levine, and Yi Ma. Sft memorizes, rl generalizes: A comparative study of foundation model post-training, 2025. URL https://arxiv.org/abs/2501.17161 .Guo Daya, Yang Dejian, and Zhang Haowei et.al. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081):633–638, September 2025. ISSN 1476-4687. doi: 10.1038/s41586-025-09422-z. URL http://dx.doi.org/10.1038/ s41586-025-09422-z .Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Yuqian Fu, Tinghong Chen, Jiajun Chai, Xihuai Wang, Songjun Tu, Guojun Yin, Wei Lin, Qichao Zhang, Yuanheng Zhu, and Dongbin Zhao. Srft: A single-stage method with supervised and reinforcement fine-tuning for reasoning, 2025. URL https://arxiv.org/ abs/2506.19767 .Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Leng Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu, and Maosong Sun. Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems, 2024. URL https://arxiv.org/abs/2402. 14008 .Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the math dataset, 2021. URL https://arxiv.org/abs/2103.03874 .Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention, 2023. URL https://arxiv.org/abs/2309. 06180 .Hynek Kydl ´ı ˇcek. Math-verify: Math verification library, 2025. URL https://github.com/ huggingface/math-verify .Mingyang Liu, Gabriele Farina, and Asuman Ozdaglar. Uft: Unifying supervised and reinforcement fine-tuning, 2025. URL https://arxiv.org/abs/2505.16984 .10 Preprint. Under review. Xingtai Lv, Yuxin Zuo, Youbang Sun, Hongyi Liu, Yuntian Wei, Zhekai Chen, Xuekai Zhu, Kaiyan Zhang, Bingning Wang, Ning Ding, and Bowen Zhou. Towards a unified view of large language model post-training, 2026. URL https://arxiv.org/abs/2509.04419 .Lu Ma, Hao Liang, Meiyi Qiang, Lexiang Tang, Xiaochen Ma, Zhen Hao Wong, Junbo Niu, Chengyu Shen, Runming He, Yanhao Li, Bin Cui, and Wentao Zhang. Learning what reinforcement learning can’t: Interleaved online fine-tuning for hardest questions, 2026. URL https://arxiv.org/abs/2506.07527 .Ashvin Nair, Bob McGrew, Marcin Andrychowicz, Wojciech Zaremba, and Pieter Abbeel. Overcoming exploration in reinforcement learning with demonstrations, 2018. URL 
+
+https://arxiv.org/abs/1709.10089 .OpenAI, :, Aaron Jaech, and Adam Kalai et.al. Openai o1 system card, 2024. URL https: //arxiv.org/abs/2412.16720 .Chongli Qin and Jost Tobias Springenberg. Supervised fine tuning on curated data is reinforcement learning (and can be improved), 2025. URL https://arxiv.org/abs/2507. 12856 .Aravind Rajeswaran, Vikash Kumar, Abhishek Gupta, Giulia Vezzani, John Schulman, Emanuel Todorov, and Sergey Levine. Learning complex dexterous manipulation with deep reinforcement learning and demonstrations, 2018. URL https://arxiv.org/abs/ 1709.10087 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open language models, 2024. URL https://arxiv.org/abs/ 2402.03300 .Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In 
+
+Proceedings of the Twentieth European Conference on Computer Systems , pp. 1279–1297. ACM, March 2025. doi: 10.1145/3689031.3696075. URL http://dx.doi.org/10.1145/3689031. 3696075 .Yongliang Wu, Yizhou Zhou, Zhou Ziheng, Yingzhe Peng, Xinyu Ye, Xinting Hu, Wenbo Zhu, Lu Qi, Ming-Hsuan Yang, and Xu Yang. On the generalization of sft: A reinforcement learning perspective with reward rectification, 2026. URL https://arxiv.org/abs/2508. 05629 .Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui, Xiaoye Qu, Yu Cheng, and Yue Zhang. Learning to reason under off-policy guidance, 2025. URL https://arxiv.org/ abs/2504.14945 .An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. Qwen2.5 technical report, 2025. URL https://arxiv.org/abs/2412.15115 .Yixin Ye, Zhen Huang, Yang Xiao, Ethan Chern, Shijie Xia, and Pengfei Liu. Limo: Less is more for reasoning, 2025. URL https://arxiv.org/abs/2502.03387 .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guang-ming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. Dapo: An open-source llm reinforcement learning system at scale, 2025. URL https://arxiv.org/abs/2503.14476 .11 Preprint. Under review. Xiaoyang Yuan, Yujuan Ding, Yi Bin, Wenqi Shao, Jinyu Cai, Jingkuan Song, Yang Yang, and Heng Tao Shen. More than one teacher: Adaptive multi-guidance policy optimization for diverse exploration, 2025. URL https://arxiv.org/abs/2510.02227 .Xuechen Zhang, Zijian Huang, Yingcong Li, Chenshun Ni, Jiasi Chen, and Samet Oymak. Bread: Branched rollouts from expert anchors bridge SFT & RL for reasoning, 2025. URL 
+
+https://arxiv.org/abs/2506.17211 .Wenhong Zhu, Ruobing Xie, Rui Wang, Xingwu Sun, Di Wang, and Pengfei Liu. Proximal supervised fine-tuning, 2025. URL https://arxiv.org/abs/2508.17784 .
+
+A Limitations 
+
+Several limitations point to future directions. First, our experiments focus on mathematical reasoning; validating the framework on other reasoning domains such as code generation, logical reasoning, and scientific problem solving remains important. Second, strategy ex-traction currently relies on a strong model and is not fully quality-controllable; developing more robust extraction methods or enabling the student model to discover strategies au-tonomously would reduce this dependence. Third, the complementary scaling pattern implies that very weak base models may not benefit substantially from strategy distillation, and understanding the precise capability threshold deserves further investigation. Finally, scaling the framework to larger training sets and stronger base models would help clarify its broader applicability. 
+
+B Strategy Extraction Pipeline 
+
+Strategy descriptions are extracted as a preprocessing step before RL training. Given a strong-model (DeepSeek-R1) response to each training problem, we prompt the same model to produce a strategy description conforming to the three-component structure described in §3.1: problem type identification, strategy selection, and general procedural steps. To mitigate extraction variance, we sample five candidate descriptions per response and rank them with a separate scoring prompt that evaluates four criteria: (i) correctness of problem type identification, (ii) appropriateness and specificity of the chosen strategy, (iii) abstraction level of the procedural steps (neither too vague nor too detailed), and (iv) absence of intermediate computations or the final answer. The highest-scoring candidate is retained. Prompt templates are given in Appendix C. Table 4: Prompt template for extracting strategy descriptions.          
+
+> You are given a math problem together with a complete solution response written by a strong reasoning model. Your task is to extract the problem-solving strategy behind the response. The extracted strategy must contain exactly three components: 1. Problem type : classify the problem into a specific, recognizable category. 2. Strategy : state the specific principle, theorem, or technique used to solve this type of problem. 3. Procedural steps : list the high-level steps for executing the strategy, in order. Do not include intermediate numerical computations or the final answer. The output should be concise, generalizable, and helpful for guiding another model to solve similar problems. Output format: Problem type: [...] Strategy: [...] Steps: (a) ... (b) ... (c) ...
+> Problem: [problem text]
+> Response: [strong-model solution]
+> Strategy:
+
+12 Preprint. Under review. 
+
+C Prompt Templates 
+
+Table 5: Prompt template for scoring candidate strategy descriptions. 
+
+You are given a math problem, a reference solution, and several candidate extracted strategies. Assign a quality score (0.0–1.0) to each candidate based on the following criteria: 1. Whether the problem type is correctly and specifically identified. 2. Whether the chosen strategy is appropriate, specific, and non-trivial. 3. Whether the procedural steps are at the right abstraction level (not too vague, not too detailed). 4. Whether the strategy avoids revealing intermediate computations or the final answer. Output format: Score: [score1, score2, ...] 
+
+Problem / Response / Candidate Strategies (omitted for brevity) 
+
+Score: 
+
+D Training Algorithm 
+
+Algorithm 1 summarizes the full procedure. For each problem, we jointly sample an autonomous group and a strategy-guided group. The autonomous group is optimized through GRPO. The guided group contributes only when it contains correct trajectories, in which case the most reachable correct response (scored under the unguided policy) is selected for proximal KL distillation with adaptive weighting. 
+
+Algorithm 1 Strategy-Guided Policy Optimization (SGPO) 
+
+Require: Problem distribution P (Q), policy πθ , strategy dataset Dm = {(q, s)}, group sizes 
+
+G1, G2
+
+Ensure: Updated policy πθ
+
+1: for each training iteration do 
+
+2: Sample minibatch {q(b)}Bb=1 ∼ P (Q)
+
+3: for each problem q(b) do 
+
+4: Retrieve strategy s(b)
+
+5: Sample autonomous group {oi}G1 
+
+> i=1
+
+∼ πθ (· | q(b))
+
+6: Sample strategy-guided group { ˜oj}G2 
+
+> j=1
+
+∼ πθ (· | q(b), s(b))
+
+7: Compute rewards {r(oi, q(b))} and {r( ˜oj, q(b))}
+
+8: Compute GRPO advantages { ˆAi} and loss LGRPO 
+
+9: C ← { j : r( ˜oj, q(b)) = 1}
+
+10: if C̸ = ∅ then 
+
+11: Select reachable target: o+ 
+
+> m
+
+= arg max ˜oj ∈C ∑t log πθ ( ˜oj,t | q(b), ˜ oj,<t) ▷
+
+unguided log-prob 
+
+12: Compute clipped KL loss Lclip KD on o+
+
+> m
+
+13: Compute adaptive weight α(q(b)) via Eq. 6 
+
+14: else 
+
+15: Lclip KD ← 0, α(q(b)) ← 0
+
+16: end if 
+
+17: L(b) ← L GRPO + α(q(b)) Lclip KD 
+
+18: end for 
+
+19: Update θ by gradient descent on 1 
+
+> B
+
+∑b L(b)
+
+20: end for 
+
+13 Preprint. Under review. 
+
+E Implementation Details 
+
+Hardware and frameworks. All experiments are conducted on 4 nodes, each equipped with 8 GPUs (32 GPUs in total). We use the veRL framework (Sheng et al., 2025) for all training (both SFT and RL stages) and vLLM (Kwon et al., 2023) for inference during evaluation. Answer correctness is verified using Math-Verify (Kydl ´ı ˇcek, 2025). End-to-end training (SFT warm-up + RL) takes approximately 17 hours for the 7B model. 
+
+SFT warm-up. We use roughly one third of the 8.5K training instances for supervised warm-up to endow the base models with basic thinking ability. We use batch size 64, train for 10 epochs with learning rate 1 ×10 −5, warm-up ratio 0.1, and maximum sequence length 16K. The checkpoint with the lowest loss on a randomly sampled one-tenth validation split is used to initialize RL. 
+
+Reinforcement learning. The total group size is 12 ( G1=8 autonomous, G2=4 strategy-guided). We use temperature 1.0, top-p=0.95, maximum generation length 16K, and train for 10 epochs with learning rate 1 ×10 −6. Hyperparameters: GRPO clipping bounds εlow =0.2 and εhigh =0.28 (Yu et al., 2025), KL threshold δ=1.0, base adaptive coefficient α0=0.5, smoothing constant γ=0.1, and maximum adaptive weight αmax =0.8. 
+
+Baselines. SFT and SFT+GRPO use the same warm-up hyperparameters as our method. For HPT and LUFFY, we match the total number of samples and sampling parameters to ensure fair comparison, while keeping their method-specific hyperparameters at the default values reported in the original papers, which already yield stable performance in our setting. 
+
+F KL Direction Ablation 
+
+We compare the forward KL direction DKL (πguided ∥ πunguided ) used in our method with the reverse direction DKL (πunguided ∥ πguided ) on Qwen2.5-7B-Instruct. Table 6: KL direction ablation on Qwen2.5-7B-Instruct.                
+
+> KL direction MATH500 AMC23 Olympiad AIME24 Average
+> Forward (ours) 82.7 55.9 50.0 19.7 52.1
+> Reverse 81.3 54.2 48.2 20.0 50.9
+
+The forward KL consistently outperforms the reverse direction. The strategy-guided distri-bution reflects a particular strategy, but a problem may admit multiple effective strategies that the model has already discovered through autonomous exploration. Forward KL only requires coverage of the guided distribution, preserving these existing alternatives while absorbing the new methodological insight. Reverse KL would instead collapse the unguided policy onto the guided modes, risking loss of alternative strategies. 
+
+G Adaptive Weighting Strategy Comparison 
+
+We compare the pass-rate-based adaptive weighting (Eq. 6) against two alternatives on Qwen2.5-7B-Instruct: (i) a fixed coefficient α=1.0 (equivalent to the “w/o adaptive weight-ing” setting in Table 2), and (ii) a group-advantage weight described below. 
+
+Group-advantage weight. Let o+ be the selected correct strategy-guided trajectory and 
+
+{oi}G1 
+
+> i=1
+
+the autonomous group. We merge them into a combined group G = {o1, . . . , oG1 , o+}
+
+and compute a GRPO-style normalized advantage for the guided trajectory: ˆAm+ = R(o+, q) − μG
+
+σG + ϵ , (8) where μG and σG are the mean and standard deviation of rewards within G. The distillation weight is then set to αgroup (q) = clip ( ˆAm+ , 0, αmax ).14 Preprint. Under review. Table 7: Comparison of weighting strategies on Qwen2.5-7B-Instruct.                      
+
+> Weighting strategy MATH500 AMC23 Olympiad AIME24 Average
+> Pass-rate-based (ours) 82.7 55.9 50.0 19.7 52.1
+> Fixed α=1.0 81.0 54.8 48.9 18.7 50.9 Group-advantage 81.4 54.5 48.4 18.0 50.6
+
+The pass-rate-based design consistently outperforms both alternatives. The fixed coefficient applies uniform distillation strength regardless of instance difficulty. The group-advantage weight reflects the relative quality of the guided trajectory within the combined group but conflates two distinct signals: problem difficulty and strategy effectiveness. A correct guided trajectory receives a high advantage whenever the autonomous group mostly fails, yet this does not indicate how much of the success is attributable to the strategy itself versus the inherent difficulty of the problem. In contrast, the pass-rate-based design disentangles these factors by directly measuring the pass-rate gap between guided and autonomous groups, providing a more faithful estimate of the marginal benefit of strategy guidance. 
+
+H Strategy Description Quality Analysis 
+
+We randomly sample 500 strategy descriptions and score each using Step-3.5-Flash (Ailin Huang, 2026) on the same four criteria used in the extraction scoring prompt (Appendix C): correctness of problem type identification, appropriateness of strategy, ab-straction level of procedural steps, and absence of answer leakage. Each criterion is rated on a 0–1 scale and the four scores are averaged into an overall quality score. Table 8 reports the distribution. Table 8: Quality distribution of extracted strategy descriptions.     
+
+> Quality band Score range Count %
+> High
+
+[0.8, 1.0 ] 197 39.4 Medium [0.5, 0.8 ) 272 54.4 Low [0.0, 0.5 ) 31 6.2 
+
+The majority of extracted descriptions fall in the High and Medium bands, indicating that the extraction pipeline combined with the scoring-based selection (Appendix B) produces generally reliable strategy descriptions. The small fraction of Low-quality descriptions is handled by the adaptive weighting mechanism (Eq. 6): when a strategy is unhelpful, the guided pass rate pguide will not substantially exceed pauto , automatically reducing α(q) and limiting the distillation signal from these instances. 15
