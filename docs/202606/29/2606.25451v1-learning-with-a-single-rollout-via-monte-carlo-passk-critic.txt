@@ -1,0 +1,790 @@
+Title: Learning with a Single Rollout via Monte Carlo Pass@k Critic
+
+URL Source: https://arxiv.org/pdf/2606.25451v1
+
+Published Time: Thu, 25 Jun 2026 00:34:47 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+# LEARNING WITH A SINGLE ROLLOUT VIA MONTE 
+
+# CARLO PASS @K CRITIC 
+
+Fengdi Che 1 Yang Liu 2 Lei Yu 3 Meng Cao 4 Tong Che 5
+
+A. Rupam Mahmood 1,6,7 Dale Schuurmans 1,6,7 1University of Alberta 2BIGAI 3University of Toronto 
+
+> 4
+
+McGill University, Mila 5Nvidia Research 6Amii 7CIFAR AI Chair 
+
+# ABSTRACT 
+
+Estimating token-level advantages in reinforcement learning (RL) for language models remains challenging because scaling up episodic experience collection is expensive. The difficulty intensifies for baseline advantage estimation methods, where repeated sampling causes trajectories to diverge into substantially different reasoning prefixes. In this context, RL algorithms such as GRPO prove limited: an outcome reward is too sparse to be attributed to specific actions like intermediate steps, and comparisons across sampled traces are non-trivial because they are het-erogeneous. To mitigate both the computational cost of repeated sampling and the difficulty of credit assignment, we study single-rollout proximal policy optimiza-tion (SR-PPO) featuring token-level credit assignment in RL for language mod-els. Instead of estimating advantages by normalizing episodic returns within the candidate group, we train a calibrated token-level credit critic using Monte Carlo outcomes from one rollout per prompt. Specifically, we use the critic to predict the Pass@k success probability at the prompt prefix, which is derived from a Pass@1 attempt. This choice yields a more selective learning signal than Pass@1: it dis-counts easily solved prefixes while prioritizing hard ones whose success proba-bility remains marginal. We show that as k increases, Pass@k converges to a reachability indicator, reflecting whether a prefix can lead to at least one success-ful continuation. In an explicit state graph, the limit ( k → ∞ ) can be computed in O(|V | + |E|) time, offering a promising surrogate for direct credit assignment without the need to sample contrastive traces. As an initial validation, SR-PPO ex-hibits stable learning dynamics, along with consistent gains in Pass@128 success rates on mathematical reasoning benchmarks such as HMMT26 and AIME24. 
+
+# 1 INTRODUCTION 
+
+Language models (LMs) have made rapid progress in complex reasoning, especially when post-trained with reinforcement learning (RL) from verifiable rewards. In domains such as competition mathematics, theorem-style reasoning, and code generation, the predicted answer can be easily ver-ified, making outcome reward-based RL a natural training paradigm (Cobbe et al., 2021; Hendrycks et al., 2021; Lewkowycz et al., 2022; Shao et al., 2024; Guo et al., 2025). However, a final correct-ness signal provides only coarse supervision. A reasoning trace usually contains intermediate steps (Wei et al., 2022) consisting of misleading detours and recoveries, thereby giving rise to the “prefix trap” problem (Wu et al., 2025). However, outcome-based rewards only indicate the correctness of the proposed solution. This poses a credit-assignment challenge: the training algorithm must discern which tokens, segments, and reasoning steps should be reinforced. These problems intensify within the landscape of contemporary agentic systems. Modern reasoning agents frequently involve spawning sub-agents (Wang et al., 2025b), executing tool calls (Wu et al., 2026), performing memory retrieval (Jia et al., 2025), and handling realistic workloads (Yang et al., 2026). In such systems, generation is expensive, and independently sampled rollouts for the same prompt may follow substantially different paths of rationale. One rollout may call a verifier early, another may attempt symbolic manipulation, and another may explore a different decomposition of the problem. As a result, group-based policy optimization methods such as GRPO can become both computationally expensive and statistically noisy (Shao et al., 2024). A single final outcome reward 1
+
+> arXiv:2606.25451v1 [cs.LG] 24 Jun 2026
+
+SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 1 Prompt Prefix                
+
+> from Single Rollout !
+> 3Local Credit
+> Critic Value Estimate
+> Critic
+> Policy Gradient
+> for Actor Update
+> Token
+> 2Success Rate
+> Learn from Pass@k
+
+!
+
+> !
+
+(a) Prefix -level Pass@k Credit Assignment                 
+
+> Trac e
+>     
+> /( #,*$*''*/.-
+> 
+> 
+> 
+> 
+> 
+> --+&-*"##./,)   *''*/.$$&!&#)!10-
+> 
+> 
+>     
+> /( #,*$*''*/.-
+> 
+> 
+> 
+> 
+> 
+> 
+> -- +&-*"##./,)  !#,)&)%. &'&.1!,*--,&).-
+> -- 
+> -- % 
+> -- % 
+
+Figure 1: Method overview and rollout-normalized performance for SR-PPO. (a) Prefix-level Pass@ k credit assignment: a single-rollout prefix is evaluated by a learned Pass@ k credit critic, where local value shifts provide token-level policy-gradient credit. (b) Validation Pass@8 success rates of SR-PPO and GRPO versus total training rollouts. To isolate sample efficiency from gradient update frequencies, the x-axis normalizes the rollout budget: each GRPO step consumes 128 × 8 = 1024 rollouts, while each SR-PPO step consumes only 256 . (c) Validation Pass@1 stability across SR-PPO variants under the identical rollout budget, with g denoting gradient accumulation steps. is too sparse to identify the contribution of each local decision, while cross-rollout comparisons can be unreliable when the rollouts differ in their internal procedures. These challenges motivate single-rollout (SR) learning. In this setting, the learner receives only one sampled trajectory for each prompt and must still extract a useful token-level training signal. This regime is important when additional rollouts are expensive, heterogeneous, or difficult to com-pare. It is also directly relevant to long-horizon agent training, where the cost of collecting multiple independent trajectories may scale with tool latency, environment interaction, or multi-agent coor-dination. Instead of relying on group-level normalization across several completions, single-rollout learning must assign credit within the realized trajectory itself. This report studies single-rollout proximal policy optimization for token-level credit assignment in mathematical reasoning. Standard PPO is usually paired with generalized advantage estimation (GAE), which computes advantages from temporal-difference (TD) errors using a learned value function and bootstrapping from future value predictions (Schulman et al., 2015; 2017). This design is effective when the value function provides reliable dense estimates along a trajectory, but it can be less suitable when the only supervision is a delayed binary outcome reward. In long-horizon tasks, value bootstrapping may accumulate errors along many intermediate steps. This motivates replacing conventional TD-bootstrapped advantage estimation with a Monte Carlo labeled credit model whose predictions are directly tied to eventual success, leading to our SR-PPO .The main idea is to train a calibrated prefix-level credit model from Monte Carlo outcome labels as shown in Figure 1 Panel (a). For each partial solution, the credit model predicts how likely the current reasoning state is to eventually lead to a correct final answer in k passes. This prediction is then used as a value estimate for policy optimization. By comparing the predicted value before and after each local continuation, the method assigns positive credit to tokens that improve the estimated chance of success and negative credit to tokens that reduce it. A terminal correction term keeps the dense credit signal aligned with the observed final outcome. 2SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic A key design choice is to use a Pass@k value family rather than only the ordinary Pass@1 suc-cess probability. Pass@1 measures the probability that one continuation succeeds, while Pass@k measures whether at least one of several possible continuations would succeed. Using Pass@4 as the main operating point produces a sparser and more selective credit signal. Easy prefixes that are already likely to be solved are downweighted, while harder prefixes that remain solvable re-ceive greater emphasis. This helps reduce unnecessary updates on already-solvable states and shifts learning toward parts of the trajectory where improvement is still possible. The Pass@k perspective also gives an interpretable connection to reachability. As the number of possible continuations becomes very large, the Pass@k value approaches a binary question: whether the current prefix can lead to any successful continuation at all. This reachability view separates two notions that are often conflated in outcome-based reinforcement learning: whether a state is solvable in principle, and how likely the current policy is to solve it. On an explicit finite state graph, this reachability signal can be computed by a graph traversal in time linear in the size of the graph, suggesting a tractable surrogate for direct credit assignment when evaluating each prefixes with chains of thought and extra sampling to satisfy required computation and sample complexity requirement is infeasible. The main contributions of this report are as follows: 1. Token-Level Credit Assignment in Single-Rollout Regime: We formulate token-level credit assignment for mathematical reasoning within the highly constrained single-rollout recipe, where only a single sampled trajectory is available for each prompt. 2. The Pass@ k Value Family and Reachability Interpretation: We train a calibrated prefix-level success predictor from single-rollout Monte Carlo outcomes to model a novel Pass@ k value family. We show that Pass@ k (with Pass@4 as a practical operating point) emphasizes hard but reachable prefixes while downweighting already-solvable states, connecting coarse success signals to a formal graph reachability interpretation. 3. The Pass@ k SR-PPO Algorithm: We introduce the design of Pass@ k SR-PPO, utilizing a difference-in-value advantage accompanied by a critical terminal correction term to assign pre-cise local credit to tokens that actively increase the predicted success probability. 4. Empirical Validation: We evaluate our method on competition-level mathematical reasoning benchmarks. Our empirical results demonstrate stable optimization and consistent improvements in Pass@ k metrics, while uncovering an insightful trade-off against Pass@1. 
+
+# 2 RELATED WORK 
+
+RL for Reasoning. PPO remains the standard starting point for policy-gradient fine-tuning of LMs because its clipped surrogate objective constrains policy updates while allowing multiple opti-mization epochs over sampled trajectories (Schulman et al., 2017). In language-model post-training, this basic recipe underlies many RLHF and reward-model optimization pipelines (Stiennon et al., 2020; Ouyang et al., 2022). For mathematical reasoning and code, the recent RL-with-verifiable-rewards line replaces subjective preference rewards with automatically checkable correctness sig-nals. DeepSeekMath (Shao et al., 2024) introduced Group Relative Policy Optimization (GRPO), a critic-free PPO variant that normalizes rewards within a group of sampled completions and reduces the memory overhead of actor-critic PPO (Shao et al., 2024). DeepSeek-R1 then demonstrated that large-scale rule-based RL can elicit strong reasoning behavior, while DeepSeek-V3 reports a full SFT-and-RL post-training stage on top of a large MoE base model (Guo et al., 2025; Liu et al., 2024). ProRL studies the complementary question of whether prolonged RL expands the set of reasoning strategies reachable by the base model rather than merely amplifying already likely com-pletions (Liu et al., 2026). These systems motivate our setting but also expose its bottleneck. Group-based methods such as GRPO obtain a useful baseline by comparing multiple completions for the same prompt. In long-horizon agentic systems, however, each completion can involve different tool calls, modules, envi-ronment states, and execution paths. The resulting group can be expensive to sample and noisy to compare. Our work therefore studies the lower-budget regime in which only one rollout is available per prompt and credit must be assigned within that rollout. 3SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+Process Rewards. A central theme in mathematical-reasoning post-training is the distinction be-tween outcome supervision and process supervision. Outcome reward models and verifiers score the final answer, whereas process reward models (PRMs) score intermediate reasoning steps (Cobbe et al., 2021; Lightman et al., 2024). Math-Shepherd reduces the cost of dense process labels by con-structing step-level supervision automatically and using the resulting PRM for both verification and step-by-step PPO (Wang et al., 2024). PRIME further reduces the supervision burden by deriving implicit process rewards from policy rollouts and outcome labels, avoiding a separate manually la-beled PRM training phase (Cui et al., 2025). Rewarding Progress / PAV argues that effective process rewards should measure progress: the change in the likelihood of eventually producing a correct re-sponse before and after a step (Setlur et al., 2025). AgentPRM adapts this idea to agent tasks, where actions are not simply correct or incorrect but can be evaluated by promise and progress toward the final goal (Xi et al., 2026). Likelihood-based rewards provide another route to dense or less task-specific supervision by rewarding the log-probability of a reference answer or continuation, which can be applied even when a hand-designed verifier is unavailable (Kwiatkowski et al., 2026). Note that our prefix-level success predictor using only the final binary outcome label and then use differences in predicted value to assign token-level credit. Thus, the credit signal resembles a learned progress reward, while the supervision remains outcome-only. 
+
+Dense Credit Assignment. A related direction uses multiple sampled trajectories to recover struc-ture among prefixes. Exploiting Tree Structure for Credit Assignment converts a group of com-pletions into a prefix tree and estimates nonparametric prefix values from descendant outcomes; its TEMPO algorithm adds branch-gated temporal-difference corrections to GRPO, giving token-level credit mainly at branching points (Tran et al., 2025). TreePO similarly treats generation as a tree-structured search process, using dynamic tree sampling, fixed-length segment decoding, and tree-based segment-level advantage estimation to reduce rollout cost while preserving exploration (Li et al., 2025). For long-horizon agents, GiGPO constructs a group-in-group hierarchy: macro advantages compare full trajectories, while micro advantages compare actions from repeated anchor states (Feng et al., 2025). HGPO further studies context inconsistency in stepwise grouping and aggregates advantages over hierarchical groups to trade off bias and variance (He et al., 2026). These methods are important baselines because they directly attack credit assignment with branching or grouping structure. Their limitation for our target regime is that the structure itself requires multiple trajectories and repeated states, which is costly in long-horizon learning. Another trends re-introduce value functions. VIMPO derives a policy-implied value function from the optimality conditions of KL-regularized RL, yielding a critic-free value loss and a PPO-style actor advantage that separate reward incorporation from policy improvement (Kang et al., 2026). Recent industry system reports, such as Z.AI’s GLM-5.2 blog, emphasize the shift toward long-horizon agentic evaluation and PPO training with a single rollout (Z.AI, 2026). 
+
+Agentic RL, Tool Use, and Software-Engineering Agents. Several algorithmic variants further emphasize credit assignment in multi-turn agents. ARPO augments GRPO with experience replay for GUI agents to reuse successful trajectories under high rollout cost (Lu et al., 2025). SPA-RL learns a progress estimator that redistributes final task reward into stepwise contributions (Wang et al., 2025a). IGPO defines turn-level intrinsic rewards as the marginal increase in the model’s probability of producing the ground-truth answer, directly targeting information acquisition in multi-turn search (Wang et al., 2026). Evolving-RL jointly optimizes experience extraction and utilization so that agents can distill reusable lessons from past interactions (Fan et al., 2026). Together, these works show that agentic training is not only a reward-design problem but also a trajectory-structure and credit-assignment problem. 
+
+# 3 METHODOLOGY 
+
+This section introduces the proposed single-rollout training framework. We first define the problem setup and the Monte Carlo prefix-value objective. We then describe the outcome-calibrated credit model, the transformation from Pass@1 to Pass@k values, the resulting token-level advantage esti-mator, and the PPO objective used for policy optimization. Finally, we discuss the graph-theoretic reachability interpretation of the Pass@k limit. 4SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 3.1 PROBLEM SETUP 
+
+Given a problem prompt x, the policy πθ generates a token sequence y1: T . We define the prefix state as st = ( x, y 1: t), where t = 0 denotes the prompt-only state. After the full trajectory is generated, an answer checker returns a binary outcome Y ∈ { 0, 1}, where Y = 1 indicates that the generated solution is correct. In the undiscounted episodic setting, the canonical value of a prefix is its probability of eventual success under the current policy π: qπ (st) = Pπ (Y = 1 | st). This quantity is the Pass@1 success probability of the current partial reasoning trace. The goal is to estimate useful token-level advantages from only a single sampled rollout per prompt. Standard PPO is commonly paired with generalized advantage estimation, which computes advan-tages from temporal-difference errors and bootstraps from a learned value function (Schulman et al., 2015; 2017). In long mathematical reasoning traces, however, the only directly observed supervi-sion is often a delayed binary outcome. Temporal-difference bootstrapping can therefore propagate value-estimation errors along the horizon. We instead train a prefix-level credit model using Monte Carlo outcome labels and use its predictions to construct dense token-level credit. 3.2 OUTCOME -C ALIBRATED PREFIX CREDIT CRITIC 
+
+We train a credit critic model to predict the final binary success label from each prefix of the trajec-tory. Let ˆqπ,t denote the model’s predicted probability that prefix st will eventually lead to a correct solution. Each prefix in the trajectory is supervised by the same Monte Carlo outcome label Y .For a single prefix, the outcome-calibration loss is The trajectory-level credit-model loss is 
+
+Lcredit = 1
+
+T + 1 
+
+> T
+
+X
+
+> t=0
+
+ℓt(ϕ) + λprompt ℓ0(ϕ). (1) where the per-token loss is defined as ℓt(ϕ) = BCE(ˆ qπ,t , Y )+ λBrier (ˆ qπ,t −Y )2. The first term trains the model on all prefixes, while the additional prompt-level term anchors the value estimate at the initial prompt state. The binary cross-entropy term encourages discrimination between successful and unsuccessful rollouts. The Brier-score term improves probability calibration, so that pt remains interpretable as a calibrated success probability rather than merely a ranking score (Brier, 1950). 3.3 FROM PASS @1 TO PASS @K VALUES 
+
+The prefix value qπ (st) corresponds to the expected success probability of a single continuation, equivalent to Pass@1. To capture multi-sample success, we define the Pass@k value as the proba-bility that at least one of k independent continuations succeeds: 
+
+qπ,k (st) = Pπ (max  
+
+> i≤k
+
+Yi|st) = 1 − (1 − qπ (st)) k,
+
+where Y1, · · · , Y k are k conditionally independent continuation outcomes given the prefix and sam-pled from the same underlying policy. This transformation quantity from Pass@1 precisely evaluates the probability that at least one completion succeeds. During training, we directly approximate qπ,k (st) with an extra credit network, denoting its output as ˆqπ,k (st). Since the subsequent training objectives are formulated based on Pass@1 values, we map the Pass@ k prediction back to an induced Pass@1 prediction via the inverse transformation: 
+
+bqπ (st) = 1 −  1 − bqπ,k (st)1/k .
+
+We therefore integrate the induced estimate bqπ (st) into the identical loss functions formulated pre-viously, while parameterizing it through the Pass@ k network bqπ,k .The Pass@k transformation reshapes the geometry of the value signal. Its derivative with respect to the underlying Pass@1 success probability is given by: 
+
+∂q π,k 
+
+∂q π
+
+= k(1 − qπ )k−1.
+
+5SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic For k > 1, this derivative vanishes as qπ approaches one. Therefore, prefixes that are already highly likely to succeed receive less gradient scale than under Pass@1. At the same time, low-probability yet reachable prefixes remain sensitive to optimization. This is the precise sense in which Pass@ k
+
+provides a more selective and less disruptive learning signal: it attenuates gradients from already-solvable states while preserving active learning signals on hard but reachable states. 3.4 TOKEN -LEVEL CREDIT ASSIGNMENT 
+
+The prefix credit model provides a value estimate at every token position. For k = 1 , the local change in predicted success probability is ∆ˆ qπ (st) = ˆ qπ (st) − ˆqπ (st−1). This quantity measures whether the token transition from st−1 to st increases or decreases the estimated probability of eventual success. The token-level advantage is set to be Aπ (st) = (ˆ qπ (st) − ˆqπ (st−1) + λ(Y − ˆqπ (sT )) , where 
+
+(Y − ˆqπ (sT )) is a terminal correction term. The local difference term assigns credit to tokens that improve the predicted chance of success, while the terminal correction keeps the dense token-level signal aligned with the observed final outcome. In this report we set λ = 1 .The same construction applies to Pass@k values. We first compute the local change ∆ˆ qπ,k (st) = ˆqπ,k (st) − ˆqπ,k (st−1). The Pass@k advantage is then Aπ,k (st) = ∆ˆ qπ,k (st) + λ(Y − ˆqπ,k (sT )) .When k = 1 , this reduces to the Pass@1 advantage above. For k > 1, positive credit is assigned to tokens that increase the probability that at least one continuation from the prefix can succeed. 3.5 SINGLE -R OLLOUT POLICY -G RADIENT OBJECTIVE 
+
+At each update, we sample a single rollout for a batch of B prompts from the current behavior policy 
+
+πθold . For trajectory i, let yi,t denote the token generated at prefix state si,t −1. A prefix credit model produces a detached token-level advantage estimate A(k) 
+
+> i,t
+
+, where the superscript k indicates that the credit output is approximating the Pass@ k value. We optimize the on-policy objective 
+
+J (θ) = 1
+
+M
+
+> B
+
+X
+
+> i=1
+> Ti
+
+X
+
+> t=1
+
+ri,t (θ)A(k) 
+
+> i,t
+
+,
+
+where 
+
+M =
+
+> B
+
+X
+
+> i=1
+
+Ti
+
+is the total number of generated tokens in the batch, and 
+
+ri,t (θ) = πθ (yi,t | si,t −1)
+
+πθold (yi,t | si,t −1) = exp (log πθ (yi,t | si,t −1) − log πθold (yi,t | si,t −1)) .
+
+In standard PPO, the surrogate would use the clipped objective. However, in our main setting, each training batch is freshly sampled from πθold , since we use a single PPO gradient computation by the setting of equal ppo mini batch size and training batch size . Thus, before the optimizer step, the policy parameters satisfy 
+
+θ = θold ,
+
+and therefore 
+
+ri,t (θold ) = 1 
+
+for every sampled token, leading to inactive clipping branch. Under this training schedule, the update is equivalent to an on-policy single-step policy-gradient update with dense token-level credit. The key distinction from group-based methods is that the rollout budget remains one sample per prompt. The method does not estimate advantages by normalizing rewards across multiple comple-tions of the same problem. Instead, it uses a learned prefix-value model to convert a single Monte Carlo terminal outcome into dense token-level credit. 6SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 3.6 CONNECTION TO DIRECT REACHABILITY 
+
+The Pass@ k target interpolates between success probability and reachability. The quantity 
+
+qπ,k (s) = 1 −  1 − qπ (s)k
+
+measures the probability that at least one of k independent continuations from prefix state s succeeds. However, as k → ∞ , this target no longer measures the magnitude of the success probability under the current policy. Instead, it converges to the binary reachability target 
+
+rπ (s) = 1{qπ (s) > 0},
+
+which only records whether success is possible from the current prefix with nonzero probability. This convergence is formalized in Lemma A.1. Lemma A.2 also shows that this limiting relationship also transfers to function approximation. If reachability is easy to approximate by a function class 
+
+F, then Pass@ k is also easy to approximate for sufficiently large k.The reachability limit is especially natural when the reasoning process is viewed as a graph (V, E )
+
+over prefixes. If the successful terminal states are known and the support graph is available, then the set of all states that can reach success can be computed exactly by a reverse graph traversal from the successful terminals. This computation takes linear time in the size of the graph, 
+
+O(|V | + |E|),
+
+using standard breadth-first or depth-first search on the reverse graph (Cormen et al., 2022), shown in algorithm 1. Success probability is a quantitative value: it depends on the total probability mass of all successful continuations. Reachability is a qualitative support-level value: it depends only on whether at least one successful continuation exists. Consequently, if the support graph over states is known, reach-ability can be computed. By contrast, estimating qπ (s) generally requires knowing or sampling numerical transition probabilities, and can still hold a large estimation error with a large amount of sampling data, as shown in Corollary B.1. In practice, however, the full reasoning graph is not explicitly available, and exact reachability is of-ten too coarse for policy optimization: it assigns the same value to all prefixes from which success is possible, even if their success probabilities differ substantially. We therefore use Pass@4 as a softer surrogate. It remains closer to the multi-continuation success probability than binary reachability, while still smoothing the dense Pass@1 signal and providing graded token-level credit from a single sampled rollout through the learned prefix credit model. 
+
+# 4 EXPERIMENT RESULTS 
+
+4.1 EXPERIMENTAL SETUP 
+
+We use Qwen3-1.7B (Yang et al., 2025) in thinking mode as the base policy model and set the maximum response length to 9, 182 tokens. Training is performed on DeepScaleR mathematical reasoning dataset (Luo et al., 2025). The goal of this experimental study is not to make a broad em-pirical claim about Pass@ k SR-PPO, but rather to identify a stable single-rollout credit-assignment method for improving mathematical reasoning with a small open-source base model. We evaluate on competition-level mathematical reasoning benchmarks, including AIME24, AIME25 and HMMT26 (Dekoninck et al., 2026). For evaluation, we sample 128 independent com-pletions per problem and report Pass@ k metrics. For k < 128 , Pass@ k is estimated from the 128 
+
+samples using the standard estimator 
+
+\Pass@ k = 1 −
+
+ n−ck
+
+ nk
+
+ , n = 128 ,
+
+where c is the number of correct completions among the n samples. Unless otherwise specified, SR-PPO uses one rollout per prompt. We set the PPO learning rate to 
+
+10 −6, the KL coefficient to 10 −3, the entropy coefficient to zero, the PPO clip ratio to 0.2, and the 7SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 0 30 60 90 120 150      
+
+> Training Steps
+> 70
+> 72
+> 74
+> 76
+> 78
+> Success Rate (%)
+> (a) Pass@8 Success Rate
+> GRPO
+> SR-PPO
+> GAE-PPO
+> 030 60 90 120 150
+> Training Steps
+> 84
+> 86
+> 88
+> 90
+> 92
+> 94
+> 96
+> Format Score (%)
+> (b) Pass@8 Format Score
+> GRPO
+> SR-PPO
+> GAE-PPO
+
+Figure 2: Training-step comparison of GRPO, SR-PPO, and GAE-PPO. Panel (a) reports Pass@8 validation success rate, and Panel (b) reports Pass@8 validation format score. The x-axis is the training step, i.e. , the number of gradient-update steps, not the number of generated rollouts. 1 2 4 8 16 32 64 128                 
+
+> Number of Samples (log scale)
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Success Rate (%)
+> AIME 2024
+> 124816 32 64 128
+> Number of Samples (log scale)
+> 20
+> 30
+> 40
+> 50
+> 60
+> Success Rate (%)
+> AIME 2025
+> 124816 32 64 128
+> Number of Samples (log scale)
+> 10
+> 20
+> 30
+> 40
+> Success Rate (%)
+> HMMT 2026
+> GRPO (step 120) Pass@4 SR-PPO (step 90) Pass@4 SR-PPO (step 180)
+
+Figure 3: Held-out success rate as a function of the inference-time sampling budget on AIME 2024, AIME 2025, and HMMT 2026. The x-axis is the number of samples used at evaluation time, cor-responding to pass@ k for k ∈ { 1, 2, 4, 8, 16 , 32 , 64 , 128 } The curves compare GRPO and Pass@1 SR-PPO on competition-level mathematical reasoning benchmarks. sampling temperature to 1.2. The prefix credit network uses Qwen3-1.7B with a binary classification head and is full finetuned as well. Its learning rate is 10 −5, and all credit-network related coefficients, including the prompt coefficient and final-term calibration in advantage, are set to 1. For GRPO, we tune the learning rate to be 2 × 10 −6. Also, for the training batch size, our SR-PPO only uses 256 
+
+prompts, while GRPO use 128 prompts but with 8 rollouts per prompt giving baselines advantages in computation consumed per step. Across experiments, we compare PPO with generalized advantage estimation and two other SR-PPO variants. The central question is whether a single-rollout method, equipped with learned token-level credit, can improve multi-sample reasoning performance steadily without requiring multiple completions per prompt during training. 4.2 MAIN VALIDATION IMPROVEMENT 
+
+Figure 1 Panel (b) shows the primary validation learning curves. The main comparison is between GRPO and Pass@4 SR-PPO. Although GRPO has access to 8 rollouts per prompt during training, Pass@4 SR-PPO achieves competitive Pass@8 validation performance using only a single sampled rollout. This suggests that the learned prefix credit model can extract useful token-level learning signal from sparse terminal outcomes. The GAE-PPO comparison in Figure 2 provides a useful negative baseline. Under the tested hy-perparameters, standard temporal-difference bootstrapping with GAE is not learning with a single rollout; even the format is barely improving as shown in the right subfigure. This supports the need for a value estimation method better aligned with long-horizon mathematical reasoning. 8SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 4.3 HELD -OUT EVALUATION PERFORMANCE 
+
+Figure 3 reports held-out Pass@ k performance on AIME24, AIME25, and HMMT26. Across these benchmarks, performance improves linearly as the number of sampled completions increases. This trend indicates that single-rollout training does not merely improve greedy or Pass@1 behavior; it can also improve the quality of the distribution of sampled solutions. In other words, the learned prefix-value estimator appears to provide useful credit even though the training procedure does not use multiple completions per prompt. 4.4 ABLATION STUDIES ON SR-PPO VARIANTS 
+
+Figure 1 Panel (c) compares Pass@1 validation success across algorithmic variants. As expected, Pass@4 SR-PPO is not necessarily the best method for optimizing Pass@1 directly, since its credit target emphasizes multi-continuation success rather than single-sample success. However, the Pass@1 SR-PPO variants are unstable: their Pass@1 validation curves degrade during training, especially when using four steps of gradient accumulation with off-policy gradient computation. 
+
+Model Total Tokens Tokens w/ Marginal Advantages Ratio % 
+
+PASS @4 SR-PPO (S TEP 90) 54,074 26,503 49.01% PASS @4 SR-PPO (S TEP 180) 58,554 34,368 58.69% PASS @1 SR-PPO (S TEP 90) 63,075 387 0.61% Table 1: Fraction of tokens whose token-level advantage magnitude is smaller than 10 −2. These statistics measure sparsity in the learned credit signal; they are not PPO ratio-clipping statistics. This behavior is consistent with the motivation for using Pass@ k-based credit. Table 1 compares the sparsity of the token-level advantages induced by Pass@1 and Pass@4 credit targets. We count a token as having small credit when its advantage magnitude is below 10 −2. The Pass@4 SR-PPO runs contain a much larger fraction of such near-zero advantage tokens: 49 .01% at step 90 and 
+
+58 .69% at step 180 , compared with only 0.61% for Pass@1 SR-PPO at step 90 .This suggests that the Pass@4 credit model produces a more selective local credit signal. Many tokens receive nearly zero update because the predicted Pass@4 value changes little across the corresponding transition. This selectivity helps explain the improved stability of Pass@4 SR-PPO with less noisy token-level credit from sparse success labels. We also provide qualitative case studies in Appendix C by visualizing token-level advantages on a SR-PPO rollout. Each token is colored according to the sign and magnitude of its advantage: green indicates positive advantage, red indicates negative advantage, and darker colors indicate larger absolute values. Recall that the token-level advantage contains both a local value-difference term and a terminal calibration term. This terminal calibration term dominates the credit assignment. For example, in failed generations where Y = 0 , this term is usually negative and shifts most token advantages below zero. Local prefix-value differences can still produce scattered positive tokens. The visualization highlights a qualitative difference between pass@1 and pass@4 credit assignment. The pass@1 variant exhibits more abrupt token-level changes in color intensity, suggesting noisier local credit assignment from a single terminal Monte Carlo outcome. 
+
+# 5 CONCLUSION 
+
+We presented an empirical study of single-rollout PPO with prefix-level Monte Carlo credit assign-ment for mathematical reasoning. The central idea is to train a calibrated prefix credit model that pre-dicts final correctness from every intermediate prefix. This converts a sparse terminal Monte Carlo outcome into a training signal that can be applied throughout the reasoning trajectory. We identifies Pass@ k-based prefix credit assignment as a promising algorithmic choice for stable single-rollout policy optimization for stable and prolonged reinforcement learning training. 9SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+# LIMITATIONS 
+
+This report has obvious limitations. The experiments are restricted to DeepScaleR mathematical reasoning data, a Qwen3-1.7B base model, a single running seed and a limited set of hyperparameter choices. We do not yet establish the generality of Pass@ k SR-PPO across domains, or long-horizon agentic environments. The connection to reachability also remains primarily a guiding principle rather than a complete description of practical reasoning dynamics, since the full prefix graph is not explicitly available and the learned credit model is only an approximation. 
+
+# REFERENCES 
+
+Glenn W. Brier. Verification of forecasts expressed in terms of probability. Monthly Weather Review ,78(1):1–3, 1950. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 ,2021. Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein. Introduction to Algorithms . MIT Press, 4 edition, 2022. Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, Qixin Xu, Weize Chen, et al. Process reinforcement through implicit rewards. arXiv preprint arXiv:2502.01456 , 2025. Jasper Dekoninck, Nikola Jovanovi´ c, Tim Gehrunger, K´ ari R¨ ognvaldsson, Ivo Petrov, Chenhao Sun, and Martin Vechev. Beyond benchmarks: Matharena as an evaluation platform for mathematics with LLMs. In 3rd AI for Math Workshop: Toward Self-Evolving Scientific Agents , 2026. URL 
+
+https://openreview.net/forum?id=DmPE4byHuN .Zhiyuan Fan, Wenwei Jin, Feng Zhang, Bin Li, Yihong Dong, Yao Hu, and Jiawei Li. Evolving-rl: End-to-end optimization of experience-driven self-evolving capability within agents. arXiv preprint arXiv:2605.10663 , 2026. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy op-timization for llm agent training. In D. Belgrave, C. Zhang, H. Lin, R. Pas-canu, P. Koniusz, M. Ghassemi, and N. Chen (eds.), Advances in Neural Infor-mation Processing Systems , volume 38, pp. 46375–46408. Curran Associates, Inc., 2025. URL https://proceedings.neurips.cc/paper_files/paper/2025/ file/420c9f777c0b4f78d515e53cf74d58b2-Paper-Conference.pdf .Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1 incentivizes reasoning in llms through reinforce-ment learning. Nature , 645(8081):633–638, 2025. Shuo He, Lang Feng, Qi Wei, Xin Cheng, Lei Feng, and Bo An. Hierarchy-of-groups policy opti-mization for long-horizon agentic tasks. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=T8Dev99qnz .Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the math dataset. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) , 2021. Zixia Jia, Jiaqi Li, Yipeng Kang, Yuxuan Wang, Tong Wu, Quansen Wang, Xiaobo Wang, Shuyi Zhang, Junzhe Shen, Qing Li, Siyuan Qi, Yitao Liang, Di He, Zilong Zheng, and Song-Chun Zhu. The AI hippocampus: How far are we from human memory? Transactions on Machine Learning Research , 2025. ISSN 2835-8856. URL https://openreview.net/forum? id=Sk7pwmLuAY .10 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic Zhewei Kang, Aosong Feng, Sergey Levine, Dawn Song, and Xuandong Zhao. Vimpo: Value-implicit policy optimization for llms, 2026. URL https://arxiv.org/abs/2606. 20008 .Ariel Kwiatkowski, Natasha Butt, Ismail Labiad, Julia Kempe, and Yann Ollivier. Likelihood-based reward designs for general llm reasoning. arXiv preprint arXiv:2602.03979 , 2026. Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ra-masesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, et al. Solving quantitative reasoning problems with language models. Advances in neural information processing systems ,35:3843–3857, 2022. Yizhi Li, Qingshui Gu, Zhoufutu Wen, Ziniu Li, Tianshun Xing, Shuyue Guo, Tianyu Zheng, Xin Zhou, Xingwei Qu, Wangchunshu Zhou, et al. Treepo: Bridging the gap of policy optimiza-tion and efficacy and inference efficiency with heuristic tree-based modeling. arXiv preprint arXiv:2508.17445 , 2025. Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations , volume 2024, pp. 39578–39601, 2024. Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2024. Mingjie Liu, Shizhe Diao, Ximing Lu, Jian Hu, Xin Dong, Yejin Choi, Jan Kautz, and Yi Dong. ProRL: Prolonged reinforcement learning expands reasoning boundaries in large language mod-els. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview.net/forum?id=YPsJha5HXQ .Fanbin Lu, Zhisheng Zhong, Shu Liu, Chi-Wing Fu, and Jiaya Jia. Arpo: End-to-end policy opti-mization for gui agents with experience replay. arXiv preprint arXiv:2505.16282 , 2025. Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Tang, Manan Roongta, Colin Cai, Jef-frey Luo, Tianjun Zhang, Erran Li, Raluca Ada Popa, and Ion Stoica. Deepscaler: Surpassing o1-preview with a 1.5b model by scaling rl. https://huggingface.co/agentica-org/ DeepScaleR-1.5B-Preview , 2025. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to fol-low instructions with human feedback. Advances in neural information processing systems , 35: 27730–27744, 2022. John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438 , 2015. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Amrith Setlur, Chirag Nagpal, Adam Fisch, Xinyang Geng, Jacob Eisenstein, Rishabh Agarwal, Alekh Agarwal, Jonathan Berant, and Aviral Kumar. Rewarding progress: Scaling automated process verifiers for LLM reasoning. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=A6Y7AqlzLW .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathe-matical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F Christiano. Learning to summarize with human feedback. Advances in neural information processing systems , 33:3008–3021, 2020. 11 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic Hieu Tran, Zonghai Yao, and Hong Yu. Exploiting tree structure for credit assignment in rl training of llms. arXiv preprint arXiv:2509.18314 , 2025. Guoqing Wang, Sunhao Dai, Guangze Ye, Zeyu Gan, Wei Yao, Yong Deng, Xiaofeng Wu, and Zhenzhe Ying. Information gain-based policy optimization: A simple and effective approach for multi-turn search agents. In The Fourteenth International Conference on Learning Representa-tions , 2026. Hanlin Wang, Chak Tou Leong, Jiashuo Wang, Jian Wang, and Wenjie Li. Spa-rl: Reinforcing llm agents via stepwise progress attribution. arXiv preprint arXiv:2505.20732 , 2025a. Junlin Wang, Jue WANG, Ben Athiwaratkun, Ce Zhang, and James Zou. Mixture-of-agents enhances large language model capabilities. In The Thirteenth International Conference on Learning Representations , 2025b. URL https://openreview.net/forum?id= h0ZfDIrj7T .Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Yu Wu, and Zhi-fang Sui. Math-shepherd: Verify and reinforce LLMs step-by-step without human annotations. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.), Proceedings of the 62nd Annual Meet-ing of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 9426–9439, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/ 2024.acl-long.510. URL https://aclanthology.org/2024.acl-long.510/ .Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed H. Chi, Quoc V Le, and Denny Zhou. Chain of thought prompting elicits reasoning in large language models. In Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun Cho (eds.), Ad-vances in Neural Information Processing Systems , 2022. URL https://openreview.net/ forum?id=_VjQlMeSB_J .Tong Wu, Yang Liu, Jun Bai, Zixia Jia, Shuyi Zhang, Ziyong Lin, Yanting Wang, Song-Chun Zhu, and Zilong Zheng. Native parallel reasoner: Reasoning in parallelism via self-distilled reinforce-ment learning. arXiv preprint arXiv:2512.07461 , 2025. Zijian Wu, Xiangyan Liu, xinyuan zhang, Lingjun Chen, Fanqing Meng, Lingxiao Du, Yiran Zhao, Fanshi Zhang, Yaoqi Ye, Jiawei Wang, Zirui Wang, Jinjie Ni, Yufan Yang, Arvin Xu, and Michael Qizhe Shieh. MCPMark: A benchmark for stress-testing realistic and comprehensive MCP use. In The Fourteenth International Conference on Learning Representations , 2026. URL 
+
+https://openreview.net/forum?id=uobROwBsJm .Zhiheng Xi, Chenyang Liao, Guanyu Li, Zhihao Zhang, Wenxiang Chen, Binghai Wang, Senjie Jin, Yuhao Zhou, Jian Guan, Wei Wu, Tao Ji, Tao Gui, Qi Zhang, and Xuanjing Huang. Agentprm: Process reward models for llm agents via step-wise promise and progress. In Proceedings of the ACM Web Conference 2026 , WWW ’26, pp. 4184–4195, New York, NY, USA, 2026. Associa-tion for Computing Machinery. ISBN 9798400723070. doi: 10.1145/3774904.3792551. URL 
+
+https://doi.org/10.1145/3774904.3792551 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Qianyu Yang, Yang Liu, Jiaqi Li, Jun Bai, Hao Chen, Kaiyuan Chen, Tiliang Duan, Jiayun Dong, Xiaobo Hu, Zixia Jia, et al. $onemillion-bench: How far are language agents from human experts? 
+
+arXiv preprint arXiv:2603.07980 , 2026. Z.AI. GLM-5.2: Built for long-horizon tasks. https://z.ai/blog/glm-5.2 , 2026. Blog post. 12 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+# A PROOF OF CONNECTION TO THE REACHABILITY 
+
+Lemma A.1 (Pass@ k converges to reachability) . Fix a time t and let H = T − t. Let P be the original transition kernel, without pruning or clipping transition probabilities. Define the Pass@1 success probability 
+
+pt(s) = Pr( YT = 1 | St = s),
+
+the reachability target 
+
+rt(s) = 1{pt(s) > 0},
+
+and the Pass@ k success probability 
+
+pt,k (s) = 1 −  1 − pt(s)k.
+
+Then, for every state s,
+
+pt,k (s) −→ rt(s) as k → ∞ .
+
+Moreover, define 
+
+αt = inf {pt(s) : rt(s) = 1 }.
+
+If αt > 0, then the convergence is uniform and satisfies 
+
+∥pt,k − rt∥∞ ≤ (1 − αt)k.
+
+Proof. If rt(s) = 0 , then pt(s) = 0 . Therefore 
+
+pt,k (s) = 1 − (1 − 0) k = 0 = rt(s).
+
+Hence 
+
+|pt,k (s) − rt(s)| = 0 .
+
+If rt(s) = 1 , then pt(s) > 0. In this case, 
+
+pt,k (s) = 1 −  1 − pt(s)k,
+
+and therefore 
+
+rt(s) − pt,k (s) = 1 −
+
+h
+
+1 −  1 − pt(s)ki
+
+=  1 − pt(s)k.
+
+Since 0 < p t(s) ≤ 1, we have 
+
+ 1 − pt(s)k −→ 0 as k → ∞ .
+
+Thus 
+
+pt,k (s) → rt(s)
+
+for every s.If additionally αt > 0, then for every reachable state s,
+
+pt(s) ≥ αt.
+
+Therefore, 
+
+|pt,k (s) − rt(s)| =  1 − pt(s)k ≤ (1 − αt)k.
+
+For unreachable states the error is 0, so the same bound holds for all states. Taking the supremum over s gives 
+
+∥pt,k − rt∥∞ ≤ (1 − αt)k.
+
+Lemma A.2 (small reachability approximation error implies small Pass@ k error) . Let F ⊆ L2(μ)
+
+be any function class. For any target function f : S → [0 , 1] , define its best approximation error under F and state distribution μ by 
+
+AF 
+
+> μ
+
+(f ) = inf  
+
+> h∈F
+
+Es∼μ
+
+h
+
+(f (s) − h(s)) 2i
+
+.
+
+13 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+Let pt(s) be the Pass@1 success probability, let 
+
+rt(s) = 1{pt(s) > 0}
+
+be the reachability target, and let 
+
+pt,k (s) = 1 −  1 − pt(s)k
+
+be the Pass@ k target. Define 
+
+et,k = ∥pt,k − rt∥L2(μ).
+
+Then 
+
+AF 
+
+> μ
+
+(pt,k ) ≤
+
+q 
+
+AF 
+
+> μ
+
+(rt) + et,k 
+
+2
+
+.
+
+In particular, if 
+
+αt = inf {pt(s) : rt(s) = 1 } > 0,
+
+then 
+
+AF 
+
+> μ
+
+(pt,k ) ≤
+
+q 
+
+AF 
+
+> μ
+
+(rt) + (1 − αt)k2
+
+.
+
+Proof. By definition, q
+
+AF 
+
+> μ
+
+(pt,k ) = inf  
+
+> h∈F
+
+∥pt,k − h∥L2(μ).
+
+For any h ∈ F , the triangle inequality gives 
+
+∥pt,k − h∥L2(μ) ≤ ∥ pt,k − rt∥L2(μ) + ∥rt − h∥L2(μ).
+
+Taking the infimum over h ∈ F yields 
+
+q
+
+AF 
+
+> μ
+
+(pt,k ) ≤ ∥ pt,k − rt∥L2(μ) + inf  
+
+> h∈F
+
+∥rt − h∥L2(μ).
+
+By the definitions of et,k and AF 
+
+> μ
+
+(rt), this becomes 
+
+q
+
+AF 
+
+> μ
+
+(pt,k ) ≤ et,k +
+
+q
+
+AF 
+
+> μ
+
+(rt).
+
+Squaring both sides gives 
+
+AF 
+
+> μ
+
+(pt,k ) ≤
+
+q 
+
+AF 
+
+> μ
+
+(rt) + et,k 
+
+2
+
+.
+
+If αt > 0, then for every state with rt(s) = 1 ,
+
+pt(s) ≥ αt.
+
+Therefore, 
+
+|pt,k (s) − rt(s)| ≤ (1 − αt)k
+
+for all s, and hence 
+
+et,k = ∥pt,k − rt∥L2(μ) ≤ (1 − αt)k.
+
+Substituting this bound into the previous inequality gives 
+
+AF 
+
+> μ
+
+(pt,k ) ≤
+
+q 
+
+AF 
+
+> μ
+
+(rt) + (1 − αt)k2
+
+.
+
+14 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+Algorithm 1 Finite-horizon backward reachability dynamic program 
+
+Require: Horizon T ; state layers {S t}Tt=0 ; terminal success set G ⊆ S T ; successor lists Succ t(s) = {s′ ∈ S t+1 : Pt(s′ | s) > 0}.
+
+Ensure: Reachability labels 
+
+rt(s) = 1{pt(s) > 0}, pt(s) = Pr( YT = 1 | St = s). 
+
+> 1:
+
+for s ∈ S T do  
+
+> 2:
+
+rT (s) ← 1{s ∈ G}  
+
+> 3:
+
+end for  
+
+> 4:
+
+for t = T − 1, T − 2, . . . , 0 do  
+
+> 5:
+
+for s ∈ S t do  
+
+> 6:
+
+rt(s) ← 0 
+
+> 7:
+
+for s′ ∈ Succ t(s) do  
+
+> 8:
+
+if rt+1 (s′) = 1 then  
+
+> 9:
+
+rt(s) ← 1 
+
+> 10:
+
+break  
+
+> 11:
+
+end if  
+
+> 12:
+
+end for  
+
+> 13:
+
+end for  
+
+> 14:
+
+end for  
+
+> 15:
+
+return {rt(s) : 0 ≤ t ≤ T, s ∈ S t}
+
+# B COMPARISON BETWEEN REACHABILITY AND SUCCESS PROBABILITY 
+
+# ESTIMATION 
+
+This corollary highlights a structural advantage of reachability targets. Reachability depends only on the support of the transition graph: whether a successful path exists. Once the support graph is known, reachability can be computed exactly by graph search or dynamic programming. By contrast, success probability depends on the numerical transition probabilities along all successful paths. Even when reachability is known exactly, estimating these probabilities from rollouts can require many samples, especially when the success probability is small. 
+
+Corollary B.1 (Exact reachability but hard success-probability estimation) . Consider a finite-horizon Markov process with state sets {S t}Tt=0 , goal set G ⊆ S T , and known support graph 
+
+Et = {(s, s ′) ∈ S t × S t+1 : Pt(s, s ′) > 0}.
+
+Let 
+
+N =
+
+> T
+
+X
+
+> t=0
+
+|S t|, M = 
+
+> T−1
+
+X
+
+> t=0
+
+|Et|.
+
+Then all reachability labels 
+
+rt(s) = 1{pt(s) > 0}
+
+can be computed exactly in time 
+
+O(N + M ).
+
+Thus reachability computation has zero error once the support graph is known. In contrast, suppose the numerical success probability 
+
+pt(s) = Pr( YT = 1 | St = s)
+
+must be estimated from independent rollouts. Then, for every α ∈ (0 , 1/4] and every n ≤ 1/(2 α),there exists a one-step Markov process with the same known support graph, needing one data sample to know the reachability, but with success probability 
+
+p(s) ∈ { α, 2α},
+
+15 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+such that any estimator bp(s) based on n rollouts satisfies 
+
+sup 
+
+> p(s)∈{ α, 2α}
+
+Pr 
+
+
+
+|bp(s) − p(s)| ≥ α
+
+2
+
+
+
+≥ 14 .
+
+Consequently, exact reachability can be obtained with linear computation in the size of the support graph, while estimating success probabilities can fail unless the number of rollouts scales at least as 
+
+n = Ω(1 /α ),
+
+even in the simplest one-step case. Proof. The first claim follows from the backward reachability dynamic program stated in Algorithm 1. At terminal time, 
+
+rT (s) = 1{s ∈ G} .
+
+For t < T ,
+
+rt(s) = 1 {∃ s′ ∈ S t+1 such that (s, s ′) ∈ Et and rt+1 (s′) = 1 } .
+
+The algorithm visits each time-state node once and inspects each support edge at most once, so the runtime is 
+
+O(N + M ).
+
+Because the computation is deterministic given the support graph, the reachability labels are com-puted with zero error. For the lower bound, consider a one-step process with an initial state s, a success terminal state g,and a failure terminal state b. Let 
+
+P (s, g ) = p, P (s, b ) = 1 − p, 
+
+where 
+
+p ∈ { α, 2α}.
+
+For both choices of p, the support graph is the same: 
+
+s → g, s → b. 
+
+Therefore the reachability label is also the same: 
+
+r(s) = 1 .
+
+Thus the support-based reachability algorithm computes r(s) exactly. However, estimating p from rollouts is equivalent to estimating the mean of a Bernoulli random variable. Let Pα denote the distribution of n i.i.d. samples from Bernoulli (α), and let P2α denote the distribution of n i.i.d. samples from Bernoulli (2 α). For α ≤ 1/4,
+
+DKL (Bernoulli (α) ∥ Bernoulli (2 α)) ≤ α. 
+
+Hence 
+
+DKL (Pα ∥ P2α) ≤ nα ≤ 12 .
+
+By Pinsker’s inequality, TV (Pα, P2α) ≤
+
+r 12 DKL (Pα ∥ P2α) ≤ 12 .
+
+Therefore, by Le Cam’s two-point method, any test distinguishing p = α from p = 2 α has error probability at least 12 (1 − TV (Pα, P2α)) ≥ 14 .
+
+Now suppose an estimator bp(s) achieved 
+
+|bp(s) − p(s)| < α
+
+2
+
+with probability greater than 3/4 under both p = α and p = 2 α. Then the threshold test 
+
+bp(s) ≤ 3α
+
+2 versus bp(s) > 3α
+
+2
+
+would distinguish p = α from p = 2 α with error probability less than 1/4, contradicting the lower bound above. Hence 
+
+sup 
+
+> p(s)∈{ α, 2α}
+
+Pr 
+
+
+
+|bp(s) − p(s)| ≥ α
+
+2
+
+
+
+≥ 14 .
+
+This proves the sample-complexity separation. 16 SR-PPO: Learning with a Single Rollout via Monte Carlo Pass@k Critic 
+
+# C QUALITATIVE TOKEN CREDIT ANALYSIS 
+
+Figure 4: Token credit assignment visualization for Pass@4 SR-PPO. 
+
+Figure 5: Token credit assignment visualization for Pass@1 SR-PPO. 17

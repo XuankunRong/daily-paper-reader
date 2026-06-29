@@ -1,0 +1,521 @@
+Title: Mesh-RL: Coupled subgrid reinforcement learning
+
+URL Source: https://arxiv.org/pdf/2606.26333v1
+
+Published Time: Fri, 26 Jun 2026 00:14:59 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Mesh-RL: Coupled subgrid reinforcement learning 
+
+Behnam Gheshlaghi 
+
+Independent Researcher 
+
+Bahador Rashidi 
+
+Independent Researcher 
+
+Shahin Atakishiyev ∗
+
+University of Alberta 
+
+## Abstract 
+
+Reinforcement learning in large or sparse-reward environments suffers from slow temporal-difference reward propagation, as value information spreads only locally across the state space. We propose Mesh-RL , a spatial domain-decomposition framework inspired by the finite element method and domain decomposition the-ory, which partitions the environment into overlapping subgrids and enforces 
+
+boundary-consistent temporal-difference updates . Such an approach enables lo-calized learning while ensuring globally coherent value propagation. Unlike hi-erarchical or model-based approaches, Mesh-RL accelerates long-range credit assignment without modifying the reward function, Bellman operator, or intro-ducing explicit planning mechanisms. We evaluate Mesh-RL on hazard-dense grid-world environments with varying geometries and mesh resolutions. Across Q-learning, SARSA, and Dyna-Q, Mesh-RL consistently improves convergence speed, cumulative reward, and learning stability. Higher mesh resolutions sustain exploration, prevent premature convergence, and substantially accelerate value propagation to distant states. While Dyna-Q already benefits from internal plan-ning, it still achieves additional gains under structured decomposition. Overall, Mesh-RL introduces a principled spatial domain-decomposition mechanism for accelerating temporal-difference learning. Our framework bridges finite element method-inspired boundary-consistency techniques from scientific computing with reinforcement learning to improve sample efficiency in sparse-reward environments. We will release source code of the study. 
+
+## 1 Introduction 
+
+Temporal-difference (TD) reinforcement learning (RL) remains challenged by slow reward prop-agation and poor scalability in large or sparse-reward state spaces [ 1 , 2, 3]. When rewards are delayed or spatially distant, standard TD updates propagate value information only locally, often requiring prohibitively many episodes to achieve accurate long-range credit assignment. Classical acceleration strategies such as prioritized sweeping [ 4] improve propagation efficiency by replay-ing important transitions, yet they remain fundamentally limited by the underlying unstructured state-space topology. Hierarchical reinforcement learning (HRL) addresses slow propagation through temporal abstraction [5, 6, 7, 8 ]. Frameworks such as MAXQ [ 9] and option-based architectures [ 6, 10 , 11 , 12 ] decompose policies into temporally extended subroutines that shorten effective planning horizons. While highly effective for temporal credit assignment, these methods do not impose explicit spatial structure on the state space, nor do they provide mechanisms for enforcing consistent value propagation across spatial partitions. Recent work has also explored alternative mechanisms for accelerating long-range credit assignment in sparse-reward settings. Value Iteration Networks [ 13 ] embed differentiable planning modules to explicitly propagate reward information across spatial state representations. Reward redistribution methods such as RUDDER [ 14 ] reshape delayed rewards into earlier informative signals, substantially         
+
+> ∗Corresponding author. Email: shahin.atakishiyev@ualberta.ca Preprint.
+> arXiv:2606.26333v1 [cs.LG] 24 Jun 2026 Subgrid 1 Subgrid 2 Subgrid 3 Subgrid 4 Subgrid 5 Subgrid 6
+> H
+> H
+> H
+> H
+> H
+> HH
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> HH
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> HH
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> HH
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> H
+> S
+> G
+
+Figure 1: A graphical illustration of Mesh-RL. improving TD learning in long-horizon tasks. Successor feature representations [ 15 ] factorize value functions into predictive state occupancies, enabling faster generalization of reward signals across related tasks. Option-critic architectures [ 16 ] learn temporal abstractions end-to-end, reducing effective planning horizons and improving stability in sparse-reward domains. Exploration-driven planning frameworks such as Go-Explore [ 17 ] demonstrate that structured state-space traversal dramatically improves exploration in hard sparse-reward environments. While these approaches enhance temporal or representational aspects of credit assignment, they do not explicitly impose spatial domain decomposition with boundary-consistent value coupling. Mesh-RL complements these directions by introducing structured spatial partitioning and deterministic boundary propagation into standard TD learning. In parallel, domain decomposition techniques in nu-merical analysis and scientific computing have long demonstrated that splitting large spatial domains into overlapping subdomains with boundary consistency constraints yields dramatic acceleration in solving partial differential equations [ 18 , 19 ]. Inspired by this observation, we propose Mesh-RL, an RL framework that introduces structured spatial decomposition into TD learning. Mesh-RL partitions the environment into overlapping subgrids, introduces mandatory-passage boundaries, and performs boundary-aware TD updates that explicitly propagate value information across partitions. Such a learning strategy produces faster and more stable reward diffusion while remaining fully compatible with standard model-free TD algorithms. Overall, the main contributions of our work can be summarized as follows: • We present Mesh-RL, a novel framework inspired by the finite element method that imposes boundary-consistent TD updates for coherent value propagation between neighboring subgrids, leading to efficient local computation while approximating a global solution; • We show that Mesh-RL consistently improves convergence speed, cumulative reward, and overall learning stability across experiments on Q-learning, SARSA, and Dyna-Q. Our paper is organized as follows. Section 2 covers related work following the Introduction. Section 3 describes how Mesh-RL fills the gap, primarily left by hierarchical RL and prioritized sweeping. The mathematical framework backing Mesh-RL is presented in Section 4. Section 5 outlines our methodology and experimental framework, and underlying empirical results, along with discussion and limitations are covered in Sections 6 and 7, respectively. Finally, Section 8 concludes the paper with the overall findings of the study. 
+
+## 2 Related Work 
+
+Hierarchical and Decomposition-based RL. Hierarchical RL frameworks such as MAXQ [ 9]and option-based architectures [ 10 , 6 ] construct temporal abstractions that accelerate learning by decomposing long-horizon problems. Subsequent work on option discovery, nested abstraction, and multi-level HRL further improves temporal structure learning [ 11 , 12 ]. However, these approaches primarily introduce temporal rather than spatial abstraction and do not enforce structured value consistency across spatial regions. 2Divide-and-conquer and state-space decomposition methods explicitly partition state spaces to train specialized policies or subgoals [ 20 , 21 , 22 ]. Related graph-partition and bottleneck-discovery approaches identify critical states to guide exploration [ 23 , 24 ]. Yet these methods typically treat partitions as weakly coupled modules, merging policies or value functions after training rather than maintaining continuous boundary synchronization during learning. 
+
+Reward Propagation Acceleration. Several methods aim to accelerate TD reward propagation without altering state-space structure. Prioritized sweeping [ 4 ] selectively replays transitions with high expected impact, while Dyna-style planning integrates model-based rollouts [ 25 ]. Proto-value functions and spectral methods construct global value bases reflecting state-space geometry [ 26 ]. Intrinsic motivation and reward shaping accelerate exploration in sparse-reward settings [ 27 , 28 ]. These techniques improve efficiency but do not change the fundamental locality of TD propagation in spatially extended environments. 
+
+Mesh-Structured and Scientific Computing-Inspired RL. Recent years have seen growing interest in applying RL to mesh-related scientific problems. Yang et al. [ 29 ] formulate adaptive mesh refinement as an RL problem. Freymuth et al. [ 30 ] propose Swarm RL for distributed adaptive mesh refinement using multi-agent coordination. Mojgani et al. [ 31 ] apply multi-agent RL to subgrid-scale closure modeling in fluid simulation. Wang et al. [ 32 ] exploit mesh-structured propagation for imagination-based RL, while Liu et al. [ 33 ] introduce reinforcement fine-tuning for 3D mesh generation. These works demonstrate the usefulness of RL on meshes, but they do not use mesh-based domain decomposition to modify the internal mechanics of TD value propagation itself. In summary, Mesh-RL combines three key elements derived from the finite element method and domain decomposition theory: (a) structured subgrid partitioning , which enables modular and localized learning; (b) goal-directed update sequences , which prioritize meshes closer to the goal for efficient reward propagation; and (c) boundary-aware Q-value synchronization , which ensures global consistency while maintaining independent local learning. As illustrated in Figure 1, lighter colors represent the successful propagation of value estimates from the goal ( G) back toward the start ( S). These values are transported across subgrid boundaries through consistency constraints, allowing distant rewards to “flow” upstream more effectively than in unpartitioned spaces. Together, these features enable Mesh-RL to improve sample efficiency, accelerate convergence, and sustain exploration, particularly in sparse-reward environments where standard RL methods often struggle. 
+
+## 3 How Mesh-RL Fills the Gap 
+
+Mesh-RL introduces a spatially structured decomposition framework with explicit boundary-aware value coupling, filling a gap left by prior HRL and decomposition-based methods. Whereas hierarchi-cal RL constructs temporal abstractions, Mesh-RL constructs spatial subgrids with mandatory-passage boundaries, enabling principled spatial credit assignment rather than purely temporal abstraction. Unlike divide-and-conquer and partition-based RL, which train submodules independently and merge them post hoc, Mesh-RL maintains continuous boundary synchronization through overlapping sub-grid interfaces and boundary TD targets, yielding a tightly coupled global value function throughout learning. Prioritized replay and model-based planning accelerate reward propagation by selecting important transitions [ 4], but they do not modify the underlying spatial structure of propagation. Mesh-RL instead introduces a structural acceleration mechanism: boundary-aware TD updates that immediately transmit downstream value improvements upstream across spatial partitions. This produces faster reward diffusion without modifying the reward function or introducing auxiliary shaping signals. Finally, while recent mesh-based RL work focuses on mesh refinement, mesh quality optimization, or simulation control [ 29 , 30 , 31 , 33 ], Mesh-RL is the first framework to use mesh-inspired domain decomposition as an internal learning principle for RL itself. By treating subgrids as domain-decomposition elements and boundary TD constraints as discrete continuity conditions, Mesh-RL imports a proven scientific computing paradigm into TD learning. Importantly, it remains fully compatible with standard model-free algorithms such as Q-learning, SARSA as well the hybrid approach, Dyna-Q, preserving simplicity while providing a novel, physically inspired mechanism for scalable and spatial RL. 34 Mesh-RL: Mathematical Framework and Mesh-Based TD Learning 
+
+Mesh-RL is inspired by finite element method (FEM), a cornerstone in computational physics and engineering, where complex physical domains are partitioned into smaller subdomains (elements) connected at nodes. In FEM [ 19 , 34 , 35 , 36 ], governing partial differential equations (PDEs) are approximated locally using interpolation or shape functions, and boundary conditions enforce consistency across elements . This decomposition allows the solution of large, complex problems in a modular and efficient manner. Analogously, in Mesh-RL, the state space of a reinforcement learning environment is divided into M subgrids, referred to as meshes or elements. Each mesh is treated as an independent learning unit where Bellman updates are performed locally. Updates begin in the mesh containing the goal and propagate outward, with boundary values synchronized through averaging to enforce global consistency. After each episode, the Q-values from all meshes are stitched together, and the averaged boundary values are redistributed to each mesh for the next learning iteration. This procedure ensures that local learning within each mesh is coupled, allowing structured and accelerated value propagation across the entire environment. 
+
+4.1 MDP Formulation 
+
+We model the environment as a Markov Decision Process (S, A, P, r, γ ), where S is the state space (e.g., a 2D grid), A the action space, P (s′|s, a ) the transition kernel, r(s, a ) the reward function, and 
+
+γ ∈ (0 , 1) the discount factor. The optimal action-value function satisfies the Bellman optimality equation: 
+
+Q∗(s, a ) = E
+
+h
+
+r(s, a ) + γ max  
+
+> a′
+
+Q∗(s′, a ′)
+
+i
+
+, (1) and standard TD updates are: 
+
+Q(s, a ) ← Q(s, a ) + αδ (s, a ), (2) 
+
+δ(s, a ) = r(s, a ) + γ max  
+
+> a′
+
+Q(s′, a ′) − Q(s, a ). (3) 
+
+4.2 Mesh Decomposition and Mandatory-Passage Property 
+
+The state space is partitioned column-wise into M overlapping subgrids: 
+
+S =
+
+> M
+
+[
+
+> i=1
+
+Si, Si = {(r, c ) | c ∈ [li, r i)}. (4) Each subgrid Si maintains a local action-value function Qi(s, a ). Adjacent subgrids overlap on boundary regions ∂Si = Si ∩ S i+1 .We consider grid environments where the start state lies in the leftmost subgrid ( sstart ∈ S 1) and the goal state lies in the rightmost subgrid ( sgoal ∈ S M ). Since admissible transitions move at most one column per step, any trajectory from sstart to sgoal must cross each intermediate column. Consequently, every successful trajectory intersects each boundary region ∂Si, establishing a mandatory-passage property across subgrids. 
+
+4.3 Local and Boundary-Aware TD Updates 
+
+For transitions contained entirely within subgrid Si, Mesh-RL performs standard TD updates: 
+
+Qi(s, a ) ← Qi(s, a ) + α
+
+h
+
+r(s, a ) + γ max  
+
+> a′
+
+Qi(s′, a ′) − Qi(s, a )
+
+i
+
+(5) For transitions reaching a boundary state s∂ ∈ ∂Si, downstream subgrid values are incorporated in the TD target: 
+
+Qi(s, a ) ← Qi(s, a ) + α
+
+h
+
+r(s, a ) + γ max  
+
+> a′
+
+Qi+1 (s∂ , a ′) − Qi(s, a )
+
+i
+
+(6) Defining 
+
+Vi(s) = max  
+
+> a
+
+Qi(s, a ), (7) 4the mandatory-passage property ensures 
+
+V ∗(s) = E
+
+h
+
+r(s, a ) + γV ∗(s∂ )
+
+i
+
+, s ∈ S i, (8) so accurate downstream boundary estimates propagate value information backward to upstream subgrids. 
+
+4.4 Escape from Suboptimal Plateaus: Boundary Propagation Lemma 
+
+If a subgrid temporarily converges to a suboptimal local fixed point Qsub i satisfying negligible local TD error: 
+
+r(s, a ) + γ max  
+
+> a′
+
+Qsub i (s′, a ′) − Qsub i (s, a ) ≈ 0, (9) but the downstream boundary improves Vi+1 (s∂ ), the resulting boundary TD error becomes 
+
+δboundary i (s, a ) = r(s, a ) + γV i+1 (s∂ ) − Qsub i (s, a ), (10) reintroducing positive updates and enabling escape from local plateaus. 
+
+Lemma 1 (Boundary Propagation) . If V (t+1)  
+
+> i+1
+
+(s∂ ) ≥ V (t)
+
+> i+1
+
+(s∂ ), boundary TD updates in Si produce nonnegative corrections to Qi.Proof sketch. TD targets depend linearly on Vi+1 (s∂ ); thus, increasing downstream boundary values increases upstream TD targets, yielding nonnegative updates. 
+
+4.5 Global Stitched Value Function 
+
+After local updates, the global value function is obtained by averaging overlapping subgrid estimates: 
+
+QG(s, a ) = 1
+
+|{ i : s ∈ S i}| 
+
+X
+
+> i:s∈S i
+
+Qi(s, a ), (11) which is then synchronized back to subgrids before the next learning episode, enforcing global boundary consistency. 
+
+4.6 Bellman Fixed-Point Preservation and Convergence 
+
+Let T denote the standard Bellman operator: 
+
+(T Q )( s, a ) = r(s, a ) + γEs′
+
+h
+
+max  
+
+> a′
+
+Q(s′, a ′)
+
+i
+
+. (12) 
+
+Proposition 1 (Fixed-Point Preservation). Any fixed point of the Mesh-RL stitching update satisfies the Bellman optimality equation 
+
+QG = T Q G.
+
+Proof. Each subgrid Si maintains a local Q-function updated by its Bellman operator 
+
+(TiQi)( s, a ) = r(s, a ) + γEs′ [max  
+
+> a′
+
+Qi(s′, a ′)] .
+
+Assume local convergence so that Qi = TiQi for all i. The global stitched Q is defined on overlapping states by 
+
+QG(s, a ) = 1
+
+|I (s)|
+
+X
+
+> i∈I (s)
+
+Qi(s, a ), I(s) = {i : s ∈ S i}.
+
+On overlapping states, all local Q-functions converge to the same optimal value: 
+
+Qi(s, a ) = Q∗(s, a ), ∀i ∈ I (s).
+
+Averaging identical values leaves them unchanged, so 
+
+QG(s, a ) = Q∗(s, a ).
+
+5Figure 2: Performance on a 10 × 30 grid with 50 random holes ( M = 2 and M = 6 ) and baseline methods. Since Q∗ satisfies the Bellman optimality equation Q∗ = T Q ∗, it follows that 
+
+QG = T Q G.
+
+□
+
+Proposition 2 (Contraction Property). The Mesh-RL operator TM , which consists of local Bellman updates, boundary substitution, and stitching on overlapping states, is a γ-contraction under the max norm: 
+
+∥TM Q − TM Q′∥∞ ≤ γ∥Q − Q′∥∞.
+
+Sketch of proof. Each local Bellman update is a γ-contraction. The stitching step averages values on overlapping states, which cannot increase the maximum difference between two Q-functions. Therefore, the overall Mesh-RL operator TM is also a γ-contraction. □
+
+Corollary. Under standard stochastic approximation conditions (finite MDP, Robbins–Monro learning rates, sufficient exploration), Mesh-RL converges almost surely to the optimal action-value function 
+
+Q∗, because TM shares the same fixed point as T and is a contraction. 
+
+4.7 Relation to Classical Bellman Iteration 
+
+Standard Q-learning performs 
+
+Q(k+1) = T Q (k), (13) while Mesh-RL performs 
+
+Q(k+1) = TM Q(k), (14) accelerating spatial propagation through domain decomposition and boundary synchronization, analogous to Schwarz methods in PDE solvers. Thorough details of stitched TD learning are presented in Algorithm 1. 
+
+## 5 Experiments 
+
+The empirical evaluation of Mesh-RL examines the efficacy of this mesh-based decomposition when applied to classical RL algorithms. The approach draws parallels with domain decomposition methods in numerical PDE solvers, where complex problems are divided into manageable subdomains solved independently and then coupled via boundary conditions [ 18 , 37 ]. Such methods are known to improve convergence speed, maintain solution consistency, and allow parallel computation, all of which inspire the design of Mesh-RL. For baseline comparison, we evaluate Mesh-RL in conjunction with three fundamental RL algorithms. Q-Learning is an off-policy TD method that iteratively estimates the optimal action-value function via Bellman updates [ 38 , 39 ]. SARSA is an on-policy TD control method that updates action-values based on the action actually taken, making it more conservative in exploration [ 2, 40 ]. Dyna-Q combines direct RL with planning through simulated experience, using N planning steps per real interaction [ 41 ]. Dyna-Q’s hybrid nature allows it to propagate rewards efficiently even with fewer subgrid divisions, whereas Q-Learning and SARSA benefit more from structured mesh updates. 6Figure 3: Value heatmaps on a 10 × 30 grid with 50 holes, for baselines and Mesh-RL ( M = 2 and 
+
+M = 6 ). The mesh decomposition strategy follows a systematic spatial partitioning approach: for M meshes, the environment is divided into M contiguous subregions, each containing approximately N/M 
+
+states, where N is the total number of states. This partitioning aligns with principles from parallel computing and domain decomposition, where proper subdomain design is crucial for convergence and efficient information propagation [18]. Within each mesh, local Bellman updates proceed independently, while boundary condition en-forcement ensures global consistency. Q-values at mesh interfaces are synchronized via averaging, analogous to Schwarz-type domain decomposition methods [ 37 , 42 ]. Updates follow a goal-directed sequence: meshes containing the goal state are updated first, followed by upstream propagation toward the start state [ 43 ]. This ensures that early-stage learning efficiently propagates reward information throughout the environment, enhancing exploration and accelerating convergence. All experiments employ consistent hyperparameters to maintain fairness: learning rate α = 0 .1,discount factor γ = 0 .99 , ϵ-greedy exploration with ϵ = 0 .1, step penalty −1, hole penalty −10 ,goal reward +100 , episode budget per mesh = 100 , 10 independent seeds with different random initializations, and a 100-episode moving average for visualization. The sparse reward landscape, characterized by a dominant goal reward and substantial penalties for missteps, emphasizes the need for efficient exploration and credit assignment. This design ensures that Mesh-RL’s structured decomposition and boundary-aware updates can be rigorously evaluated for their ability to accelerate learning, improve reward propagation, and maintain stability across multiple reinforcement learning methods. All experiments have been performed on an Intel Core i9-11950H (2.60 GHz) CPU. 
+
+## 6 Results and Analysis 
+
+6.1 10×30 Grid with 50 Holes 
+
+The first experimental setup considers a 10×30 grid with 50 randomly placed holes, simulating a sparse-reward environment. We evaluated Mesh-RL with two mesh resolutions, M = 2 and M = 6 ,across Q-Learning, SARSA, and Dyna-Q. Figure 2 shows the mean reward per episode averaged over 10 seeds. For M = 6 , Dyna-Q achieves the highest rewards most rapidly, consistent with its built-in planning efficiency. However, SARSA and Q-Learning also exhibit substantial improvements with 
+
+M = 6 compared to M = 2 , indicating that increased mesh resolution enhances both the speed and quality of learning. The larger number of meshes enables more localized updates, while boundary 7Figure 4: Performance on a 20 × 20 grid with 50 random holes ( M = 2 and M = 6 ) and baseline methods. synchronization ensures coherent propagation of reward information across the grid, effectively reducing the learning horizon to distant states. Cumulative reward plots reinforce this observation: higher mesh resolution leads to larger total reward accumulation. TD-error dynamics reveal that Mesh-RL maintains higher TD errors during early learning stages, reflecting sustained exploration and ongoing refinement of Q-values across subgrids. This contrasts with baseline methods, which often show early TD-error collapse and converge prematurely to suboptimal policies. Maintaining an elevated TD-error allows the agent to continue exploring promising trajectories while efficiently propagating information through the structured mesh. Figure 3 presents Q-value heatmaps for this environment. For M = 6 , Mesh-RL clearly demonstrates smoother and more extensive propagation of value information across the grid. Mesh boundaries are visible in Q-Learning and SARSA, reflecting localized updates within each subgrid, yet the stitched boundary values produce globally consistent Q-values. Dyna-Q shows minimal differences between M = 2 and M = 6 , as its planning steps already propagate reward information efficiently. These heatmaps highlight that structured decomposition benefits algorithms that rely on iterative TD updates, enabling faster learning and more uniform exploration. 
+
+6.2 20×20 Grid with 50 Holes 
+
+To further test Mesh-RL in a more balanced and moderately dense environment, we used a 20×20 grid with 50 random holes. Figure 4 shows the mean reward per episode for M = 2 and M =6. Across all methods, M = 6 consistently accelerates convergence, allowing Q-Learning and SARSA to reach maximum rewards by episode 2000. Dyna-Q remains largely unaffected, as its planning mechanism efficiently propagates reward information even with fewer meshes. TD-error curves indicate that higher mesh resolution sustains elevated errors longer, confirming that subgrid decomposition encourages continued exploration while preventing premature convergence to suboptimal policies. Figure 5 presents Q-value heatmaps. For Q-Learning and SARSA, M = 6 clearly enhances value propagation, producing smooth and globally consistent Q-fields. Even in early episodes, subgrid boundaries guide the propagation of value information from the goal to distant regions. This structured information transfer accelerates learning and allows the agent to anticipate rewards along optimal paths more efficiently. Dyna-Q exhibits minimal sensitivity to mesh resolution, highlighting that planning algorithms are inherently less dependent on structured decomposition. Together, the reward curves, cumulative reward plots, TD-error dynamics, and heatmaps demonstrate that increasing mesh resolution systematically improves learning performance for TD-based methods. Higher mesh resolutions enable faster reward accumulation, more stable exploration, and effective propagation of Q-values across the environment, while Dyna-Q’s performance is largely unaffected due to its planning capability. These findings underscore the utility of Mesh-RL for algorithms that rely on incremental value updates, particularly in sparse-reward and challenging exploration settings. 8Figure 5: Value heatmaps on a 20 × 20 grid with 50 holes, for baselines and Mesh-RL ( M = 2 and 
+
+M = 6 ). 
+
+6.3 Summary of Mesh Resolution Effects 
+
+Across all experimental setups, increasing the mesh resolution from M = 2 to M = 6 consistently improves performance for TD-based methods. The benefits include: • Faster reward accumulation: Higher mesh resolution accelerates convergence by propa-gating values more efficiently across the environment. • Sustained TD-error: Maintaining elevated TD-error early in learning ensures continued exploration and prevents premature convergence. • Structured Q-value propagation: Heatmaps demonstrate that subgrid boundaries guide learning while stitched boundary values ensure global consistency. • Algorithm-dependent effects: Mesh-RL provides the largest benefits for Q-Learning and SARSA, whereas Dyna-Q is relatively insensitive due to planning. 9Table 1: Aggregated Performance Summary (10 Seeds, 10,000 Episods): 20 × 20 vs. 10 × 30 Grid Environments (50 Holes)                                                                                                                                                                         
+
+> Method Grid Accumulated_Reward Avg_Reward Final_Reward Peak_Reward Peak_Ep Peak_Time Total_Time Total_Actions
+> Dyna-Q 20x20 531,434.3 53.14 63.0 63.0 620 23.99 457.42 271,939 10x30 -94,400.0 -9.44 -4.3 -4.3 620 13.56 247.79 45,547 Dyna-Q ( M= 2 )20x20 551,401.8 55.14 63.0 63.0 580 35.10 613.19 466,391 10x30 310,500.0 31.05 47.9 47.9 2287 72.48 343.60 362,937
+> Dyna-Q ( M= 6 )20x20 566,416.5 56.64 63.0 63.0 383 46.20 2142.99 1,227,903 10x30 398,200.0 39.82 47.9 47.9 906 44.18 518.08 939,048 Q20x20 -175,022.3 -17.50 9.3 16.3 2019 72.18 342.29 213,367 10x30 -195,500.0 -19.55 -11.7 -11.7 511 11.92 219.94 53,679 Q ( M= 2 )20x20 105,416.1 10.54 47.5 55.0 2592 93.35 339.63 467,413 10x30 -189,100.0 -18.91 -11.7 -11.7 515 14.27 238.70 281,450 Q ( M= 6 )20x20 454,641.1 45.46 63.0 63.0 963 42.72 427.09 1,300,731 10x30 324,900.0 32.49 47.9 47.9 1354 33.16 242.43 1,055,048 SARSA 20x20 -245,010.3 -24.50 9.1 16.9 3227 108.57 322.13 200,015 10x30 -193,600.0 -19.36 -11.7 -11.7 489 11.95 225.28 53,687 SARSA ( M= 2 )20x20 -10,918.9 -1.09 39.8 47.1 2216 73.29 342.08 440,665 10x30 -185,700.0 -18.57 -11.7 -11.7 442 11.20 240.24 327,263 SARSA ( M= 6 )20x20 458,163.2 45.82 63.0 63.0 944 40.82 424.21 1,291,357 10x30 285,000.0 28.50 47.9 47.9 1805 39.76 234.55 1,035,946
+
+These observations confirm that the combination of subgrid partitioning, goal-directed updates, and boundary synchronization in Mesh-RL provides a systematic and principled mechanism for accelerating RL in sparse-reward and challenging environments. 
+
+6.4 Final Reward 
+
+As shown in Table 1, we first examine the final reward achieved after 10,000 training episodes. On the 20 ×20 grid, the maximum attainable final reward is 63. For Dyna-Q-based methods, this optimal value is already achieved by the baseline planner, and introducing two or six meshes does not further improve asymptotic performance, indicating that classical Dyna-Q planning already provides strong reward propagation. In contrast, Q-learning and SARSA show substantial gains as the number of meshes increases. With six meshes, both methods reach the optimal final reward of 63, whereas their baseline counterparts remain far below this level. The same trend holds on the 10 ×30 grid, demonstrating that MeshRL significantly enhances value propagation and credit assignment for model-free methods. 
+
+6.5 Peak Reward and Convergence Speed 
+
+We next analyze peak reward and the episode at which it is reached. For the 20 ×20 grid, Dyna-Q with six meshes attains its peak reward after only 383 episodes, and for the 10 ×30 grid after 906 episodes, indicating rapid convergence. For Q-learning and SARSA, increasing the mesh count both raises the achievable peak reward and substantially reduces the number of episodes required to reach it. This shows that MeshRL not only improves ultimate performance but also accelerates the learning dynamics, enabling model-free agents to approach optimal policies significantly faster. 
+
+6.6 Computational Efficiency 
+
+Finally, we evaluate peak time, total runtime, and total action counts. While MeshRL increases the number of executed actions due to subgrid exploration (e.g., over 1.2 million actions for six-mesh variants versus roughly 0.2–0.3 million for baselines), it often reduces wall-clock time to reach peak performance. For example, on the 20 ×20 grid, Q-learning with six meshes reaches the optimal reward in 42.7 seconds, whereas baseline Q-learning fails to reach this reward even after 342 seconds of training. Similar trends are observed for SARSA. For Dyna-Q, peak time moderately increases with mesh count due to additional subgrid coupling, but without affecting final performance. Overall, Mesh-RL achieves faster convergence and higher rewards, particularly for model-free methods, while maintaining practical computational cost. 10 Algorithm 1 Stitched TD Learning with Subgrid Decomposition  
+
+> 1:
+
+Initialize: Grid G(R, C ), Episodes E, Base Max Steps L, Subgrids n, Learning rate α, Discount 
+
+γ 
+
+> 2:
+
+Initialize Qstitch and Q1...n to zeros  
+
+> 3:
+
+for episode e = 1 to E do  
+
+> 4:
+
+// Stage 1: Local Subgrid Learning (Right to Left)  
+
+> 5:
+
+for subgrid i = n down to 1 do  
+
+> 6:
+
+Determine local sstart and sgoal (boundary-dependent)  
+
+> 7:
+
+local _limit ← ⌊ L/n ⌋ 
+
+> 8:
+
+s ← sstart  
+
+> 9:
+
+for step t = 1 to local _limit do  
+
+> 10:
+
+a ← ϵ-greedy (Qi, s ) 
+
+> 11:
+
+s′, r, done ← EnvironmentStep (s, a ) 
+
+> 12:
+
+if not done then  
+
+> 13:
+
+T arget ← r + γ max a′ Qi(s′, a ′) 
+
+> 14:
+
+else  
+
+> 15:
+
+T arget ← r 
+
+> 16:
+
+end if  
+
+> 17:
+
+Qi(s, a ) ← Qi(s, a ) + α(T arget − Qi(s, a ))  
+
+> 18:
+
+if method is DYNA then  
+
+> 19:
+
+Perform P lanningSteps (Qi, M odel ) 
+
+> 20:
+
+end if  
+
+> 21:
+
+s ← s′ 
+
+> 22:
+
+if s = sgoal or done then  
+
+> 23:
+
+break  
+
+> 24:
+
+end if  
+
+> 25:
+
+end for  
+
+> 26:
+
+if i > 1 then  
+
+> 27:
+
+Copy shared boundary Qi to Qi−1 
+
+> 28:
+
+end if  
+
+> 29:
+
+end for  
+
+> 30:
+
+// Stage 2: Stitching and Synchronization  
+
+> 31:
+
+Qstitch ← Average (Q1...n ) for all overlapping states  
+
+> 32:
+
+for subgrid i = 1 to n do  
+
+> 33:
+
+Qi ← Qstitch  
+
+> 34:
+
+end for  
+
+> 35:
+
+// Stage 3: Global Evaluation  
+
+> 36:
+
+Rollout greedy policy from global ST ART using Qstitch for L steps  
+
+> 37:
+
+end for 
+
+## 7 Discussion and Limitations 
+
+Mesh-RL is motivated by the observation that TD learning propagates value information locally, leading to slow reward diffusion in large or sparse-reward environments. By decomposing the state space into overlapping subgrids and enforcing boundary-consistent TD updates, Mesh-RL introduces structured long-range communication between distant regions while preserving the simplicity of standard TD learning. Our empirical results show that finer mesh resolutions systematically accelerate convergence and improve stability, confirming that controlled boundary synchronization effectively mitigates delayed credit assignment. The interaction between Mesh-RL and planning-based methods such as Dyna-Q provides additional insight. While Dyna-Q benefits from simulated experience, Mesh-RL consistently yields further gains, indicating that spatial decomposition and model-based planning address complementary aspects of value propagation. Visualizations of value functions and TD-error dynamics suggest that Mesh-RL reduces stagnation in distant regions of the state space and prevents premature convergence to suboptimal policies. Despite these promising results, being a preliminary study, Mesh-RL focuses on tabular TD methods in discrete grid-world environments, where this aspect is a limitation of our work. Mesh construction 11 parameters, including subgrid size and overlap width, are manually specified, and the current formula-tion does not yet address function approximation, continuous control, or highly stochastic dynamics. Hence, as future work, we will extend Mesh-RL to deep RL with neural value approximation, investi-gate adaptive or learned mesh partitioning strategies, and develop theoretical convergence analyses under general approximation settings. Complementing latter, applying Mesh-RL to large-scale navigation and robotics domains is a promising direction in this regard, which we also leave for future exploration. 
+
+## 8 Conclusion 
+
+In this paper, we have presented Mesh-RL , an RL framework that accelerates TD learning through spatial domain decomposition and boundary-aware value propagation. By partitioning the state space into overlapping subgrids and enforcing boundary-consistent TD updates, Mesh-RL enables localized learning while maintaining globally coherent value functions, improving long-range credit assignment without modifying the reward function or Bellman operator. Experiments on 10 × 30 and 
+
+20 × 20 grid-worlds with sparse rewards demonstrate that increasing mesh resolution systematically improves convergence speed, cumulative reward, and learning stability for TD-based methods such as Q-learning and SARSA, while Dyna-Q remains strong due to its internal planning. Value heatmaps and TD-error dynamics further confirm that structured boundary synchronization accelerates reward diffusion across distant regions of the state space. Overall, Mesh-RL opens a new avenue for bridging classical domain-decomposition principles from scientific computing with RL, providing a simple and general mechanism for scalable spatial value propagation. 
+
+## Impact Statement 
+
+This paper presents work aimed at advancing the field of machine learning by proposing improved optimization and normalization mechanisms for reinforcement learning. There are many potential societal consequences of advances in machine learning; however, we do not identify any immediate negative ethical or societal risks arising uniquely from this work beyond those commonly associated with general-purpose machine learning research. 
+
+## References 
+
+[1] John Tsitsiklis and Benjamin Van Roy. Analysis of Temporal-Difference Learning with Function Approximation. Advances in Neural Information Processing Systems , 9, 1996. [2] Richard S Sutton and Andrew G Barto. Reinforcement learning: An Introduction , volume 1. MIT Press Cambridge, 1998. [3] Patrick Schnell, Luca Guastoni, and Nils Thuerey. Temporal Difference Learning: Why It Can Be Fast and How It Will Be Faster. In The Thirteenth International Conference on Learning Representations , 2025. [4] Andrew W Moore and Christopher G Atkeson. Prioritized sweeping: Reinforcement learning with less data and less time. Machine Learning , 13(1):103–130, 1993. [5] Ronald Parr and Stuart Russell. Reinforcement Learning with Hierarchies of Machines. Ad-vances in Neural Information Processing Systems , 10, 1997. [6] Andrew G Barto and Sridhar Mahadevan. Recent Advances in Hierarchical Reinforcement Learning. Discrete Event Dynamic Systems , 13(4):341–379, 2003. [7] Shubham Pateria, Budhitama Subagdja, Ah-hwee Tan, and Chai Quek. Hierarchical Rein-forcement Learning: A Comprehensive Survey. ACM Computing Surveys (CSUR) , 54(5):1–35, 2021. [8] Martin Klissarov, Akhil Bagaria, Ziyan Luo, George Konidaris, Doina Precup, and Marlos C Machado. Discovering Temporal Structure: An Overview of Hierarchical Reinforcement Learning. arXiv preprint arXiv:2506.14045 , 2025. 12 [9] Thomas G Dietterich. Hierarchical Reinforcement Learning with the MAXQ Value Function Decomposition. Journal of Artificial Intelligence Research , 13:227–303, 2000. [10] Richard S Sutton, Doina Precup, and Satinder Singh. Between MDPs and semi-MDPs: A framework for temporal abstraction in reinforcement learning. Artificial Intelligence , 112(1-2):181–211, 1999. [11] Vivek Veeriah, Tom Zahavy, Matteo Hessel, Zhongwen Xu, Junhyuk Oh, Iurii Kemaev, Hado P van Hasselt, David Silver, and Satinder Singh. Discovery of options via meta-learned subgoals. 
+
+Advances in Neural Information Processing Systems , 34:29861–29873, 2021. [12] Alessio Arcudi, Davide Sartor, Alberto Sinigaglia, Vincent François-Lavet, and Gian Anto-nio Susto. Multi-layer abstraction for nested generation of options (mango) in hierarchical reinforcement learning. IFAC-PapersOnLine , 59(26):25–30, 2025. [13] Aviv Tamar, Yi Wu, Garrett Thomas, Sergey Levine, and Pieter Abbeel. Value Iteration Networks. Advances in Neural Information Processing Systems , 29, 2016. [14] Jose A Arjona-Medina, Michael Gillhofer, Michael Widrich, Thomas Unterthiner, Johannes Brandstetter, and Sepp Hochreiter. RUDDER: Return Decomposition for Delayed Rewards . 
+
+Advances in Neural Information Processing Systems , 32, 2019. [15] André Barreto, Will Dabney, Rémi Munos, Jonathan J Hunt, Tom Schaul, Hado P van Hasselt, and David Silver. Successor Features for Transfer in Reinforcement Learning. Advances in Neural Information Processing Systems , 30, 2017. [16] Pierre-Luc Bacon, Jean Harb, and Doina Precup. The Option-Critic Architecture. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 31, 2017. [17] Adrien Ecoffet, Joost Huizinga, Joel Lehman, Kenneth O Stanley, and Jeff Clune. Go-explore: a new approach for hard-exploration problems. arXiv preprint arXiv:1901.10995 , 2019. [18] Andrea Toselli and Olof Widlund. Domain decomposition methods-algorithms and theory ,volume 34. Springer Science & Business Media, 2004. [19] Robert Leroy Taylor and Olgierd Cecil Zienkiewicz. The finite element method . Butterworth-Heinemann Oxford, UK:, 2013. [20] Dibya Ghosh, Avi Singh, Aravind Rajeswaran, Vikash Kumar, and Sergey Levine. Divide-and-conquer reinforcement learning. arXiv preprint arXiv:1711.09874 , 2017. [21] Himanshu Sahni, Saurabh Kumar, Farhan Tejani, Yannick Schroecker, and Charles Isbell. State space decomposition and subgoal creation for transfer in deep reinforcement learning. arXiv preprint arXiv:1705.08997 , 2017. [22] Esther Wong, Kin Leung, and Tony Field. State-space decomposition for reinforcement learning. 
+
+Dept. Comput., Imperial College London, London, UK, Rep , 2021. [23] Ishai Menache, Shie Mannor, and Nahum Shimkin. Q-Cut—Dynamic Discovery of Sub-goals in Reinforcement Learning. In European Conference on Machine Learning , pages 295–306. Springer, 2002. [24] Pierre-Luc Bacon. On the bottleneck concept for options discovery: Theoretical underpinnings and extension in continuous state spaces. Masters thesis, McGill University , 2014. [25] Richard S Sutton. First results with Dyna, an integrated architecture for learning, planning and reacting. Neural Networks for Control , 179, 1990. [26] Sridhar Mahadevan. Proto-Value Functions: Developmental Reinforcement Learning. In 
+
+Proceedings of the 22nd International Conference on Machine Learning , pages 553–560, 2005. [27] Andrew Y Ng, Daishi Harada, and Stuart Russell. Policy invariance under reward transforma-tions: Theory and application to reward shaping. In ICML , volume 99, pages 278–287. Citeseer, 1999. 13 [28] Joshua Hare. Dealing with sparse rewards in reinforcement learning. arXiv preprint arXiv:1910.09281 , 2019. [29] Jiachen Yang, Tarik Dzanic, Brenden Petersen, Jun Kudo, Ketan Mittal, Vladimir Tomov, Jean-Sylvain Camier, Tuo Zhao, Hongyuan Zha, Tzanio Kolev, et al. Reinforcement Learning for Adaptive Mesh Refinement. In International Conference on Artificial Intelligence and Statistics , pages 5997–6014. PMLR, 2023. [30] Niklas Freymuth, Philipp Dahlinger, Tobias Würth, Simon Reisch, Luise Kärger, and Gerhard Neumann. Swarm Reinforcement Learning For Adaptive Mesh Refinement. Advances in Neural Information Processing Systems , 36:73312–73347, 2023. [31] Rambod Mojgani, Daniel Wälchli, Yifei Guan, Petros Koumoutsakos, and Pedram Hassanzadeh. Multi-agent reinforcement learning for subgrid-scale modeling of environmental turbulence. In 
+
+76th Annual Meeting of the Division of Fluid Dynamics . APS, 2023. [32] Zihang Wang and Maowei Jiang. Enhancing data efficiency in reinforcement learning: a novel imagination mechanism based on mesh information propagation. arXiv preprint arXiv:2309.14243 , 2023. [33] Jian Liu, Jing Xu, Song Guo, Jing Li, Jingfeng Guo, Jiaao Yu, Haohan Weng, Biwen Lei, Xianghui Yang, Zhuo Chen, et al. Mesh-rft: Enhancing mesh generation via fine-grained reinforcement fine-tuning. arXiv preprint arXiv:2505.16761 , 2025. [34] Thomas JR Hughes. The finite element method: linear static and dynamic finite element analysis .Courier Corporation, 2003. [35] Klaus-Jürgen Bathe. Finite element procedures . Klaus-Jurgen Bathe, 2006. [36] Junuthula Narasimha Reddy. An introduction to the finite element method , volume 3. McGraw-Hill New York, 2005. [37] William Gropp and Barry Smith. Parallel domain decomposition software. In Domain-Based Parallelism and Problem Decomposition Methods in Computational Science and Engineering ,pages 97–106. SIAM, 1995. [38] Christopher JCH Watkins. Learning from delayed rewards. Ph. D. thesis, King’s College, University of Cambridge , 1989. [39] Christopher JCH Watkins and Peter Dayan. Q-learning. Machine Learning , 8(3):279–292, 1992. [40] Gavin A Rummery and Mahesan Niranjan. On-line Q-learning using connectionist systems ,volume 37. University of Cambridge, Department of Engineering, Cambridge, UK, 1994. [41] Richard S Sutton. Integrated Modeling and Control Based on Reinforcement Learning and Dynamic Programming. Advances in Neural Information Processing Systems , 3, 1990. [42] Martin J Gander et al. Schwarz methods over the course of time. Electron. Trans. Numer. Anal ,31(5):228–255, 2008. [43] Justin Boyan and Andrew Moore. Generalization in Reinforcement Learning: Safely Approxi-mating the Value Function. Advances in Neural Information Processing Systems , 7, 1994. 14

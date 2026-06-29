@@ -1,0 +1,182 @@
+Title: Towards Scalable Multi-Task Reinforcement Learning with Large Decision Models
+
+URL Source: https://arxiv.org/pdf/2606.24962v1
+
+Published Time: Thu, 25 Jun 2026 00:02:41 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Towards Scalable Multi-Task Reinforcement Learning with Large Decision Models 
+
+Thibaut Kulak 1
+
+thibaut.kulak@neoinstinct.com 
+
+> 1
+
+NeoInstinct SA 
+
+Abstract 
+
+Recent progress in large-scale sequence modeling has shown that a single model can learn useful representations across highly diverse data distributions. Inspired by these advances, we investigate whether a unified transformer policy can be trained across large collections of heterogeneous reinforcement learning environments. We introduce LDM-v0, a Large Decision Model trained offline on trajectories collected from thousands of environments spanning multiple domains and modalities. LDM-v0 is a multi-task, multi-modal transformer policy conditioned on histories of observations, actions, rewards, and termination signals, and trained through supervised next-action prediction over offline trajectories. We describe the environment infrastructure, auto-mated data generation pipeline, model architecture, and training methodology used to build LDM-v0, and evaluate its performance across diverse environments. We show that a single pretrained model matches the performance of independently trained task-specific reference policies on approximately 1,000 environments including robotics, autonomous driving, inventory management, cybersecurity, trading, and video games. These results demonstrate the feasibility of large-scale offline pretraining across hetero-geneous reinforcement learning environments using a single transformer policy. 
+
+1 Introduction 
+
+Reinforcement Learning (RL) provides a general framework for sequential decision making and has achieved impressive results in domains such as games, robotics, resource optimization, and control. Despite this progress, applying RL in real-world settings remains difficult. Modern RL systems often require extensive environment interaction, careful reward engineering, domain-specific archi-tectures, and substantial hyperparameter tuning. As a consequence, many successful applications rely heavily on expert knowledge and task-specific design choices. Offline RL and offline-to-online RL partially address these limitations by leveraging previously collected trajectories to reduce costly online interaction. However, selecting and adapting a suitable RL algorithm for a new environment remains challenging (Nie et al., 2022). These difficulties motivate the development of more general and automated approaches to reinforcement learning. In parallel, large-scale sequence models trained on diverse datasets have transformed natural lan-guage processing and, more recently, computer vision and multimodal learning. In RL, sequence-modeling approaches such as Decision Transformers (Chen et al., 2021) have shown that policies can be represented as autoregressive models over trajectories. These results raise an important ques-tion: can multi-domain offline RL trajectories be consolidated into a single scalable transformer policy while maintaining strong task performance across many domains? One key challenge is that multi-domain RL ecosystems are fragmented and hard to unify. 1                
+
+> arXiv:2606.24962v1 [cs.LG] 23 Jun 2026 Model Training scale Modalities Tokens / timestep RL libraries Tasks / envs Gato (Reed et al., 2022) 16 596 Multi-modal Variable, per-dimension JAT (Gallouédec et al., 2024) 4∼150 Multi-modal 2LDM-v0 (ours) 146 ∼3,000 Multi-modal 1
+
+Table 1: Comparison of large-scale transformer policies trained across multi-domain reinforcement learning environments. The table reports the number of reinforcement learning libraries used, the approximate number of tasks or environments covered, the input/output modalities considered, and the number of tokens used to encode each trajectory timestep. For Gato, this number varies with the dimensionality of the observation and action spaces because different dimensions are tokenized separately; the paper reports more than 100 tokens for a single image observation. In this work, we explore this direction by building a unified multi-domain RL infrastructure, using it to generate large-scale trajectories and training LDM-v0, a Large Decision Model instantiated as a single transformer policy. LDM-v0 is a multi-task and multi-modal model conditioned on past observations, actions, rewards, and current observations in order to predict future actions. Our primary objective is not to study out-of-distribution generalization, but rather to investigate whether a single transformer policy can jointly model diverse RL behaviors at scale. We present the environment infrastructure, large-scale RL dataset generation pipeline, model ar-chitecture and training methodology used to train LDM-v0, and evaluate its performance across a diverse collection of environments. More broadly, we view LDM-v0 as a step toward scalable pretrained reinforcement learning systems. 
+
+2 Related Work 
+
+Transformer architectures (Vaswani et al., 2017) have recently become an important framework for reinforcement learning, motivated by their success in large-scale sequence modeling (Brown et al., 2020). Sequence-modeling approaches such as Decision Transformer (Chen et al., 2021) and Trajectory Transformer (Janner et al., 2021) demonstrated that RL policies can be formulated as autoregressive models over trajectories, while subsequent work has further explored the role of transformers in RL (Agarwal et al., 2023). Our work is also related to meta-reinforcement learning. Traditional meta-RL methods (Finn et al., 2017; Duan et al., 2016; Beck et al., 2023) aim to learn agents that can adapt rapidly across tasks, often through explicit task distributions, recurrent policies, or gradient-based adaptation. More re-cently, in-context RL approaches have investigated whether transformers can learn adaptation strate-gies directly from trajectory context (Laskin et al., 2023; Lee et al., 2023; Team et al., 2023; Grigsby et al., 2023; 2024; Kumar et al.; Sridhar et al., 2024; Petrov et al., 2024; Raparthy et al., 2023). In particular, Lee et al. (2023) cast meta-RL as supervised pretraining, where a transformer predicts actions conditioned on a query state and an in-context dataset of prior interactions. This perspective has also been connected theoretically to Bayesian posterior sampling (Wang et al., 2024). LDM-v0 is most closely inspired by Gato (Reed et al., 2022) and supervised in-context RL pre-training (Lee et al., 2023). Unlike prior generalist transformer agents (Reed et al., 2022; Gallouédec et al., 2024) that combine RL with language, robotics, or internet-scale supervised data, LDM-v0 focuses specifically on scalable reinforcement learning pretraining across highly heterogeneous RL ecosystems. Our work emphasizes multi-domain environment integration (see Table 1), large-scale trajectory generation across thousands of Gym/Gymnasium-compatible environments, and compact transition-level sequence modeling. 2Interaction history with an env: 
+
+> Past Observations Past Actions Past Rewards Past Term/Trunc
+> Current env state:
+> Observation
+
+# LDM-v0 
+
+> Encoders
+> Obs enc.: Continuous (Multi)Discrete Image Action enc.: Continuous, (Multi)Discrete Reward enc. Term/trunc enc.
+> Transformer
+> Llama backbone trained from scratch
+> Action decoder
+> Linear layer
+
+Action 
+
+Reference action 
+
+> Cross Entropy Loss
+
+Figure 1: Architecture of LDM-v0. LDM-v0 receives an interaction history and the current obser-vation, encodes each modality, merges them into transition-level embeddings (containing an obser-vation at timestep t and action/reward/done at timestep t-1), processes them with a Llama backbone, and decodes the predicted action. During training, the prediction is supervised using strong task-specific reference policies. 
+
+3 Method 
+
+The goal of LDM-v0 is to train a single policy model across a large and heterogeneous collection of reinforcement learning environments. Our approach combines automated reference-policy super-vision with a unified sequence-modeling architecture: we first generate supervised policy data by training task-specific RL agents and retaining high-performing policies as references, then train a transformer policy to predict reference actions from interaction histories and current observations. 
+
+3.1 Automated Reference-Policy Supervision 
+
+Generating high-quality trajectories across diverse environments is challenging because no single RL algorithm or hyperparameter configuration performs well across all domains. We therefore treat dataset construction as an AutoRL problem: for each environment family, the pipeline empirically ranks candidate algorithms and configurations, trains strong task-specific reference policies, records their trajectories, and annotates collected observations with final-policy actions. LDM-v0 is thus trained to imitate strong task-specific policies rather than exploratory actions. Low-quality runs are removed using performance-based filtering; implementation details are given in Section 4. 
+
+3.2 LDM-v0 Architecture 
+
+The primary design objective of LDM-v0 is to support unified training across varied reinforcement learning environments, including domains with different observation modalities, action spaces, and temporal dynamics. An overview of the architecture is shown in Fig. 1. LDM-v0 receives an interaction history and the current observation as input. Observations, previous actions, rewards, and termination signals are encoded using modality-specific encoders, merged into transition-level embeddings, processed by a decoder-only transformer backbone, and decoded into an action prediction. 
+
+3.3 Tokenization and Embedding 
+
+LDM-v0 converts multi-modal environment interactions into a unified tokenized representation compatible with transformer sequence modeling. 3• Continuous inputs are μ-law encoded, discretized into 1024 bins, and mapped through learned embedding tables. • Discrete inputs are embedded through lookup tables. • Image observations are resized to a common resolution (64 , 64 , 3) and encoded using a convolu-tional encoder. The different dimensions of each observation are stacked into an observation embedding, using a maximum observation dimension of 128 (padding is applied for smaller observations). The same is done for multi-dimensional actions, with a maximum action dimension of 28. The ob-servation/action/reward/termination embeddings are then aligned (observation aligns with previous action/reward/termination signal; padded in case of first observation), stacked and processed to a transition-level meta-token using a linear layer. This representation maps multi-modal environment interactions into a shared latent sequence repre-sentation compatible with a single transformer backbone. This compact transition-level packing also reduces sequence length compared to per-dimension tokenization approaches (Reed et al., 2022) and enables longer interaction histories within a fixed transformer context budget. 
+
+3.4 Backbone 
+
+LDM-v0 uses a decoder-only transformer backbone based on the Llama architecture. The backbone processes transition-level embeddings autoregressively and produces contextualized representations used for action prediction. The model is trained entirely from scratch on the dataset described in Section 4, as we did not ob-serve measurable improvements from initializing with language-model checkpoints in preliminary experiments. 
+
+3.5 Action Decoder and Training Objective 
+
+The transformer output is passed to a linear action decoder that predicts logits over discretized action bins for each action dimension. For continuous actions, the decoder predicts the corresponding discretized bin; for discrete actions, it predicts the corresponding action category. LDM-v0 is trained to predict reference actions from trajectories generated by RL agents trained in-dependently on each environment (described in Section 4.2). Training is performed using a standard cross-entropy loss over discretized actions. Formally, the model learns an autoregressive policy of the form: 
+
+at = LDM 
+
+
+
+(oi)Ti=1 , (ai, r i, d i)T −1
+
+> i=1
+
+
+
+,
+
+where oi, ai, ri, and di respectively denote observations, actions, rewards, and termination indi-cators. The model autoregressively predicts actions conditioned on the trajectory history retained within the context window. 
+
+4 Experimental Setup 
+
+4.1 Environments 
+
+Public RL environments provide a natural testbed for large-scale heterogeneous policy training: they cover a wide range of control, optimization, and sequential decision-making problems, and vary substantially in observation modalities, action spaces, temporal horizons, and reward struc-tures. We collect training environments from publicly available GitHub repositories implementing OpenAI Gym- or Gymnasium-compatible interfaces. Although these environments share a common 4high-level API, they often rely on different Python versions, package ecosystems, and simulator de-pendencies, which makes unified large-scale training difficult in practice. To address this challenge, we developed an internal environment orchestration framework that en-capsulates each environment library within isolated Docker containers and exposes a unified inter-action API compatible with modern Gymnasium interfaces. This infrastructure enables scalable and reproducible interaction with multi-domain RL environments while preserving compatibility with legacy dependencies. The process of fetching, validating, containerizing, and integrating environment repositories into the framework was partly automated. Using this pipeline, we collected 146 environment libraries corresponding to approximately 15,000 individual environments. The list of integrated libraries and their corresponding number of environments is summarized in Appendix A. We note that the number of environments alone is not necessarily indicative of behav-ioral diversity, as some libraries contain many closely related tasks while others expose fewer but highly configurable environments. 
+
+4.2 Reference-Policy Data Generation 
+
+We instantiate the automated reference-policy supervision pipeline described in Section 3.1 as fol-lows. We define a fixed pool of candidate algorithm/configuration pairs drawn from Stable-Baselines3 and SB3-Contrib, including A2C, ARS, DDPG, DQN, PPO, QR-DQN, SAC, TD3, TQC, and TRPO. Candidates use either default library hyperparameters or predefined alternatives; the complete set is reported in Appendix C. A candidate is evaluated only when compatible with the environment observation and action spaces, and no hyperparameters are tuned manually for individual environ-ments. For each environment library, compatible candidates are first trained on a subset of five environments for 3 million transitions. Each run is evaluated by the mean episode return over the last 10% of training episodes. Candidate configurations are then ranked using pairwise comparisons: for each environment, a configuration receives one point over another only when its final performance is significantly higher according to a one-tailed Welch’s t-test. Scores are summed across the five-environment subset to obtain a library-level ranking. We then select the top-N algorithm/configuration pairs for each environment ( N = 3 in our ex-periments), and train each for 3 million transitions. Due to computational constraints, we cap the number of environments to 250 per library. During training, all interaction trajectories are recorded, including observations, actions, rewards, and termination signals. After training, the final trained policy is replayed over all collected observations to generate refer-ence action annotations. Consequently, the supervision targets used to train LDM-v0 correspond to actions produced by the final policy rather than the potentially exploratory actions originally taken during data collection. We apply several data curation steps to improve dataset quality: • We remove trajectories from training runs that do not exhibit statistically significant performance improvement during learning 1.• We remove trajectories whose final policy performance falls below 95% of the best-performing policy trained on the same environment. The resulting dataset contains approximately 4,000 high-performing agents spanning 3,000 distinct environments and a total of 9.3 billion transitions annotated with reference policy actions. A sum-mary of the dataset is provided in Appendix B. 
+
+> 1We use a one-tailed Welch’s t-test on episode returns from the first and last 10% of training episodes
+
+54.3 LDM-v0 Training Details 
+
+Unless otherwise specified, the main LDM-v0 model has 12 hidden layers, 12 attention heads, a hidden size of 768 and a context length of 2048 transitions. The model has 308M parameters and is trained from scratch for six days using two nodes equipped with eight NVIDIA H200 GPUs each. We use the AdamW optimizer with β1 = 0 .9, β2 = 0 .999 , ϵ = 10 −8 and a constant learning rate of 
+
+2.5 × 10 −4. Training uses Distributed Data Parallel with a total batch size of 1024. The wall-clock time required to train one reference policy for 3 million transitions varies substan-tially across environments, since the dominant cost is often environment simulation rather than pol-icy optimization. Reference-policy data generation took 12 weeks in total on four servers, consisting of two nodes with 8 NVIDIA H200 GPUs each and two nodes with 4 NVIDIA RTX 4090 GPUs each, for a total of 608 CPU cores. The generated dataset occupies 29 terabytes of storage. 
+
+4.4 Evaluation Protocol 
+
+For each environment, LDM-v0 performance is averaged over two fresh rollouts of 10 episodes each. The context is initialized empty before each rollout, and the interaction history is kept across episodes during deployment. We use deterministic decoding at evaluation time. The action-space mask is applied to ensure that predicted actions are feasible, for example within the valid bounds for continuous actions or within the allowed range for discrete and multi-discrete actions. We then select the action corresponding to the maximum logit without sampling. Each environment score is normalized relative to the corresponding task-specific reference-policy training trajectory. The aver-age episode return over the first 10% of the trajectory is treated as poor performance, corresponding to 0%, while the average over the last 10% is treated as reference performance, corresponding to 100%. 
+
+5 Results 
+
+We evaluate whether a single pretrained LDM-v0 model can achieve strong performance across heterogeneous training environments, and study how performance changes with model size. 
+
+5.1 Training Environments 
+
+Figure 2 shows a performance-threshold curve for LDM-v0 against task-specific reference agents on training environments. All reported results are obtained using a single pretrained model with a single shared set of parameters across all environments. Performance varies substantially across libraries, but strong results are observed across many unre-lated domains despite the use of a single shared parameterization. LDM-v0 achieves more than 80% of the reference policy performance on over 1,600 environments spanning a broad range of domains and matches reference-policy performance on approximately 1,000 environments. In particular, LDM-v0 demonstrates strong performance across a wide variety of practical sequen-tial decision-making problems. Performance comparable to task-specific high-performing agents is observed in robotic manipulation and control ( gymnasium_robotics , panda-gym ), drone and UAV control ( gym-copter , jsbgym ), autonomous driving simulation ( highway-env ), electric motor control ( gym_electricmotors ), smart-grid and energy-management tasks (building-energy-storage-simulation ), financial trading ( gym_trading_env ), in-ventory optimization ( gym_inventory ), cybersecurity-oriented environments ( cymnasium ), and plant or crop optimization tasks involving branching and growth control ( growspace ). Beyond real-world-inspired domains, LDM-v0 also achieves strong results on complex game-like environments including Atari-style tasks ( gym_masked_atari , gym_super_mario_bros ), and procedurally generated environments such as procgen .6These results indicate that a single shared parameterization can achieve competitive performance across diverse settings, and suggest that large sequence models may benefit from statistical regular-ities shared across subsets of environments despite substantial heterogeneity in observation modali-ties, action spaces, reward scales, and temporal horizons.   
+
+> >1,600 envs at 80%
+
+?
+
+Figure 2: Performance-threshold curve of LDM-v0 across training environments. For each threshold on the x-axis, the y-axis reports the number of environments where LDM-v0 achieves at least that percentage of the corresponding task-specific reference-policy return. 
+
+5.2 Model Scaling Experiments 
+
+Figure 3 shows the in-distribution performance of LDM-v0 as a function of model size. We evaluate four model scales: 32M, 70M, 308M, and 736M parameters. All models use the same transformer context length of 2048 transitions. The batch size is fixed to 1024 for all models except the 736M variant, which uses a batch size of 384 due to GPU memory limitations. For each model, we report the percentage of training environments where the pretrained model achieves at least 80% of reference performance as training progresses. We observe substantial performance improvements when increasing model size from 32M to 308M parameters, with larger models generally achieving stronger and more stable performance across training. Performance gains appear to plateau between the 308M and 736M models, although addi-tional experiments would be required to characterize scaling behavior more precisely. These results nevertheless suggest that heterogeneous offline RL sequence modeling can benefit from increased model capacity, similarly to trends observed in other large-scale sequence modeling domains. 7Figure 3: Model size scaling law : In-distribution performance as a function of transitions processed. 
+
+6 Discussion and Future Work 
+
+We presented LDM-v0, a large-scale transformer policy trained through a unified offline reinforce-ment learning pipeline built on automated environment orchestration and large-scale trajectory gen-eration across highly diverse RL environments. Our results demonstrate the feasibility of scalable heterogeneous RL pretraining using a single shared model across multiple domains and modalities. A primary direction for future work is scaling the size and diversity of the training dataset: due to computational limitations we trained only on roughly 19% of our current environment pool, which can be further expanded. An important limitation of the current work is that evaluations are primarily conducted on envi-ronments contained within the training distribution. Understanding the extent to which LDM-v0 acquires transferable decision-making strategies rather than learning predominantly environment-specific behaviors, remains an important open question. Future work will investigate both in-context adaptation and offline/online finetuning approaches for improving generalization to unseen environ-ments. More broadly, we hope this work motivates further research on scalable and automated reinforce-ment learning systems, including future large-scale pretrained reinforcement learning models. 8A Libraries 
+
+Library Environments Library Environments 
+
+2048-gym-ai-environment 1 gym_pomdp 22d_robot_arm_dqn 1 gym_probabilistic 4484-curiosity 135 gym_raas 2against_env 1 gym_ressim 1ai_course_project 134 gym_reversi 1ai_football 4 gym_rlcourse 6artificial-intelligence-that-can-see 1 gym_routing 2asteroidsenv 51 gym_rubik 1baba_is_gym 1 gym_short_corridor 1bandits 1 gym_sokoban_wrapped 123 bcr_work 1 gym_spaceinvaders 1brdiv 236 gym_splt 1building-energy-storage-simulation 1 gym_stag_hunt 3coding_challenge 1 gym_super_mario_bros 138 continuoussafetygym 52 gym_supplychain 7csc498 2 gym_toy 8custom_envs 4 gym_trading_env 199 cymnasium 1 gym_vizdoom 19 d4rl_atari 100 gym_walk 19 dacbench 3 gym_wildfire 1deeprl-ltl 1 gym_windy 5diffuser 7 gym_woodoku 1domain_randomization 1 gym_yagw 1driftgym 3 gymnasium_2048 1drone-gym 2 gymnasium_env 1dsaa 743 gymnasium_quadruped 2dtqn-gelu 21 gymnasium_robotics 152 eightnumber 1 gymnasium_trading 1final_version_in_2stage 152 highway-env 325 fishing-gym 11 homestri_ur5e_rl 1football2d 4 honoursresearchsim 8frc_gym 1 hurry_taxi 1growspace 7 hyphi_gym 1gym-bandits 2 icrl 1gym-dubins-ac 3 indoor_explorers 2gym-game2048 99 jogodavelhaia 1gym-mobile-env 3 jsbgym 55 gym_2048 1 jumping-task 1gym_ai_lab 1 lanro-gym 4781 gym_antytrading 2 learning_event_triggered_control 947 gym_apl 1 macc 943 gym_attitudecontrol 1 manipulator_mujoco 2gym_barm 10 memtest 1gym_blobble 1 multiple-gym 1gym_bomber 1 mygym 4gym_classics 12 ogbench 9gym_cms 1 panda-gym 19 gym_cog_ml_tasks 9 pogema 1gym_continuous-maze 3 probabilistic_robotics 2gym_copter 1 procgen 16 gym_crane 1 props 51 gym_duane 1 pyflyt 4gym_dummy 1 qwertyenv 1gym_electricmotors 54 racingenv 52 gym_extensions 940 rangl 2gym_fetch 934 rili_co-adaptation 4gym_futbol 1 rl_bicycle 1gym_games 1 rl_reach 49 gym_gmazes 2 rubiks_cube_gym 7gym_gridworlds 2 saferl-envs 18 gym_gs 1 safety-gymnasium 552 gym_inventory 1 saver 3gym_lorenz 1 shimmy 45 gym_masked_atari 955 simplegrid-gym 102 gym_match_input_continuous 4 snake_gym 95 gym_md 48 sneks 42 gym_missile_command 30 spwk_agtech 1gym_mosquitoes 1 stable-baselines3 940 gym_mountain_cliff 1 tinycarlo 1gym_moving_dot 4 uniform-coins-environment 1gym_n_back 2 vizdoom 9gym_oscillator 1 voxelgym2d 1gym_pcgrl 36 widowx-reacher 25 
+
+Table 2: Github libraries currently available in our Environments API 9B Datasets 
+
+Library Environments Transitions Library Environments Transitions 
+
+2d_robot_arm_dqn 1 3M gym_pomdp 2 9M 484-curiosity 74 186M gym_probabilistic 3 11M ai_course_project 75 180M gym_raas 2 11M ai_football 2 24M gym_rlcourse 4 16M artificial-intelligence-that-can-see 1 5M gym_sokoban_wrapped 2 9M asteroidsenv 18 54M gym_stag_hunt 3 9M bandits 1 3M gym_super_mario_bros 70 181M bcr_work 1 3M gym_supplychain 5 15M building-energy-storage-simulation 1 3M gym_toy 8 27M continuoussafetygym 52 167M gym_trading_env 163 523M csc498 2 5M gym_walk 15 62M custom_envs 4 18M gym_windy 5 20M cymnasium 1 3M gym_yagw 1 3M d4rl_atari 201 561M gymnasium_quadruped 2 6M dacbench 3 21M gymnasium_robotics 39 121M deeprl-ltl 1 2M highway-env 135 578M diffuser 5 24M honoursresearchsim 8 25M domain_randomization 1 3M hyphi_gym 1 3M driftgym 3 12M icrl 1 5M dsaa 177 525M jogodavelhaia 1 3M final_version_in_2stage 6 17M jsbgym 49 132M fishing-gym 9 41M lanro-gym 5 15M football2d 2 3M learning_event_triggered_control 228 665M growspace 3 8M macc 234 713M gym-mobile-env 1 5M multiple-gym 1 5M gym_ai_lab 1 3M mygym 2 6M gym_barm 5 16M panda-gym 14 50M gym_blobble 1 3M probabilistic_robotics 2 9M gym_bomber 1 5M procgen 7 24M gym_classics 10 33M props 48 178M gym_cms 1 2M pyflyt 3 17M gym_cog_ml_tasks 9 28M racingenv 26 189M gym_copter 1 2M rili_co-adaptation 3 7M gym_electricmotors 48 175M rl_bicycle 1 5M gym_extensions 243 666M rl_reach 25 85M gym_fetch 208 588M saferl-envs 16 55M gym_gridworlds 2 8M safety-gymnasium 66 184M gym_inventory 1 5M saver 3 9M gym_lorenz 1 2M shimmy 23 99M gym_masked_atari 196 542M simplegrid-gym 101 463M gym_match_input_continuous 4 8M sneks 24 62M gym_md 48 253M spwk_agtech 1 3M gym_missile_command 29 123M stable-baselines3 128 297M gym_mosquitoes 1 3M uniform-coins-environment 1 6M gym_pcgrl 6 26M widowx-reacher 16 44M 
+
+Table 3: Datasets used to train LDM-v0 10 C Candidate algorithm/configuration pairs                                                                   
+
+> ID Algorithm Non-default hyperparameters C1 A2C None
+> C2 A2C ent_coef=0.01
+> C3 ARS None
+> C4 DDPG None
+> C5 DDPG learning_starts=10000 ,batch_size=100 ,train_freq=50 ,gradient_steps=-1
+> C6 DDPG learning_starts=2000 ,batch_size=64 ,train_freq=50 ,gradient_steps=-1 ,
+> learning_rate=1e-4 ,tau=0.01
+> C7 DQN None
+> C8 PPO None
+> C9 PPO n_steps=4000 ,n_epochs=4 ,gae_lambda=0.97 ,ent_coef=0.01 ,batch_size=512
+> C10 PPO n_epochs=4 ,batch_size=512
+> C11 QR-DQN None
+> C12 SAC None
+> C13 SAC learning_starts=10000 ,batch_size=100 ,train_freq=50 ,gradient_steps=-1 ,
+> learning_rate=1e-3
+> C14 TD3 None
+> C15 TD3 learning_starts=10000 ,batch_size=100 ,train_freq=50 ,gradient_steps=-1
+> C16 TQC None
+> C17 TRPO None
+> C18 TRPO n_steps=4000 ,n_critic_updates=80 ,gae_lambda=0.97 ,cg_max_steps=10
+> C19 TRPO n_steps=1024 ,target_kl=0.001 ,cg_max_steps=10 ,gae_lambda=1.0 ,cg_damping=0.01 ,
+> learning_rate=3e-4 ,n_critic_updates=3
+
+Table 4: Candidate reinforcement learning algorithm/configuration pairs used for automated reference-policy generation. None indicates that no non-default hyperparameters were used, i.e., the corresponding Stable-Baselines3 or SB3-Contrib library defaults are used. Candidate configura-tions are used only when compatible with the environment observation and action spaces. 
+
+Acknowledgments 
+
+We thank the NeoInstinct developers for their valuable technical contributions to the development of our environment orchestration framework and to the collection and integration of experimental environments. Their work was essential to the successful development and execution of this study. We also thank our NeoInstinct colleagues for helpful discussions that contributed to the development of this work. This work was funded by NeoInstinct SA. 
+
+References 
+
+Pranav Agarwal, Aamer Abdul Rahman, Pierre-Luc St-Charles, Simon J. D. Prince, and Samira Ebrahimi Kahou. Transformers in reinforcement learning: a survey. arXiv preprint arXiv:2307.05979 , 2023. Jacob Beck, Risto Vuorio, Evan Zheran Liu, Zheng Xiong, Luisa Zintgraf, Chelsea Finn, and Shi-mon Whiteson. A survey of meta-reinforcement learning. arXiv preprint arXiv:2301.08028 ,2023. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D. Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. Advances in Neural Information Processing Systems , 33:1877–1901, 2020. 11 Lili Chen, Kevin Lu, Aravind Rajeswaran, Kimin Lee, Aditya Grover, Misha Laskin, Pieter Abbeel, Aravind Srinivas, and Igor Mordatch. Decision transformer: Reinforcement learning via sequence modeling. Advances in Neural Information Processing Systems , 34:15084–15097, 2021. Yan Duan, John Schulman, Xi Chen, Peter L. Bartlett, Ilya Sutskever, and Pieter Abbeel. RL 2: Fast reinforcement learning via slow reinforcement learning. arXiv preprint arXiv:1611.02779 , 2016. Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep networks. In International Conference on Machine Learning , pages 1126–1135. PMLR, 2017. Quentin Gallouédec, Edward Beeching, Clément Romac, and Emmanuel Dellandréa. Jack of all trades, master of some, a multi-purpose transformer agent. arXiv preprint arXiv:2402.09844 ,2024. Jake Grigsby, Linxi Fan, and Yuke Zhu. Amago: Scalable in-context reinforcement learning for adaptive agents. arXiv preprint arXiv:2310.09971 , 2023. Jake Grigsby, Justin Sasek, Samyak Parajuli, Daniel Adebi, Amy Zhang, and Yuke Zhu. Amago-2: Breaking the multi-task barrier in meta-reinforcement learning with transformers. Advances in Neural Information Processing Systems , 37:87473–87508, 2024. Michael Janner, Qiyang Li, and Sergey Levine. Offline reinforcement learning as one big sequence modeling problem. Advances in Neural Information Processing Systems , 34:1273–1286, 2021. Akarsh Kumar, Chris Lu, Louis Kirsch, and Phillip Isola. Learning in-context decision making with synthetic MDPs. In Automated Reinforcement Learning: Exploring Meta-Learning, AutoML, and LLMs .Michael Laskin, Luyu Wang, Junhyuk Oh, Emilio Parisotto, Stephen Spencer, Richie Steigerwald, D. J. Strouse, Steven Hansen, Angelos Filos, Ethan Brooks, et al. In-context reinforcement learn-ing with algorithm distillation. International Conference on Learning Representations , 2023. Jonathan N. Lee, Annie Xie, Aldo Pacchiano, Yash Chandak, Chelsea Finn, Ofir Nachum, and Emma Brunskill. Supervised pretraining can learn in-context reinforcement learning. arXiv preprint arXiv:2306.14892 , 2023. Allen Nie, Yannis Flet-Berliac, Deon Jordan, William Steenbergen, and Emma Brunskill. Data-efficient pipeline for offline reinforcement learning with limited data. Advances in Neural Infor-mation Processing Systems , 35:14810–14823, 2022. Vladimir Petrov, Nikhil Vyas, and Lucas Janson. Transformers can reinforcement learn to approx-imate Gittins index. In NeurIPS 2024 Workshop on Scientific Methods for Understanding Deep Learning , 2024. Sharath Chandra Raparthy, Eric Hambro, Robert Kirk, Mikael Henaff, and Roberta Raileanu. Gen-eralization to new sequential decision making tasks with in-context learning. arXiv preprint arXiv:2312.03801 , 2023. Scott Reed, Konrad Zolna, Emilio Parisotto, Sergio Gomez Colmenarejo, Alexander Novikov, Gabriel Barth-Maron, Mai Gimenez, Yury Sulsky, Jackie Kay, Jost Tobias Springenberg, et al. A generalist agent. arXiv preprint arXiv:2205.06175 , 2022. Kaustubh Sridhar, Souradeep Dutta, Dinesh Jayaraman, and Insup Lee. REGENT: A retrieval-augmented generalist agent that can act in-context in new environments. arXiv preprint arXiv:2412.04759 , 2024. Adaptive Agent Team, Jakob Bauer, Kate Baumli, Satinder Baveja, Feryal Behbahani, Avishkar Bhoopchand, Nathalie Bradley-Schmieg, Michael Chang, Natalie Clay, Adrian Collister, et al. Human-timescale adaptation in an open-ended task space. arXiv preprint arXiv:2301.07608 ,2023. 12 Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in Neural Informa-tion Processing Systems , 30, 2017. Hanzhao Wang, Yu Pan, Fupeng Sun, Shang Liu, Kalyan Talluri, Guanting Chen, and Xiaocheng Li. Understanding the training and generalization of pretrained transformer for sequential decision making. arXiv preprint arXiv:2405.14219 , 2024. 13

@@ -1,0 +1,768 @@
+Title: Semantic Consistency Policy Optimization for Reinforcement Learning of LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.25852v1
+
+Published Time: Thu, 25 Jun 2026 01:12:54 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Semantic Consistency Policy Optimization for Reinforcement Learning of LLM Agents 
+
+Peng Xu † Sijia Chen † Junzhuo Li †‡ Xuming Hu †‡ †The Hong Kong University of Science and Technology (Guangzhou) 
+
+> ‡
+
+The Hong Kong University of Science and Technology 
+
+{pxu364, jz.li}@connect.hkust-gz.edu.cn {sijiachen, xuminghu}@hkust-gz.edu.cn 
+
+Abstract 
+
+Group-based reinforcement learning effec-tively post-trains LLM agents for long-horizon, sparse-reward tasks by deriving step-level credit from trajectory outcomes. However, this ties a step’s credit to its rollout’s final outcome: semantically near-identical intermediate steps receive opposite credit depending on whether their trajectory eventually succeeded or failed. Such semantic credit inconsistency sends con-flicting gradients to similar actions and wastes the partially-correct progress inside failed roll-outs. Motivated by this, we propose Semantic 
+
+Consistency Policy Optimization ( SCPO ), a value-free reward-shaping method that miti-gates this inconsistency by recovering step-level credit from successful siblings in the same rollout group. Concretely, SCPO scores each failed step against a successful sibling and adds positive step-level credit for new progress along that sibling. On ALFWorld and Web-Shop, SCPO matches or exceeds strong group-based baselines, reaching 93.7 ±4.1% success on ALFWorld and 74.8 ±2.0% on WebShop at 1.5B parameters, with gains concentrated on the hardest multi-step tasks. 
+
+1 Introduction 
+
+Large language models (LLMs) increasingly act as 
+
+agents that perceive, reason, and act in open-ended, interactive environments (Achiam and others , Ope-nAI; Gemini Team, 2024). Representative appli-cations include embodied assistants in simulated households (Shridhar et al., 2021), web navigators that complete multi-step browsing tasks (Yao et al., 2022), and tool-using agents for search and reason-ing (Qian et al., 2025; Jin et al., 2025). Beyond single-turn language understanding, such agents must perform long-horizon planning and robust decision-making, repeatedly observing the environ-ment, acting, and recovering from earlier mistakes, often before any reward is observed. Reinforcement learning (RL) has become a key paradigm for post-training LLMs (Ouyang et al., 2022; DeepSeek-AI, 2025). In particular, group-based, value-free methods such as RLOO (Kool et al., 2019), GRPO (Shao et al., 2024), and DAPO (Yu et al., 2025) estimate relative advan-tages within a group of sampled rollouts instead of training a separate critic, achieving strong per-formance at low computational cost. These meth-ods are most established on single-turn tasks such as mathematical reasoning and code generation, where reward is immediate and credit assign-ment (Pignatelli et al., 2024) is straightforward. In multi-turn agentic settings, however, the reward is typically a single terminal signal—often a binary success/failure delivered only after a long trajec-tory of tens of steps—so applying these algorithms naively assigns every step the same trajectory-level advantage and collapses step-level distinctions. To recover fine-grained credit without a critic or addi-tional rollouts, GiGPO (Feng et al., 2025) groups steps that revisit the same environment state across rollouts and estimates step-level relative advantages within these state-aligned groups, and subsequent work has further enriched group-based agentic RL (e.g., HGPO (He et al., 2026), HCAPO (Tan et al., 2026), and Context-Lite (Chen et al., 2025)). However, these step-level remedies still derive a step’s credit from its trajectory’s eventual out-come: a locally correct step is penalised whenever its rollout fails at a later step, even when it shares a stage with successful rollouts. Two semantically near-identical steps—one from a successful rollout, one from a rollout that erred only later—therefore receive opposite training signals, decided by their trajectories’ outcomes rather than by the step itself. We call this failure mode semantic credit incon-sistency : it sends conflicting gradients to similar actions and wastes the partially correct progress hidden inside failed rollouts. To address this issue, we propose Semantic 1
+
+> arXiv:2606.25852v1 [cs.LG] 24 Jun 2026
+
+Consistency Policy Optimization (SCPO ), areward-level plugin inserted between step-reward construction and advantage estimation, which can in principle also be combined with any group-based agentic RL method; Figure 1 gives an overview. Concretely, SCPO treats an in-group successful sibling as a reference and rewards a failed step for the new semantic progress it makes toward that reference, crediting each reference position at most once. We evaluate SCPO on ALFWorld and Web-Shop with Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct. The gains are largest at 1.5B— +7 .0
+
+on ALFWorld and +9 .8 on WebShop task-success over the GiGPO base it wraps, concentrated in the harder multi-step families; at 7B the margin nar-rows but SCPO stays competitive with the strongest published baselines. Our contributions are three-fold: (i) we identify semantic credit inconsis-tency as a credit-assignment failure mode in sparse-reward agentic RL; (ii) we propose SCPO, a value-free reward shaper that recovers step-level credit through monotonic semantic matching against suc-cessful in-group siblings; and (iii) to our knowl-edge, we are the first to bring frozen cross-encoder semantic step matching into agentic RL, identify-ing useful behaviour in failed trajectories without training an additional verifier or reward model. Our code, training logs, and run records will be released after submission. 
+
+2 Related Work 
+
+Group-based RL for LLM post-training. 
+
+Group-based, value-free RL methods compute rel-ative advantages within rollout groups instead of training a critic. GRPO (Shao et al., 2024) intro-duced trajectory-level relative advantages over mul-tiple sampled responses, and RLOO (Kool et al., 2019) and DAPO (Yu et al., 2025) have been widely used for reasoning and code post-training. In multi-turn agentic settings, GiGPO (Feng et al., 2025) adds step-level advantages by grouping steps that revisit the same anchor state across rollouts, while HGPO (He et al., 2026) and Context-Lite (Chen et al., 2025) refine context- and token-level advan-tage computation and EMPG (Wang et al., 2025b) modulates the step-level gradient by stepwise un-certainty. SCPO intervenes at the step-reward level, recovering credit for failed steps from successful in-group siblings. 
+
+Process supervision and hindsight credit assign-ment. A direct remedy for sparse outcome re-ward and the temporal credit-assignment prob-lem (Pignatelli et al., 2024) is to add step-level supervision. Process reward methods provide dense signals through learned critics, rollout statis-tics, demonstrations, preference objectives, or LLM/verifier calls (Choudhury, 2025; Xi et al., 2025; Liu et al., 2025; Xia et al., 2025; Wang et al., 2026; Zhang et al., 2026; Wang et al., 2025a), with recent agentic variants spanning program-matic meta-reasoning rewards (Zhang et al., 2025), step-wise search rewards (Wang et al., 2025c), and segment-level preference optimization (Kong et al., 2025); these gains, however, come at the cost of training a process reward model, collect-ing demonstrations, or expensive inference-time verification. Hindsight credit assignment instead reinterprets earlier actions after observing the out-come: classical HCA (Harutyunyan et al., 2019) estimates hindsight-conditioned action likelihoods, and HCAPO (Tan et al., 2026) uses the policy LLM as a post-hoc critic—trading the reward model for causal-probability estimation or LLM judging. SCPO follows the same hindsight spirit by treating a successful in-group sibling as the hindsight refer-ence against which failed steps are credited, with-out training a task-specific process reward model or invoking an LLM critic. 
+
+Reward shaping and successful-behaviour reuse. 
+
+A related line reshapes rewards or reuses good be-haviour. Potential-based reward shaping preserves optimal policies under a state-potential form (Ng et al., 1999), and recent work shows reward shaping is an efficient lever for agentic RL, especially for smaller policies (Zhu et al., 2025). Self-imitation learning (Oh et al., 2018) and imitation methods such as GAIL (Ho and Ermon, 2016) reuse high-return or expert behaviour, and agentic variants such as SPEAR (Qin et al., 2026) replay whole successful trajectories from a buffer. A separate strand turns trajectory or text similarity into a learn-ing signal, e.g. BERTScore (Zhang et al., 2020) and encoder-based semantic reward modeling (Pap-pone et al., 2025). SCPO draws on these ideas but differs in source and granularity: its reference is an on-policy successful sibling , not an expert demon-stration or fixed text, and it rewards new step-level progress rather than whole-path imitation or raw similarity. 20.96  0.75  0.32  0.15               
+
+> 0.78 0.93 0.71 0.18
+> 0.72 0.29 0.45 0.78
+> 0.24 0.55 0.42 0.58
+> Rollout Group
+> 0.93
+> 0.88
+> 0
+> 0.63
+> Cross-trajectory Semantic Matching
+> ...
+> Reward Integration
+> 0.31
+> 0.10
+> -0.65
+> -0.09
+> -0.62
+> -0.78
+> -0.65
+> -0.72
+> =
+> Semantic Similarity Calculation & Semantic Matrix
+> Step Matched
+> Step Credited
+> is the
+> native GiGPO step reward .
+> is the SCPO
+> added step reward .
+> Success Trajectory Step
+> Failed Trajectory Step
+> Semantic Space
+> Success Trajectory Set
+> Failed Trajectory Set
+> +1
+> +1 +1
+> -1
+> -1
+
+Figure 1: Overview of SCPO , a reward-level plugin on group-based agentic RL, read left to right. (1) Rollout group: for each task we sample a group of trajectories and take a successful sibling as the success reference .
+
+(2) Semantic similarity: a frozen cross-encoder scores every failed step against every reference step, forming a similarity matrix M . (3) Cross-trajectory matching: a failed step is matched to a reference step when their similarity exceeds the threshold θ, and credited only if that position has not already been credited—so credit advances monotonically through the reference and no position is rewarded twice. (4) Reward integration: the recovered credit, scaled by α, is added to the native GiGPO step reward and passed to the advantage estimator. 
+
+3 Method 
+
+SCPO is a reward-level plugin for group-based agentic RL (Figure 1): it leaves the rollout col-lector, policy objective, and advantage estimator untouched, and acts only on the step rewards that enter advantage estimation. After fixing notation (§3.1), SCPO proceeds in three stages. Given a roll-out group, it takes a successful sibling as a success reference for the failed ones (§3.2). It then scores every failed step against the reference steps with a frozen cross-encoder, yielding a semantic similar-ity matrix, and from this matrix credits a failed step only when its match is both strong and reaches a part of the reference not yet credited, so that only 
+
+new progress is rewarded (§3.3; the order in which steps claim the reference is set in §3.4). Finally, the recovered credit is added to that step’s GiGPO return before advantage estimation (§3.5). Because credit is granted for behaviour a failed step shares with a successful sibling, SCPO narrows the gap between near-identical behaviour in successful and failed rollouts, which motivates the name semantic consistency . Pseudocode and full matcher details are in Appendix B. 
+
+3.1 Preliminaries and Motivation 
+
+An LLM agent πθ solves a task x ∼ p(X) through multi-turn interaction: at step t it observes a state 
+
+st, emits a textual action at ∼ πθ(· | st, x ), and receives a reward rt and next state st+1 , producing a trajectory τ = ( st, a t, r t)Tt=1 . We focus on the sparse-reward regime, where the environment re-turns a task outcome R(τ ) = P
+
+t rt only at the end of an episode, labelling τ a success or a failure. Following group-based agentic RL, for each task we sample a group of n trajectories {τi}ni=1 from identical initial states and estimate advantages from group-internal statistics, using GiGPO (Feng et al., 2025) as the base estimator. GiGPO forms a two-level relative advantage. At the episode level it normalizes trajectory returns within the group, 
+
+AE (τi) = R(τi) − mean  {R(τj )}nj=1 
+
+
+
+Fnorm 
+
+ {R(τj )}nj=1 
+
+ , (1) with Fnorm the group standard deviation. At the 
+
+step level it groups time steps that revisit the same environment ( anchor ) state ˜s, GS (˜ s) =
+
+{(a(i)
+
+t , R (i)
+
+t ) : s(i)
+
+t = ˜ s}, assigns each step its dis-counted return R(i)
+
+t = P
+
+k≥t γ k−tr(i)
+
+k , and normal-izes within the anchor-state group, 
+
+AS
+
+ a(i)
+
+t
+
+ = R(i)
+
+t − mean  {R(j)
+
+t }GS (˜ s)
+
+
+
+Fnorm 
+
+ {R(j)
+
+t }GS (˜ s)
+
+ . (2) The two signals combine into a single group-in-group advantage, 
+
+A a(i)
+
+t
+
+ = AE (τi) + ω A S
+
+ a(i)
+
+t
+
+, (3) with step-advantage weight ω, optimized with the standard clipped policy-gradient objective and KL regularization (Schulman et al., 2017). SCPO acts one level earlier, adding credit to the step-level discounted returns R(i)
+
+t of failed trajectories before this estimator is applied (§3.5). 3failed-trajectory steps (n=1555)  
+
+> successful-trajectory steps (n=1000)
+
+Figure 2: Failed trajectories contain successful-like steps. Many failed-trajectory steps (red) fall inside the regions occupied by successful-trajectory steps (green), yet trajectory-level credit assigns them the same nega-tive advantage. Embedding and construction details are in Appendix C.2. 
+
+Motivation. Both levels tie a step’s credit to its trajectory’s outcome: AE (τi) is constant across a trajectory, and the step return R(i) 
+
+> t
+
+inherits the sparse terminal reward, so every step of a failed sibling receives the same negative advantage— regardless of whether it was locally correct. Yet failed trajectories routinely contain steps near-identical to successful behaviour. Figure 2 embeds filtered steps from early-training rollout groups and projects them to 2D: many failed-trajectory steps (red) fall inside the regions occupied by successful-trajectory steps (green shading), i.e. failed roll-outs often make locally-successful progress that outcome-based credit nonetheless penalises. SCPO targets exactly these steps, recovering partial step-level credit for the successful-like behaviour inside failed trajectories. 
+
+3.2 Success reference 
+
+For each group we partition its n trajectories by terminal outcome into successful siblings S = {i :
+
+R(τi) > τ succ } and failed siblings W (τsucc = 0 
+
+for binary rewards), and SCPO acts only when S̸ =
+
+∅. We take as the success reference the longest successful trajectory, 
+
+τ ⋆ = arg max 
+
+> i∈S
+
+|τi|,
+
+which supplies the largest set of reusable refer-ence behaviours (ablated in §4.3); τ ⋆ is an on-policy sibling for the same task, not external su-pervision. Each step is encoded as a text string 
+
+xt formed from its state observation st and ac-tion at (Figure 1), so that context-dependent ac-tions remain distinguishable; the exact format is given in Appendix A.5. After removing invalid and no-op steps (Appendix A.5), we obtain a fil-tered reference ¯τ ⋆ = ( x⋆
+
+> 1
+
+, . . . , x ⋆m) of length m
+
+and, for each failed sibling w, a filtered step se-quence ¯τw = ( xw 
+
+> 1
+
+, . . . , x wℓ ) of length ℓ, where x⋆u
+
+and xwv are the per-step texts defined above. 
+
+3.3 Semantic similarity and progress credit Similarity matrix. SCPO scores every filtered failed step v against every filtered reference step u
+
+with a frozen cross-encoder f , giving a similarity matrix 
+
+M ∈ [0 , 1] m×ℓ, Mu,v = f (x⋆u, x wv ).
+
+Monotonic semantic credit. Raw similarity is not rewarded directly: over long horizons, repeated observations, navigation templates, and retries pro-duce many high-similarity matches that carry no new task progress. SCPO instead rewards only 
+
+new progress along the reference, governed by two rules. A failed step earns credit at a reference posi-tion j only if (i) their similarity exceeds a threshold 
+
+θ, and (ii) that position lies beyond every position already credited, so credit moves strictly forward through the reference and each position is used at most once. A step meeting both rules receives soft credit 
+
+rSCPO  
+
+> w,v
+
+= max(0 , M j,v − λ)1 − λ ,
+
+with soft base λ; any other step—sub-threshold, or re-matching an already-credited position—receives 
+
+rSCPO  
+
+> w,v
+
+= 0 . Thus θ sets which matches are eligi-ble and λ scales the credit among them. Because each reference position is credited at most once, repeated or templated behaviour cannot accumu-late reward, regardless of the failed trajectory’s length or how often a behaviour recurs (§B.3). We give the matching procedure and pseudocode in Appendix B. 
+
+3.4 Allocation order 
+
+Because credit moves strictly forward through the reference (§3.3), it is a scarce, ordered resource: once a failed step claims reference position j, ear-lier positions close to that trajectory’s remaining steps, so the processing order π decides which steps claim the limited reference positions. Tem-poral order π = (1 , . . . , ℓ ) has a structural failure 4mode—a failed sibling’s early steps are dominated by templated navigation shared by nearly all roll-outs regardless of outcome, so crediting front-to-back spends the limited positions on these low-discriminative early steps. SCPO instead reorders 
+
+this processing order so that steps from all positions compete on equal footing to extend the credited progress, rather than being credited strictly front-to-back. Such an order is available at no extra cost from the training pipeline (Appendix B.2). This permutation only changes which step first claims a position—not the trajectory, the reward timestamp to which credit is written back, or the discounted returns—thereby ensuring that steps from all posi-tions are matched fairly. We analyse the resulting gain over temporal order in §4.3.1. 
+
+3.5 Integration with the base trainer 
+
+SCPO adds the recovered credit directly to the step-level discounted return of failed siblings, 
+
+˜R(i) 
+
+> t
+
+= R(i) 
+
+> t
+
++ α r SCPO  
+
+> i,t
+
+,
+
+˜AS
+
+ a(i)
+
+> t
+
+ = AS
+
+ a(i)
+
+> t
+
+ 
+
+> R→˜R
+
+, (4) where R(i) 
+
+> t
+
+= P 
+
+> k≥t
+
+γ k−tr(i) 
+
+> k
+
+is GiGPO’s dis-counted step return and rSCPO  
+
+> i,t
+
+≥ 0 is the mono-tonic semantic credit assigned to step t of sibling 
+
+i by the matcher of §3.3, with rSCPO  
+
+> i,t
+
+= 0 for suc-cessful siblings, filtered steps, and steps that do not reach a new reference position. The credit is added at the step where it is earned rather than propagated back through the discount, following GiGPO’s con-vention for step-level reward terms such as its invalid-action penalty. The shaped return enters the estimator only through the step-level advantage: 
+
+˜AS (a(i) 
+
+> t
+
+) is Eq. (2) evaluated on ˜R(i) 
+
+> t
+
+, giving the shaped advantage ˜A(a(i) 
+
+> t
+
+) = AE (τi) + ω ˜AS (a(i) 
+
+> t
+
+).The episode advantage AE is computed from the unshaped task outcome R(τi) in Eq. (1) and is de-liberately left intact: credit is redistributed within 
+
+a failed trajectory but never enters its episode re-turn or its success/failure label, so SCPO cannot promote a failure to a success. SCPO therefore keeps the GiGPO objective and optimizer and only substitutes ˜A for A. The entire intervention is thus the advantage shift 
+
+˜A a(i)
+
+> t
+
+ − A a(i)
+
+> t
+
+ = ω  ˜AS (a(i) 
+
+> t
+
+) − AS (a(i) 
+
+> t
+
+),
+
+(5) nonzero only for failed-sibling steps whose dis-counted return is shifted by recovered credit (and, through anchor-state normalization, for their step-group peers): SCPO reweights the policy gra-dient toward failed steps that make new seman-tic progress. Its sole overhead is one frozen cross-encoder pass over already-collected steps— no learned critic, process reward model, verifier, demonstrations, or extra rollouts. 
+
+4 Experiments 
+
+In this section, we present empirical evaluations of SCPO on challenging agentic benchmarks. Specifi-cally, we aim to demonstrate: (1) the effectiveness of SCPO in training strong LLM agents and its com-petitiveness with state-of-the-art group-based base-lines; (2) where the gains arise, in particular their concentration in the harder multi-step task families; (3) the contribution of SCPO’s design choices, with a focus on allocation order, through ablation stud-ies; and (4) the computational overhead introduced by the frozen cross-encoder shaper. 
+
+4.1 Setup Benchmarks and metrics. We evaluate on ALF-World (Shridhar et al., 2021) and WebShop (Yao et al., 2022). ALFWorld contains embodied house-hold tasks with Tmax = 50 ; we report success rate on the valid_seen split. WebShop requires web-page navigation toward an attribute-matched purchase with Tmax = 15 ; we report average task score and binary task-success rate. 
+
+Baselines and implementation. We compare with prompting-only agents, standard RL fine-tuning methods, and group-based agentic RL meth-ods. The most important baseline is GiGPO, which SCPO directly wraps. We also include HGPO (at its K = 2 setting) as a strong published reference point and HCAPO as a hindsight-style critic re-finement method. Reported results for GiGPO, HCAPO, and HGPO are quoted directly from their respective papers (Feng et al., 2025; Tan et al., 2026; He et al., 2026). For Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct, we follow the public 
+
+verl-agent GiGPO recipe (Feng et al., 2025) us-ing commit 796ed31 . To make the comparison con-trolled, we keep our configuration strictly identical 
+
+to GiGPO and change only SCPO’s step-reward shaping; the shared hyperparameters are listed in Appendix A.3. We note that HGPO’s reported numbers instead use 160 training iterations, i.e. a slightly larger training budget than the 150 used by GiGPO, HCAPO, and SCPO. Cross-encoder 5ALFWorld WebShop Type Method Pick Look Clean Heat Cool Pick2 All Score Succ. 
+
+Closed-source LLMs 
+
+Prompting GPT-4o (Achiam and others , OpenAI) 75.3 60.8 31.2 56.7 21.6 49.8 48.0 31.8 23.7 Prompting Gemini-2.5-Pro (Gemini Team, 2024) 92.8 63.3 62.1 69.0 26.6 58.7 60.3 42.5 35.9 
+
+Qwen2.5-1.5B-Instruct 
+
+Prompting Qwen2.5 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23.1 5.2 Prompting ReAct (Yao et al., 2023) 17.4 20.5 15.7 6.2 7.7 2.0 12.8 40.1 11.3 Prompting Reflexion (Shinn et al., 2023) 35.3 22.2 21.7 13.6 19.4 3.7 21.8 55.8 21.9 RL PPO 64.8 ±3.5 40.5 ±6.9 57.1 ±4.9 60.6 ±6.6 46.4 ±4.0 47.4 ±1.9 54.4 ±3.1 73.8 ±3.0 51.5 ±2.9
+
+RL RLOO 88.3 ±3.0 52.8 ±8.6 71.0 ±5.9 62.8 ±8.7 66.4 ±5.5 56.9 ±4.7 69.7 ±2.5 73.9 ±5.6 52.1 ±6.7
+
+RL GRPO 85.3 ±1.5 53.7 ±8.0 84.5 ±6.8 78.2 ±7.9 59.7 ±5.0 53.5 ±5.6 72.8 ±3.6 75.8 ±3.5 56.8 ±3.8
+
+RL EMPG ∗ 85.5 33.5 78.9 76.2 74.7 69.1 73.7 80.4 60.8 RL GiGPO ∗ 94.4 ±5.9 67.5 ±4.6 94.8 ±3.8 94.4 ±7.8 79.8 ±4.7 76.4 ±5.4 86.7 ±1.7 83.1 ±1.6 65.0 ±3.2
+
+RL HCAPO ∗ 88.6 ±7.0 75.0 ±0.0 97.6 ±1.8 90.7 ±6.9 84.2 ±0.0 74.2 ±6.9 87.0 ±4.1 83.8 ±0.7 68.5 ±1.0
+
+RL HGPO ( K = 2 , 160 it.) ∗ – – – – – – 92.77 ±1.08 85.56 ±2.86 71.54 ±4.00 
+
+RL SCPO (ours) 96.0 ±4.4 88.6 ±12 .7 93.4 ±8.2 96.5 ±3.1 92.8 ±12 .5 90.9 ±3.4 93.7 ±4.1 89.3 ±1.8 74.8 ±2.0
+
+Qwen2.5-7B-Instruct 
+
+Prompting Qwen2.5 33.4 21.6 19.3 6.9 2.8 3.2 14.8 26.4 7.8 Prompting ReAct (Yao et al., 2023) 48.5 35.4 34.3 13.2 18.2 17.6 31.2 46.2 19.5 Prompting Reflexion (Shinn et al., 2023) 62.0 41.6 44.9 30.9 36.3 23.8 42.7 58.1 28.8 RL PPO 92.3 ±4.0 64.0 ±8.4 92.5 ±2.4 89.5 ±7.0 80.3 ±2.0 68.8 ±8.3 80.4 ±2.7 81.4 ±3.1 68.7 ±5.1
+
+RL RLOO 87.6 ±4.3 78.2 ±8.3 87.3 ±5.8 81.3 ±7.6 71.9 ±5.2 48.9 ±8.4 75.5 ±4.6 80.3 ±3.2 65.7 ±4.0
+
+RL GRPO 90.8 ±5.1 66.1 ±6.7 89.3 ±5.4 74.7 ±6.9 72.5 ±5.4 64.7 ±7.3 77.6 ±5.2 79.3 ±2.8 66.1 ±3.7
+
+RL EMPG ∗ 92.9 75.2 74.8 86.3 73.7 65.3 78.5 81.0 69.3 RL GiGPO ∗ 97.7 ±1.6 82.7 ±7.9 98.8 ±1.6 83.7 ±7.2 89.3 ±8.2 79.2 ±6.6 90.8 ±1.3 84.4 ±2.9 72.8 ±3.2
+
+RL HCAPO ∗ 99.1 ±1.3 90.3 ±2.0 97.3 ±1.9 81.8 ±8.8 90.8 ±6.6 81.9 ±10 .0 91.4 ±2.3 85.1 ±1.3 73.8 ±2.8
+
+RL HGPO ( K = 2 , 160 it.) ∗ – – – – – – 95.44 ±0.62 88.96 ±1.04 78.51 ±1.40 
+
+RL SCPO (ours) 100.0 ±0.0 100.0 ±0.0 97.2 ±2.4 92.9 ±7.2 89.3 ±9.4 94.3 ±2.6 95.3 ±1.6 88.0 ±3.8 77.5 ±3.0
+
+Table 1: Main results on ALFWorld ( VALID _SEEN , per-family and overall success rate %) and WebShop (average score and success rate %). SCPO wraps GiGPO and changes only the step-reward signal before advantage estimation. SCPO numbers are mean ±std over three seeds; best per column in bold. ∗ Results for these baselines are quoted from their original papers (Wang et al., 2025b; Feng et al., 2025; Tan et al., 2026; He et al., 2026); HGPO does not report a per-family breakdown. 
+
+scoring uses frozen BGE-Reranker-v2-m3 (Chen et al., 2024). Unless otherwise stated, we report mean ±std over three random seeds. Full details are in Appendix A. 
+
+4.2 Main results 
+
+Table 1 reports ALFWorld and WebShop perfor-mance. The central comparison is GiGPO versus SCPO: since SCPO changes only the step-reward signal, the GiGPO–SCPO gap isolates the effect of its reward shaping. 
+
+SCPO achieves state-of-the-art results at 1.5B. 
+
+At 1.5B, SCPO reaches 93 .7 ± 4.1 ALFWorld suc-cess and 74 .8 ± 2.0 WebShop task-success. Rela-tive to GiGPO, the recipe SCPO wraps, this is +7 .0
+
+on ALFWorld and +9 .8 on WebShop task-success, and SCPO also edges past the strongest published baseline HGPO ( 92 .77 / 71 .54 ). Both margins are large relative to seed variance, indicating that se-mantic progress credit adds useful supervision on top of the group-based estimator. The analysis of SCPO’s mechanism is presented separately in our ablations (§4.3). 
+
+Gains concentrate on the hardest task families. 
+
+The per-family columns of Table 1 show where this improvement comes from. On the families where GiGPO is already near-saturated (P ICK , C LEAN ,HEAT ), SCPO is comparable, staying within a few points. The largest gains instead concentrate in the harder multi-step families: at 1.5B, SCPO im-proves L OOK from 67 .5 to 88 .6 (+21 .1), C OOL 
+
+from 79 .8 to 92 .8 (+13 .0), and P ICK 2 from 76 .4
+
+to 90 .9 (+14 .5) over GiGPO. These are exactly the families where a failed rollout is most likely to make partial progress before failing—navigating to the wrong receptacle, cleaning the wrong object, or completing only one of two required placements— so that the trajectory’s failure signal overrides the credit for genuinely useful intermediate behaviour. SCPO’s semantic progress credit has the most to re-cover precisely here, whereas single-step families leave little partial progress to credit. 
+
+SCPO remains among the strongest methods at 7B. At 7B, SCPO remains the strongest or near-strongest method, reaching 95 .3 on ALFWorld (vs. GiGPO 90 .8, on par with HGPO 95 .44 ) and 77 .5
+
+WebShop task-success (vs. GiGPO 72 .8). The 6Variant Pick Look Clean Heat Cool Pick2 All SCPO (default) 96.0 ±4.4 88.6 ±12 .7 93.4 ±8.2 96.5 ±3.1 92.8 ±12 .5 90.9 ±3.4 93.7 ±4.1                      
+
+> chronological order 97.0 ±3.082.8 ±0.989.0 ±3.995.8 ±7.286.0 ±14 .085.2 ±7.890.4 ±2.0
+> −monotonicity 100.0 ±0.066.5 ±10 .495.7 ±2.1100.0 ±0.085.7 ±9.377.8 ±12 .390.1 ±1.6
+> shortest reference 100.0 ±0.081.5 ±8.593.3 ±6.793.8 ±6.394.7 ±2.380.5 ±10 .291.7 ±2.7
+
+Table 2: Ablation of SCPO’s three design choices on ALFWorld 1.5B. Each row changes one choice from the default SCPO—reordered processing, longest successful reference, and monotonicity—holding all else fixed: chronological order processes failed steps in their original temporal order; − monotonicity removes the monotonic credit rule so already-credited reference positions can be rewarded again (repeated credit); shortest reference uses the shortest rather than the longest successful sibling. All values are mean ±std over three random seeds. 
+
+same per-family pattern holds, with SCPO reaching 
+
+100 on L OOK and 94 .3 on P ICK 2. The absolute headroom shrinks as the base policy strengthens, consistent with SCPO’s intended role: it is most useful when failed rollouts still contain recoverable successful-like local behaviour, which is especially common for weaker or mid-training policies. Figure 3 shows the full learning dynamics over training: across both benchmarks and model sizes, validation success and task score rise steadily and plateau within the 150 -step budget, with training closely tracking validation. 
+
+4.3 Ablations 
+
+We next isolate which design choices are respon-sible for stable semantic progress credit. All ab-lations are run on ALFWorld with Qwen2.5-1.5B-Instruct, changing one design dimension at a time. All variants, including the ablations, are averaged over three seeds. 
+
+4.3.1 Allocation order matters 
+
+SCPO does not impose a chronological prior on credit allocation (§3.4). We test whether this mat-ters by replacing the reordered allocation with strict chronological matching—processing failed steps in their original temporal order—while holding every other component fixed. The reordered allocation outperforms chrono-logical matching by +3 .3 points (Table 2, chrono-logical order row). By letting every failed step compete for the reference on equal footing rather than crediting front-to-back, the reordered order matches steps to the reference more fairly, raising both the number of credited steps per failed trajec-tory and the mean auxiliary reward over training (Figure 7). As discussed in §3.4, temporal order instead spends the limited reference positions on early, low-discriminative templated steps; letting steps from all positions compete surfaces the gen-uinely useful behaviour that tends to appear later or interleaved with detours, which is where SCPO’s gains concentrate. We read this as evidence that strict temporal priority is a weaker allocation rule for failed agentic trajectories than order-agnostic competition. 
+
+4.3.2 Monotonic crediting prevents reward inflation 
+
+We next test whether SCPO’s monotonic credit rule is necessary. The monotonic rule emits credit only when a match reaches a reference position beyond those already credited. Without this rule, repeated template matches can be converted into reward multiple times, even when the failed trajec-tory is revisiting similar observations rather than making new task progress. Table 2 shows that removing the monotonicity constraint lowers overall success to 90 .1 (−3.6 rel-ative to SCPO). This supports the distinction be-tween semantic progress and semantic repetition: a failed trajectory may repeatedly match the same successful-like template, but repeatedly rewarding such matches inflates auxiliary reward without re-flecting new task progress. 
+
+4.3.3 Longer references preserve exploration 
+
+SCPO selects the longest successful sibling as the reference (§3.2). Intuitively, the shortest successful sibling—the most efficient solution—might seem the cleaner, more refined reference. Yet Table 2 shows it lowers overall success to 91 .7 (−2.0 rel-ative to SCPO), with the drop concentrated in the harder multi-step families (L OOK , P ICK 2). A short reference consists almost entirely of the core steps that nearly every rollout shares, so crediting against it concentrates reward on this single efficient path; this may suppress policy entropy and discourage exploration, hurting precisely the multi-step tasks that require longer or more varied solutions. The longest reference instead exposes more intermedi-ate and later milestones, giving failed steps a wider 70                    
+
+> 20
+> 40
+> 60
+> 80
+> 100
+> Qwen2.5-1.5B
+> Success / Score (%)
+> ALFWorld success rate (%)
+> Training
+> Validation
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 WebShop success rate (%)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 WebShop task score
+> 025 50 75 100 125 150
+> Training step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Qwen2.5-7B
+> Success / Score (%)
+> 025 50 75 100 125 150
+> Training step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 025 50 75 100 125 150
+> Training step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+
+Figure 3: Learning dynamics over 150 training steps for Qwen2.5-1.5B (top) and Qwen2.5-7B (bottom). Each panel shows SCPO’s training and validation curves (three-seed mean, shaded ±std) for ALFWorld success rate, WebShop success rate, and WebShop task score. Validation rises steadily and plateaus within the budget, with training closely tracking it across both benchmarks and model sizes. 
+
+and more task-specific set of positions to advance against, which better preserves exploration. 
+
+4.4 Mechanism and cost 
+
+Diagnostics in Appendix C support the in-tended mechanism. The neighbourhood analy-sis (Appendix C.2) shows that the failed steps SCPO credits coincide tightly with successful-sibling behaviour—most are near-exact matches— so SCPO recovers a substantial amount of useful signal hidden in failed rollouts rather than applying a uniform bonus. The credit-spectrum heatmaps (Appendix C.1) show this failed-versus-reference overlap growing denser from early to late check-points, so as the policy improves SCPO finds progressively more reusable behaviour to credit. Finally, the single-knob sensitivity analysis (Ap-pendix C.3) shows that performance stays stable across a range of θ and λ, indicating that SCPO is fairly robust to its hyperparameter settings rather than sensitive to a particular choice. SCPO adds 29 .3s per training step in the ALF-World 1.5B setting ( 10 .4% overhead) and increases peak GPU memory from 33 .5GB to 35 .2GB. Nearly all overhead comes from frozen cross-encoder inference; the monotonic credit matcher itself is negligible. A full timing breakdown is provided in Appendix C.5. 
+
+5 Conclusion 
+
+We identified semantic credit inconsistency as a credit-assignment failure mode in group-based agentic RL: because a step’s credit is tied to its tra-jectory’s eventual outcome, a locally correct step in a rollout that fails later is penalised, and two near-identical steps can receive opposite training signals. To address it, we proposed SCPO , a value-free reward-level plugin that recovers step credit by matching each failed step against a successful in-group sibling and rewarding only the new progress it makes—crediting each reference position at most once, with no critic, reward model, verifier, demon-strations, or extra rollouts. On ALFWorld and WebShop, SCPO improves the GiGPO backbone it wraps, reaching state-of-the-art results at 1.5B and remaining competitive with the strongest published baselines at 7B, with the largest gains on the harder multi-step families where failed rollouts carry the most recoverable progress. Because SCPO inter-venes only at the step-reward level, it is agnostic to the underlying group-based algorithm and could be paired with other estimators. A natural next step is to recover credit even when a group contains no successful sibling—for example, by drawing ref-erences from a buffer of past successes—so that SCPO also helps in the all-failure regime of early or extremely sparse training. 8Limitations 
+
+Dependence on successful siblings. SCPO can recover credit only in groups that contain at least one successful sibling. When all rollouts fail, the group is left unchanged. This makes SCPO comple-mentary to trajectory-level group-based RL rather than a replacement for it; in extremely sparse or early-training regimes, its benefit may appear only after the base policy occasionally solves the task. 
+
+Approximate semantic matching, not exact veri-fication. SCPO credits a failed step by seman-tic similarity against a successful sibling rather than by exact state–action equivalence. The frozen cross-encoder returns a soft alignment score, so the matcher operates on fuzzy semantic overlap and can both over- and under-credit: two steps with similar surface form may be scored as match-ing even when their effects differ, while genuinely equivalent steps phrased differently may be missed. This is well suited to embodied and web-navigation tasks such as ALFWorld and WebShop, where progress is reflected in coarse, observable state changes (locations, objects, page transitions) that a general-purpose reranker captures reliably. It is a poorer fit for domains that require exact, symbolic matching: in preliminary experiments applying the same recipe to reasoning RL on mathematics and code datasets, we observed no clear improve-ment, which we attribute to the off-the-shelf cross-encoder—never trained with a contrastive objective on such content—producing only a coarse similar-ity signal that cannot reliably separate a correct intermediate derivation step from a subtly incorrect one. Adapting the scorer to the target domain (e.g., a contrastively trained or verifier-based matcher) is a natural extension that we leave to future work. 
+
+Local semantic credit is not causal verification. 
+
+SCPO avoids forcing failed trajectories to imitate the exact temporal path of a successful rollout, but it also does not verify that matched local behaviours form a globally coherent solution. A failed step may semantically resemble a success reference slot while being irrelevant or harmful in context. Cred-iting each reference position at most once limits the magnitude of such errors, but does not guaran-tee policy improvement; the realised update still depends on advantage normalisation, PPO clipping, KL regularisation, and optimisation dynamics. 
+
+References 
+
+Josh Achiam and others (OpenAI). 2023. GPT-4 techni-cal report. arXiv preprint arXiv:2303.08774 .Jianlv Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024. M3-embedding: Multi-linguality, multi-functionality, multi-granularity text embeddings through self-knowledge distillation. In 
+
+Findings of the Association for Computational Lin-guistics: ACL 2024 , pages 2318–2335. Wentse Chen, Jiayu Chen, Hao Zhu, and Jeff Schneider. 2025. Context-lite multi-turn reinforcement learning for LLM agents. In ICML 2025 Workshop .Sanjiban Choudhury. 2025. Process reward models for LLM agents: Practical framework and directions. 
+
+arXiv preprint arXiv:2502.10325 .Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein. 2009. Introduction to Algorithms , 3 edition. MIT Press. Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Sys-tems (NeurIPS) .DeepSeek-AI. 2025. DeepSeek-R1: Incentivizing rea-soning capability in LLMs via reinforcement learning. 
+
+Nature , 645:633–638. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for LLM agent training. In Advances in Neural Information Processing Systems (NeurIPS) .Google Gemini Team. 2024. Gemini: A family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 .Anna Harutyunyan, Will Dabney, Thomas Mesnard, Mohammad Gheshlaghi Azar, Bilal Piot, Nicolas Heess, Hado P. van Hasselt, Greg Wayne, Satinder Singh, Doina Precup, and Rémi Munos. 2019. Hind-sight credit assignment. In Advances in Neural Infor-mation Processing Systems (NeurIPS) .Shuo He, Lang Feng, Qi Wei, Xin Cheng, Lei Feng, and Bo An. 2026. Hierarchy-of-groups policy optimiza-tion for long-horizon agentic tasks. In International Conference on Learning Representations (ICLR) .Jonathan Ho and Stefano Ermon. 2016. Generative adversarial imitation learning. In Advances in Neural Information Processing Systems (NeurIPS) .Bowen Jin, Hansi Zeng, Zhenrui Yue, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. In Conference on Lan-guage Modeling (COLM) .Donald E. Knuth, James H. Morris, and Vaughan R. Pratt. 1977. Fast pattern matching in strings. SIAM Journal on Computing , 6(2):323–350. 
+
+9Aobo Kong, Wentao Ma, Shiwan Zhao, Yongbin Li, Yuchuan Wu, Ke Wang, Xiaoqian Liu, Qicheng Li, Yong Qin, and Fei Huang. 2025. SDPO: Segment-level direct preference optimization for social agents. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (ACL) .Wouter Kool, Herke van Hoof, and Max Welling. 2019. Buy 4 REINFORCE samples, get a baseline for free! 
+
+ICLR 2019 Workshop: Deep Reinforcement Learning Meets Structured Prediction .Xiaoqian Liu, Ke Wang, Yuchuan Wu, Fei Huang, Yong-bin Li, Junge Zhang, and Jianbin Jiao. 2025. Agentic reinforcement learning with implicit step rewards. 
+
+arXiv preprint arXiv:2509.19199 .Andrew Y Ng, Daishi Harada, and Stuart Russell. 1999. Policy invariance under reward transformations: The-ory and application to reward shaping. In Proceed-ings of the Sixteenth International Conference on Machine Learning (ICML) .Junhyuk Oh, Yijie Guo, Satinder Singh, and Honglak Lee. 2018. Self-imitation learning. In Proceedings of the 35th International Conference on Machine Learning (ICML) .Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Car-roll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, and 1 others. 2022. Training language models to fol-low instructions with human feedback. Advances in Neural Information Processing Systems (NeurIPS) ,35:27730–27744. Francesco Pappone, Ruggero Marino Lazzaroni, Fed-erico Califano, Niccolò Gentile, and Roberto Marras. 2025. Shaping explanations: Semantic reward model-ing with encoder-only transformers for GRPO. arXiv preprint arXiv:2509.13081 .Eduardo Pignatelli, Johan Ferret, Matthieu Geist, Thomas Mesnard, Hado van Hasselt, and Laura Toni. 2024. A survey of temporal credit assignment in deep reinforcement learning. Transactions on Ma-chine Learning Research .Cheng Qian, Emre Can Acikgoz, Qi He, Hongru Wang, Xiusi Chen, Dilek Hakkani-Tür, Gokhan Tur, and Heng Ji. 2025. ToolRL: Reward is all tool learning needs. In Advances in Neural Information Process-ing Systems (NeurIPS) .Yulei Qin, Xiaoyu Tan, Zhengbao He, Gang Li, Hao-jia Lin, Zongyi Li, Zihan Xu, Yuchen Shi, Siqi Cai, Renting Rui, and 1 others. 2026. Learn the ropes, then trust the wins: Self-imitation with progressive exploration for agentic reinforcement learning. In In-ternational Conference on Learning Representations (ICLR) .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Y Wu, and 1 others. 2024. DeepSeek-Math: Pushing the limits of mathematical rea-soning in open language models. arXiv preprint arXiv:2402.03300 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. In Advances in Neural Information Pro-cessing Systems (NeurIPS) .Mohit Shridhar, Jesse Thomason, Daniel Gordon, Yonatan Bisk, Winson Han, Roozbeh Mottaghi, Luke Zettlemoyer, and Dieter Fox. 2020. ALFRED: A benchmark for interpreting grounded instructions for everyday tasks. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-nition (CVPR) .Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021. ALFWorld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representa-tions (ICLR) .Hui-Ze Tan, Xiao-Wen Yang, Hao Chen, Jie-Jing Shao, Yi Wen, Yuteng Shen, Weihong Luo, Xiku Du, Lan-Zhe Guo, and Yu-Feng Li. 2026. Hindsight credit assignment for long-horizon LLM agents. arXiv preprint arXiv:2603.08754 .Laurens van der Maaten and Geoffrey Hinton. 2008. Visualizing data using t-SNE. Journal of Machine Learning Research , 9:2579–2605. Hanlin Wang, Chak Tou Leong, Jiashuo Wang, Jian Wang, and Wenjie Li. 2025a. SPA-RL: Reinforcing LLM agents via stepwise progress attribution. arXiv preprint arXiv:2505.20732 .Jiawei Wang, Jiacai Liu, Yuqian Fu, Yingru Li, Xintao Wang, Yuan Lin, Yu Yue, Lin Zhang, Yang Wang, and Ke Wang. 2025b. Harnessing uncertainty: Entropy-modulated policy gradients for long-horizon LLM agents. arXiv preprint arXiv:2509.09265 .Tao Wang, Suhang Zheng, and Xiaoxiao Xu. 2026. RTMC: Step-level credit assignment via rollout trees. 
+
+arXiv preprint arXiv:2604.11037 .Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, and Ming Zhou. 2020. Minilm: Deep self-attention distillation for task-agnostic compression of pre-trained transformers. In Advances in Neural Information Processing Systems (NeurIPS) .Ziliang Wang, Xuhui Zheng, Kang An, Cijun Ouyang, Jialu Cai, Yuhang Wang, and Yichao Wu. 2025c. StepSearch: Igniting LLMs search ability via step-wise proximal policy optimization. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing (EMNLP) .
+
+10 Zhiheng Xi, Chenyang Liao, Guanyu Li, Yajie Yang, Wenxiang Chen, Zhihao Zhang, Binghai Wang, Sen-jie Jin, Yuhao Zhou, Jian Guan, Wei Wu, Tao Ji, Tao Gui, Qi Zhang, and Xuanjing Huang. 2025. AgentPRM: Process reward models for LLM agents via step-wise promise and progress. arXiv preprint arXiv:2511.08325 .Yu Xia, Jingru Fan, Weize Chen, Siyu Yan, Xin Cong, Zhong Zhang, Yaxi Lu, Yankai Lin, Zhiyuan Liu, and Maosong Sun. 2025. AgentRM: Enhancing agent generalization with reward modeling. arXiv preprint arXiv:2502.18407 .Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. WebShop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Representations (ICLR) .Qiying Yu and 1 others. 2025. DAPO: An open-source LLM reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Jiazheng Zhang, Ziche Fu, Zhiheng Xi, Wenqing Jing, Mingxu Chai, Wei He, Guoqiang Zhang, Chenghao Fan, Chenxin An, Wenxiang Chen, and 1 others. 2026. AgentV-RL: Scaling reward modeling with agentic verifier. arXiv preprint arXiv:2604.16004 .Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q. Weinberger, and Yoav Artzi. 2020. BERTScore: Evaluating text generation with BERT. In Inter-national Conference on Learning Representations (ICLR) .Zijing Zhang, Ziyang Chen, Mingxiao Li, Zhaopeng Tu, and Xiaolong Li. 2025. RLVMR: Reinforce-ment learning with verifiable meta-reasoning re-wards for robust long-horizon agents. arXiv preprint arXiv:2507.22844 .Yanli Zhao, Andrew Gu, Rohan Varma, Liang Luo, Chien-Chin Huang, Min Xu, Less Wright, Hamid Shojanazeri, Myle Ott, Sam Shleifer, and 1 others. 2023. PyTorch FSDP: Experiences on scaling fully sharded data parallel. Proceedings of the VLDB En-dowment , 16(12):3848–3860. Siyu Zhu, Yanbin Jiang, Hejian Sang, Shao Tang, Qingquan Song, Biao He, Rohit Jain, Zhipeng Wang, and Alborz Geramifard. 2025. Planner-R1: Reward shaping enables efficient agentic RL with smaller LLMs. arXiv preprint arXiv:2509.25779 .
+
+11 A Experimental Details 
+
+This appendix provides the experimental details supporting §4. We include benchmark protocols, training hyperparameters, SCPO shaper settings, evaluation details, and compute configuration. 
+
+A.1 Benchmarks ALFWorld. ALFWorld (Shridhar et al., 2021) is an embodied-instruction benchmark built on text-based household tasks aligned with the visual AL-FRED environment (Shridhar et al., 2020). Each episode starts from a natural-language goal and a textual observation of the agent’s current loca-tion. We evaluate on VALID _SEEN . The maximum episode length is Tmax = 50 , matching the GiGPO ALFWorld configuration (Feng et al., 2025). 
+
+WebShop. WebShop (Yao et al., 2022) is a simulated e-commerce environment where the agent must purchase a product matching a natural-language description. Actions include search, click, and purchase commands, and observations corre-spond to rendered product pages. Rewards are delivered after the purchase action. We use the standard protocol with Tmax = 15 and report both the average task score and the binary task-success rate, matching the GiGPO WebShop configura-tion (Feng et al., 2025). 
+
+A.2 Hardware and software 
+
+All experiments are run on a single node with 
+
+4×NVIDIA A800 80GB GPUs, 32 CPU cores, and approximately 2 TiB of system memory. We use the public verl-agent training stack (Feng et al., 2025) at commit 796ed31 . Inference is served by vLLM with FlashAttention (Dao et al., 2022) en-abled. Training uses FSDP (Zhao et al., 2023) for actor and reference-policy sharding. Cross-encoder scoring uses BGE-Reranker-v2-m3 (Chen et al., 2024), executed in a separate subprocess sharing GPU 0. Every run trains for 150 iterations on the 
+
+4×A800 GPUs above. A single SCPO run takes approximately 13 h (ALFWorld) and 7 h (Web-Shop) with Qwen2.5-1.5B-Instruct, and approxi-mately 36 h (ALFWorld) and 27 h (WebShop) with Qwen2.5-7B-Instruct; wall-clock times vary with cluster load. Across three seeds per setting, the SCPO runs reported here total on the order of 1,000 
+
+GPU-hours. As detailed in §4.4, SCPO’s frozen cross-encoder adds only ≈10% to GiGPO’s per-step time, so this cost is dominated by the under-                           
+
+> Hyperparameter Value
+> Base model Qwen2.5-1.5B/7B-Instruct Group size n8Train batch size 16 tasks / step Validation batch size 128 episodes PPO mini-batch size 256 PPO micro-batch / GPU 32 (1.5B) / 8 (7B) Learning rate 1×10 −6
+> Optimizer AdamW KL coefficient 0.01 Discount γ0.95 Invalid-action penalty 0.1 Max prompt length 2048 Max response length 512 History context K2Training iterations 150 Save / validation frequency every 5 steps Rollout temperature 1.0 Validation temperature 0.4 Random seeds {0,1,2}
+> Table 3: Training hyperparameters.
+
+lying multi-turn rollouts rather than by SCPO’s shaping. 
+
+A.3 Training hyperparameters 
+
+Table 3 lists the training hyperparameters used in our SCPO runs. To keep the comparison controlled, our configuration is strictly identical to GiGPO, and the only change relative to GiGPO is SCPO’s step-reward shaping. WebShop uses the same con-figuration except for the environment horizon and benchmark-specific reward scale. 
+
+A.4 SCPO shaper configuration 
+
+Table 4 lists the SCPO-specific settings. The de-fault shaper uses monotonic semantic credit with reordered processing. The chronological abla-tion changes only the processing order by setting 
+
+balance_batch=False .
+
+A.4.1 Choice of α across benchmarks 
+
+We use α = 0 .5 on ALFWorld and α = 1 .0 on WebShop. This choice follows the monotonic-credit shaping scale. Because each reference po-sition contributes credit at most once (§B.3), the auxiliary signal a failed sibling can receive scales with the number of filtered successful-reference po-sitions. ALFWorld trajectories are generally longer, while WebShop trajectories are shorter. A larger WebShop α therefore keeps the auxiliary signal on the same order as the task reward. The success threshold τsucc also differs by bench-mark because the two reward scales differ. ALF-World gives a binary terminal reward, so any pos-12 Parameter Symbol Value                                   
+
+> Match threshold θ0.6 Soft base λ0.4 Aux. weight, ALFWorld α0.5 Aux. weight, WebShop α1.0 Success threshold, ALFWorld
+> τsucc 0.0 Success threshold, WebShop
+> τsucc 9.0 Reference selection Πlongest success Apply scope –failed siblings Credit semantics –monotonic semantic credit Default order πreordered Chronological ablation πtemporal Repeated-credit ablation –monotonicity disabled Invalid-action filter –enabled Observation blacklist –no-op / empty obs. Step text –action + observation Cross-encoder fBGE-Reranker-v2-m3 Precision –fp16 CE batch size –64 pairs
+
+Table 4: SCPO shaper configuration. 
+
+itive return ( τsucc = 0 ) marks a success. Web-Shop gives a graded purchase score in [0 , 10] , so we set τsucc = 9 .0 to select only (near-)complete purchases as the success reference, preventing low-quality partial successes from being used as the matching target. 
+
+A.5 Step filtering and text construction 
+
+Each valid step is represented as a short text string combining the agent action and the resulting obser-vation: 
+
+x(g) 
+
+> i,t
+
+= action (g) 
+
+> i,t
+
+∥ observation (g) 
+
+> i,t
+
+.
+
+We filter invalid actions and degenerate no-op ob-servations before cross-encoder scoring. In ALF-World, this includes observations such as Nothing happens. . Filtering avoids assigning credit to mal-formed or rejected actions that repeat across failed rollouts. The filtered successful sibling defines the semantic reference used by the monotonic credit matcher. 
+
+A.6 Evaluation protocol 
+
+Evaluation runs every 5 training steps on a fixed set of 128 episodes. Results are averaged over three random seeds unless otherwise stated. For ALF-World, success rate is measured on valid_seen .For WebShop, we report both average task score and binary task-success rate. Baseline numbers marked with ∗ in Table 1 are quoted from the original papers (Wang et al., 
+
+Algorithm 1 SCPO step-reward shaping                                                                   
+
+> Require: Rollout groups, step-level discounted returns R
+> (Eq. 2), cross-encoder f, threshold θ, soft base λ, weight
+> α, reference selector Π
+> Ensure: Shaped step returns ˜R
+> 1: for each rollout group gdo
+> 2: S(g)← { i:R(τ(g)
+> i)> τ succ }
+> 3: if S(g)=∅then
+> 4: continue 5: end if
+> 6: Select successful reference τ∗
+> g←Π( S(g))
+> 7: Build filtered step texts for τ∗
+> gand failed siblings 8: Compute reference self-similarity M∗for semantic backtracking 9: for each failed sibling τ(g)
+> wdo
+> 10: Compute Mu,v =f(x⋆u, x wv)
+> 11: Choose processing order π
+> 12: rSCPO
+> w←
+> SINGLE USE PROGRESS MATCH (M, M ∗;θ, λ, π )
+> 13: Add credit to step returns: ˜R(g)
+> w←R(g)
+> w+
+> α r SCPO
+> w
+> 14: end for
+> 15: end for
+> 16: return ˜R
+
+2025b; Feng et al., 2025; Tan et al., 2026; He et al., 2026). 
+
+B Algorithm and Monotonic Semantic Credit 
+
+B.1 SCPO pseudocode 
+
+Algorithm 1 summarises SCPO as applied once per training batch. 
+
+B.2 Monotonic credit matcher 
+
+Given a similarity matrix M ∈ [0 , 1] m×ℓ between a filtered successful reference of length m and a fil-tered failed sibling of length ℓ, SCPO computes the auxiliary signal through monotonic semantic credit matching: each reference position can be credited at most once, and credit advances strictly forward through the reference. The matcher is implemented in the style of KMP sequence matching (Knuth et al., 1977; Cormen et al., 2009), but its credit se-mantics differ from classical occurrence matching: SCPO rewards new reference progress, not every repeated semantic match. Let π = ( π1, . . . , π ℓ) denote the processing or-der over failed-sibling steps. Chronological SCPO corresponds to π = (1 , . . . , ℓ ) and is implemented with balance_batch=False . The reordered or-der used by Default SCPO is the one verl-agent’s 
+
+balance_batch already produces: it reorders steps by sequence length to balance tokens across data-parallel ranks, reducing padding and improving throughput. SCPO is applied after this step in the 13 Algorithm 2 Monotonic credit matcher                                                                                          
+
+> Require: Similarity matrix M∈[0 ,1] m×ℓ, reference self-similarity M∗, threshold θ, soft base λ, order π
+> Ensure: Step-level SCPO rewards rSCPO ∈[0 ,1] ℓ
+> 1: Build semantic KMP table next( ·)from M∗using thresh-old θ
+> 2: Initialize j← − 1,jmax ← − 1,rSCPO
+> v←0for all v
+> 3: for k= 1 to ℓdo
+> 4: v←πk
+> 5: while j≥0and Mj+1 ,v < θ do
+> 6: j←next( j)
+> 7: end while
+> 8: if Mj+1 ,v ≥θthen
+> 9: j←j+ 1
+> 10: if j > j max then
+> 11: rSCPO
+> v←max(0 ,(Mj,v −λ)/(1 −λ))
+> 12: jmax ←j
+> 13: end if
+> 14: end if
+> 15: if j=m−1then
+> 16: break
+> 17: end if
+> 18: end for
+> 19: return rSCPO
+
+pipeline, so it consumes the length-balanced order directly and reuses it as the credit-allocation permu-tation, decoupling processing order from temporal position at no extra cost since the pipeline com-putes it regardless. This order changes only which failed steps reach new reference positions first; it does not change the monotonic credit rule. Algorithm 2 gives the matcher. The state j is the current matched reference position, and jmax 
+
+is the historical credited frontier. A failed step re-ceives credit only when it pushes j strictly beyond 
+
+jmax . Backtracking may revisit earlier reference positions, but revisits cannot emit new credit unless they later lead to frontier expansion. 
+
+B.3 Monotonic crediting 
+
+By construction the matcher credits each of the m
+
+filtered reference positions at most once: a posi-tive score rSCPO  
+
+> w,v
+
+> 0 is emitted only when the match advances the historical frontier jmax , which increases monotonically. A repeated, templated, or high-similarity match to an already-credited position therefore cannot be rewarded again, in-dependent of the failed-trajectory length or the processing order π. This monotonicity is what stops semantic similarity from becoming an un-bounded reward source—the repeated-credit abla-tion in §4.3.2 removes it and degrades performance. It is a structural property of the matcher, not a policy-improvement guarantee. 
+
+C Additional Experiments and Results 
+
+This appendix provides additional diagnostics and results for SCPO. 
+
+C.1 Case study 
+
+To make the matcher concrete, Figure 4 visualises the cross-encoder similarity matrix between one failed sibling and its success reference at three train-ing checkpoints. Each cell Mu,v is the similarity between reference step u and failed step v; red boxes mark the cells SCPO credits, and the red line traces the forward, monotonic progress through the reference. As the policy improves from early to late training (left to right), the failed trajectory’s steps align increasingly well with the reference— the matrix brightens and the credited path length-ens and straightens—so SCPO finds progressively more reusable behaviour to credit. The heatmaps are displayed in trajectory order; the default re-ordered matcher may process steps in a different order during training, so the visualization reflects semantic-overlap density rather than the exact pro-cessing order. 
+
+C.2 Semantic neighbourhood of the auxiliary signal 
+
+To check what SCPO actually credits, we em-bed 2,555 step strings sampled from five early-training batches with a general-purpose sentence encoder (all-MiniLM-L6-v2) (Wang et al., 2020) and project them to 2D with t-SNE (van der Maaten and Hinton, 2008); each step string is the filtered 
+
+(action, observation) text defined in Appendix A.5. The motivation figure in the main text (Figure 2) shows this same 2D embedding coloured by trajec-tory outcome only (successful vs. failed steps), with green shading marking the density of successful-trajectory steps. Figure 5 instead plots the individ-ual steps for three groups: steps from successful in-group siblings, failed-sibling steps that received SCPO credit ( rSCPO > 0), and failed-sibling steps that received none. The credited-failure group co-incides with the success group and is markedly tighter than the non-credited-failure group, which spreads broadly across the space. Quantitatively, the median embedding distance from a credited failed step to its nearest successful-sibling step is 
+
+0.00 (74% are exact (action, observation) matches) versus 0.28 for non-credited failed steps; restricted to the non-exact subset, the medians are 0.44 ver-sus 0.59 (1.34 × larger). SCPO therefore credits 14 Figure 4: SCPO credit spectrum across training checkpoints (one failed sibling vs. its success reference). Each cell Mu,v is the cross-encoder similarity between reference step u and failed step v; red boxes mark credited cells and the red line traces the forward, monotonic progress. From early to late training (left to right) the failed trajectory aligns increasingly well with the reference. 
+
+failed steps that semantically resemble in-group successful behaviour rather than applying a uni-form bonus. failed, not credited (n=1000)   
+
+> successful-trajectory steps (n=1000)
+> failed, SCPO-credited (n=555)
+
+Figure 5: Semantic neighbourhood of SCPO’s aux-iliary signal (ALFWorld 1.5B, five early-training batches). Each point is one filtered step embedded with all-MiniLM-L6-v2 and projected to 2D with t-SNE: successful-sibling steps (green), SCPO-credited failed steps (blue), and non-credited failed steps (red); green shading marks the density of successful-sibling steps. SCPO-credited failed steps co-locate with successful-sibling steps in tight local clusters, whereas non-credited failed steps are diffuse. 
+
+Two caveats apply. The embedding uses a general-purpose encoder rather than SCPO’s BGE cross-encoder (which scores pairs and does not pro-duce standalone embeddings), so it is a faithful proxy for semantic proximity rather than SCPO’s exact scoring; and the sample is drawn from early training, where most rollouts fail. The analysis should be read as evidence of semantic overlap, not as causal verification that every credited step is necessary for success. 
+
+C.3 Hyperparameter sensitivity 
+
+Figure 6 reports a one-at-a-time sensitivity analy-sis around the default (α, θ, λ ) = (0 .5, 0.6, 0.4) on ALFWorld with Qwen2.5-1.5B-Instruct. The de-fault point (red) is the three-seed result 93 .7 ± 4.1;all other points are single-seed runs and should be interpreted as suggestive rather than definitive. 0.5 0.6 0.7 0.8      
+
+> Match threshold
+> 90
+> 92
+> 94
+> 96
+> 98
+> Peak success (%)
+> = 0.5, = 0.4
+> Default (3 seeds)
+> 0.0 0.3 0.4 0.5
+> Soft base
+> = 0.5, = 0.6
+
+Figure 6: Single-knob SCPO sensitivity on ALFWorld 1.5B. Left : match threshold θ (at α = 0 .5, λ = 0 .4). 
+
+Right : soft base λ (at α = 0 .5, θ = 0 .6). All points report the best validation checkpoint reached within 150 
+
+training steps. The red point with error bar is the default configuration (three seeds, 93 .7 ± 4.1); blue points are single-seed runs. 
+
+The sweep suggests that SCPO is not overly sen-sitive to small changes in θ or λ, but the non-default rows are not multi-seed estimates. We therefore use this result only as supporting evidence, not as a robustness claim. 
+
+C.4 Step-reward analysis 
+
+Figure 7 tracks the SCPO step-reward over training on ALFWorld 1.5B: the number of credited steps per failed trajectory (left) and the mean auxiliary reward per step (right), as three-seed means with 
+
+±1 standard-deviation bands. Early in training the injected signal is small—few groups yet contain a successful sibling—and it grows as the policy improves and more failed steps semantically match 15 a successful reference, so SCPO recovers progres-sively more credit. The magnitude nonetheless stays small (mean auxiliary reward ≈0.03 , well be-low the task reward) rather than growing without bound, consistent with monotonic crediting, which credits each reference position at most once (§B.3). The default reordered allocation credits more than chronological order ( 12 .0 vs. 9.7 steps per failed trajectory and 0.034 vs. 0.029 mean auxiliary re-ward over steps 20 –150 ), mirroring its +3 .3 advan-tage in §4.3.1. 0 25 50 75 100 125 150       
+
+> Training step
+> 10
+> 20
+> 30
+> Credited steps per trajectory
+> Reordered (default)
+> Chronological order
+> 025 50 75 100 125 150
+> Training step
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Mean auxiliary reward
+
+Figure 7: SCPO step-reward over training on ALF-World 1.5B (three-seed mean, ±1 std bands, 5-step moving average). Left : credited steps per failed tra-jectory. Right : mean auxiliary reward per step. The signal grows as the policy improves but stays bounded, and the default reordered allocation credits more than chronological order. 
+
+C.5 Shaper timing 
+
+Sub-stage Median (s) Share 
+
+Cross-encoder on ref.–failed pairs 23.68 84.73% Reference self-similarity scoring 4.06 14.00% Tokenizer decode 0.36 1.14% Monotonic credit matching 0.004 0.02% Reward accumulation 0.003 0.01% Metric aggregation / tensor conv. 0.008 0.03% 
+
+Table 5: SCPO shaper timing decomposition. 
+
+As Table 5 shows, nearly all overhead comes from frozen cross-encoder inference; the monotonic credit matcher itself is negligible. The sub-stage medians above sum to ≈28 s; the 29 .3 s figure re-ported in §4.4 is the mean wall-clock increase per training step and additionally accounts for inter-process communication with the reranker subpro-cess. 16

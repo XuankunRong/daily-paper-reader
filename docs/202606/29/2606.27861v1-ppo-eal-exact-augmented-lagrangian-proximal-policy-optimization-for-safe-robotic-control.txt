@@ -1,0 +1,1045 @@
+Title: PPO-EAL: Exact Augmented Lagrangian Proximal Policy Optimization for Safe Robotic Control
+
+URL Source: https://arxiv.org/pdf/2606.27861v1
+
+Published Time: Mon, 29 Jun 2026 00:35:48 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+> XX 1
+
+# PPO-EAL: Exact Augmented Lagrangian Proximal Policy Optimization for Safe Robotic Control 
+
+Jiatao Ding ⋆, Songqun Gao, Andrea Del Prete, and Matteo Saveriano 
+
+Abstract —Reinforcement learning (RL) has emerged as apromising solution to accomplish complex robotic control tasks; however, most of the current work ignores the safety require-ments. Safe RL seeks to maximize task performance while satisfying explicit physical constraints, but current algorithms struggle to learn the policy efficiently with precise constraint satisfaction. This work proposes PPO-EAL, a novel first-order constrained policy optimization framework that integrates ex-act augmented Lagrangian optimization into proximal policy optimization for safe robotic control. By combining clipped policy updates with exact quadratic penalty terms, PPO-EAL achieves theoretically grounded constraint enforcement without requiring impractically large penalty factors. A momentum-regulated multiplier update further improves dual-variable sta-bility, reducing constraint oscillation and unsafe behavior while preserving task performance. We provide exactness and con-vergence analysis under standard stochastic approximation as-sumptions. Extensive validation across diverse GPU-accelerated robotic benchmarks—including cart-pole balancing, cart-double-pendulum stabilization, 7-DoF Franka end-effector reaching, and quadrupedal locomotion—demonstrates superior safety precision and reward performance compared with state-of-the-art first-order safe RL baselines. Finally, we demonstrate zero-shot sim-to-real deployment in a contact-rich gear assembly task, where PPO-EAL substantially improves task success, reduces peak contact force, and enhances operational robustness. These results establish PPO-EAL as a general and practically deployable safe RL framework for diverse safety-critical robotic systems. 
+
+Index Terms —Safety-critical robotics control, Reinforcement learning, Augmented Lagrangian, Policy optimization. 
+
+I. I NTRODUCTION 
+
+# REINFORCEMENT learning (RL) [1] has been widely used to solve complex robotic control tasks, such as ma-nipulation [2]–[4], locomotion [5]–[9], and multi-robot control [10], [11]. However, most current approaches ignore feasibility constraints in the policy updating process, thus failing to satisfy the safety requirement. To overcome this issue, safe RL has been proposed to find a policy that maximizes the cu-mulative return while satisfying feasibility constraints, among which the constrained Markov decision process (CMDP) [12], [13] provides a principled framework by introducing auxiliary cost functions in problem formulation. An intuitive idea to solve a CMDP is to approximate the nonconvex constrained objective within a local quadratic trust region [14], [15]. However, these quadratic methods require solving conjugate-gradient systems involving the inverse of Fisher information matrix, leading to a high computational 
+
+All the authors are with the Department of Industrial Engineering, Univer-sity of Trento, Via Sommarive 9, 38123, Trento, Italy (e-mail: {jiatao.ding, songqun.gao, andrea.delprete, matteo.saveriano }@unitn.it). The work is supported in part by EU project INVERSE (GA 101136067). 
+
+⋆ Corresponding author. 
+
+load. First-order Lagrangian-based algorithms, which use a simpler structure, can perform comparably or even better. For instance, the work in [16] constrains the proximal policy optimization (PPO) [17] with Lagrangian methods that use adaptive penalty coefficients to enforce constraints. In [18], a Lagrangian argument is used to find the Karush–Kuhn–Tucker (KKT) points as the optimum of the constrained local policy optimization. Nevertheless, theoretical analyses [19], [20] re-veal that the updates of the Lagrange multipliers are slower than those of the policy parameters, which are prone to cause oscillations or overshooting around the cost boundary. The approach in [21] alleviates this problem by introducing a PID-type multiplier adjustment, though it is hard to tune due to the sensitivity to three hyperparameters. In contrast to Lagrangian-based methods, alternative constrained RL approaches include both barrier-based and penalty-based formulations. Barrier-based methods, such as interior-point policy optimization (IPO) [22], employ logarithmic barrier functions to maintain feasibility, but their surrogate objectives introduce bias and often lead to suboptimal solutions [23]. Penalty-based methods instead directly penalize constraint violations; for example, penalized proximal policy optimization (P3O) [24] adopts an 
+
+ℓ1-based exact penalty formulation, while [25] demonstrates that cost normalization can improve empirical performance. However, such approaches require very large or infinite penalty factors to guarantee equivalence with the original constrained problem [23], often resulting in ill-conditioned optimization and numerical instability. To address these limitations, we propose the exact aug-mented Lagrangian PPO (PPO-EAL), a constrained PPO method which augments the Lagrangian function of the primal CMDP with a quadratic deviation term, using an exact for-mulation. This multiplier–penalty construction stabilizes cost dynamics and remains mathematically equivalent to the orig-inal constrained problem without requiring an infinite penalty factor. Inspired by PPO [17], PPO-EAL adopts a clipped surrogate objective for both reward and cost, thereby avoiding expensive trust-region optimization. Differing from the aug-mented PPO (APPO) method in [26], we do not introduce the relaxation values in the problem formulation, and we update policy parameters and Lagrangian multipliers at different time scales to guarantee convergence. In addition, we stabilize the Lagrangian multipliers update by adding momentum, which achieves better performance with lower oscillations. Differ-ing from previous benchmark work such as [16] and [26], which focus on the task with one constraint, we highlight effectiveness for more complex tasks with multiple physical constraints by validating PPO-EAL across a broad suite of  
+
+> arXiv:2606.27861v1 [cs.RO] 26 Jun 2026 XX 2
+
+increasingly complex robotic benchmarks—including dynamic balancing, manipulator control, and quadrupedal locomotion. Finally, we demonstrate zero-shot sim-to-real deployment in a real-world contact-rich gear assembly task, highlighting safety, robustness, and practical applicability for safety-critical robotic systems. Our main contributions are summarized as follows:  
+
+> •
+
+We propose a novel algorithm, PPO-EAL, that inte-grates Lagrangian duality with an exact quadratic penalty, achieving provable exactness and convergence.  
+
+> •
+
+We implement the safe RL pipeline, together with a momentum-based modification, under the deep ac-tor–critic architecture using the standard first-order opti-mizer, and empirically demonstrate superior performance over state-of-the-art safe RL baselines.  
+
+> •
+
+We extensively validate PPO-EAL across a broad suite of increasingly complex robotic control benchmarks with multiple physical constraints, and further demonstrate zero-shot sim-to-real deployment in a contact-rich gear assembly task, establishing its practical effectiveness for safety-critical robotic systems. The rest of the work is organized as follows: Section II introduces the background for CMDP. Section III formulates PPO-EAL pipeline, with provable exactness and convergence. Section IV evaluates the method in robotic control tasks, and Section V concludes our work. II. B ACKGROUND 
+
+RL models a control problem as a Markov Decision Process (MDP), which is a tuple < S, A, r, p, μ > . Here, S is the set of states, A is the set of actions, r : S × A × S → R is the reward function, p : S × A × S → [0 , 1] is the state transition probability (where P (s′|s, a ) is the transition probability from state s to state s′ given action a), and μ is the initial state distribution. To solve an MDP, we aim to find a policy π(a|s) : 
+
+S → P (A) that maximizes 
+
+JR(π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+γtr(st, a t, s t+1 )
+
+#
+
+, (1) 
+
+where τ =  s0, a 0, s 1, a 1, . . .  denotes a trajectory, and τ ∼ π
+
+means that the distribution over trajectories is determined by policy π, i.e., s0 ∼ μ, at ∼ π · | st
+
+, st+1 ∼ P  · | st, a t
+
+.
+
+γ ∈ [0 , 1) is the discount factor. The expectation E[·] repre-sents the empirical average over a batch of sampled trajecto-ries. The initial state s0 is sampled from μ, and subsequent transitions (st, a t, s t+1 ) are generated by following policy π.Following the general principle, we denote the value func-tion as V π (s) := Eτ ∼π
+
+P∞ 
+
+> t=0
+
+γtR(st,a t) s0 = s
+
+
+
+and the action-value function as Qπ (s, a ) := Eτ ∼π
+
+P∞ 
+
+> t=0
+
+γtR(st, a t)
+
+s0 = s, a 0 = a
+
+
+
+. The advantage function is defined as 
+
+Aπ (s, a ) := Qπ (s, a ) − V π (s).
+
+To address constrained problems, the above framework is extended as a CMDP. The MDP is augmented with a set 
+
+C = {c1, . . . , c n} of cost functions that capture constraint vi-olations, and corresponding thresholds B = {b1, . . . , b n} [12], [14]. Each cost ci : S × A × S → R maps state-action-state triplets to a non-negative cost. In the constrained setting, an optimal policy maximizes the expected discounted return (1), while ensuring that each discounted-sum cost JCi (π) remains below its threshold bi:
+
+maximize  
+
+> π
+
+JR(π) (2) 
+
+s.t. JCi (π) ≤ bi, ∀i ∈ { 1, . . . , n }, (3) 
+
+with 
+
+JCi (π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+γtci(st, a t, s t+1 )
+
+#
+
+. (4) 
+
+Using the performance difference lemma [27], and defining the discounted future state visitation distribution as dπ (s) := (1 −γ) P∞ 
+
+> t=0
+
+γtP  st = s | π, one can derive a surrogate form of (2)–(3) in terms of advantage functions over two policies (π and πold ) as 
+
+JR(π) − JR(πold ) = 11 − γ E(s,a )∼(dπ ,π )
+
+Aπold  
+
+> R,t
+
+(s, a )
+
+JCi (π) − JCi (πold ) = 11 − γ E(s,a )∼(dπ ,π )
+
+Aπold 
+
+> Ci,t
+
+(s, a ), ∀i, 
+
+where AπR,t (s, a ) denotes the reward advantage function and 
+
+AπCi,t (s, a ) denotes the cost advantage for the i-th constraint at time-step t. Then, we can formulate the unbiased constrained policy optimization problem as 
+
+π⋆ = arg max 
+
+> π
+
+E(s,a )∼(dπ ,π )Aπold  
+
+> R,t
+
+(s, a )
+
+s.t. J Ci (πold )+ 11 − γ E 
+
+> (s,a )∼(dπ,π )
+
+Aπold 
+
+> Ci,t
+
+(s, a ) ≤ bi, ∀i. (5) 
+
+III. PPO WITH EXACT AUGMENTED LAGRANGIAN 
+
+To solve the CMDP problem (5) with smooth convergence, we here augment the primal problem with an exact augmented Lagrangian function. 
+
+A. Exact Augmented Lagrangian 
+
+For brevity, let us denote ϕi(π) = JCi (π) − bi. Then, we solve the above constrained PPO with the augmented Lagrangian function LEAL (π, λ ), following 
+
+LEAL (π, λ ) = JR(π)−
+
+> n
+
+X
+
+> i=1
+
+λiϕi(π)− β
+
+2
+
+> n
+
+X
+
+> i=1
+
+ [ϕi(π)] +)2, (6) 
+
+with λi ≥ 0 being the dual variables, β ≥ 0 denoting the penalty coefficient of the quadratic term, and [·]+ denoting the ReLU function. In a real application, we parameterize the policy π by θ.Then, a naive primal-dual scheme alternates 
+
+θ′ = θ+αθ ∇θ
+
+h
+
+LCLIP  
+
+> R
+
+(θ)−
+
+> n
+
+X
+
+> i=1
+
+λiLCLIP  
+
+> Ci
+
+(θ)− β
+
+2
+
+> n
+
+X
+
+> i=1
+
+[LCLIP  
+
+> Ci
+
+(θ)] 2+
+
+i
+
+,
+
+(7) 
+
+λ′ 
+
+> i
+
+= max 0, λ i +αλi ϕi(πθ ) , (8) where αθ and αλi are the learning rates for policy parameters and Lagrangian multipliers, respectively 1. To avoid aggres-sive policy change after each iteration, we use the clipped    
+
+> 1In practice, we use one fixed αλfor all constraints. XX 3
+
+surrogates for reward and cost (denoted as LCLIP  
+
+> R
+
+and LCLIP  
+
+> Ci
+
+)following the original PPO pipeline, which are defined as 
+
+LCLIP  
+
+> R
+
+(θ) = −Et
+
+h
+
+min  rt(θ) ˆAπR,t , clip( rt(θ)) ˆAπR,t 
+
+i
+
+, (9) 
+
+LCLIP  
+
+> Ci
+
+(θ) = Et
+
+h
+
+max  rt(θ) ˆAπCi,t , clip( rt(θ)) ˆAπCi,t 
+
+i
+
+, (10) where rt(θ) = πθ (at|st)  
+
+> πθold (at|st)
+
+is the importance sampling ratio, 
+
+ˆAπR,t and ˆAπCi,t are the normalized reward advantage and cost advantage at time t, and clip( rt(θ)) = clip  rt(θ), 1 − δ, 1 + δ
+
+for some δ > 0. The advantages ˆAπR,t and ˆAπCi,t are estimated from past trajectories and value networks ( V πR,t and V πCi,t )using the generalized advantage estimation [28]. 
+
+B. Exactness and Convergence Analysis 
+
+Under standard regularity assumptions, PPO-EAP admits exactness and convergence properties. The exactness property follows from the finite-penalty exact augmented Lagrangian theory [29]. The proof of convergence is standard for stochas-tic approximation (SA) algorithms [30], [31], which is then well formulated in [32] for risk–constrained policy–gradient and actor–critic algorithms. 
+
+1) Exactness analysis: To state the exactness, we make the following assumptions: 
+
+Assumption 1. Each JR(π) and JCi (π) is continuously differentiable, with Lipschitz–continuous gradients. 
+
+Assumption 2. The feasible set {π | ϕi(π) ≤ 0, ∀i} is nonempty, and compactness is enforced through projection. 
+
+Theorem 1 (Exactness) . Under Assumptions 1–2, there exists a finite β⋆ > 0 and a neighborhood N (λ⋆) of the optimal multipliers such that for all β ≥ β⋆ and λ ∈ N (λ⋆): (i) if 
+
+π is feasible ( ϕi(π) = JCi (π) ≤ 0, λ i ≥ 0) and satisfies the stationarity condition 0 ∈ ∂π LEAL (π, λ ), then π is a KKT point (and hence a local solution) of the original constrained problem (5) ; (ii) conversely, any KKT point (π⋆, λ ⋆) is a stationary point of LEAL in (6) .Proof sketch: The exactness result (Theorem 1) follows di-rectly from the finite–penalty exactness theorem of the Rock-afellar augmented Lagrangian ( [33]; see also [29], Chapter 4). To make it clear, we introduce nonnegative slack variables 
+
+pi ≥ 0 and use the inf–projection identity 
+
+[ϕi(π)] 2+ = min 
+
+> pi≥0
+
+(ϕi(π) + pi)2,
+
+so (6) can be rewritten as 
+
+LEAL (π, λ ) = min 
+
+> p≥0
+
+n
+
+JR(π) − X
+
+> i
+
+λi(ϕi(π) + pi)
+
+− β
+
+2
+
+X
+
+> i
+
+(ϕi(π) + pi)2o
+
+.
+
+Define the equality constraints 
+
+hi(π, p ) := ϕi(π) + pi = 0 , pi ≥ 0.
+
+Hence, the inequality–constrained CMDP is reformulated as an equality–constrained problem in (π, p ). The above augmented Lagrangian is precisely the standard Rockafellar augmented Lagrangian for equality constraints: 
+
+Lβ (π, p, λ ) = JR(π) −
+
+> n
+
+X
+
+> i=1
+
+λihi(π, p ) − β
+
+2
+
+> n
+
+X
+
+> i=1
+
+hi(π, p )2.
+
+By the finite–penalty exactness theorem of the Rockafellar augmented Lagrangian [33], there exists a finite β∗ > 0 and a neighborhood N (λ∗) of the optimal multipliers such that, whenever β ≥ β∗ and λ ∈ N (λ∗): (i) any stationary point 
+
+(π, p ) of Lβ with hi(π, p ) = 0 corresponds to a KKT point of the original constrained problem; and (ii) conversely, any KKT point (π∗, p ∗, λ ∗) is a stationary point of Lβ .For a feasible π∗, the optimal slack satisfies p∗ 
+
+> i
+
+=max {0, −ϕi(π∗)} = 0 , so we obtain exactly the statement of Theorem 1 for (π∗, λ ∗). □
+
+Note that the slack variables pi are introduced only for theo-retical analysis to rewrite the inequality constraints as equality constraints, which enables a direct application of the classical exact augmented Lagrangian theory. In implementation, we do 
+
+not optimize over pi. The minimization of pi ≥ 0 admits a closed-form solution and yields the hinge penalty [φi(π)] 2+,which is exactly the term used in the algorithm. 
+
+2) Convergence analysis: We now establish the conver-gence of PPO–EAL under standard SA assumptions. 
+
+Assumption 3. Step sizes αk and ωk satisfy the Robbins– Monro conditions: P 
+
+> k
+
+αk = P 
+
+> k
+
+ωk = ∞, P
+
+> k
+
+(α2 
+
+> k
+
++ ω2
+
+> k
+
+) <
+
+∞, and ωk/α k → 0.
+
+Assumption 4. Gradient estimates are unbiased with martin-gale–difference noise and bounded variance. That is, 
+
+E[ξk+1 |F k]=0 , E[ζk+1 |F k]=0 , E[∥ξk+1 ∥2+∥ζk+1 ∥2|F k]<∞,
+
+where (ξk+1 , ζ k+1 ) are martingale–difference noise terms, and 
+
+Fk denotes the σ–algebra generated by all information up to iteration k.
+
+Assumption 5 (PPO specific) . The surrogate objective, ad-vantage estimator, and clipping bias introduce bounded per-turbations of order O(ε), where ε quantifies the approximation and clipping bias in PPO. 
+
+Before analyzing the limiting dynamics, we impose the following standard condition on the projection operators. 
+
+Assumption 6 (Projected dynamics) . The projection operators 
+
+Γπ and Γλ project the iterates onto compact convex sets. The induced projected vector fields are continuous and locally Lipschitz on these sets. For a vector field g(x) and projection operator Γ, we denote the induced projected vector field by 
+
+ˆΓ( g(x)) := lim 
+
+> η↓0
+
+Γ( x + ηg (x)) − xη .
+
+Assumption 7 (Characterization of invariant sets) . For the lim-iting projected primal-dual dynamics, every internally chain-transitive invariant set is contained in the set of projected stationary points satisfying primal feasibility and complemen-tarity: 
+
+0 ∈ ˆΓπ (∇π LEAL (π, λ )) , ϕ i(π) ≤ 0, λ iϕi(π) = 0 , λ i ≥ 0, ∀i. XX 4
+
+Theorem 2 (Convergence) . Under Assumptions 1–7, the sequence (πk, λ k) generated by PPO–EAL is almost surely bounded. Moreover, the iterates converge almost surely to an 
+
+O(ε) neighborhood of an internally chain-transitive invariant set M of the limiting projected primal-dual dynamics: 
+
+lim sup 
+
+> k→∞
+
+dist (( πk, λ k), M) ≤ O(ε).
+
+If the PPO approximation bias vanishes asymptotically, i.e., 
+
+ε → 0, then the iterates converge almost surely to M. Fur-thermore, if the limit points in M satisfy the local exactness conditions in Theorem 1, then they correspond to KKT points of the original constrained problem (5) .Proof sketch. The proof follows the standard multi-time-scale SA and ODE method. We outline the main ideas in the following. 
+
+Step 1: SA recursion: Under Assumptions 1–6, the PPO– EAL updates can be written as the projected SA recursion 
+
+πk+1 = Γ π (πk + αk (∇π LEAL (πk, λ k) + ξk+1 + ∆ πk )) ,λk+1 = Γ λ
+
+ λk + ωk
+
+ ϕ(πk+1 ) + ζk+1 + ∆ λk
+
+ ,
+
+where ξk+1 and ζk+1 are martingale-difference noise terms, and ∆πk and ∆λk denote the bounded PPO-induced perturba-tions. By Assumption 5, 
+
+∥∆πk ∥ + ∥∆λk ∥ = O(ε).
+
+The positive sign in the policy recursion follows from the fact that the policy update maximizes the exact augmented Lagrangian objective with respect to π, whereas the multiplier update increases λi when the corresponding constraint viola-tion ϕi(π) is positive. 
+
+Step 2: Limiting projected dynamics: Since ωk/α k → 0,the policy evolves on the fast time scale and the multiplier evolves on the slow time scale. Neglecting the martingale-difference noise and the bounded PPO perturbations, the limiting projected primal-dual dynamics are 
+
+˙π ∈ ˆΓπ (∇π LEAL (π, λ )) , ˙λ ∈ ˆΓλ (ϕ(π)) .
+
+By Assumptions 1, 2, and 6, the projected vector fields are well-defined on compact sets and are locally Lipschitz. Hence, the limiting projected dynamics admit well-defined solution trajectories. 
+
+Step 3: ODE tracking and invariant-set convergence: 
+
+By the Robbins–Monro step-size conditions in Assumption 3, the martingale-difference noise condition in Assumption 4, and the compact projection in Assumption 6, the interpo-lated trajectory of the stochastic recursion is an asymptotic pseudo-trajectory of the limiting projected dynamics, up to the bounded PPO perturbation O(ε). Standard projected stochastic approximation results then imply that the iterates converge almost surely to an internally chain-transitive invariant set of the limiting dynamics, with an O(ε) perturbation: 
+
+lim sup 
+
+> k→∞
+
+dist (( πk, λ k), M) ≤ O(ε).
+
+When ε → 0, the perturbed dynamics reduce to the unper-turbed limiting projected dynamics, and the iterates converge almost surely to M.
+
+Step 4: Identification of KKT limit points: By Assumption 7, every internally chain-transitive invariant set of the limit-ing projected dynamics is contained in the set of projected stationary points satisfying primal feasibility, dual feasibility, and complementarity. Therefore, every limit point in M satis-fies the first-order projected stationarity and complementarity conditions. If, in addition, the local exactness conditions in Theorem 1 hold, then the exactness result implies that these limit points correspond to KKT points of the original constrained problem (5). This completes the proof. 
+
+C. Momentum Regulation for Updating Lagrangian Multiplier 
+
+The above updating process ensures the exactness without introducing extra variables. However, the usage of the maximal operator result in non-smooth behavior, thus could cause oscillation in constraint satisfaction. To address this issue, we propose to update the Lagrange multipliers by additionally penalizing the rate of change of the cost. That is, differing from the n¨ aive primal-dual scheme in (8), we update λ′ 
+
+> i
+
+by           
+
+> λ′
+> i= max 0, λ i+αλiϕi(πθ)+ kd(JCi(πθ)−JCi(πθ)old ),(11)
+
+where, JCi (πθ )old and kd are the last constraint violation ratio and derivative gain. 
+
+Remark 1 (Effect of momentum regularization on conver-gence) . We introduce a derivative-type correction term in the dual update, resulting in 
+
+λk+1 = Γ λ (λk + ωk [ϕ(πk+1 ) + kd (JC (πk+1 ) − JC (πk))]) .
+
+Under the Lipschitz continuity of the constraint cost JC (π)
+
+and the boundedness of the projected policy update, we have 
+
+JC (πk+1 ) − JC (πk) = O(∥πk+1 − πk∥) = O(αk).
+
+Therefore, the additional derivative-type contribution to the dual recursion satisfies 
+
+ωkkd (JC (πk+1 ) − JC (πk)) = O(ωkαk).
+
+Under the step-size condition in Assumption 3, this term is a bounded vanishing perturbation of the dual recursion. Hence, in the stochastic-approximation framework, it does not change the limiting projected primal-dual dynamics: 
+
+˙π ∈ ˆΓπ (∇π LEAL (π, λ )) , ˙λ ∈ ˆΓλ (ϕ(π)) .
+
+Consequently, the internally chain-transitive invariant set characterized in Theorem 2 remains unchanged, and the convergence result continues to hold with the derivative-type dual regulation. Intuitively, the derivative-type correction acts as a damping component in the dual dynamics. It reduces transient oscilla-tions of the Lagrange multipliers without altering the limiting KKT-associated invariant set. D. Actor-critic Implementation 
+
+Using the actor-critic structure, a practical implementation of PPO-EAL follows Algorithm 1. The difference with PPO is marked in blue. Note that in real applications, we can first tune the hyperpa-rameters, e.g., αθ and αλi in PPO-EAL, without considering the momentum regulation. Then, we can fix these parameters and adjust kd to incorporate the momentum regulation. XX 5
+
+Algorithm 1: PPO-EAL Outline 
+
+Input: Initialize policy network π0, value network V πR ,and cost value networks V πCi for all cost function ci; Initialize policy parameter θ0,Lagrange multipliers λ0, penalty factor β0
+
+Output: Optimized policy parameters θ 
+
+> 1
+
+for k ← 1, . . . , K do // Episode loop  
+
+> 2
+
+Generate trajectories τ ∼ πθk 
+
+> 3
+
+Estimate returns and advantage functions  
+
+> 4
+
+if momentum regulation == True then  
+
+> 5
+
+Update Lagrangian multiplier λ′ 
+
+> i
+
+using (11),  
+
+> 6
+
+else  
+
+> 7
+
+Update Lagrangian multiplier λ′ 
+
+> i
+
+using (8).  
+
+> 8
+
+for e ← 1, . . . , E do // Epochs loop  
+
+> 9
+
+for b ← 1, . . . , B do // Mini-batch loop  
+
+> 10
+
+Update value network V πR using (9)  
+
+> 11
+
+Update cost networks V πCi using (10)  
+
+> 12
+
+Update policy network using (7) 
+
+Remark 2. Unlike the slack-augmented AL used in APPO [26], our PPO-EAL formulation directly adopts the Rockafellar-type exact augmented Lagrangian without intro-ducing auxiliary slack variables. Hence, no penalty-factor adjustment is required in practice. In addition, differing from the APPO method, we update the Lagrangian λi only at the outer (epoch) loop rather than inside each epoch, ensuring smoother and more stable convergence behaviour. 
+
+IV. V ALIDATION 
+
+We systematically evaluate PPO-EAL across various control tasks with increasing dynamical and operational complexity, ranging from classical inverted cart-pole stabilization problems to high-dimensional manipulation and locomotion tasks. These tasks encompass multiple physical safety constraints, including velocity, position, torque, and contact-force limitations, pro-viding a comprehensive assessment of safe control capability. Using GPU-accelerated simulation for large-scale training and benchmarking, we compare PPO-EAL against representative state-of-the-art first-order safe RL baselines. Beyond simula-tion, we further investigate real-world deployability through zero-shot sim-to-real transfer in a contact-rich gear assembly task, assessing safety, robustness, and control effectiveness in physical robotic systems. All resulting videos are available at https://youtu.be/Cenyd5Ng76k. 
+
+A. Environment and Baselines 
+
+We train the policy with IssacLab, a GPU-accelerated, open-source framework designed to unify and simplify robotics research workflows. The IssacLab development initiated from the Orbit framework [34] and the robot dynamics are emulated with Issac Sim [35]. We implemented the RL algorithms with RSL-RL, an open-source RL library [36]. Within each task, all methods employ identical network architectures, with ELU activation functions for fair comparison. By default, all the tasks are trained with 3000 iteration steps. (a) 
+
+## (c) 
+
+## (b) 
+
+## (d) 
+
+Fig. 1: Four benchmark control tasks used for RL evaluation: (a) inverted cart-pole balancing, (b) cart-double pendulum swing-up and stabilization, (c) Franka end-effector pose reach-ing, (d) quadrupedal locomotion. To comprehensively assess task performance, we compare PPO-EAL against representative state-of-the-art first-order constrained RL baselines, including PPO Lagrangian (PPO-L) [16], P3O 2, and APPO [26] (we call it ‘PPO-AL’ below). In particular, we extend the above methods to accommodate mul-tiple feasibility constraints if necessary. To solve the CMDP problem, ci is defined as a binary threshold-violation indicator, and JCi is estimated by the empirical violation rate over all rollout samples. Therefore, the constraint JCi (π) ≤ bi requires the average violation rate of the i-th physical constraint to remain below the prescribed threshold bi3. Moreover, in all validations, the standard PPO serves as a basic baseline. 
+
+B. Safe Control Tasks with GPU-Accelerated Environment 
+
+In this section, we validate and compare different safe RL methods across four benchmark control tasks, including in-verted cart-pole balancing, cart-double pendulum stabilization, Franka end-effector pose reaching and quadrupedal locomo-tion, as illustrated in Fig. 1. 
+
+1) Inverted cart-pole balancing: Considering an inverted pendulum attached to a moving cart, we compute the desired force applied to the cart base to ensure that the pole moves to the vertical position rapidly and then maintains balance (see Fig 1(a)). We limit the joint velocity below 1 rad/s and set the constraint violation threshold, i.e., safety threshold, to 1e-2. We apply the actor-critic structure to learn the control policy. Both the actor and critic networks have two hidden layers, each containing 64 neurons. The agent observes cart position, cart velocity, pole inclination angle, and angular velocity and then outputs the 1D raw action applied to the cart. 
+
+Results: Fig. 2 plots the training curves and Table I reports the statistical results. Results in Fig. 2 and Table I demonstrate that PPO-L, P3O, PPO-EAL, and PPO-EAL-m satisfy the safety requirement 4. While PPO-L obtains the lowest limit violation rate, PPO-EAL-m achieves the highest task reward while satisfying the safety requirement, thus accomplishing the best overall safety-performance tradeoff.                  
+
+> 2Here, we use the normalized version defined in [25].
+> 3Note that we actually obtain an approximation version of ‘violation rate’ by defining the discounted-sum cost JCi(π)in (4).
+> 4Note that we are actually using the approximation version of ‘violation rate’ due to the usage of discounted-sum cost JCi(π), as defined in (4). XX 60500 1000 1500 2000 2500 3000
+> Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> Violation rate
+> Cartpole joint velocity constraint
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.01
+> 2500 2600 2700 2800 2900 3000
+> 0.010
+> 0.015
+
+(a) Pole joint velocity threshold violation during the training process. 0 500 1000 1500 2000 2500 3000       
+
+> Step
+> 0
+> 200
+> 400
+> 600
+> Mean reward
+> Reward
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=596.34
+> 2500 2600 2700 2800 2900 3000
+> 595.0
+> 597.5
+
+(b) Evolution of the mean reward during the training process. 
+
+Fig. 2: Training profiles for the inverted cart-pole balancing. The black dashed lines in (a) and (b) separately mark the safety threshold (a) and the reward obtained by vanilla PPO (b). TABLE I: Statistical results for the inverted cart-pole balanc-ing. Red fonts mark the safety requirement violation. Light-blue values denote minor numerical deviations attributable to statistical estimation noise or stochastic sampling variance 5.The bold black fonts mark the peak values obtained by different policies.                                     
+
+> Method Violation rate ( ↓)Reward ( ↑)Success Last 100 steps End value Last 100 steps End value
+> PP0 1.3e-2 ±7.1e-5 1.4e-2 596.37 ±4.6e-2 596.34 ✗
+> PPO-L 9.3e-3 ±8.7e-4 9.4e-3 597.43 ±2.2e-2 597.43 ✓
+> P30 1.1e-2 ±5.0e-5 1.1e-2 595.09 ±5.7e-2 595.06 ✓✗
+> PP0-AL 2.6e-2 ±7.8e-3 3.4e-2 596.41 ±8.2e-2 596.59 ✗
+> PP0-EAL 1.0e-2 ±9.2e-5 9.9e-3 597.22 ±3.8e-2 597.15 ✓
+> PP0-EAL-m 9.9e-3 ±6.8e-5 9.9e-3 597.68 ±2.8e-2 597.70 ✓
+
+2) Cart-double pendulum stabilization: Taking into account the double inverted pendulums on a moving cart, we compute the desired force on the cart base and the rotation torque applied to the second pendulum joint to ensure that the double pendulums move to the vertical position rapidly (see Fig 1(b)). Specifically, cart position and velocity are constrained to 1.5 m and 3 m/s, respectively. The constraint violation thresholds are 5e-3 and 1e-2, respectively. The network structure is the same as that used for the cart-pole balancing task. The agent observes the cart position, cart linear velocity, pole angle, pole angular velocity, relative angle of pendulum to first pole, angular velocity of the second joint, and absolute angle of second pole relative to cart vertical, and then outputs the 2D raw action applied to the system. 
+
+Results: Fig. 3 and Fig. 4 separately plot the constraint violation curves and the reward curves with different meth-ods and Table II reports the statistical results. The results demonstrate that all first-order constrained RL approaches evaluated satisfy the safety requirement. However, PPO-EAL-m achieves the highest task reward while preserving precise safety compliance. 
+
+3) Franka end-effector pose reaching: Considering Franka robotic manipulator [37] with a fixed base, we compute the desired joint angle (which is then tracked by the PD-type torque control) to command the end effector to track a randomly-selected position and pose (see Fig 1(c)). We limit the joint velocity and the end-effector Catesian velocity to 90% of the feasible allowable thresholds. The constraint 
+
+> 5These marginal deviations are not considered safety violations in our evaluation. We mark this case with ‘ ✓✗ ’ in the table.
+
+violation thresholds are both 1e-3. The network structure is the same as that used for the cart-pole balancing task. The agent observes the joint configuration (angles, velocities), end-effector position and velocity, goal pose (position and orientation), and last action, and then outputs the 7D raw action applied to the system, which is smoothed by a moving average filter. 
+
+Results: Fig. 5 and Fig. 6 separately plot the constraint viola-tion curves and the reward curves. Table III reports the statis-tical results. The results demonstrate that all the first-order constrained RL approaches satisfy the safety requirement. However, due to the fluctuation, the PPO-EAL fails to meet the safety requirement on end-effector velocity strictly (see red curve in Fig. 5(b)). In contrast, when momentum regulation is considered, the safety requirement is satisfied. While P3O achieves the lowest violation rate in each channel, it results in a reduced task reward, indicating overly conservative behavior. Instead, the proposed approach, i.e., PPO-EAL and PPO-EAL-m, obtains the highest rewards, meaning the best tracking-safety performance. 
+
+4) Quadrupedal locomotion: We applied the RL policy to a quadrupedal locomotion task with the ANYmal-C robot, following the setting in [25] (see Fig 1(d)). Both the actor and critic networks have three hidden layers, each containing 128 neurons. In particular, we constrained the joint deviation, joint velocity, and joint torque below 0.5 rad, 6 rad/s, and 75 Nm, whose physical-infeasible values are 0.6 rad, 8 rad/s and 80 Nm, respectively. The constraint violation thresholds are 1e-2, 1e-3 and 5e-5, respectively. 
+
+Results: Fig. 7 plot the training curves and Table IV reports the statistical results. The results in Fig. 7 and Table IV demonstrate that only PPO-L, PPO-EAL, and PPO-EAL-m satisfy the safety requirement. While P3O achieves a lower violation rate for position constraints, it does so at the cost of a substantially reduced task reward. In contrast, PPO-EAL-m achieves the highest overall reward while simultaneously satisfying all required safety thresholds, demonstrating supe-rior safety-performance trade-offs in complex multi-constraint robotic control. These results highlight the practical effec-tiveness of PPO-EAL in maintaining stable, high-performance locomotion while enforcing precise safety regulation. XX 70 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> Violation rate
+
+Cart position constraint     
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.005
+> 2500 2600 2700 2800 2900
+> 0.000
+> 0.002
+> 0.004
+
+(a) Cart position threshold violation during the training process. 0 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Violation rate
+
+Cart velocity constraint      
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.01
+> 2500 2600 2700 2800 2900
+> 0.010
+> 0.015
+
+(b) Cart velocity threshold violation during the training process. 
+
+Fig. 3: Training profiles for the cart-double pendulum stabilization task. The black dashed lines mark the safety thresholds. TABLE II: Statistical results for the cart-double pendulum stabilization task. Red fonts mark the safety requirement violation. The bold black fonts mark the peak values obtained by different policies. 
+
+Method Position violation rate ( ↓) Velocity violation rate ( ↓) Reward ( ↑) Success Last 100 steps End value Last 100 steps End value Last 100 steps End value 
+
+PP0 4.1e-3 ±2.3e-4 3.9e-3 1.7e-2 ±2.6e-4 1.7e-2 577.26 ±0.28 576.99 ✗
+
+PPO-L 2.4e-3 ±1.4e-4 2.5e-3 1.1e-2 ±9.3e-5 1.0e-2 575.26 ±0.12 575.18 ✓
+
+P30 3.5e-3 ±2.4e-4 3.0e-3 1.0e-2 ±9.7e-5 1.0e-2 563.38 ±0.27 563.06 ✓
+
+PP0-AL 4.8e-3 ±2.0e-4 4.6e-3 9.2e-3 ±1.2e-4 9.3e-3 565.77 ±0.47 565.81 ✓
+
+PP0-EAL 0.2e-23 ±0.0e-23 0.0e-23 9.5e-3 ±1.1e-4 9.5e-3 576.30 ±0.62 574.92 ✓
+
+PP0-EAL-m 5.7e-4 ±2.8e-5 5.5e-4 8.3e-3 ±8.5e-5 8.4e-3 577.28 ±0.45 577.65 ✓
+
+TABLE III: Statistical results for the Franka end-effector pose reaching task. Red fonts mark the safety requirement violation. The bold black fonts mark the peak values obtained by different policies.                                                    
+
+> Method Joint velocity violation rate ( ↓)End-effector velocity violation rate ( ↓)Reward ( ↑)Success Last 100 steps End value Last 100 steps End value Last 100 steps End value
+> PP0 5.1e-3 ±2.2e-4 4.7e-3 2.9e-2 ±1.7e-4 2.8e-2 18.47 ±0.83 18.07 ✗
+> PPO-L 4.4e-4 ±2.4e-5 4.1e-4 5.2e-4 ±4.5e-5 5.5e-4 18.66 ±0.41 18.78 ✓
+> P30 3.1e-5 ±3.0e-6 3.2e-5 4.4e-5 ±1.7e-5 8.1e-5 33.29 ±0.32 33.39 ✓
+> PP0-AL 5.6e-4 ±3.0e-5 5.7e-4 9.2e-4 ±6.1e-5 9.2e-4 33.76 ±0.22 33.41 ✓
+> PP0-EAL 9.2e-4 ±2.5e-5 9.0e-4 1.1e-4 ±4.4e-5 1.1e-3 35.38 ±0.22 35.39 ✓✗
+> PP0-EAL-m 8.9e-4 ±2.6e-5 8.5e-4 8.2e-4 ±3.2e-5 8.8e-4 33.69 ±0.25 34.12 ✓
+
+TABLE IV: Statistical results for the quadrupedal locomotion task. Red fonts mark the safety requirement violation. The bold black fonts mark the peak values obtained by different policies. 
+
+Method Position violation rate ( ↓) Velocity violation rate ( ↓) Torque violation rate ( ↓) Reward ( ↑) Success Last 100 steps End value Last 100 steps End value Last 100 steps End value Last 100 steps End value 
+
+PP0 8.3e-2 ±8.4e-4 8.5e-2 4.0e-3 ±1.9e-4 4.1e-3 1.4e-4 ±2.7e-5 1.3e-4 27.19 ±6.4e-2 27.25 ✗
+
+PPO-L 7.8e-3 ±4.7e-4 8.6e-3 7.6e-4 ±3.2e-5 6.7e-4 4.3e-5 ±1.1e-5 2.9e-5 27.07 ±4.1e-2 27.16 ✓
+
+P30 1.7e-3 ±8.0e-5 1.6e-3 1.1e-3 ±3.7e-5 1.1e-3 1.3e-5 ±6.0e-6 2.4e-5 25.65 ±4.5e-2 25.73 ✓✗ 
+
+PP0-AL 7.1e-3 ±6.9e-4 7.1e-3 1.3e-3 ±1.2e-4 1.1e-3 1.1e-4 ±2.4e-5 7.1e-5 26.93 ±5.9e-2 27.06 ✗
+
+PP0-EAL 7.2e-3 ±3.4e-4 8.1e-3 9.4e-4 ±6.1e-5 9.1e-4 4.2e-5 ±5.0e-6 4.6e-5 27.54 ±2.8e-2 27.58 ✓
+
+PP0-EAL-m 8.4e-3 ±3.9e-4 8.7e-3 8.1e-4 ±7.5e-5 7.6e-4 3.6e-5 ±2.0e-5 1.0e-5 27.59 ±5.5e-2 27.63 ✓0 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0
+> 200
+> 400
+> 600
+> Mean reward
+
+Reward     
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=576.99
+> 2500 2600 2700 2800 2900
+> 565
+> 570
+> 575
+
+Fig. 4: Reward profile for the cart-double pendulum stabiliza-tion task. The black dashed line marks the reward obtained by vanilla PPO. 
+
+C. Sensitivity analysis 
+
+Taking the quadrupedal locomotion task as an example, we conduct sensitivity analyses by varying key training settings. 
+
+1) Performance variation with different quadratic penalty factors: In theory, Theorem 1 requires a sufficiently large penalty coefficient β to guarantee the exactness property. How-ever, in the above tasks, we set β = αλi , a constant coupled to the Lagrange learning rate, which acts as a mild quadratic regularizer stabilizing the dual updates. This practical choice yields smoother training dynamics while maintaining approx-imate exactness. To further investigate the influence of the penalty magnitude, we conduct a sensitivity analysis by setting 
+
+β = N α λi with N ∈ { 1, 10 , 20 , 50 , 100 }.XX 80 500 1000 1500 2000 2500 3000 3500 4000      
+
+> Step
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Violation rate
+> Joint velocity constraint
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.001
+> 3500 3600 3700 3800 3900 4000
+> 0.0000
+> 0.0005
+> 0.0010
+
+(a) Joint velocity threshold violation during the training process. 0 500 1000 1500 2000 2500 3000 3500 4000       
+
+> Step
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> Violation rate
+> Endeffector velocity constraint
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.001 3500 3600 3700 3800 3900 4000
+> 0.0000
+> 0.0005
+> 0.0010
+
+(b) End-effector velocity threshold violation during the training process. 
+
+Fig. 5: Training profiles for the Franka end-effector pose reaching task. The black dashed lines mark the safety thresholds. 0 500 1000 1500 2000 2500 3000 3500 4000      
+
+> Step
+> 200
+> 100
+> 0
+> Mean reward
+> Reward
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=18.07 3500 3600 3700 3800 3900 4000
+> 20
+> 30
+
+Fig. 6: Reward profile for the Franka end-effector pose reach-ing task. The black dashed line marks the reward obtained by vanilla PPO. The statistical results in Table V indicate that, when N ≤
+
+20 , the generated motion satisfies the safety requirements. In contrast, when N becomes too large, some of the safety requirements are violated. It can be attributed to the fact that an excessively large quadratic penalty can dominate the policy-gradient update, amplify estimation noise and clipping bias, and induce oscillatory constraint correction. Another reason is that the derivative gain kd is kept fixed in this study. Since the effective dual dynamics depend jointly on β, the multiplier learning rate, and kd, larger penalty values may require retuning kd for stable constraint regulation. 
+
+2) Robustness against different random seeds: To evaluate robustness under environmental uncertainty, we assess PPO-EAL across multiple runs using five different random seeds. Table VI summarizes the resulting policy performance under varying initialization and environment stochasticity. The upper part of Table VI reports PPO-EAL without momentum regulation. While the method generally maintains strong reward performance across seeds, the resulting policies exhibit noticeable sensitivity in satisfying strict torque safety constraints, with several runs violating the required torque threshold. Although the average torque violation remains rela-tively low, these results indicate that the baseline dual-update mechanism can produce unstable constraint regulation under environmental variation. The lower panel reports PPO-EAL with momentum regula-tion, i.e, PPO-EAL-m. Incorporating momentum significantly improves robustness by reducing overall torque violation, im-proving average safety satisfaction, and increasing consistency across random seeds. In particular, the average policy with momentum regulation satisfies all required safety constraints while preserving comparable or slightly improved reward per-formance relative to the non-momentum variant. These results demonstrate that momentum regulation not only improves transient safety-performance trade-offs, but also enhances training robustness under varying environmental uncertainties. 
+
+3) Task performance under different safety requirements: 
+
+To evaluate sensitivity to varying safety specifications, we assess PPO-EAL and PPO-EAL-m under multiple combi-nations of constraint thresholds while keeping all training hyperparameters fixed. This setting tests the versatility of the proposed framework under changing operational safety demands without task-specific retuning. Table VII demonstrates that extremely restrictive safety thresholds (e.g., 1e-5 for torque limit violation) substantially reduce the feasible solution space for both methods, occasion-ally leading to constraint violations. Nevertheless, PPO-EAL-m achieves superior safety robustness and more stable safety-performance trade-offs across most evaluated configurations. These results demonstrate that the momentum-regulated PPO-EAL framework offers improved versatility and practical ap-plicability for robotic systems operating under different levels of safety requirements. 
+
+D. Real-world Application–Contact-rich Gear Assembly 
+
+To further assess the effectiveness of the proposed method, we apply it to a contact-rich gear assembly task, which is substantially more challenging due to the stringent precision and control requirements imposed by restrictive contact condi-tions. The gear assembly task can be divided into two stages. In the first stage, the gripper moves the gear toward the target shaft position and aligns it with the shaft axis. In the second stage, the gripper applies downward insertion force while simultaneously rotating the gear to achieve successful tooth engagement and complete the assembly process. Task success is determined by satisfying geometric conditions on XY alignment, insertion depth, and final alignment between the gear and target shaft. 
+
+1) RL formulation: The RL framework adopts an asym-metric actor–critic structure. The actor observation consists of fingertip position, fingertip position relative to the fixed target, fingertip orientation quaternion, end-effector linear velocity, angular velocity, 6D hand wrench, and the last action. The XX 90 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Violation rate
+
+Joint position constraint     
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.01
+> 2500 2600 2700 2800 2900
+> 0.00
+> 0.01
+
+(a) Joint position threshold violation during the training process. 0 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> Violation rate
+
+Joint velocity constraint      
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=0.001
+> 2500 2600 2700 2800 2900
+> 0.0010
+> 0.0015
+
+(b) Joint velocity threshold violation during the training process. 0 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> Violation rate
+
+Joint torque constraint     
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=5e05
+> 2500 2600 2700 2800 2900
+> 0.00000
+> 0.00005
+> 0.00010
+> 0.00015
+
+(c) Joint torque threshold violation during the training process. 0 500 1000 1500 2000 2500 3000 
+
+Step 
+
+> 0
+> 10
+> 20
+> Mean reward
+
+Reward      
+
+> P3O
+> PPO
+> PPO_AL
+> PPO_EAL
+> PPO_EALm
+> PPO_L
+> y=27.25 2500 2600 2700 2800 2900
+> 25
+> 26
+> 27
+
+(d) Evaluation of the mean reward during the training process. 
+
+Fig. 7: Training profiles for the quadrupedal locomotion task. The black dashed lines mark safety thresholds in (a)–(c) and the reward obtained by vanilla PPO in (d). TABLE V: Policy performance with different quadratic penalty factors ( β = N α λi ). Red fonts mark the safety requirement violation. 
+
+Penalty Position violation rate ( ↓) Velocity violation rate ( ↓) Torque violation rate ( ↓) Reward ( ↑) Success Last 100 steps End value Last 100 steps End value Last 100 steps End value Last 100 steps End value 
+
+N = 1 (Default) 7.2e-3 ±3.4e-4 8.1e-3 9.4e-4 ±6.1e-5 9.1e-4 4.2e-5 ±5.0e-6 4.6e-5 27.54 ±2.8e-2 27.58 ✓
+
+N = 10 8.7e-3 ±5.8e-4 8.2e-3 8.6e-4 ±3.5e-5 8.1e-4 6.8e-5 ±1.4e-5 4.8e-5 27.58 ±3.6e-2 27.61 ✓
+
+N = 20 1.2e-2 ±1.1e-3 9.8e-3 9.7e-4 ±4.6e-5 9.0e-4 3.6e-5 ±1.3e-5 3.0e-5 27.45 ±3.7e-2 27.52 ✓
+
+N = 50 7.3e-3 ±9.1e-4 6.7e-3 7.4e-4 ±4.4e-5 7.0e-4 8.0e-5 ±1.0e-5 7.7e-5 27.36 ±3.0e-2 27.39 ✗
+
+N = 100 1.1e-2 ±3.7e-4 1.2e-2 8.5e-4 ±6.8e-5 7.6e-4 4.1e-5 ±2.5e-5 1.7e-5 27.47 ±5.0e-2 27.49 ✗
+
+TABLE VI: Policy performance with different random seeds. The upper panel reports the results without momentum regulation while the bottom panel reports the results with momentum regulation. 
+
+Seed Position violation rate ( ↓) Velocity violation rate ( ↓) Torque violation rate ( ↓) Reward ( ↑) Success Last 100 steps End value Last 100 steps End value Last 100 steps End value Last 100 steps End value 42 (Default) 7.2e-3 ±3.4e-4 8.1e-3 9.4e-4 ±6.1e-5 9.1e-4 4.2e-5 ±5.0e-6 4.6e-5 27.54 ±2.8e-2 27.58 ✓
+
+0 1.2e-3 ±1.2e-3 1.1e-2 1.3e-3 ±1.1e-4 1.2e-3 8.1e-5 ±3.6e-5 8.0e-5 27.30 ±4.2e-2 27.31 ✗
+
+1 9.6e-3 ±5.3e-4 1.1e-2 9.8e-4 ±7.6e-5 9.2e-4 6.9e-5 ±2.6e-5 4.3e-5 27.36 ±4.6e-2 27.46 ✓✗ 
+
+2 7.9e-3 ±2.2e-4 7.8e-3 1.0e-3 ±4.2e-5 9.4e-4 1.0e-4 ±1.5e-5 9.5e-5 27.47 ±5.7e-2 27.53 ✗
+
+199 8.5e-3 ±4.5e-4 8.1e-3 1.0e-3 ±6.9e-5 9.8e-3 1.3e-4 ±2.2e-5 1.2e-4 27.12 ±7.4e-2 27.18 ✗
+
+Average 8.9e-3 ±1.7e-3 9.1e-3 ±1.5e-3 1.1e-3 ±1.6e-4 1.0e-3 ±1.3e-4 8.4e-5 ±3.7e-5 7.7e-5 ±3.3e-5 27.36 ±0.15 27.39 ±0.15 ✗
+
+42 (Default) 8.4e-3 ±3.9e-4 8.7e-3 8.1e-4 ±7.5e-5 7.6e-4 3.6e-5 ±2.0e-5 1.0e-5 27.59 ±5.5e-2 27.63 ✓
+
+0 7.9e-3 ±5.8e-4 8.6e-3 9.7e-4 ±7.5e-5 9.7e-4 6.9e-5 ±1.3e-5 6.6e-5 27.54 ±4.7e-2 27.59 ✗
+
+1 1.2e-2 ±5.6e-4 1.1e-2 7.1e-4 ±3.4e-5 7.0e-4 3.6e-5 ±1.3e-5 1.7e-5 27.67 ±3.7e-2 27.70 ✓✗ 
+
+2 9.3e-3 ±3.8e-4 9.5e-3 1.3e-3 ±8.6e-5 1.2e-3 5.9e-5 ±2.8e-5 6.5e-5 27.45 ±5.8e-2 27.47 ✗
+
+199 6.8e-3 ±4.2e-4 8.1e-3 7.3e-4 ±4.2e-5 7.5e-4 1.0e-5 ±7.0e-6 1.0e-5 27.37 ±4.2e-2 27.46 ✓
+
+Average 8.9e-3 ±1.8e-3 9.1e-3 ±1.0e-3 9.0e-4 ±2.2e-4 8.8e-4 ±2.3e-4 4.2e-5 ±2.7e-5 3.4e-5 ±2.9e-5 27.52 ±0.11 27.57 ±0.10 ✓
+
+critic state contains all actor observations plus privileged information such as joint positions, manipulated object pose, target object pose, controller gains, and control thresholds. The action space is a 6D vector, where the first three di-mensions are the incremental Cartesian position displacement and the last three dimensions are the incremental rotational dis-placement of the end-effector. Actions are scaled by predefined positional and rotational thresholds before being converted into target poses for task-space impedance controller. The reward function is composed of multi-scale keypoint-based alignment rewards, action magnitude penalties, action smoothness penalties, engagement bonuses, and final success bonuses. This reward structure progressively encourages object approach, alignment, and successful insertion while discour-XX 10 
+
+TABLE VII: Policy performance with different safety requirements. Red fonts mark the safety requirement violation.                                                                                                                                 
+
+> Safety Method Position violation rate ( ↓)Velocity violation rate ( ↓)Torque violation rate ( ↓)Reward ( ↑)Success level Last 100 steps End value Last 100 steps End value Last 100 steps End value Last 100 steps End value [1e-2,1e-3,1e-4] PPO-EAL 1.1e-2 ±9.4e-4 1.4e-2 9.1e-4 ±4.1e-5 9.3e-4 2.2e-5 ±8.0e-6 1.5e-5 27.56 ±5.2e-2 27.56 ✗
+> PPO-EAL-m 1.2e-2 ±5.6e-4 1.1e-2 9.2e-4 ±8.7e-5 9.4e-4 3.5e-5 ±2.1e-5 1.6e-5 27.60 ±4.3e-2 27.60 ✓✗
+> [1e-2,1e-3,5e-5] PPO-EAL 7.2e-3 ±3.4e-4 8.1e-3 9.4e-4 ±6.1e-5 9.1e-4 4.2e-5 ±5.0e-6 4.6e-5 27.54 ±2.8e-2 27.58 ✓
+> PPO-EAL-m 8.4e-3 ±3.9e-4 8.7e-3 8.1e-4 ±7.5e-5 7.6e-4 3.6e-5 ±2.0e-5 1.0e-5 27.59 ±5.5e-2 27.63 ✓
+> [1e-2,1e-3,1e-5] PPO-EAL 1.0e-2 ±3.1e-4 9.3e-3 8.1e-4 ±9.2e-5 7.5e-4 4.8e-5 ±1.7e-5 2.8e-5 27.45 ±5.1e-2 27.53 ✗
+> PPO-EAL-m 8.7e-3 ±2.0e-4 8.6e-3 9.5e-4 ±1.2e-4 9.7e-4 9.9e-5 ±3.9e-5 8.1e-5 27.51 ±6.4e-2 27.56 ✗
+> [1e-3,1e-3,1e-4] PPO-EAL 4.9e-4 ±1.2e-4 3.4e-4 6.8e-4 ±7.7e-5 5.7e-4 2.4e-4 ±2.2e-5 1.9e-4 27.25 ±3.5e-2 27.27 ✗
+> PPO-EAL-m 8.1e-4 ±1.0e-4 7.1e-4 9.0e-4 ±4.7e-5 8.7e-4 1.1e-4 ±2.2e-5 1.0e-4 27.30 ±3.8e-2 27.34 ✓
+> [1e-3,1e-3,5e-5] PPO-EAL 3.9e-4 ±3.8e-5 3.8e-4 6.7e-4 ±6.2e-5 6.3e-4 1.9e-4 ±1.4e-5 2.1e-4 27.26 ±3.2e-2 27.31 ✗
+> PPO-EAL-m 7.0e-4 ±9.4e-5 7.5e-4 7.7e-4 ±4.1e-5 7.4e-4 3.1e-5 ±1.1e-5 2.6e-5 27.24 ±6.8e-2 27.30 ✓
+> [1e-3,1e-3,1e-5] PPO-EAL 5.1e-4 ±1.7e-4 5.1e-4 7.0e-4 ±1.1e-4 7.8e-4 1.6e-4 ±2.6e-5 1.7e-4 27.14 ±7.7e-2 27.20 ✗
+> PPO-EAL-m 7.1e-4 ±1.2e-4 6.9e-4 8.0e-4 ±5.6e-5 8.2e-4 4.5e-5 ±1.4e-5 2.9e-5 27.28 ±2.7e-2 27.30 ✗
+
+Fig. 8: Contact-rich gear assembly with PPO-EAL policy: (left) simulation evaluation, (right) hardware deployment. aging excessive or unstable motions. Each episode terminates when the maximum episode length is reached. As described above, PPO-EAL and PPO employ identical network architectures with the same depth and width. For safety considerations, the contact force threshold is set to 15 N, with the desired violation rate constrained below 2e-3. During training, the target horizontal shaft position is randomized within ±5 cm of [0.35, 0.25] m. For sim-to-real transfer, domain randomization is applied by introducing noisy position observations and varying control gains. 
+
+2) Results: We compared PPO-EAL and PPO through real-world experiments. The results over 20 hardware tests show that the PPO-EAL achieves an 80% success rate, while the na¨ ıve PPO only reaches a 30% success rate. For successful trials only, we further evaluate the mean values and standard deviations of the following metrics: (1) the peak contact force ( Fmax ) and peak torque ( τmax ) en-countered during task execution, (2) the task completion time (Ts), defined as the elapsed time from the start of policy execution to the first time the measured end-effector reaches its lowest insertion height, (3) the average XY-plane position error between the reference and measured end-effector positions before task completion ( etrack ), which reflects excessive lateral motion during task execution, and (4) the average XY-plane distance between the reference trajectory and the target inser-tion position before task completion ( eh), which characterizes the reference policy’s insertion efficiency and search behavior. Results in Table VIII show that, compared with PPO, PPO-EAL achieves substantially safer gear assembly behavior by reducing peak contact force by approximately 46%. Also, the mean values of average etrack and eh across successful trials using PPO-EAL are smaller than those using PPO, demonstrating reduced lateral motion during task execution and more effective search movement. Although PPO-EAL TABLE VIII: Gear assembly performance comparison.                           
+
+> Fmax [N] τmax [Nm] Ts[s] etrack [m] eh[m] PP0 53.4 ±8.4 3.0 ±0.7 9.1 ±4.1 1.2e-2 ±2.6e-3 1.0e-2 ±1.7e-4 PP0-EAL 28.7 ±5.7 3.0 ±0.5 11.3 ±6.1 7.9e-3 ±9.6e-4 9.7e-3 ±4.8e-4 PP0-EAL-m 21.5 ±4.8 2.6 ±0.3 9.3 ±5.2 8.0e-3 ±6.9e-4 9.9e-3 ±3.6e-4
+
+requires longer task completion time, the results demonstrate a favorable safety–performance tradeoff. Furthermore, compared with PPO-EAL, the momentum-regulated PPO-EAL-m further improves real-world deploy-ment performance by reducing peak contact force, peak torque, task completion time, while achieving almost the same level of success rate and lateral tracking errors. In particular, PPO-EAL-m achieves the lowest peak force and torque among all evaluated methods, demonstrating that momentum regulation translates into superior practical safety-performance trade-offs in contact-rich robotic manipulation. We also tested the generalization capabilities of PPO-EAL, subjecting varying target shart positions and gear mass. Com-parison tests can be found in the supplementary video. While PPO is not able to generalize to new situations (the success rate over 20 tests drops to 0%), we found that the PPO-EAL policy enables generalization to new situations (success rate ≈
+
+80% over 20 runs) where the target shaft position goes beyond the zone experienced in the training stage, demonstrating robustness in real-world deployment. V. C ONCLUSION AND DISCUSSION 
+
+This work presents PPO-EAL, a constrained proximal pol-icy optimization framework that integrates exact augmented Lagrangian optimization into first-order deep reinforcement learning for safe robotic control. By combining clipped policy optimization with exact quadratic penalty terms and stabilized dual-variable updates, PPO-EAL achieves precise safety con-straint satisfaction while maintaining strong task performance across diverse robotic systems. Extensive validation in GPU-accelerated benchmark tasks, including inverted cart-pole bal-ancing, cart-double pendulum stabilization, Franka manipu-lator control, and quadrupedal locomotion, demonstrates that PPO-EAL consistently outperforms existing first-order safe RL baselines in terms of safety precision and learning stability. In particular, real-world hardware experiments confirm that PPO-EAL substantially improves contact safety, and sim-to-XX 11 
+
+real generalization for challenging contact-rich manipulation tasks, highlighting its practical value for safety-critical control. Despite these promising results, several directions remain for future research. First, while the current implementation primarily relies on feedforward actor–critic architectures, more advanced policy structures such as recurrent networks may further improve performance in robot control tasks requiring richer temporal reasoning. Second, the CMDP framework in the current work only provides soft constraints in safety control. Since no online fine-tuning is considered, the sim2real performance depends heavily on the high-fidelity simulation. In the future, we will incorporate the safety shielding into the learning framework, providing rigorous safety guarantees. REFERENCES [1] R. S. Sutton and A. G. Barto, Reinforcement Learning: An Introduction ,2nd ed. Cambridge, MA: MIT Press, 2018. [2] J. Luo, C. Xu, J. Wu, and S. Levine, “Precise and dexterous robotic manipulation via human-in-the-loop reinforcement learning,” Science Robotics , vol. 10, no. 105, p. eads5033, 2025. [3] P. Falco, A. Attawia, M. Saveriano, and D. Lee, “On policy learning robust to irreversible events: An application to robotic in-hand manipu-lation,” IEEE Robotics and Automation Letters , vol. 3, no. 3, pp. 1482– 1489, 2018. [4] H. Wang, Z. Dong, T. Zhu, H. Lei, W. Shi, Z. Zhang, W. Luo, W. Wan, X. Chen, and J. Huang, “Robot deformable object manipulation via nmpc-generated demonstrations in deep reinforcement learning,” IEEE Transactions on Automation Science and Engineering , vol. 22, pp. 23 566–23 578, 2025. [5] I. Radosavovic, T. Xiao, B. Zhang, T. Darrell, J. Malik, and K. Sreenath, “Real-world humanoid locomotion with reinforcement learning,” Sci-ence Robotics , vol. 9, no. 89, p. eadi9579, 2024. [6] D. Hoeller, N. Rudin, D. Sako, and M. Hutter, “Anymal parkour: Learning agile navigation for quadrupedal robots,” Science Robotics ,vol. 9, no. 88, p. eadi7566, 2024. [7] V. Atanassov, J. Ding, J. Kober, I. Havoutis, and C. Della Santina, “Curriculum-based reinforcement learning for quadrupedal jumping: A reference-free design,” IEEE Robotics & Automation Magazine , vol. 32, no. 2, pp. 35–48, 2024. [8] G. Apostolides, W. Pan, J. Kober, C. Della Santina, and J. Ding, “Ex-plosive jumping with rigid and articulated soft quadrupeds via example guided reinforcement learning,” in IEEE/RSJ International Conference on Intelligent Robots and Systems , 2025, pp. 18 903–18 910. [9] Y. Zhou, J. Qiu, S. Jia, F. Ni, and W. Zhang, “Curriculum-enhanced rein-forcement learning for robust humanoid locomotion,” IEEE Transactions on Automation Science and Engineering , vol. 23, pp. 5779–5789, 2026. [10] E. Sebasti´ an, T. Duong, N. Atanasov, E. Montijano, and C. Sag¨ u´ es, “Physics-informed multi-agent reinforcement learning for distributed multi-robot problems,” IEEE Transactions on Robotics , vol. 41, pp. 4499–4517, 2025. [11] M. Hua, X. Qi, D. Chen, K. Jiang, Z. E. Liu, H. Sun, Q. Zhou, and H. Xu, “Multi-agent reinforcement learning for connected and automated vehicles control: Recent advancements and future prospects,” 
+
+IEEE Transactions on Automation Science and Engineering , vol. 22, pp. 16 266–16 286, 2025. [12] E. Altman, Constrained Markov decision processes . Routledge, 2021. [13] Y. Kim, H. Oh, J. Lee, J. Choi, G. Ji, M. Jung, D. Youm, and J. Hwangbo, “Not only rewards but also constraints: Applications on legged robot locomotion,” IEEE Transactions on Robotics , vol. 40, pp. 2984–3003, 2024. [14] J. Achiam, D. Held, A. Tamar, and P. Abbeel, “Constrained policy optimization,” in International conference on machine learning . PMLR, 2017, pp. 22–31. [15] T.-Y. Yang, J. Rosca, K. Narasimhan, and P. J. Ramadge, “Projection-based constrained policy optimization,” arXiv preprint arXiv:2010.03152 , 2020. [16] A. Ray, J. Achiam, and D. Amodei, “Benchmarking safe exploration in deep reinforcement learning,” arXiv preprint arXiv:1910.01708 , vol. 7, no. 1, p. 2, 2019. [17] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Prox-imal policy optimization algorithms,” arXiv preprint arXiv:1707.06347 ,2017. [18] Y. Zhang, Q. Vuong, and K. Ross, “First order constrained optimization in policy space,” Advances in Neural Information Processing Systems ,vol. 33, pp. 15 338–15 349, 2020. [19] C. Tessler, D. J. Mankowitz, and S. Mannor, “Reward constrained policy optimization,” arXiv preprint arXiv:1805.11074 , 2018. [20] S. Paternain, L. Chamon, M. Calvo-Fullana, and A. Ribeiro, “Con-strained reinforcement learning has zero duality gap,” Advances in Neural Information Processing Systems , vol. 32, 2019. [21] A. Stooke, J. Achiam, and P. Abbeel, “Responsive safety in reinforce-ment learning by pid lagrangian methods,” in International Conference on Machine Learning . PMLR, 2020, pp. 9133–9143. [22] Y. Liu, J. Ding, and X. Liu, “Ipo: Interior-point policy optimization under constraints,” in Proceedings of the AAAI conference on artificial intelligence , vol. 34, no. 04, 2020, pp. 4940–4947. [23] R. M. Freund, “Penalty and barrier methods for constrained optimiza-tion,” Lecture Notes, Massachusetts Institute of Technology , 2004. [24] L. Zhang, L. Shen, L. Yang, S. Chen, B. Yuan, X. Wang, and D. Tao, “Penalized proximal policy optimization for safe reinforcement learn-ing,” arXiv preprint arXiv:2205.11814 , 2022. [25] J. Lee, L. Schroth, V. Klemm, M. Bjelonic, A. Reske, and M. Hut-ter, “Exploring constrained reinforcement learning algorithms for quadrupedal locomotion,” in IEEE/RSJ International Conference on Intelligent Robots and Systems , 2024, pp. 11 132–11 138. [26] J. Dai, J. Ji, L. Yang, Q. Zheng, and G. Pan, “Augmented proximal policy optimization for safe reinforcement learning,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 37, no. 6, 2023, pp. 7288–7295. [27] S. Kakade and J. Langford, “Approximately optimal approximate rein-forcement learning,” in International conference on machine learning ,2002, pp. 267–274. [28] J. Schulman, P. Moritz, S. Levine, M. I. Jordan, and P. Abbeel, “High-dimensional continuous control using generalized advantage estimation,” 
+
+International Conference on Learning Representations , 2015. [29] D. P. Bertsekas, Constrained optimization and Lagrange multiplier methods . Academic press, 2014. [30] S. Bhatnagar, R. S. Sutton, M. Ghavamzadeh, and M. Lee, “Natural actor–critic algorithms,” Automatica , vol. 45, no. 11, pp. 2471–2482, 2009. [31] S. Bhatnagar, H. Prasad, and L. Prashanth, Stochastic Recursive Algo-rithms for Optimization . Springer, 2013, vol. 434. [32] Y. Chow, M. Ghavamzadeh, L. Janson, and M. Pavone, “Risk-constrained reinforcement learning with percentile risk criteria,” Journal of Machine Learning Research , vol. 18, no. 167, pp. 1–51, 2018. [33] R. T. Rockafellar, “Augmented lagrangians and applications of the proximal point algorithm in convex programming,” Mathematics of operations research , vol. 1, no. 2, pp. 97–116, 1976. [34] M. Mittal, C. Yu, Q. Yu, J. Liu, N. Rudin, D. Hoeller, J. L. Yuan, R. Singh, Y. Guo, H. Mazhar, A. Mandlekar, B. Babich, G. State, M. Hutter, and A. Garg, “Orbit: A unified simulation framework for interactive robot learning environments,” IEEE Robotics and Automation Letters , vol. 8, no. 6, pp. 3740–3747, 2023. [35] NVIDIA, “Isaac Sim.” [Online]. Available: https://github.com/isaac-sim/ IsaacSim [36] C. Schwarke, M. Mittal, N. Rudin, D. Hoeller, and M. Hutter, “Rsl-rl: A learning library for robotics research,” arXiv preprint arXiv:2509.10771 ,2025. [37] S. Haddadin, “The franka emika robot: A standard platform in robotics research [survey],” IEEE Robotics & Automation Magazine , vol. 31, no. 4, pp. 136–148, 2024.
