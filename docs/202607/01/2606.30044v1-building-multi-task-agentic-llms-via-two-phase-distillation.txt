@@ -1,0 +1,341 @@
+Title: Building Multi-Task Agentic LLMs via Two-Phase Distillation
+
+URL Source: https://arxiv.org/pdf/2606.30044v1
+
+Published Time: Tue, 30 Jun 2026 02:44:17 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+Preprint. 
+
+# Building Multi-Task Agentic LLMs via Two-Phase Distillation 
+
+Huaijie Wang 1∗ Shusheng Xu 2 Yi Wu 1 Kaifeng Lyu 11Tsinghua University 2Ant Group 
+
+wang-hx23@mails.tsinghua.edu.cn {xssstory,jxwuyi }@gmail.com klyu@mail.tsinghua.edu.cn 
+
+# Abstract 
+
+A key step toward artificial general intelligence is to train models that can perform multiple tasks. In this paper, we study how to build such models by first training separate RL experts for individual tasks and then consolidating them via distillation, as an alternative to directly training a single model on mixed tasks. We show that off-policy distillation de-grades in multi-task settings due to the mode-covering nature of forward KL: aggregating data from multiple tasks introduces a large number of behavioral modes that can exceed the student’s capacity, forcing it to av-erage across behaviors and leading to degraded performance. In contrast, on-policy distillation is mode-seeking but requires strong initialization. Inspired by these observations, we propose a two-phase approach: off-policy distillation followed by on-policy refinement. Evaluation across conversational agents and text-based games confirms that this two-phase approach matches single-task RL expert performance for each individual task, whereas off-policy or on-policy distillation alone fails to match this performance. 
+
+# 1 Introduction 
+
+Reinforcement Learning (RL) has demonstrated remarkable success across a wide range of agentic large language model (LLM) tasks, including interactive tool-using agents (Gao et al., 2026), search agents (Gao et al., 2025), and text-based games (Liu et al., 2025). As an important step towards artificial general intelligence, LLMs are expected to solve multiple tasks simultaneously. However, building such unified multi-task models remains chal-lenging. A straightforward approach is multi-task RL, i.e., jointly training a single model on multiple tasks. Unfortunately, multi-task RL presents significant practical challenges. Wu et al. (2025) find that different tasks may exhibit vastly different gradient scales, yet larger gradients do not necessarily correlate with greater performance gains. Ramesh et al. (2026) observe that certain tasks can dominate the training process, leading to suboptimal multi-task performance. Furthermore, multi-task RL may incur substantial computational costs, as the training cost of each trial is comparable to the sum of training all individual tasks. An alternative solution is to train one expert model for each task and then combine these models into a unified model. Two primary approaches exist for such combination: parameter merging (Ilharco et al., 2023; Yu et al., 2024) and distillation (DeepSeek-AI, 2025; Xiaomi LLM-Core Team, 2026; Agarwal et al., 2024). While parameter merging offers computational efficiency by requiring little or no additional training, it operates as a black box with limited interpretability. Parameter merging often suffers from performance trade-offs between tasks (Wang et al., 2026). Empirically, we observe substantial performance degradation with parameter merging on the benchmarks we evaluate. Additionally, the effectiveness of parameter merging is highly sensitive to the training dynamics of the supervised fine-tuning (SFT) phase. (See Appendix B.1 for details.) This paper focuses on distillation-based methods, which provide a more interpretable paradigm for combining knowledge from different expert models. We consider two main 
+
+> ∗
+
+This work was done during the internship at Ant Group. 
+
+1
+
+> arXiv:2606.30044v1 [cs.LG] 29 Jun 2026
+
+Preprint. distillation approaches: off-policy and on-policy distillation. Off-policy distillation collects rollouts from teacher models and applies supervised fine-tuning, essentially optimizing the forward KL divergence. In contrast, on-policy distillation samples from the student model and optimizes the reverse KL divergence. 
+
+Limitations of Off-Policy and On-Policy Distillation. Comparing off-policy and on-policy distillation, off-policy distillation is easier to implement and offers better training stability, but prior work has identified several limitations of off-policy distillation: (1) exposure bias (Bengio et al., 2015; Agarwal et al., 2024; Xu et al., 2025; Gu et al., 2026), where the student model makes out-of-distribution errors during generation but receives no guidance on recovery from the training data, causing errors to accumulate across generation steps; (2) mode-covering behavior (Agarwal et al., 2024; Gu et al., 2026), which typically occurs when the teacher has larger capacity than the student—since off-policy distillation optimizes forward KL (a mode-covering objective), the student model is incentivized to place probability mass across all modes in the teacher distribution, including placing excessive probability on low-probability regions; (3) conflicting reasoning structures between teacher and student (Chen et al., 2026). Among these possible limitations of off-policy distillation, our experiments reveal that when building multi-task agentic LLMs, the major challenge likely stems from its mode-covering property. Even when the student and teacher models share the same base model, aggregating data from multiple tasks introduces a larger number of behavioral modes that can exceed the student model’s capacity, forcing it to compromise by averaging across modes. Conversely, on-policy distillation cannot be applied directly without proper initialization, as it requires the student model to already possess sufficiently strong performance to generate reasonable trajectories. 
+
+Our Method: Two-Phase Distillation. To address this limitation, we propose a two-phase distillation approach: off-policy distillation followed by on-policy refinement. The mode-seeking property of on-policy distillation enables the student model to focus on a subset of modes, mitigating the averaging behavior induced by off-policy distillation. Meanwhile, off-policy distillation provides the necessary initialization for on-policy distillation to generate reasonable trajectories. We evaluate our method on four tasks: two conversational agent domains from τ2-bench (Barres et al., 2025) and two text-based games from GEM (Liu et al., 2025), demonstrating that our approach successfully recovers the performance of single-task RL models. Additionally, we investigate data aggregation strategies for multi-task off-policy distillation, showing that while data mixture affects off-policy distillation performance, our two-phase approach remains robust across different mixture configurations. 
+
+# 2 Related Works 
+
+2.1 Knowledge Distillation 
+
+Distillation transfers knowledge from a teacher model to a student model through two primary approaches. Off-policy distillation, also known as supervised knowledge distil-lation, collects data from the teacher model and applies supervised fine-tuning (SFT) to the student (Hinton et al., 2015). Recent successes (Guha et al., 2025; Moshkov et al., 2025; Du et al., 2025) have demonstrated that off-policy distillation enables small models (e.g., 1.5B parameters) to acquire strong reasoning capabilities for complex tasks in mathematics, coding, and science. However, as argued by Agarwal et al. (2024), the mode-covering nature of forward KL divergence in off-policy distillation can cause the student to assign excessive probability mass to low-probability regions of the teacher’s distribution, leading to hallucination and performance degradation. Another concern is exposure bias (Bengio et al., 2015), where the student’s sampling distribution at inference time may deviate from the teacher distribution, with errors potentially accumulating across generation steps. However, the severity of exposure bias in autoregressive language models remains debated (He et al., 2021). An alternative paradigm, on-policy distillation (Agarwal et al., 2024; Lu & Lab, 2025; Gu et al., 2026), samples from the student’s own distribution rather than the teacher’s. This 2Preprint. approach has been successfully incorporated to build powerful small language models from larger ones (Gu et al., 2026; Qwen Team, 2025b;a). However, on-policy distillation requires the student model to be sufficiently capable, as learning is limited to trajectories the student can already generate. When unifying multiple domain-specific LLMs into a single model, both distillation ap-proaches have been explored. DeepSeek-AI (2025) employ off-policy distillation and observe that while it introduces marginal performance drops, these can be recovered through a subsequent mixed RL phase. Xiaomi LLM-Core Team (2026) incorporate on-policy distil-lation and achieve performance comparable to domain experts on most benchmarks. Our experiments reveal that proper initialization is critical for on-policy distillation: relying solely on SFT for initialization can lead to unstable training and final performance that falls behind domain specialists. 
+
+2.2 Model Merging 
+
+Model merging operates directly in parameter space to combine multiple task-specific LLMs into a unified model. A straightforward approach fuses the parameter deltas of different models (Ilharco et al., 2023). Subsequent works address parameter interference through various techniques, such as neglecting minority signs (Yadav et al., 2023; Wan et al., 2024; Team, 2025) or applying dropout to parameter deltas (Yu et al., 2024; Team, 2025). Wang et al. (2026) introduce the concept of policy neighborhoods, where merging neighboring policies can improve performance. However, they demonstrate that this relationship is asymmetric and that merging non-neighboring policies may result in performance trade-offs, with gains in one task accompanied by degradation in another. An alternative approach determines optimal weights for averaging parameter deltas using metrics such as the Fisher Information Matrix (Matena & Raffel, 2022; Lee et al., 2025) or task-specific evaluation metrics (Lee et al., 2025; Li et al., 2025). However, these methods require additional computation and can be complex to implement. 
+
+# 3 Preliminary 
+
+We consider two types of distillation methods for combining single-task RL experts: off-policy distillation (Sec. 3.1) and on-policy distillation (Sec. 3.2). 
+
+3.1 Off-Policy Distillation 
+
+Off-policy distillation transfers knowledge from expert teacher models to a student model by collecting rollouts generated by the teachers and training the student via supervised fine-tuning (SFT). Given a teacher model πT (y|x) and a training prompt dataset Dtrain , we collect K rollouts from each training prompt: 
+
+Drollout = [
+
+> x∈D train
+
+{(x, y1), (x, y2), . . . , (x, yK ) | yi ∼ πT (·| x)}. (1) The student model πθ (y|x) is then trained to minimize the negative log-likelihood: 
+
+LSFT = E(x,y)∼D rollout [− log πθ (y|x)] . (2) This objective is equivalent to minimizing the forward KL divergence KL [πT ∥πθ ] between the teacher and student distributions. In the multi-task setting, we simultaneously distill from multiple expert models, each trained specifically for a different task. Let {π(i) 
+
+> T
+
+}Ni=1 denote the set of N task-specific expert models. For each expert, we collect rollouts from its corresponding task dataset and merge these rollout data to form a unified training set Dmultitask = SNi=1 D(i)
+
+> rollout
+
+, where D(i)
+
+> rollout
+
+contains the rollouts collected from expert π(i) 
+
+> T
+
+. The student model is then trained on this merged dataset using the SFT objective. 3Preprint. 
+
+3.2 On-Policy Distillation 
+
+On-policy distillation (Agarwal et al., 2024; Lu & Lab, 2025; Xiaomi LLM-Core Team, 2026) aims to minimize the reverse KL divergence KL [πθ ∥πT ] between the student model and the teacher model. This requires sampling from the student model, which cannot be performed in advance. In this paper, we follow the methodology of Lu & Lab (2025); Xiaomi LLM-Core Team (2026). The reverse KL divergence can be written as KL [πθ (·| x)∥πT (·| x)] (3) 
+
+= Ey∼πθ (·| x)[log πθ (y|x) − log πT (y|x)] (4) 
+
+= Ey∼πθ (·| x)
+
+" L
+
+# ∑
+
+> i=1
+
+(log πθ (yi|xy 1: i−1) − log πT (yi|xy 1: i−1)) 
+
+#
+
+. (5) Leveraging this decomposition, we apply reinforcement learning with the reward given by 
+
+r(xy 1: i ) = −(log πθ (yi|xy 1: i−1) − log πT (yi|xy 1: i−1)) . (6) In this case, the KL divergence in Eq. 5 is the negated accumulated reward 
+
+Ey∼πθ (·| x)[∑Li=1 −r(xy 1: i )] . We follow Lu & Lab (2025) and set the discount factor γ = 0. In this case, we can directly adopt ˆAi = −(log πθ (yi|xy 1 : i − 1) − log πT (yi|xy 1: i−1)) as the advantage estimation in the policy gradient objective. Notably, since on-policy distillation leverages samples from the student model, it is expected that the student model already possesses adequate performance (Agarwal et al., 2024). In the multi-task setting, we extend on-policy distillation to simultaneously imitate multiple teacher models on their respective tasks. Specifically, each training batch contains prompts sampled from different task datasets. For a prompt from task i, we apply the on-policy distillation objective using the corresponding teacher model π(i) 
+
+> T
+
+to compute the reward. This allows the student model to learn from all expert models during training. 
+
+# 4 Main Results 
+
+We begin by presenting results for existing distillation approaches: off-policy distillation and on-policy distillation applied in isolation. On-policy distillation is initialized from SFT. We also evaluate two alternative approaches (multi-task RL and parameter merging) in Appendix B.1. 
+
+Tasks and Evaluation Metrics. We evaluate our methods on four diverse tasks spanning two domains. From τ2-bench (Barres et al., 2025), we select two conversational agent domains: airline (booking, modifying, and canceling flight reservations and handling refunds) and telecom (technical support, bill payment, line suspension, and plan options). These tasks demand multiple agent capabilities: calling domain-specific APIs following guidelines, interacting with user agents, and dual-control (guiding the user agent to cor-rectly invoke APIs). We also incorporate two text-based games from GEM (Liu et al., 2025): 
+
+sudoku and mastermind , both using the v0-hard variant. These games require logical rea-soning, planning, and memory recall over evolving game states (Guertler et al., 2025). For 
+
+sudoku , we extend the max number of turns to 60. We use success rate as the evaluation metric for all tasks. For the τ2-bench tasks, we sample 16 trajectories per test prompt and compute the average success rate. For the GEM text games, we randomly generate 128 intial setups and sample 16 trajectories for each game setup. For all 4 tasks, we report pass@1 (success rate per trajectory) and passˆ4 (probability that all 4 i.i.d. trials succeed). We perform experiments using two model scales, Qwen3-8B and Qwen3-30B-A3B-Thinking-2507 ,to evaluate the effectiveness of our approach across different model capacities. For the τ2-bench tasks, we use a locally hosted Qwen3-235B-A22B-Instruct-2507 model as the user simulator instead of gpt-4.1-2025-04-14 to ensure more stable and reproducible results. For the telecom domain, the user model is further fine-tuned using rejection sampling to improve its tool calling ability. 4Preprint. 
+
+Method 
+
+τ2-bench GEM airline telecom sudoku mastermind pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 
+
+Single-Task 
+
+Pre-RL 42.5 26.5 66.2 44.7 2.2 0.0 3.6 0.0 RL 53.5 33.6 85.9 67.8 92.8 73.7 77.3 38.7 Off-policy Distill. 50.0 -3.5 32.1 -1.5 84.3 -1.6 67.7 -0.1 93.2 +0.4 75.4 +1.7 77.1 -0.2 41.7 +3.0 
+
+Multi-Task 
+
+Off-policy Distill. 51.8 -1.7 31.3 -2.3 84.8 -1.1 64.9 -2.9 93.8 +1.0 77.5 +3.8 76.5 -0.8 39.6 +0.9 
+
+On-policy Distill. 52.6 -0.9 32.9 -0.7 78.2 -7.7 58.3 -9.5 93.9 +1.1 77.8 +4.1 78.0 +0.7 41.8 +3.1 
+
+Off. + On. 51.4 -2.1 33.2 -0.4 85.8 -0.1 69.4 +1.6 94.8 +2.0 81.0 +7.3 78.6 +1.3 43.1 +4.4 
+
+Table 1: Main results on Qwen3-8B . Colored subscripts show performance deltas versus single-task RL. Off-policy distillation recovers RL performance in single-task but degrades in multi-task (especially on telecom ). Combining off-policy and on-policy distillation (“Off. + On.”) restores performance. On-policy alone fails without proper initialization. 
+
+Method 
+
+τ2-bench GEM airline telecom sudoku mastermind pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 
+
+Single-Task 
+
+Pre-RL 52.9 30.9 77.4 51.1 5.1 0.0 1.0 0.0 RL 61.6 42.6 92.8 76.4 98.7 94.9 93.5 77.1 Off-policy Distill. 60.5 -1.1 41.7 -0.9 92.0 -0.8 74.7 -1.7 98.9 +0.2 95.7 +0.8 94.6 +1.1 81.0 +3.9 
+
+Multi-Task 
+
+Off-policy Distill. 61.0 -0.6 41.5 -1.1 88.0 -4.8 65.8 -10.6 98.2 -0.5 93.0 -1.9 91.5 -2.0 71.8 -5.3 
+
+On-policy Distill. 61.1 -0.5 41.0 -1.6 88.8 -4.0 72.2 -4.2 99.1 +0.4 96.4 +1.5 93.4 -0.1 77.0 -0.1 
+
+Off. + On. 62.0 +0.4 43.8 +1.2 92.2 -0.6 74.7 -1.7 99.3 +0.6 97.1 +2.2 93.9 +0.4 78.4 +1.3 
+
+Table 2: Main results on Qwen3-30B-A3B-Thinking-2507 . Colored subscripts show perfor-mance deltas versus single-task RL. Results are consistent with the 8B model: off-policy distillation degrades in multi-task while “Off. + On.” recovers performance. 
+
+Training Details. For off-policy distillation, we sample rollouts from the teacher model using the RL training prompts. For the 8B models, we collect 128 × 400 (prompt, answer) pairs per task, while for the 30B models, we use 128 × 800 pairs per task to account for the larger model capacity. We train with a batch size of 128. For on-policy distillation, each batch contains 16 training prompts with 16 rollouts per prompt. We present our main results in Tab. 1 and Tab. 2. We highlight 3 key findings below. 
+
+Off-policy distillation recovers performance of single-task RL models. In the single-task setting, off-policy distillation successfully recovers the performance of RL experts when applied to the same base model, demonstrating that expert trajectories can effectively transfer learned behaviors. Interetingly, the SFT phase before RL leverages data collected from claude-opus-4.5 , so it is effectively performing off-policy distillation from a stronger model. However, as presented in Fig. 1, under a modest training budget, distilling from the RL model (which is built upon the same base model) achieves even better performance than distilling from a much stronger model. Similar observations have been made in recent work (Gu et al., 2026), attributing this to teacher models containing more modes than students can capture. We also investigate the number of samples per prompt required for successful single-task off-policy distillation. For the telecom task, we vary the number of samples per prompt and then upsample (or downsample) to maintain a fixed dataset size of 128 × 400. Notably, sampling 16 rollouts per training prompt produces 63,191 samples, exceeding 5Preprint. 
+
+Figure 1: Learning curves comparing SFT and off-policy distillation (single-task setting) on 
+
+airline and telecom , where off-policy distillation is essentially SFT on teacher-generated data. Despite the SFT baseline leveraging rollouts from a substantially stronger model, off-policy distillation from RL models trained on the same base model achieves superior performance under a limited training budget. 128 × 400. We report telecom passˆ4 performance in Fig. 2. We find that using fewer samples per prompt (and therefore upsampling the data) harms performance, resulting in poor results (1 sample per prompt) or high variance across trials (2-8 samples per prompt). In contrast, using 16 samples per prompt (only 1 epoch) yields much lower variance. 
+
+Figure 2: Off-policy dis-tillation performance (passˆ4) on telecom with varying samples per prompt. Dataset size fixed at 128 × 400. Performance degrades with fewer sam-ples per prompt. 
+
+Multi-task off-policy distillation exhibits performance degradation. Despite its simplicity, off-policy distillation in the multi-task setting achieves performance comparable to single-task RL models on most tasks, even surpassing them on sudoku . However, we observe notable performance degra-dation on telecom (8B: -2.9% passˆ4, 30B: -10.6% passˆ4), sug-gesting that simple aggregation of expert trajectories may not always suffice for multi-task learning. Notably, the degrada-tion is more severe for passˆ4 than pass@1, indicating that the model struggles to consistently produce the desired behavior. Since single-task off-policy distillation achieves comparable performance to RL, we rule out exposure bias as the primary cause. Instead, we hypothesize that the root cause is the mode-covering behavior of off-policy distillation. We provide more discussion of this phenomenon in Sec. 5. 
+
+On-policy distillation may require proper initialization. When applied directly without off-policy distillation in advance, on-policy distillation fails to achieve satisfactory perfor-mance. As shown in Tab. 2, it exhibits substantial performance drops on telecom (-9.5% passˆ4 on 8B models, -4.2% passˆ4 on 30B models), with degradation particularly severe for the 8B model. One possible explanation is that SFT models may not provide sufficiently strong initialization for on-policy distillation. This aligns with previous findings that on-policy distillation requires the model to have sufficiently strong initial performance, as the student model must generate reasonable trajectories for effective learning (Agarwal et al., 2024). 
+
+# 5 Our Method 
+
+Given the limitations of both distillation methods, we address two key questions: Why does off-policy distillation fail in multi-task settings? How can we robustly distill multiple experts into a unified multi-task model? We attribute the failure of off-policy distillation to the mode-covering property of forward KL divergence. In Sec. 5.1, we present a toy 6Preprint. example illustrating why mode-covering could become problematic in multi-task settings. Building on this insight, we propose a two-phase distillation recipe and demonstrate that our method successfully recovers the performance of single-task RL baselines. Finally, in Sec. 5.3, we further validate our hypothesis through experiments that manipulate the off-policy distillation data. 
+
+5.1 A Toy Example 
+
+We present a toy example illustrating why off-policy distillation could fail in multi-task settings. Consider a task where the input prompt p ∈ { 0, 1 } requires generating two tokens 
+
+a1 ∈ { 0, 1 } and a2 ∈ S (S ⊃ { 0, 1 } is a sufficiently large set). The reward function is given by I{p = a2}, i.e., a2 must match p, while a1 represents intermediate reasoning. p = 0 and 
+
+p = 1 can be viewed as two “domains”. We consider a model M with limited capacity: 
+
+a1 ∼ pM 
+
+> 1
+
+(·| p) and a2 ∼ pM 
+
+> 2
+
+(·| a1), where each token depends only on the previous token and position. The optimal policy for domain p = 0 has pM 
+
+> 1
+
+being arbitrary and pM 
+
+> 2
+
+always outputs 0; similarly for p = 1 with pM 
+
+> 2
+
+outputting 1. Without loss of generality, we assume both optimal policies have uniform pM 
+
+> 1
+
+distributions. Collecting expert trajectories yields dataset D =
+
+{000, 010, 101, 111 }. Consider two student policies: U (uniform) where both distributions 
+
+pM 
+
+> 1
+
+, pM 
+
+> 2
+
+are uniform over {0, 1 }, and C (copy) where each token copies the previous one. Under off-policy distillation, the SFT loss of U is given by 
+
+Ep,a1,a2∼D [− log pU (a1, a2|p)] = Ep,a1,a2∼D [− log ( 12 · 12 )] = log 4. (7) It can be shown that U is the optimal policy under off-policy distillation. On the other hand, 
+
+C results in infinite loss as pC (01 |0) = pC (10 |1) = 0. This creates a pathological situation where off-policy distillation favors U over C, despite C perfectly solving both tasks while U
+
+solves neither. In contrast, on-policy distillation optimizes the reverse KL divergence 
+
+Ep∼{ 0,1 },a1,a2∼pstudent (·| p)[log pstudent (a1, a2|p) − log pexpert (a1, a2|p)] , (8) where pexpert denotes the optimal policy under the corresponding domain, i.e., always generating a2 = p. U generates (p, a1, a2) = ( 0, 0, 1 ) with probability 1/4, to which pexpert 
+
+assigns zero probability. This causes U to incur infinite loss under the on-policy distil-lation objective. On the other hand, in both domains p = 0 and p = 1, C generates 
+
+(p, a1, a2) = ( 0, 0, 0 ) and (p, a1, a2) = ( 1, 1, 1 ) with probability 1, respectively, which re-sults in a loss of 12 (( log 1 − log 1/2 ) + ( log 1 − log 1/2 )) = log 2. It can be observed that on-policy distillation correctly favors C over U.However, on-policy distillation fails without proper initialization. Recall that the action space of a2 is a sufficiently large set S. If pM 
+
+> 2
+
+is a uniform distribution over the large set 
+
+S, the student almost never samples tokens 0 or 1. Consequently, the gradient signal only indicates which incorrect tokens to avoid, never providing positive reinforcement for the correct tokens 0 and 1. 
+
+5.2 Proposed Method 
+
+Building on our analysis, we propose a two-phase distillation approach. First, we apply off-policy distillation to establish adequate multi-task performance. Second, we apply on-policy distillation for refinement, which exploits the mode-seeking property of reverse KL divergence. This encourages the model to commit to a subset of modes that fit within the model’s limited capacity, rather than attempting to average across multiple modes. Under our two-phase method, off-policy distillation enables p2 to concentrate probability mass on the correct tokens 0 and 1. Consequently, leveraging the mode-seeking property of on-policy distillation, the policy may converge to either C (copy policy) or F (flipping policy, where each token is flipped from the previous token), both of which perfectly solve the tasks. Training curves for this toy example are provided in Appendix B.2. 7Preprint.                      
+
+> Method airline telecom pass@1 passˆ4 pass@1 passˆ4 Rollout from Unified 51.3 -2.2 32.8 -0.8 86.0 +0.1 68.7 +0.9
+> Filtered Data 51.8 -1.7 31.8 -1.8 83.4 -2.5 67.0 -0.8
+> Baselines
+> (Multi-Task) Off-Policy Distill. 52.1 -1.4 31.3 -2.3 79.8 -6.1 57.9 -9.9
+> Single-Task RL 53.5 33.6 85.9 67.8
+
+Table 3: Ablation studies validating that mode-covering behavior causes performance degradation in multi-task off-policy distillation. “Rollout from Unified” collects rollouts from a unified multi-task model (trained with off-policy + on-policy distillation) instead of individual single-task RL experts. “Filtered Data” retains only tokens consistent with the unified model when distilling from single-task experts. All methods substantially mitigate the performance degradation observed in naive multi-task off-policy distillation, achieving performance comparable to single-task RL baselines. For on-policy distillation, we use a batch size of 16 with 16 rollouts per training prompt. We train for 10 steps when combining two tasks ( airline and telecom ) and 30 steps when combining all four tasks. As shown in Tab. 1 and Tab. 2, the combined approach (“Off. + On.”) successfully recovers performance across all four tasks, matching or exceeding single-task RL baselines. 
+
+5.3 Empirical Validation 
+
+To validate our hypothesis, we conduct additional experiments on tasks airline and 
+
+telecom .
+
+Collecting rollouts from the multi-task model. Instead of collecting training data from single-task RL experts, we collect rollouts from the unified multi-task model trained with our two-phase approach (Off. + On.). As shown in Tab. 3, this “Rollout from Unified” method achieves performance comparable to single-task RL baselines. While not practically useful (since this requires an existing multi-task model), this experiment validates that the performance degradation stems from aggregating data across multiple expert models, rather than from limitations of the off-policy distillation algorithm itself. 
+
+Filtering distillation data. Since on-policy distillation successfully addresses the perfor-mance degradation of off-policy distillation, and our hypothesis attributes this success to its mode-seeking behavior, we test whether explicitly filtering off-policy data to retain only consistent modes yields similar benefits. Specifically, we filter the off-policy dataset at the token level using the “Off. + On.” model. For each prompt-answer pair (x, y), we retain token yi if and only if log πOff.+On. (yi|xy 1: i−1) − log πRL (yi|xy 1: i−1) > −0.01, (9) where πRL denotes the corresponding single-task RL model that generated the trajectory. This filtering process removes approximately 18% of training tokens. We double the amount of distillation data to compensate for the filtered tokens. As presented in Tab. 3, filtering substantially alleviates the performance degradation. The drop on telecom is reduced from -9.9% to -0.8% passˆ4, supporting our hypothesis that the mode-covering nature of forward KL causes off-policy distillation to average across different modes, and that reducing the number of modes mitigates this issue. 
+
+Discussions. Our analysis reveals that the challenges of off-policy distillation stem from the interaction between limited student model capacity and the mode-covering nature of forward KL divergence. A natural question arises: is this a genuine research problem, or will it resolve naturally as models scale? We argue that this remains an important issue for several reasons. First, given computational constraints, post-training of smaller models 8Preprint.                                          
+
+> Ratio airline telecom pass@1 passˆ4 pass@1 passˆ4
+> Off-policy Distill.
+> 400 : 400 52.1 -1.4 31.3 -2.3 79.8 -6.1 57.9 -9.9
+> 400 : 800 49.9 -3.6 32.8 -0.8 83.6 -2.3 65.3 -2.5
+> 400 : 1200 50.5 -3.0 30.6 -3.0 83.7 -2.2 64.5 -3.3
+> 800 : 800 50.9 -2.6 31.5 -2.1 79.6 -6.3 59.3 -8.5
+> Off-policy Distill. + On-policy Distill.
+> 400 : 400 53.1 -0.4 33.3 -0.3 85.8 -0.1 72.1 +4.1
+> 400 : 800 53.5 +0.0 33.1 -0.5 86.1 +0.2 70.1 +2.3
+> 400 : 1200 53.1 -0.4 35.5 +1.9 86.5 +0.6 71.4 +3.6
+> 800 : 800 52.4 -1.1 33.7 +0.1 85.9 +0.0 70.5 +2.7
+> RL Baseline
+> Single-Task RL 53.5 33.6 85.9 67.8
+
+Table 4: Effect of data mixture on off-policy distillation performance. M : N denotes 128 × M
+
+samples from airline and 128 × N samples from telecom used in off-policy distillation. While off-policy distillation alone suffers from performance degradation regardless of data mixture, a subsequent on-policy distillation phase (always using balanced 1:1 data) consistently recovers performance across all configurations. Colored subscripts indicate performance deltas relative to single-task RL baselines. continues to play a crucial role in LLM research and applications. Second, as models scale, the number of modes in each single-task expert also grows with improved RL performance, maintaining the capacity mismatch. Indeed, our empirical findings in Tab. 2 demonstrate that this issue persists even in 30B-A3B models. 
+
+5.4 Ablation Study on Off-Policy Distillation Data 
+
+An important design choice in multi-task off-policy distillation is how to aggregate training data from different tasks. To investigate the impact of data mixture in off-policy distillation, we conduct experiments on airline and telecom with four different configurations: 400:400 (as in our main experiments), 400:800, 400:1200, and 800:800, where M : N denotes 128 × M
+
+samples from airline and 128 × N samples from telecom . For each configuration, we apply an on-policy distillation phase with balanced 1:1 data mixture following off-policy distillation. The results presented in Tab. 4 reveal the following key insights. First, simply increasing data volume uniformly does not alleviate performance degradation in multi-task off-policy distillation. The 800:800 mixture exhibits similar performance drops as 400:400. Second, allocating more data to telecom can partially mitigate its performance drop, though the degradation persists (400:1200 still shows -3.3% on telecom passˆ4). Moreover, this intro-duces potential trade-offs with other tasks. Finally, regardless of data mixture, subsequent on-policy distillation consistently addresses the performance degradation issue across all configurations. 
+
+# 6 Conclusion 
+
+This paper investigates distillation-based methods for training multi-task agentic LLMs. Through our experiments, we reveal distinct limitations of off-policy and on-policy dis-tillation approaches. While off-policy distillation is straightforward to implement, its mode-covering behavior makes it problematic in multi-task settings. Conversely, on-policy distillation requires the student model to already possess adequate initial performance. To address these limitations, we propose a two-phase training recipe: first applying off-policy distillation to establish adequate baseline performance, then leveraging on-policy distillation for refinement. We evaluate our method on conversational agents using τ2-bench and text-based games in GEM, with experiments confirming the effectiveness of 9Preprint. our approach. Additionally, we evaluate two alternative strategies: multi-task RL and parameter merging in Appendix B.1. Under equivalent training budgets, multi-task RL underperforms distillation-based methods. Furthermore, we demonstrate that parameter merging methods exhibit significant performance degradation and are highly sensitive to SFT training dynamics. 
+
+# References 
+
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes, 2024. URL https://arxiv.org/abs/2306.13649 .Victor Barres, Honghua Dong, Soham Ray, Xujie Si, and Karthik Narasimhan. τ2-bench: Evaluating conversational agents in a dual-control environment, 2025. URL https:// arxiv.org/abs/2506.07982 .Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer. Scheduled sampling for sequence prediction with recurrent neural networks, 2015. URL https://arxiv.org/abs/ 1506.03099 .Qiguang Chen, Yantao Du, Ziniu Li, Jinhao Liu, Songyao Duan, Jiarui Guo, Minghao Liu, Jiaheng Liu, Tong Yang, Ge Zhang, Libo Qin, Wanxiang Che, and Wenhao Huang. The molecular structure of thought: Mapping the topology of long chain-of-thought reasoning, 2026. URL https://arxiv.org/abs/2601.06002 .DeepSeek-AI. Deepseek-v3.2: Pushing the frontier of open large language models, 2025. URL https://arxiv.org/abs/2512.02556 .Wei Du, Shubham Toshniwal, Branislav Kisacanin, Sadegh Mahdavi, Ivan Moshkov, George Armstrong, Stephen Ge, Edgar Minasyan, Feng Chen, and Igor Gitman. Nemotron-math: Efficient long-context distillation of mathematical reasoning from multi-mode supervision. 
+
+arXiv preprint arXiv:2512.15489 , 2025. Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu, Guo Wei, Jun Mei, Jiashu Wang, Tongkai Yang, Binhang Yuan, and Yi Wu. Areal: A large-scale asynchronous reinforcement learning system for language reasoning, 2025. URL 
+
+https://arxiv.org/abs/2505.24298 .Jiaxuan Gao, Wei Fu, Minyang Xie, Shusheng Xu, Chuyi He, Zhiyu Mei, Banghua Zhu, and Yi Wu. Beyond ten turns: Unlocking long-horizon agentic search with large-scale asynchronous rl, 2025. URL https://arxiv.org/abs/2508.07976 .Jiaxuan Gao, Jiaao Chen, Chuyi He, Shusheng Xu, Di Jin, and Yi Wu. From self-evolving synthetic data to verifiable-reward rl: Post-training multi-turn interactive tool-using agents, 2026. URL https://arxiv.org/abs/2601.22607 .Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: On-policy distillation of large language models, 2026. URL https://arxiv.org/abs/2306.08543 .Leon Guertler, Bobby Cheng, Simon Yu, Bo Liu, Leshem Choshen, and Cheston Tan. Textarena, 2025. URL https://arxiv.org/abs/2504.11442 .Etash Guha, Ryan Marten, Sedrick Keh, Negin Raoof, Georgios Smyrnis, Hritik Bansal, Marianna Nezhurina, Jean Mercat, Trung Vu, Zayne Sprague, Ashima Suvarna, Benjamin Feuer, Liangyu Chen, Zaid Khan, Eric Frankel, Sachin Grover, Caroline Choi, Niklas Muennighoff, Shiye Su, Wanjia Zhao, John Yang, Shreyas Pimpalgaonkar, Kartik Sharma, Charlie Cheng-Jie Ji, Yichuan Deng, Sarah Pratt, Vivek Ramanujan, Jon Saad-Falcon, Jeffrey Li, Achal Dave, Alon Albalak, Kushal Arora, Blake Wulfe, Chinmay Hegde, Greg Durrett, Sewoong Oh, Mohit Bansal, Saadia Gabriel, Aditya Grover, Kai-Wei Chang, Vaishaal Shankar, Aaron Gokaslan, Mike A. Merrill, Tatsunori Hashimoto, Yejin Choi, Jenia Jitsev, Reinhard Heckel, Maheswaran Sathiamoorthy, Alexandros G. Dimakis, and Ludwig Schmidt. Openthoughts: Data recipes for reasoning models, 2025. URL https: //arxiv.org/abs/2506.04178 .10 Preprint. Tianxing He, Jingzhao Zhang, Zhiming Zhou, and James Glass. Exposure bias versus self-recovery: Are distortions really incremental for autoregressive text generation?, 2021. URL https://arxiv.org/abs/1905.10617 .Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network, 2015. URL https://arxiv.org/abs/1503.02531 .Gabriel Ilharco, Marco Tulio Ribeiro, Mitchell Wortsman, Suchin Gururangan, Ludwig Schmidt, Hannaneh Hajishirzi, and Ali Farhadi. Editing models with task arithmetic, 2023. URL https://arxiv.org/abs/2212.04089 .Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica. Livecodebench: Holistic and contamination free evaluation of large language models for code, 2024. URL https: //arxiv.org/abs/2403.07974 .Sanwoo Lee, Jiahao Liu, Qifan Wang, Jingang Wang, Xunliang Cai, and Yunfang Wu. Dynamic fisher-weighted model merging via bayesian optimization, 2025. URL https: //arxiv.org/abs/2504.18992 .Lu Li, Tianyu Zhang, Zhiqi Bu, Suyuchen Wang, Huan He, Jie Fu, Yonghui Wu, Jiang Bian, Yong Chen, and Yoshua Bengio. Map: Low-compute model merging with amortized pareto fronts via quadratic approximation, 2025. URL https://arxiv.org/abs/2406. 07529 .Zichen Liu, Anya Sims, Keyu Duan, Changyu Chen, Simon Yu, Xiangxin Zhou, Haotian Xu, Shaopan Xiong, Bo Liu, Chenmien Tan, Chuen Yang Beh, Weixun Wang, Hao Zhu, Weiyan Shi, Diyi Yang, Michael Shieh, Yee Whye Teh, Wee Sun Lee, and Min Lin. Gem: A gym for agentic llms, 2025. URL https://arxiv.org/abs/2510.01051 .Kevin Lu and Thinking Machines Lab. On-policy distillation. Thinking Machines Lab: Connectionism , 2025. doi: 10.64434/tml.20251026. https://thinkingmachines.ai/blog/on-policy-distillation. Michael Matena and Colin Raffel. Merging models with fisher-weighted averaging, 2022. URL https://arxiv.org/abs/2111.09832 .Ivan Moshkov, Darragh Hanley, Ivan Sorokin, Shubham Toshniwal, Christof Henkel, Benedikt Schifferer, Wei Du, and Igor Gitman. Aimo-2 winning solution: Building state-of-the-art mathematical reasoning models with openmathreasoning dataset. arXiv preprint arXiv:2504.16891 , 2025. Qwen Team. Qwen3-vl technical report, 2025a. URL https://arxiv.org/abs/2511.21631 .Qwen Team. Qwen3 technical report, 2025b. URL https://arxiv.org/abs/2505.09388 .Shyam Sundhar Ramesh, Xiaotong Ji, Matthieu Zimmer, Sangwoong Yoon, Zhiyong Wang, Haitham Bou Ammar, Aurelien Lucchi, and Ilija Bogunovic. Multi-task grpo: Reliable llm reasoning across tasks, 2026. URL https://arxiv.org/abs/2602.05547 .Meituan LongCat Team. Introducing longcat-flash-thinking: A technical report, 2025. URL 
+
+https://arxiv.org/abs/2509.18883 .Fanqi Wan, Longguang Zhong, Ziyi Yang, Ruijun Chen, and Xiaojun Quan. Fusechat: Knowledge fusion of chat models, 2024. URL https://arxiv.org/abs/2408.07990 .Haoqing Wang, Xiang Long, Ziheng Li, Yilong Xu, Tingguang Li, and Yehui Tang. To mix or to merge: Toward multi-domain reinforcement learning for large language models, 2026. URL https://arxiv.org/abs/2602.12566 .Mitchell Wortsman, Gabriel Ilharco, Samir Yitzhak Gadre, Rebecca Roelofs, Raphael Gontijo-Lopes, Ari S. Morcos, Hongseok Namkoong, Ali Farhadi, Yair Carmon, Simon Kornblith, and Ludwig Schmidt. Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time, 2022. URL https://arxiv.org/ abs/2203.05482 .11 Preprint. Runzhe Wu, Ankur Samanta, Ayush Jain, Scott Fujimoto, Jeongyeol Kwon, Ben Kretzu, Youliang Yu, Kaveh Hassani, Boris Vidolov, and Yonathan Efroni. Imbalanced gradients in rl post-training of multi-task llms, 2025. URL https://arxiv.org/abs/2510.19178 .Xiaomi LLM-Core Team. Mimo-v2-flash technical report, 2026. URL https://arxiv.org/ abs/2601.02780 .Hongling Xu, Qi Zhu, Heyuan Deng, Jinpeng Li, Lu Hou, Yasheng Wang, Lifeng Shang, Ruifeng Xu, and Fei Mi. Kdrl: Post-training reasoning llms via unified knowledge distillation and reinforcement learning, 2025. URL https://arxiv.org/abs/2506.02208 .Prateek Yadav, Derek Tam, Leshem Choshen, Colin Raffel, and Mohit Bansal. Ties-merging: Resolving interference when merging models, 2023. URL https://arxiv.org/abs/2306. 01708 .Le Yu, Bowen Yu, Haiyang Yu, Fei Huang, and Yongbin Li. Language models are super mario: Absorbing abilities from homologous models as a free lunch, 2024. URL https: //arxiv.org/abs/2311.03099 .
+
+# A Training Details 
+
+All training is performed using the AReaL (Fu et al., 2025) framework. For τ2-bench tasks, we follow the method in Gao et al. (2026). For 8B models, which are not covered in their paper, we adopt a batch size of 16 × 16 (16 training prompts with 16 rollouts each) and a learning rate of 5 × 10 −6. During training, we use Qwen2.5-72B-Instruct as the user simulator for airline and a fine-tuned Qwen3-32B model as the user simulator for 
+
+telecom . We use temperature 1 for the user simulator during training and 0 for evaluation. For GEM tasks, we also use a learning rate of 5 × 10 −6. For sudoku , we adopt a batch size of 16 × 16. We limit the maximum context length to 16384 during training to reduce training cost. We extend the max number of turns to 60 in evaluation. For mastermind , we adopt a batch size of 256 × 1. These two tasks do not undergo SFT before RL. Consequently, when conducting on-policy distillation in the multi-task setting, the model is initialized from SFT on only the τ2-bench tasks. All tasks have a maximum context length of 32768 during inference. For each turn, the maximum number of generated tokens is 8192. 
+
+# B Additional Results 
+
+B.1 Alternative Approaches 
+
+In addition to distillation, we investigate three alternative approaches for multi-task learn-ing: (1) off-policy distillation followed by multi-task RL; (2) parameter merging; and (3) Generalized Knowledge Distillation (GKD) (Agarwal et al., 2024). For multi-task RL, we apply the same training budget as on-policy distillation (batch size of 16 with 16 rollouts per prompt). Under this setting, we observe that RL training becomes unstable, and we report results from the best checkpoint before training collapse. For parameter merging, we evalu-ate three methods: naive weight averaging (Wortsman et al., 2022), task arithmetic (Ilharco et al., 2023), and DARE (Yu et al., 2024). Results are presented in Tab. 5. 
+
+Multi-Task RL. While performance on sudoku and mastermind slightly improves com-pared to single-task RL baselines, the performance degradation on telecom becomes more severe. This observation aligns with previous findings that optimization across different tasks is imbalanced in the multi-task RL process (Wu et al., 2025; Ramesh et al., 2026), which presents substantial challenges in practical multi-task settings. 12 Preprint.                                                                                
+
+> Method
+> τ2-bench GEM airline telecom sudoku mastermind pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 pass@1 passˆ4 Avg. 38.0 37.0 0.1 0.0 0.0 0.0 0.0 0.0 ----88.2 60.5 46.6 10.3 TA 48.5 33.1 23.7 2.4 0.0 0.0 0.3 0.0 ----66.9 20.1 74.8 34.1 TA + DARE 48.0 32.2 24.2 3.0 0.0 0.0 0.4 0.0 --81.9 62.2 7.3 0.0 41.8 5.9 ----66.7 19.6 75.8 36.5 Multi-Task RL 51.8 34.1 80.6 54.9 95.9 84.6 81.3 48.0 GKD 51.5 33.8 81.6 61.6 92.7 74.2 78.0 41.7
+
+Table 5: Performance of alternative multi-task learning approaches. “Multi-Task RL” de-notes off-policy distillation followed by multi-task RL training. “GKD” denotes single-phase Generalized Knowledge Distillation. “-” indicates the corresponding RL expert is excluded from the merge. For example, the second row under “Avg.” shows naive weight averaging of only the sudoku and mastermind experts. Parameter merging exhibits significant perfor-mance degradation, particularly when airline or telecom experts are included. This occurs because the parameter changes ∥θRL − θpre ∥2 for these tasks substantially exceed those of sudoku and mastermind , causing the corresponding single-task models to dominate the merged model. Multi-task RL demonstrates imbalanced optimization across tasks: while performance on sudoku and mastermind improves, the degradation on telecom becomes more severe than with off-policy distillation alone. GKD without an off-policy distillation phase also exhibits significant performance drop on telecom .
+
+Parameter Merging. When merging experts from all four tasks, performance drops dra-matically except on airline . Analysis reveals that the parameter change ∥θRL − θpre ∥2 for the airline expert is significantly larger than for other tasks, causing airline to dominate the merged model. Notably, this large parameter change primarily originates from the SFT process before RL, demonstrating that parameter merging can be heavily influenced by substantial parameter shifts introduced during SFT. Merging only sudoku and mastermind 
+
+yields substantially better performance, though significant degradation remains compared to single-task baselines. Interestingly, we observe substantially different behavior when apply-ing parameter merging to math and coding tasks. Using DeepSeek-R1-Distill-Qwen-1.5B 
+
+with RL training on the boba 2 dataset (Fu et al., 2025), evaluated on AIME24 and Live-CodeBench v5 (Jain et al., 2024), all three merging methods achieve performance comparable to single-task RL (Tab. 6), with degradation controlled below 3.0%. This suggests that pa-rameter merging effectiveness may be task-dependent. 
+
+Generalized Knowledge Distillation. GKD optimizes the divergence between student and teacher using samples from both the student model and the teacher model. We investi-gate whether the off-policy distillation phase is necessary, or if single-phase GKD suffices for multi-task distillation. As presented in Tab. 5, single-phase GKD results in significant performance drop on telecom . This suggests that an off-policy distillation phase is indeed required to stabilize on-policy distillation training. 
+
+B.2 Toy Example Details 
+
+Fig. 3 shows training curves for our toy example (Sec. 5.1). Off-policy distillation alone saturates at average reward 0.5, while on-policy alone fails at 0. Our two-phase approach achieves full reward 1. We train with gradient descent (learning rate 0.1, momentum 0.9). For both on-policy distillation and the two-phase approach (Off.+On.), we slightly perturb 
+
+p1 before on-policy distillation to break symmetry: p1(a1 = 1|0) = sigmoid (0.02 ) and 
+
+p1(a1 = 1|1) = sigmoid (0.01 ). This perturbation reflects realistic conditions where models naturally produce different distributions across tasks. 13 Preprint. Method AIME24 LCB v5 Single-Task RL 42.8 26.4 Avg. 40.6 23.4 TA 41.0 25.1 TA + DARE 40.8 25.6 Table 6: Parameter merging performance on math and coding tasks. All three parameter merging methods achieve results comparable to single-task RL baselines, with degradation below 3.0%. 
+
+Figure 3: Training curves for our toy ex-ample. For “Off.+On.”, reward is plotted against on-policy distillation steps. Off-policy alone (“Off.”) saturates at reward 0.5 and on-policy alone (“On.”) fails at 0, while our two-phase approach achieves full reward 1. 
+
+Figure 4: (Multi-Task) On-policy distillation training curves. We plot the telecom passˆ4 on 8B models. The model performance stays below single-task RL baseline. 
+
+B.3 On-Policy Distillation Training Curves 
+
+Fig. 4 shows on-policy distillation training curves for multi-task learning (all 4 tasks), plotting telecom passˆ4 on 8B models. Without proper initialization, performance remains below the single-task RL baseline even after 100 steps. In contrast, our two-phase approach recovers baseline performance in 30 steps. 14

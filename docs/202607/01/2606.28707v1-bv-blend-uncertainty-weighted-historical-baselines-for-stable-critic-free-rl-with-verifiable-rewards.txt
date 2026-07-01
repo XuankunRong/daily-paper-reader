@@ -1,0 +1,1713 @@
+Title: BV-Blend: Uncertainty-Weighted Historical Baselines for Stable Critic-Free RL with Verifiable Rewards
+
+URL Source: https://arxiv.org/pdf/2606.28707v1
+
+Published Time: Tue, 30 Jun 2026 00:23:33 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# BV-Blend: Uncertainty-Weighted Historical Baselines for Stable Critic-Free RL with Verifiable Rewards 
+
+Yupeng Chang 1 Yuan Wu 1* Yi Chang 1,2,31School of Artificial Intelligence, Jilin University 
+
+> 2
+
+Engineering Research Center of Knowledge-Driven Human-Machine Intelligence, MOE, China 
+
+> 3
+
+International Center of Future Science, Jilin University changyp23@mails.jlu.edu.cn, {yuanwu, yichang}@jlu.edu.cn 
+
+Abstract 
+
+Critic-free reinforcement learning with verifi-able rewards (RLVR), exemplified by Group Relative Policy Optimization (GRPO), avoids training a value function (critic) and reduces memory and compute overhead relative to critic-based PPO pipelines for aligning large language models. However, GRPO-style ad-vantage estimation depends on prompt-local (within-prompt-group) reward statistics and can be unstable. In particular, when all rollouts in a prompt group receive identical rewards, the within-group reward variance becomes zero, and group normalization yields zero advantages for that group, impeding learning in cold-start regimes with binary verifiers. We introduce BV-Blend , a critic-free framework that stabilizes advantage estimation by combining prompt-local on-policy statistics with semantic-cluster-conditioned historical moments. BV-Blend maintains EMA-tracked reward moments for each cluster, derives a confidence weight from a standard error of the mean (SEM) proxy, and uses this weight to blend historical and prompt-local baseline and variance statistics into a standardized advantage for PPO-style clipped updates. Experiments on verifiable reasoning benchmarks show that BV-Blend improves training stability and performance, and remains robust in regimes where group-normalized methods may stall. 
+
+1 Introduction 
+
+Reinforcement Learning with Verifiable Rewards (RLVR) has recently become a practical paradigm for aligning Large Language Models (LLMs) in domains with objective correctness signals, such as mathematics and code, where outputs can be auto-matically verified (e.g., exact match against a refer-ence answer, formal proof checking, or passing unit tests) (Yu et al., 2025b; Yan et al., 2025; Gui et al., 2024). Compared with process-level supervision 
+
+> *Corresponding author
+
+such as Process Reward Models (PRMs) (Light-man et al., 2023), RLVR optimizes outcome-based rewards and does not require scoring intermediate reasoning steps. When verifiers are reliable, collect-ing multiple rollouts per prompt naturally improves exploration and increases the chance of observing correct solutions, which has underpinned several recent reasoning-focused RL systems (Guo et al., 2025). Beyond structured domains, RLVR has also been extended to more diverse settings when ref-erence signals or robust verifiers are available (Su et al., 2025). However, directly applying the de facto RLHF recipe—PPO with a learned critic (Ziegler et al., 2019; Ouyang et al., 2022)—to RLVR exposes a practical tension. With sparse, trajectory-level ver-ifiable rewards, learning an accurate value func-tion can be challenging, while the additional critic introduces non-trivial memory and compute over-head, as well as additional training complexity, at LLM scale (Ouyang et al., 2022). These considera-tions have accelerated interest in critic-free align-ment. Preference-optimization methods such as DPO (Rafailov et al., 2024) avoid explicit reward modeling and online RL, but are primarily studied under preference or utility supervision rather than settings where informative, programmatic outcome rewards are directly available. We therefore focus on direct-reward, critic-free policy optimization, where GRPO (Shao et al., 2024) is a prominent baseline that derives advantages through prompt-local reward normalization within each prompt group. Despite its simplicity, prompt-local normaliza-tion can be unstable. The resulting advantage es-timator may depend strongly on transient within-group statistics, leading to high variance and un-stable learning dynamics, which has motivated a growing body of analyses and fixes (Liang, 2025; Chen et al., 2025; Mroueh, 2025; Yu et al., 2025a). Moreover, RLVR commonly encounters a cold-
+
+> arXiv:2606.28707v1 [cs.AI] 27 Jun 2026
+
+start regime in which the current policy produces predominantly incorrect solutions; under binary verifiers, many prompt groups become effectively deterministic (e.g., all failures), yielding (near-)zero within-group reward variance. In this zero-variance regime, standard within-group normaliza-tion produces (near-)zero advantages, removing the learning signal for those prompt groups (Le et al., 2025). To address this instability, we propose BV-Blend , a critic-free framework that stabilizes ad-vantage estimation by combining (i) an on-policy prompt-local signal with (ii) low-variance histor-ical moments aggregated over semantically simi-lar prompts. BV-Blend computes an uncertainty-aware confidence weight from a standard-error-of-the-mean (SEM) proxy of the historical statistics, downweighting unreliable historical information while relying more on it when the historical esti-mate is better supported. As a result, BV-Blend mit-igates advantage collapse on zero-variance prompt groups without training a critic and remains com-patible with PPO-style optimization. Our contributions are: • We analyze the zero-variance failure mode of prompt-local (group-normalized) advantage estimation in direct-reward, critic-free RL, where the normalized learning signal vanishes when all rollouts in a prompt group receive identical rewards. • We introduce BV-Blend , an uncertainty-aware historical blending mechanism that stabilizes prompt-local advantage estimation by lever-aging semantic-cluster-conditioned historical moments, without training a critic. • We empirically demonstrate that BV-Blend improves training stability and performance on verifiable reasoning benchmarks, and re-mains robust in regimes where standard group-normalized methods may stall. 
+
+2 Related Work 
+
+Critic-based and preference-based alignment. 
+
+Policy-gradient methods typically reduce vari-ance with a learned value-function baseline; GAE (Schulman et al., 2015) (commonly paired with PPO (Schulman et al., 2017)) yields lower-variance advantages than Monte Carlo estimators such as REINFORCE (Williams, 1992). In RLHF-style LLM alignment, PPO pipelines often train an auxiliary value head alongside the policy during RL fine-tuning (Ouyang et al., 2022). A separate line of work avoids online RL and critic training by di-rectly optimizing objectives from preference or util-ity supervision, e.g., DPO (Rafailov et al., 2024), KTO (Ethayarajh et al., 2024), and SimPO (Meng et al., 2024). These methods are primarily studied under preference or utility supervision (or implicit rewards), rather than explicit outcome-based verifi-able rewards. 
+
+Direct-reward, critic-free policy optimization. 
+
+Our work builds on critic-free policy optimization with verifiable rewards, exemplified by Group Rel-ative Policy Optimization (GRPO) (Shao et al., 2024). GRPO avoids a learned critic by normal-izing rewards within each prompt group, but the learning signal can be sensitive to transient within-group statistics and may collapse when within-group reward variance is near zero. Recent work has explored related issues and remedies, including correcting optimization bias in GRPO-style objec-tives (Dr. GRPO) (Liu et al., 2025a), temporally smoothing baselines via lightweight Bayesian or Kalman-style updates (KRPO) (Wang et al., 2025), extending GRPO-style optimization to multi-turn tool-use settings (ARPO) (Dong et al., 2025a), and extracting learning signals from zero-variance prompts (RL-ZVP) (Le et al., 2025). Other work also mitigates zero-variance or low-signal training regimes through data- or sampling-level interven-tions, such as dynamic sampling (Yu et al., 2025a). Our method is most closely related to approaches that stabilize GRPO-style advantage estimation without training a critic. Compared with KRPO, which primarily smooths statistics across train-ing steps, BV-Blend maintains historical reward moments conditioned on semantic clusters of prompts. Compared with RL-ZVP, which specif-ically targets zero-variance prompts, BV-Blend uses uncertainty-aware blending of prompt-local and cluster-conditioned historical statistics to form a unified standardized advantage for all prompt groups. Compared with dynamic-sampling-based remedies, BV-Blend operates at the level of the advantage estimator rather than the data-selection policy. Overall, BV-Blend is a critic-free method that modifies the advantage estimator while remain-ing compatible with standard PPO-style training pipelines. Policy      
+
+> Model
+> 𝐀 1
+> (𝐀 )
+> 𝐀 2
+> (𝐀 )
+> 𝐀 𝐀
+> (𝐀 )
+> 𝐀 1
+> 𝐀 𝐀 , ( 𝐀 )
+> 𝐀 2
+> 𝐀 𝐀 , ( 𝐀 )
+> 𝐀 𝐀
+> 𝐀 𝐀 , ( 𝐀 )
+> ⋯⋯
+> 𝐀 1
+> (𝐀 )
+> 𝐀 2
+> (𝐀 )
+> 𝐀 𝐀
+> (𝐀 )
+> ⋯
+> Solution
+> Verifier
+> SEM-based
+> Confidence
+> Encoder &
+> Cluster
+> Historical EMA
+> moments
+> Trajectory Final Advantage
+> Reward
+> 𝐀 𝐀 (𝐀 )
+> 𝐀 (𝐀 )
+> Prompt
+> cluster key 𝐀 (𝐀 )
+> Policy Update
+> Prompt-local
+> Stats
+> Blend
+> Stats Standardize
+> update EMA
+> (post-update) lookup
+> (pre-update)
+
+Figure 1: BV-Blend overview. For each prompt q(m), we sample G trajectories {τ (m) 
+
+> i
+
+} with the behavior policy and obtain verifier rewards {R(m) 
+
+> i
+
+}. We compute prompt-local statistics (μ(m) 
+
+> G
+
+, σ (m) 
+
+> G
+
+), embed q(m), and assign it to a semantic cluster k(m). Using pre-update EMA moments (μhist (k), v hist (k), N eff  
+
+> k
+
+), we compute the SEM-based confidence wk (Eq. (9) ; cold start: wk=0 for unseen clusters), blend baseline and variance statistics to obtain 
+
+(b(m), s (m)) (Eq. (10) ), and form advantages ABV ,(m) 
+
+> i
+
+(Eq. (11) ) for a PPO-style update. EMA moments are updated 
+
+post-update using the current batch. 
+
+3 Method 
+
+Critic-free policy optimization for LLM alignment often relies on prompt-local (group-dependent) ad-vantage normalization (e.g., GRPO-style estima-tors), but when within-group reward dispersion is small, prompt-local standardization can yield near-zero advantages and effectively remove the learn-ing signal for that prompt group. We propose BV-Blend , which constructs a single per-trajectory ad-vantage by combining prompt-local statistics with semantic-cluster-conditioned historical moments, using a confidence weight derived from a standard-error-of-the-mean (SEM) proxy. Concretely, BV-Blend blends baseline and variance statistics, then standardizes once using the resulting scale. BV-Blend keeps the PPO-style clipped objective un-changed (Schulman et al., 2017) and modifies only the advantage estimator: the SEM weight is com-puted from pre-update EMA statistics, while EMA moments are updated post-update using the current batch (Fig. 1). As in other group-based normaliza-tion methods, we stop gradients through all reward statistics and do not assume the resulting normal-ized estimator is unbiased. 
+
+3.1 Background: prompt-local normalization in critic-free RL 
+
+A training batch contains M prompts {q(m)}Mm=1 .For each prompt q(m), the behavior policy πθold 
+
+samples G trajectories G(q(m)) = {τ (m) 
+
+> i
+
+}Gi=1 .Each trajectory τ (m) 
+
+> i
+
+= (y(m) 
+
+> i, 1
+
+, . . . , y (m) 
+
+> i,T (m)
+> i
+
+) re-ceives a scalar trajectory-level reward R(m) 
+
+> i
+
+from an external verifier. For token position t in τ (m) 
+
+> i
+
+, define the impor-tance ratio 
+
+r(m) 
+
+> i,t
+
+(θ) = 
+
+πθ
+
+
+
+y(m) 
+
+> i,t
+
+| q(m), y (m)
+
+> i,<t
+
+
+
+πθold 
+
+
+
+y(m) 
+
+> i,t
+
+| q(m), y (m)
+
+> i,<t
+
+ , (1) and its clipped version ˜r(m) 
+
+> i,t
+
+(θ) = clip  r(m) 
+
+> i,t
+
+(θ), 1−
+
+ϵ, 1 + ϵ. Since rewards are trajectory-level, we compute a single advantage A(m) 
+
+> i
+
+per trajectory and apply it to all completion tokens. We restrict optimization to completion tokens using a mask 
+
+m(m) 
+
+> i,t
+
+∈ { 0, 1} and define masked token means as 
+
+Et∼τ (m)
+
+> i
+
+[fi,t ] ≜
+
+PT (m) 
+
+> i
+> t=1
+
+m(m) 
+
+> i,t
+
+fi,t 
+
+PT (m) 
+
+> i
+> t=1
+
+m(m)
+
+> i,t
+
+, (2) where each completion contains at least one gen-erated token so the denominator is non-zero. Throughout, Et∼τ (m)
+
+> i
+
+[·] denotes a mean over com-pletion tokens (Eq. (2) ) to avoid length-dependent gradient scaling; concretely, m(m) 
+
+> i,t
+
+= 1 for gener-ated completion tokens up to (and including) EOS, and 0 for prompt tokens and padding. In implemen-tation, A(m) 
+
+> i
+
+is treated as a trajectory-level constant (no gradient through reward statistics). GRPO-style training forms a prompt-local stan-dardized advantage (Shao et al., 2024): 
+
+AGRPO ,(m) 
+
+> i
+
+= R(m) 
+
+> i
+
+− μ(m)
+
+> G
+
+σ(m) 
+
+> G
+
++ δ , (3) where μ(m) 
+
+> G
+
+and σ(m) 
+
+> G
+
+are the mean and standard deviation of {R(m) 
+
+> i
+
+}Gi=1 , and δ > 0 is a small constant. If G < 2, we set σ(m) 
+
+> G
+
+= 0 , yielding 
+
+AGRPO ,(m)1 = 0 . The clipped surrogate objective is        
+
+> JGRPO (θ) = Em
+> "
+> 1
+> G
+> GX
+> i=1
+> Et∼τ(m)
+> i
+> h
+> min
+> 
+> r(m)
+> i,t (θ)AGRPO ,(m)
+> i,
+> ˜r(m)
+> i,t (θ)AGRPO ,(m)
+> i
+> i #
+> .
+
+(4) When σ(m) 
+
+> G
+
+≈ 0, Eq. (3) collapses toward zero advantages, effectively removing the learning sig-nal for that prompt group. 
+
+3.2 BV-Blend: SEM-driven blending of historical and prompt-local baselines 
+
+BV-Blend computes a single standardized advan-tage ABV ,(m) 
+
+> i
+
+by blending baseline and variance statistics and then standardizing once (taking a square root to obtain the scale). It follows the com-mon form A = ( R − b)/s : GRPO uses prompt-local (b, s ) = ( μ(m) 
+
+> G
+
+, σ (m) 
+
+> G
+
+), whereas BV-Blend interpolates between prompt-local statistics and 
+
+semantic-cluster-conditioned EMA moments, with the interpolation controlled by a SEM-based confi-dence wk.
+
+3.2.1 Prompt clustering 
+
+Each prompt q(m) is embedded by a frozen encoder 
+
+E(·) and assigned to a fixed K-means codebook 
+
+{cj }Kj=1 :
+
+k(m) = arg min  
+
+> j∈{ 1,...,K }
+
+∥E(q(m)) − cj ∥22. (5) The codebook is trained offline on a representative prompt corpus and kept fixed during RL to avoid cluster-identity drift. We report the encoder choice, 
+
+K, codebook training corpus, and K-means set-tings (implementation, seed, and iterations) for re-producibility. 
+
+3.2.2 Historical statistics with EMA moments 
+
+For each cluster k, we maintain EMA moments: mean m1(k), second raw moment m2(k), and EMA mass N eff  
+
+> k
+
+(here m1, m 2 denote moments, not the prompt index m). Given batch B, let 
+
+IB(k) = {(m, i ) : k(m) = k} and NB(k) = 
+
+|I B(k)|. Define sufficient statistics 
+
+S1,B(k) = X 
+
+> (m,i )∈I B(k)
+
+R(m) 
+
+> i
+
+,S2,B(k) = X 
+
+> (m,i )∈I B(k)
+
+ R(m)
+
+> i
+
+2.
+
+In distributed training, we aggregate 
+
+{S1,B(k), S 2,B(k), N B(k)} across workers and apply the EMA update after the policy optimization step. If NB(k) > 0, define the batch mean and second raw moment 
+
+μB(k) = S1,B(k)
+
+NB(k) , μ2,B(k) = S2,B(k)
+
+NB(k) .
+
+With EMA rate γ ∈ (0 , 1] ,
+
+m1(k) ← (1 − γ)m1(k) + γ μ B(k),m2(k) ← (1 − γ)m2(k) + γ μ 2,B(k), (6) 
+
+N eff  
+
+> k
+
+← (1 − γ)N eff  
+
+> k
+
++ γ N B(k).
+
+We define 
+
+vhist (k) = max  m2(k) − m1(k)2, 0,σhist (k) = pvhist (k),μhist (k) = m1(k).
+
+(7) 
+
+Initialization and cold start. On first ob-servation of cluster k, we initialize N eff  
+
+> k
+
+←
+
+N0, m 1(k) ← μB(k), m 2(k) ← μB(k)2 + Vprior ,
+
+with N0 > 0 and Vprior > 0.
+
+Update ordering. For each batch, we compute 
+
+wk using EMA statistics before incorporating the current batch. If a cluster k is first observed in the current batch (i.e., no prior EMA state exists at advantage-computation time), we set wk = 0 
+
+for this batch (pure prompt-local normalization for 
+
+ABV ) and create its EMA state using the initializa-tion above after the policy optimization step. For previously seen clusters, EMA moments are up-dated after the policy optimization step using the aggregated sufficient statistics. 
+
+3.2.3 Uncertainty-to-confidence mapping 
+
+We quantify historical uncertainty using a SEM-style proxy 
+
+SEM hist (k) = σhist (k)
+
+q
+
+N eff  
+
+> k
+
++ δN
+
+, (8) with δN > 0. We map uncertainty to a confidence weight 
+
+wk = exp 
+
+
+
+− SEM hist (k)
+
+T
+
+
+
+, (9) where T > 0 controls sensitivity to the reward scale. For clusters with an EMA state, wk ∈ (0 , 1] :lower uncertainty yields larger wk (more reliance on historical moments), while higher uncertainty yields smaller wk (more reliance on prompt-local statistics). We report T, γ, N 0, V prior , δ N in experi-ments. 
+
+3.2.4 Baseline-and-scale blending and BV advantage 
+
+For each prompt group m, compute prompt-local statistics μ(m) 
+
+> G
+
+and σ(m) 
+
+> G
+
+over {R(m) 
+
+> i
+
+}Gi=1 . Let 
+
+w(m) = wk(m) . We blend baseline and variance statistics, and take a square root to obtain the scale: 
+
+b(m) = w(m) μhist (k(m)) +  1 − w(m) μ(m) 
+
+> G
+
+,s(m) =
+
+q
+
+w(m) vhist (k(m)) +  1 − w(m)  σ(m)
+
+> G
+
+2 ,
+
+(10) and define the BV-Blend advantage 
+
+ABV ,(m) 
+
+> i
+
+= R(m) 
+
+> i
+
+− b(m)
+
+s(m) + δ . (11) When σ(m) 
+
+> G
+
+≈ 0, the blended scale s(m) remains non-degenerate whenever the historical term pro-vides non-zero variance, thereby preventing col-lapse of the learning signal. 
+
+4 Experiments 
+
+Domain and Datasets. We focus on mathemat-ical reasoning, where evaluation is rigorous and objective. Compared with more subjective tasks, math offers (i) deterministic, programmatic verifi-cation against ground-truth final answers, reducing reliance on preference labels and learned judges that may be biased or exploitable (Huang et al., 2025; Zheng et al., 2025); (ii) scalable automated evaluation without costly human annotation; and (iii) diverse multi-step problems with unambigu-ous correctness criteria. Our training set contains 45,000 problems curated from the default 94k split of OpenR1-Math-220k (Face, 2025; Yan et al., 2025). OpenR1-Math-220k is built from Numi-naMath 1.5 prompts and includes 2–4 reasoning traces generated by DeepSeek-R1; most traces are verified by Math-Verify (with a small portion ad-ditionally judged by an LLM), and each problem has at least one correct trace (Face, 2025; LI et al., 2024; Guo et al., 2025). We use Math-Verify to remove instances with invalid or unverifiable final answers, and further filter samples whose traces exceed 8,192 tokens. This curated set is used as (1) prompts for on-policy rollouts, (2) ground-truth answers for deterministic reward computation, and (3) a corpus of reasoning traces for training SFT baselines. 
+
+Evaluation. We evaluate BV-Blend on bench-marks probing two complementary aspects: (i) in-domain mathematical reasoning across a broad dif-ficulty range—from pre-college competition prob-lems (AMC (He et al., 2024)), through university-level problem solving (MATH-500 (Hendrycks et al., 2021), Minerva (Lewkowycz et al., 2022)), to elite competition-level challenges (AIME 2024/2025 (Li et al., 2024)); and (ii) 
+
+out-of-distribution (OOD) generalization to non-mathematical benchmarks, including abstract rea-soning (ARC-C (Clark et al., 2018)), expert-level scientific knowledge (GPQA-diamond (Rein et al., 2023)), and multidisciplinary problem solving (MMLU-Pro (Wang et al., 2024)). Our main re-sults use Qwen2.5-Math-7B (Yang et al., 2024c) as the backbone; additional backbones are reported in the Implementation Details paragraph below. Un-less otherwise specified, we decode for evaluation with temperature 0.6. For multiple-choice bench-marks, we randomly permute answer options for each question (with labels remapped accordingly) to mitigate position bias. We report pass@1 on large-scale benchmarks (MATH-500, Minerva, and the OOD suite). For smaller and more challeng-ing test sets (AIME and AMC), we instead report avg@32, defined as the mean success rate over 32 independent samples per problem, which is more stable under stochastic decoding. 
+
+Baselines. To contextualize BV-Blend, we com-pare against baselines built on the same Qwen2.5-Math-7B backbone (Table 1), grouped into two categories. (1) On-policy RLVR methods start from the base model and optimize using only on-policy rollouts with verifiable rewards (i.e., without SFT initialization or off-policy demon-strations). This category includes our replica-tion of GRPO (Shao et al., 2024) and representa-tive “Zero” RLVR systems trained under different reward designs and training recipes: SimpleRL-Zero (Zeng et al., 2025), Open-Reasoner-Zero (Hu et al., 2025), PRIME-Zero (Cui et al., 2025), and Oat-Zero (Liu et al., 2025b). (2) Hybrid & off-policy methods leverage additional external data beyond on-policy rollouts, including SFT, a sequen-tial SFT →RL pipeline, ReLIFT (Ma et al., 2025), Table 1: Main results on Qwen2.5-Math-7B. We compare BV-Blend with baselines on mathematical reasoning and OOD generalization benchmarks. Best and second-best in each column are in bold and underlined . Math Reasoning Avg. averages AIME 2024/2025, AMC, MATH-500, Minerva, and Olympiad; Generalization Avg. averages ARC-C, GPQA*, and MMLU-Pro.                                                                                                                                     
+
+> Model Math Reasoning Performance Generalization Performance AIME 24/25 AMC MATH-500 Minerva Olympiad Avg. ARC-C GPQA* MMLU-Pro Avg.
+> Qwen-Base 11.5/4.9 31.3 43.6 7.4 15.6 19.1 18.2 11.1 16.9 15.4 Qwen-Instruct 12.5/10.2 48.5 80.4 32.7 41.0 37.6 70.3 24.7 34.1 43.0
+> Baselines: On-Policy RLVR
+> GRPO (our replication) 25.1/15.3 62.0 84.4 39.3 46.8 45.5 82.3 40.4 49.3 57.3 SimpleRL-Zero 27.0/6.8 54.9 76.0 25.0 34.7 37.4 30.2 23.2 34.5 29.3 OpenReasoner-Zero 16.5/15.0 52.1 82.4 33.1 47.1 41.0 66.2 29.8 58.7 51.6 PRIME-Zero 17.0/12.8 54.0 81.4 39.0 40.3 40.8 73.3 18.2 32.7 41.4 Oat-Zero 33.4/11.9 61.2 78.0 34.6 43.4 43.8 70.1 23.7 41.7 45.2
+> Baselines: Hybrid & Off-Policy Methods
+> SFT 22.2/22.3 52.8 82.6 40.8 43.7 44.1 75.2 24.7 42.7 47.5 SFT+RL 25.8/23.1 62.7 87.2 39.7 50.4 48.2 72.4 24.2 37.7 44.8 ReLIFT 28.2/20.1 64.9 87.4 33.8 52.5 47.8 76.2 37.9 52.5 55.5 LUFFY 29.4/23.1 65.6 87.6 37.5 57.2 50.1 80.5 39.9 53.0 57.8 LUFFY †30.7/ 25.5 66.2 86.8 41.2 55.3 51.0 81.8 49.0 54.7 61.8 BV-Blend ( ours )34.2 /23.6 66.5 87.9 40.7 57.4 51.7 83.1 52.6 56.5 64.1
+
+and LUFFY (Yan et al., 2025). For LUFFY, we report both the standard and extended-training ( †)variants when available. 
+
+Implementation Details. We evaluate BV-Blend across multiple backbones. Our primary testbed is Qwen2.5-Math-7B to align with prior RLVR work. We additionally report results on Qwen2.5-Math-1.5B, Qwen2.5-7B-Instruct, and Llama-3.1-8B-Instruct to assess robustness across model scales and instruction tuning. Unless otherwise specified, we use a shared training setup across all runs. We optimize with AdamW and a cosine learning-rate schedule with linear warmup, with a peak learning rate of 1 × 10 −6. Each iteration collects a global rollout batch of 128 trajectories (16 prompts × 8rollouts) with sampling temperature 1.0, and per-forms policy updates with a trajectory minibatch size of 64. Rewards are binary: we assign +1 if the extracted final answer is verified as correct by 
+
+Math-Verify , and 0 otherwise, with no intermediate or format-based shaping rewards. We use a PPO-style clipped objective shared by BV-Blend and the PPO-style baselines, with clipping ϵ = 0 .2 and an entropy bonus coefficient of 0.01 . Unless otherwise stated, we include a KL-to-reference term in the objective but set its coefficient to β = 0 in the main experiments, effectively disabling it to isolate the effect of different advantage estimators. For BV-Blend, we maintain cluster-conditioned historical moments using EMA with update rate γ = 0 .9, and use δ = 10 −8 for numerical stability in advantage computation. The remaining BV-Blend-specific hyperparameters and clustering settings are fixed across experiments unless otherwise stated. We do not apply any additional global advantage nor-malization beyond the method-specific estimator (e.g., GRPO or BV-Blend). For purely on-policy approaches (including BV-Blend and our GRPO replication), all 8 rollouts per prompt are gener-ated on-policy from the current policy. All models are trained for 500 iterations. All experiments are conducted on 8 NVIDIA RTX PRO 6000 GPUs (96 GB VRAM each). 
+
+4.1 Main Results 
+
+Table 1 summarizes results on the Qwen2.5-Math-7B backbone. Overall, BV-Blend achieves the best average performance among the compared meth-ods on both in-domain mathematical reasoning and OOD benchmarks. Notably, BV-Blend is a purely on-policy RLVR approach, yet it remains compet-itive with hybrid/off-policy systems that addition-ally leverage external data. 0 100 200 300 400 500 
+
+> Steps
+> 1000
+> 2000
+> 3000
+> 4000
+> Response Length
+> GRPO
+> BV-Blend
+
+(a) Response length 0 100 200 300 400 500  
+
+> Steps
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> Entropy
+> GRPO
+> BV-Blend
+
+(b) Training entropy 0 100 200 300 400 500  
+
+> Steps
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Reward
+> GRPO
+> BV-Blend
+
+(c) Training reward 0 100 200 300 400 500  
+
+> Steps
+> 0
+> 25
+> 50
+> 75
+> 100
+> Effective Signal Ratio (%)
+> GRPO
+> BV-Blend
+
+(d) Effective signal ratio 
+
+Figure 2: GRPO vs. BV-Blend. We track (a) response length (tokens), (b) policy training entropy, (c) mean training reward (verifier score), and (d) the effective-signal ratio: the fraction of prompts whose method-specific normalization scale remains non-degenerate during training (GRPO: σ(m) 
+
+> G
+
+; BV-Blend: s(m) in Eq. (10)). 0 30 60 90 120                  
+
+> Steps
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> Average Accuracy
+> (a) Accuracy: Standard
+> 030 60 90 120
+> Steps
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> (b) Accuracy: Complex
+> 030 60 90 120
+> Steps
+> 10 2
+> 10 3
+> 10 4
+> Average Length
+> (c) Length: Standard
+> 030 60 90 120
+> Steps
+> 10 2
+> 10 3
+> 10 4
+> (d) Length: Complex
+> BV-Blend (Ours) GRPO (Baseline) Easy Medium Hard Hardest
+
+Figure 3: Difficulty-stratified BV-Blend vs. GRPO. We partition prompts into four difficulty buckets (Easy/Medium/Hard/Hardest) using a fixed pre-RL difficulty estimate (Appendix C.4) shared across methods, and track verifier accuracy (a,b; fraction of prompts with correct final answers) and average response length (c,d) across training checkpoints. The left pair (a,c) reports the Standard subset and the right pair (b,d) reports the 
+
+Complex subset. Response length is measured on completion tokens and plotted on a log scale. 
+
+In-Domain Mathematical Reasoning. We eval-uate in-domain performance on five math bench-marks, where AIME is reported for two years (AIME 2024/2025), yielding six scores in total for the Math Reasoning Avg. AIME and AMC are reported as avg@32, while the remaining bench-marks use pass@1. Across these six scores, BV-Blend attains the highest average (51.7%), outper-forming the strongest on-policy baseline Oat-Zero (43.8%) by 7.9 points. It also exceeds ReLIFT (47.8%) and LUFFY (50.1%), and is slightly above the extended-training LUFFY † variant (51.0%). At the per-benchmark level, BV-Blend achieves the best reported results on AIME 2024 (34.2%), AMC (66.5%), MATH-500 (87.9%), and Olympiad (57.4%). Meanwhile, it is marginally below the best baseline on Minerva (40.7% vs. 41.2%) and on AIME 2025 (23.6% vs. 25.5%), indicating broad but non-uniform gains across evaluation settings. 
+
+OOD Generalization. On the OOD suite (ARC-C, GPQA*, and MMLU-Pro), BV-Blend again achieves the best average score (64.1%), improving over the next-best baseline LUFFY † (61.8%) by 2.3 points. The largest gains appear on reasoning-centric benchmarks: BV-Blend achieves the best results on ARC-C (83.1%) and GPQA* (52.6%), exceeding LUFFY † by 3.6 points on GPQA*. On MMLU-Pro, BV-Blend is slightly below the best baseline (56.5% vs. 58.7%), suggesting that im-provements are more pronounced on benchmarks emphasizing multi-step reasoning, while broad knowledge coverage may depend more on pretrain-ing and instruction tuning. Taken together, Table 1 shows that stabiliz-ing the advantage signal can improve on-policy RLVR training, yielding substantial gains with-out requiring additional supervision beyond ver-ifiable rewards, while remaining competitive with hybrid/off-policy approaches that leverage extra data. 
+
+4.2 Analysis of Training Dynamics 
+
+To diagnose how BV-Blend shapes optimization, Fig. 2 compares BV-Blend with the on-policy base-line GRPO across four training signals. BV-Blend consistently produces longer responses and reaches a higher, more stable length plateau (Fig. 2a), which is consistent with sustaining multi-step rea-soning traces under the same rollout budget. While entropy decreases for both methods early in train-ing, BV-Blend maintains a higher residual policy entropy throughout (Fig. 2b), which is consistent Table 2: Ablations of BV-Blend on Qwen2.5-Math-7B. We ablate the SEM-based confidence weighting by constructing wk from only the EMA effective count N eff  
+
+> k
+
+or only the historical scale σhist (k). Avg. is computed over six scores (AIME 2024, AIME 2025, AMC, MATH-500, Minerva, Olympiad).                                       
+
+> Model AIME 24/25 AMC MATH-500 Minerva Olympiad Avg.
+> GRPO (baseline) 25.1/15.3 62.1 84.3 39.3 46.9 45.5 Naive historical averaging ( w=0 .5)25.8/16.1 58.2 79.6 37.9 44.5 43.7 BV-Blend ( wkfrom Neff
+> konly) 31.5/22.2 64.2 86.8 39.6 53.9 49.7 BV-Blend ( wkfrom σhist only) 29.1/21.3 65.2 87.3 40.3 51.2 49.1
+> BV-Blend (full SEM-based confidence) 34.2 /23.6 66.4 87.9 40.7 57.4 51.7
+
+with slower policy concentration and more persis-tent exploration. This is accompanied by slightly higher and noticeably smoother training rewards (Fig. 2c), with reduced volatility relative to GRPO. Most importantly, the effective-signal ratio (Fig. 2d) highlights a difference in the resulting learning signal. We define the effective-signal ra-tio as the fraction of prompts whose normaliza-tion scale is non-degenerate under the correspond-ing estimator (GRPO: σ(m) 
+
+> G
+
+; BV-Blend: s(m)). With binary verifier rewards, prompt groups fre-quently become near-deterministic (all-correct or all-incorrect), causing σ(m) 
+
+> G
+
+to approach zero and thereby collapsing GRPO advantages toward zero, which reduces the number of informative prompt groups available for learning (Shao et al., 2024). In contrast, BV-Blend preserves a substantially higher effective-signal ratio by stabilizing the baseline and scale via cluster-conditioned historical moments when prompt-local dispersion is small, thereby maintaining usable learning signals and yielding more stable optimization dynamics overall. 
+
+4.3 Difficulty-stratified dynamics 
+
+To better understand where BV-Blend’s gains arise and whether they are accompanied by undesirable verbosity, we analyze learning dynamics under a fixed difficulty stratification. Specifically, fol-lowing the protocol described in Appendix C.4, we assign each prompt to one of four buckets (Easy/Medium/Hard/Hardest) using a pre-RL diffi-culty estimate, and evaluate both BV-Blend and the on-policy baseline GRPO at the same checkpoints (Steps 0/30 /60 /90 /120 ). Fig. 3 reports bucket-wise average verifier accuracy and average comple-tion length (log scale) on both Standard and Com-plex subsets. Overall, BV-Blend yields consistent accuracy improvements on harder buckets—most notably Hard and Hardest—while keeping response lengths comparable and avoiding systematic length blow-up. We observe mild non-monotonic fluc-tuations across checkpoints, which is expected in on-policy optimization due to sampling noise; im-portantly, BV-Blend shows a more consistent up-ward trend on difficult prompts, consistent with the hypothesis that historically stabilized advan-tage estimation improves training stability without evidence of systematic length inflation. 
+
+4.4 Ablation Study 
+
+Table 2 ablates the core design of BV-Blend on Qwen2.5-Math-7B. We compare GRPO, a naive fixed-weight historical mixture ( w=0 .5), two partial variants that compute the confidence weight using only one historical-uncertainty in-gredient, and the full BV-Blend. All BV-Blend variants use the same baseline/scale blending in Eq. (10) and differ only in how wk is com-puted from historical statistics. Concretely, the full method computes the SEM-style uncertainty 
+
+SEM hist (k) = σhist (k)/
+
+q
+
+N eff  
+
+> k
+
++ δN and maps it to confidence via Eq. (9) . The N eff  
+
+> k
+
+-only variant drops the dependence on σhist (k) (i.e., SEM( k) ∝
+
+1/
+
+q
+
+N eff  
+
+> k
+
++ δN ), while the σhist -only variant drops the dependence on N eff  
+
+> k
+
+(i.e., SEM( k) ∝ σhist (k)); in all cases, wk is a monotone function of the cor-responding uncertainty proxy. Two observations emerge. First, simply injecting historical information is insufficient: naive averag-ing drops from 45.5 (GRPO) to 43.7, indicating that historical moments should be used selectively rather than uniformly. Second, either signal alone already improves over GRPO (49.7 and 49.1), and combining them through the SEM proxy performs best (51.7), improving by 6.2 points over GRPO and by 2.0 points over the best single-signal vari-ant. The gains are particularly noticeable on harder benchmarks, such as Olympiad and AIME, which is consistent with the role of SEM-based confidence in stabilizing advantage estimation when prompt-local reward dispersion is small. 
+
+5 Conclusion 
+
+We identify an instability in critic-free RLVR: when prompt-local reward dispersion is small, group-normalized advantages can collapse and weaken the learning signal. We propose BV-Blend (BV-Blend), which stabilizes advantage estimation by blending prompt-local statistics with semantic-cluster-conditioned historical moments through an SEM-based confidence weight, while leaving the PPO-style clipped objective unchanged. Across experiments, BV-Blend improves training stability and performance on in-domain, OOD, and cross-backbone evaluations. Future work will explore more effective mechanisms for sharing historical information across prompts, especially under dis-tribution shift. 
+
+Limitations 
+
+BV-Blend relies on a fixed prompt embedding and clustering pipeline; performance may depend on the encoder and codebook granularity, and may de-grade under substantial distribution shift. It also requires maintaining cluster-conditioned EMA mo-ments and aggregating per-cluster statistics in dis-tributed training, which introduces additional book-keeping and hyperparameter tuning. Finally, we primarily evaluate mathematical reasoning with verifiable outcome rewards and a limited set of backbones; broader domains and verifier/reward designs are needed to more fully assess generality. In addition, under extremely sparse reward regimes, if both the current prompt group and its relevant historical cluster provide little or no reward vari-ation, BV-Blend may still offer limited learning signal. 
+
+Acknowledgments 
+
+This work is supported by the National Key Research and Development Program of China (No.2023YFF0905400), the National Natural Sci-ence Foundation of China (No.U2341229) and the Reform Commission Foundation of Jilin Province (No.2024C003). 
+
+References 
+
+Yupeng Chang, Yi Chang, and Yuan Wu. 2026. BA-loRA: Bias-alleviating low-rank adaptation to miti-gate catastrophic inheritance in large language mod-els. In The Fourteenth International Conference on Learning Representations .Yupeng Chang, Chenlu Guo, Yi Chang, and Yuan Wu. 2025. Lora-mgpo: Mitigating double descent in low-rank adaptation via momentum-guided pertur-bation optimization. In Findings of the Association for Computational Linguistics: EMNLP 2025 , pages 648–659. Yupeng Chang, Xu Wang, Jindong Wang, Yuan Wu, Linyi Yang, Kaijie Zhu, Hao Chen, Xiaoyuan Yi, Cunxiang Wang, Yidong Wang, and 1 others. 2024. A survey on evaluation of large language models. 
+
+ACM transactions on intelligent systems and technol-ogy , 15(3):1–45. Peter Chen, Xiaopeng Li, Ziniu Li, Xi Chen, and Tianyi Lin. 2025. Spectral policy optimization: Coloring your incorrect reasoning in grpo. arXiv preprint arXiv:2505.11595 .Xi Chen, Wei Xue, and Yike Guo. 2026. Actormind: Emulating human actor reasoning for speech role-playing. Preprint , arXiv:2604.11103. Xi Chen and Min Zeng. 2025. Prototype conditioned generative replay for continual learning in NLP. In 
+
+Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Com-putational Linguistics: Human Language Technolo-gies (Volume 1: Long Papers) , pages 12754–12770, Albuquerque, New Mexico. Association for Compu-tational Linguistics. Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. 2018. Think you have solved question an-swering? try arc, the AI2 reasoning challenge. CoRR ,abs/1803.05457. Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, Qixin Xu, Weize Chen, and 1 others. 2025. Pro-cess reinforcement through implicit rewards. arXiv preprint arXiv:2502.01456 .Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Ji-azhen Du, Huiyang Wang, Fuzheng Zhang, and 1 others. 2025a. Agentic reinforced policy optimiza-tion. arXiv preprint arXiv:2507.19849 .Haonan Dong, Kehan Jiang, Haoran Ye, Wenhao Zhu, Zhaolu Kang, and Guojie Song. 2026. Neurea-soner: Towards explainable, controllable, and uni-fied reasoning via mixture-of-neurons. Preprint ,arXiv:2604.02972. Haonan Dong, Wenhao Zhu, Guojie Song, and Liang Wang. 2025b. AuroRA: Breaking low-rank bottle-neck of loRA with nonlinear mapping. In The Thirty-ninth Annual Conference on Neural Information Pro-cessing Systems .Kawin Ethayarajh, Winnie Xu, Niklas Muennighoff, Dan Jurafsky, and Douwe Kiela. 2024. Kto: Model alignment as prospect theoretic optimization. arXiv preprint arXiv:2402.01306 .Hugging Face. Chat templates. https: //huggingface.co/docs/transformers/main/ en/chat_templating . Transformers documenta-tion (main). Accessed: 2026-01-05. Hugging Face. 2025. Open r1: A fully open reproduc-tion of deepseek-r1. Jiayi Gui, Yiming Liu, Jiale Cheng, Xiaotao Gu, Xiao Liu, Hongning Wang, Yuxiao Dong, Jie Tang, and Minlie Huang. 2024. Logicgame: Benchmarking rule-based reasoning abilities of large language mod-els. arXiv preprint arXiv:2408.15778 .Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shi-rong Ma, Peiyi Wang, Xiao Bi, and 1 others. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 .Zhezheng Hao, Hong Wang, Haoyang Liu, Jian Luo, Jiarui Yu, Hande Dong, Qiang Lin, Can Wang, and Jiawei Chen. 2025. Rethinking entropy interven-tions in rlvr: An entropy change perspective. arXiv preprint arXiv:2510.10150 .Zhezheng Hao, Hong Wang, Jian Luo, Jianqing Zhang, Yuyan Zhou, Qiang Lin, Can Wang, Hande Dong, and Jiawei Chen. 2026. Recreate: Reasoning and creating domain agents driven by experience. arXiv preprint arXiv:2601.11100 .Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Leng Thai, Junhao Shen, Jinyi Hu, Xu Han, Yu-jie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu, and Maosong Sun. 2024. Olympiadbench: A challenging benchmark for promoting AGI with olympiad-level bilingual multimodal scientific prob-lems. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024 , pages 3828–3850. Association for Computational Linguistics. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Ja-cob Steinhardt. 2021. Measuring mathematical prob-lem solving with the MATH dataset. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks 1, NeurIPS Datasets and Benchmarks 2021, December 2021, virtual .Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, and 1 others. 2022. Lora: Low-rank adaptation of large language models. ICLR , 1(2):3. Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xi-angyu Zhang, and Heung-Yeung Shum. 2025. Open-Reasoner-Zero: An open source approach to scaling up reinforcement learning on the base model. arXiv preprint arXiv:2503.24290 .Zeyu Huang, Zihan Qiu, Zili Wang, Edoardo M. Ponti, and Ivan Titov. 2025. Post-hoc reward calibration: A case study on length bias. In The Thirteenth In-ternational Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenRe-view.net. Kehan Jiang, Haonan Dong, Zhaolu Kang, Zhengzhou Zhu, and Guojie Song. 2026. Foe: Forest of errors makes the first solution the best in large reasoning models. Preprint , arXiv:2604.02967. Hynek Kydlicek, Alina Lozovskaya, Nathan Habib, and Clémentine Fourrier. 2025. Fixing open llm leaderboard and introducing math-verify. 
+
+https://huggingface.co/blog/math_verify_ leaderboard . Hugging Face Blog. Accessed: 2026-01-05. Thanh-Long V Le, Myeongho Jeon, Kim Vu, Viet Lai, and Eunho Yang. 2025. No prompt left behind: Exploiting zero-variance prompts in llm reinforce-ment learning via entropy-guided advantage shaping. 
+
+arXiv preprint arXiv:2509.21880 .Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay V. Ra-masesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, Yuhuai Wu, Behnam Neyshabur, Guy Gur-Ari, and Vedant Misra. 2022. Solving quan-titative reasoning problems with language models. In 
+
+Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Pro-cessing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 .Jia Li, Edward Beeching, Lewis Tunstall, Ben Lip-kin, Roman Soletskyi, Shengyi Huang, Kashif Rasul, Longhui Yu, Albert Q. Jiang, Ziju Shen, and 1 oth-ers. 2024. Numinamath: The largest public dataset in ai4maths with 860k pairs of competition math problems and solutions. https://huggingface. co/datasets/Numinamath . Hugging Face reposi-tory, 13:9. Jia LI, Edward Beeching, Lewis Tunstall, Ben Lipkin, Roman Soletskyi, Shengyi Costa Huang, Kashif Ra-sul, Longhui Yu, Albert Jiang, Ziju Shen, Zihan Qin, Bin Dong, Li Zhou, Yann Fleureau, Guillaume Lam-ple, and Stanislas Polu. 2024. Numinamath. Zixu Li, Yupeng Hu, Zhiwei Chen, Qinlei Huang, Guozhi Qiu, Zhiheng Fu, and Meng Liu. 2026a. Retrack: Evidence-driven dual-stream directional anchor calibration network for composed video re-trieval. In Proceedings of the AAAI Conference on Ar-tificial Intelligence , volume 40, pages 23373–23381. Zixu Li, Yupeng Hu, Zhiwei Chen, Shiqi Zhang, Qinlei Huang, Zhiheng Fu, and Yinwei Wei. 2026b. Habit: Chrono-synergia robust progressive learning frame-work for composed image retrieval. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 40, pages 6762–6770. Xu Liang. 2025. Group relative policy optimization for image captioning. arXiv preprint arXiv:2503.01333 .Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri-son Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2023. Let’s verify step by step. In The Twelfth Inter-national Conference on Learning Representations .Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. 2025a. Understanding r1-zero-like training: A crit-ical perspective. https://github.com/sail-sg/ understand-r1-zero .Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. 2025b. Understanding r1-zero-like training: A criti-cal perspective. arXiv preprint arXiv:2503.20783 .Lu Ma, Hao Liang, Meiyi Qiang, Lexiang Tang, Xi-aochen Ma, Zhen Hao Wong, Junbo Niu, Chengyu Shen, Runming He, Bin Cui, and 1 others. 2025. Learning what reinforcement learning can’t: Inter-leaved online fine-tuning for hardest questions. arXiv preprint arXiv:2506.07527 .Yu Meng, Mengzhou Xia, and Danqi Chen. 2024. Simpo: Simple preference optimization with a reference-free reward. arXiv preprint arXiv:2405.14734 .Youssef Mroueh. 2025. Reinforcement learning with verifiable rewards: Grpo’s effective loss, dynam-ics, and success amplification. arXiv preprint arXiv:2503.06639 .Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, and 1 others. 2022. Training language models to follow in-structions with human feedback. Advances in neural information processing systems , 35:27730–27744. Rafael Rafailov, Archit Sharma, Eric Mitchell, Christo-pher D Manning, Stefano Ermon, and Chelsea Finn. 2024. Direct preference optimization: Your language model is secretly a reward model. Advances in Neu-ral Information Processing Systems , 36. David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Di-rani, Julian Michael, and Samuel R. Bowman. 2023. GPQA: A graduate-level google-proof q&a bench-mark. CoRR , abs/2311.12022. John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. 2015. High-dimensional continuous control using generalized advantage esti-mation. arXiv preprint arXiv:1506.02438 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Y Wu, and 1 others. 2024. Deepseek-math: Pushing the limits of mathematical reason-ing in open language models. arXiv preprint arXiv:2402.03300 .Hanwen Shen, Ting Ying, Jiajie Lu, and Shanshan Wang. 2026. Preconditioned test-time adaptation for out-of-distribution debiasing in narrative generation. arXiv preprint arXiv:2603.13683 .Yi Su, Dian Yu, Linfeng Song, Juntao Li, Haitao Mi, Zhaopeng Tu, Min Zhang, and Dong Yu. 2025. Crossing the reward bridge: Expanding rl with verifi-able rewards across diverse domains. arXiv preprint arXiv:2503.23829 .Meta Team. 2024. The llama 3 herd of models. 
+
+Preprint , arXiv:2407.21783. Kaiyuan Tian, Yu Tang, Gongqingjian Jiang, Bai-hui Liu, Yifu Gao, Xialin Su, Linbo Qiao, and Dongsheng Li. 2026. Grass: Gradient-based adap-tive layer-wise importance sampling for memory-efficient large language model fine-tuning. Preprint ,arXiv:2604.07808. Hu Wang, Congbo Ma, Ian Reid, and Mohammad Yaqub. 2025. Kalman filter enhanced grpo for rein-forcement learning-based language model reasoning. 
+
+arXiv preprint arXiv:2505.07527 .Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen. 2024. Mmlu-pro: A more robust and challenging multi-task language understanding benchmark. In Advances in Neural Information Pro-cessing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 .Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, and 1 others. 2022. Chain-of-thought prompting elic-its reasoning in large language models. Advances in neural information processing systems , 35:24824– 24837. Ronald J Williams. 1992. Simple statistical gradient-following algorithms for connectionist reinforcement learning. Machine learning , 8(3):229–256. Zhenhe Wu, Zhongqiu Li, JieZhangChinaTele JieZhangChinaTele, Zhongjiang He, Jian Yang, Yu Zhao, Ruiyu Fang, Bing Wang, Hongyan Xie, Shuangyong Song, and 1 others. 2025a. Ucs-sql: uniting content and structure for enhanced semantic bridging in text-to-sql. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 8156–8168. Zhenhe Wu, Zhongqiu Li, Mengxiang Li, Jie Zhang, Zhongjiang He, Jian Yang, Yu Zhao, Ruiyu Fang, Yongxiang Li, Zhoujun Li, and 1 others. 2025b. Mr-sql: multi-level retrieval enhances inference for llm in text-to-sql. In International Conference on Database Systems for Advanced Applications , pages 403–413. Springer. Zhenhe Wu, Jian Yang, Jiaheng Liu, Xianjie Wu, Changzai Pan, Jie Zhang, Yu Zhao, Shuangyong Song, Yongxiang Li, and Zhoujun Li. 2025c. Table-r1: Region-based reinforcement learning for table understanding. arXiv preprint arXiv:2505.12415 .Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui, Xiaoye Qu, Yu Cheng, and Yue Zhang. 2025. Learning to reason under off-policy guidance. arXiv preprint arXiv:2504.14945 .An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jian-hong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, and 22 others. 2024a. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 .An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jian-hong Tu, Jingren Zhou, Junyang Lin, Keming Lu, Mingfeng Xue, Runji Lin, Tianyu Liu, Xingzhang Ren, and Zhenru Zhang. 2024b. Qwen2.5-math tech-nical report: Toward mathematical expert model via self-improvement. Preprint , arXiv:2409.12122. An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jianhong Tu, Jingren Zhou, Junyang Lin, and 1 others. 2024c. Qwen2. 5-math technical report: Toward mathe-matical expert model via self-improvement. arXiv preprint arXiv:2409.12122 .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, and 1 others. 2025a. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Zhouliang Yu, Ruotian Peng, Keyi Ding, Yizhe Li, Zhongyuan Peng, Minghao Liu, Yifan Zhang, Zheng Yuan, Huajian Xin, Wenhao Huang, and 1 others. 2025b. Formalmath: Benchmarking formal mathe-matical reasoning of large language models. arXiv preprint arXiv:2505.02735 .Weihao Zeng, Yuzhen Huang, Qian Liu, Wei Liu, Ke-qing He, Zejun Ma, and Junxian He. 2025. Simplerl-zoo: Investigating and taming zero reinforcement learning for open base models in the wild. arXiv preprint arXiv:2503.18892 .Xiaosen Zheng, Tianyu Pang, Chao Du, Qian Liu, Jing Jiang, and Min Lin. 2025. Cheating automatic LLM benchmarks: Null models achieve high win rates. In 
+
+The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. Yixiao Zhou, Yang Li, Dongzhou Cheng, Hehe Fan, and Yu Cheng. 2026. Look inward to explore outward: Learning temperature policy from llm internal states via hierarchical rl. arXiv preprint arXiv:2602.13035 .Daniel M Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B Brown, Alec Radford, Dario Amodei, Paul Chris-tiano, and Geoffrey Irving. 2019. Fine-tuning lan-guage models from human preferences. arXiv preprint arXiv:1909.08593 .Appendix 
+
+Contents 
+
+A Experimental Setup 13 
+
+A.1 Problem Formulation as a Markov Decision Process (MDP) . . . . . 13 A.2 Justification for the Mathematical Reasoning Domain . . . . . . . . 13 A.3 Reward Computation and Visual-ized Example . . . . . . . . . . . 14 A.4 Base Models and Prompting Format 14 
+
+B Implementation Details and Pseudocode 15 
+
+B.1 Historical Moments Buffer . . . . 15 B.2 BV-Blend Training Loop and Ad-vantage Computation . . . . . . . 15 B.3 Model and Optimization . . . . . 15 B.4 Prompting Strategy . . . . . . . . 16 
+
+C Extended Experimental Results 16 
+
+C.1 Further Ablation Studies . . . . . 16 C.2 Robustness Across Diverse Models 16 C.3 Proof that GRPO Advantages Van-ish Under Uniform Prompt-Group Rewards . . . . . . . . . . . . . . 17 C.4 Difficulty Stratification and Subset Definition . . . . . . . . . . . . . 17 
+
+D Bias–Variance Analysis of the BV-Blend Advantage Estimator 17 
+
+D.1 Discussion of Key Assumptions . 18 
+
+E Reproducibility Details 19 
+
+A Experimental Setup 
+
+This appendix describes the experimental environ-ment, task formulation, datasets, evaluation proto-cols, and base model configurations. Our goal is to provide sufficient detail for reproducibility. 
+
+A.1 Problem Formulation as a Markov Decision Process (MDP) 
+
+We model autoregressive generation as a finite-horizon episodic Markov Decision Process (MDP) 
+
+(S, A, P, r, H ), where H is the maximum number of generated completion tokens (including EOS when present). • State Space ( S). A state at step t is the prompt concatenated with the generated prefix: st =[q; y<t ] = [ q; y1; . . . ; yt−1], with initial state 
+
+s1 = [ q].• Action Space ( A). The action space is the model vocabulary. At state st, the policy 
+
+πθ(· | st) outputs a distribution over tokens, and we sample an action at = yt.• Transition Dynamics ( P ). Transitions are deterministic: after taking action at = yt, the next state is st+1 = [ q; y≤t] = [ st; yt].• Reward ( r) and Return. We use sparse, outcome-based rewards. A scalar reward is given only at episode termination and is bi-nary: 
+
+R(τ ) = 
+
+(
+
+1 if Math-Verify (τ ) = True ,
+
+0 otherwise ,
+
+where τ = ( y1, . . . , y T ) denotes the gener-ated completion and Math-Verify returns True 
+
+if the extracted final answer is judged equiva-lent to the gold answer under its comparison rules. No intermediate rewards are provided (i.e., rt = 0 for t < T ), and the terminal reward equals rT = R(τ ). In optimization (Sec. 3), this trajectory-level reward induces a single per-trajectory advantage that is applied to completion tokens, with gradients stopped through all reward statistics. • Termination and Horizon ( H). An episode terminates when either (i) the model emits an end-of-sequence token (EOS), or (ii) the num-ber of generated completion tokens reaches the maximum length limit H. We set H =8192 in all experiments. 
+
+A.2 Justification for the Mathematical Reasoning Domain 
+
+We select mathematical reasoning as our primary experimental domain for three reasons: 1. Objective, verifiable rewards. Mathemati-cal problems admit a well-defined notion of correctness, enabling programmatic outcome verification against ground-truth final answers (e.g., by extracting the final answer, normal-izing it, and checking equivalence). This re-duces reliance on subjective annotations or learned judges that may introduce noise or exploitable biases. 2. A natural stress test for prompt-local nor-malization under sparse binary rewards. 
+
+With sparse binary rewards, difficult prompts often yield rollout groups where most sam-ples share the same outcome (e.g., all incor-rect), making within-prompt reward disper-sion small. This setting makes it possible to di-rectly study failure cases of prompt-local nor-malization methods, including GRPO-style estimators, where the normalization scale can become (near-)degenerate and standardized advantages weaken the effective learning sig-nal (Sec. 3). 3. Scalable and rigorous evaluation. Auto-mated verification supports efficient evalua-tion on large test sets at low cost, improving scalability, consistency, and reproducibility across methods and backbones. 
+
+A.3 Reward Computation and Visualized Example Reward Computation. We compute sparse, outcome-based rewards using Math-Verify . Given a completed trajectory τ , Math-Verify (i) extracts a candidate final answer from the model output using a priority-based extraction pipeline (e.g., preferring content inside \boxed{ ·} when present), (ii) nor-malizes the extracted text and parses it into a canon-ical symbolic representation (e.g., via ANTLR-based parsing and latex2sympy2_extended ), and (iii) checks equivalence against the gold answer using rule-based and SymPy-backed comparisons (Kydlicek et al., 2025). We assign a binary trajectory-level reward 
+
+R(τ ) = 
+
+(
+
+1 if Math-Verify (τ ) = True ,
+
+0 otherwise ,
+
+where parsing failures or non-equivalence return 0.Some answer representations receive specialized handling (e.g., relations, sets/intervals), following 
+
+Math-Verify ’s documented comparison rules (Ky-dlicek et al., 2025). This outcome-based formula-tion is standard in settings with verifiable rewards (Hao et al., 2025) and is broadly aligned with eval-uation practices for large language models that em-phasize reliable outcome assessment (Chang et al., 2024). It is also compatible with broader reasoning-oriented frameworks that rely on trajectory-level outcomes (Hao et al., 2026; Chen et al., 2026). Sim-ilar considerations also arise in structured reason-ing tasks such as table understanding and text-to-SQL, where intermediate reasoning must ultimately support correct final outputs (Wu et al., 2025c,a,b). More broadly, related retrieval settings also em-phasize the importance of aligning intermediate evidence with final decisions (Li et al., 2026a,b). Recent work on controllable and explainable rea-soning, adaptive exploration, test-time adaptation, and solution refinement further highlights the value of structured intermediate reasoning for reliable fi-nal outcomes (Dong et al., 2026; Zhou et al., 2026; Shen et al., 2026; Jiang et al., 2026). 
+
+Figure 4: An illustrative example showing a prompt, a successful and a failed generation trajectory, and their corresponding rewards under Math-Verify .                                                              
+
+> Prompt
+> Let f(x) = x2−2x+ 3 . Find the vertex of the parabola.
+> Successful Generation Trajectory ( τ1)
+> The vertex of a parabola f(x) = ax 2+bx +cis at
+> x=−b/ (2 a). Here a= 1 , b =−2. So x=−(−2) /(2 ·
+> 1) = 1 . The y-coordinate is f(1) = 1 2−2(1) + 3 = 2 .The vertex is (1 ,2) .\boxed{ (1, 2) }
+> Reward for τ1:R(τ1) = 1
+> Failed Generation Trajectory ( τ2)
+> The vertex of a parabola f(x) = ax 2+bx +cis at x=
+> b/ (2 a). Here a= 1 , b =−2. So x=−2/(2 ·1) = −1.The y-coordinate is f(−1) = ( −1) 2−2( −1) + 3 = 6 .The vertex is (−1,6) .\boxed{ (-1, 6) }
+> Reward for τ2:R(τ2) = 0
+
+A.4 Base Models and Prompting Format 
+
+To support reproducibility, we list all base models and their sources. • Primary Model. Our main experiments and ablations use Qwen2.5-Math-7B (Yang et al., 2024b), loaded from the Hugging Face Hub (Qwen/Qwen2.5-Math-7B ). • Robustness-Test Models. To test robustness across model scales and instruction tuning, we additionally evaluate Qwen/Qwen2.5-Math-1.5B ,
+
+Qwen/Qwen2.5-7B-Instruct 
+
+(Yang et al., 2024a), and 
+
+meta-llama/Meta-Llama-3.1-8B-Instruct 
+
+(Team, 2024). All checkpoints are obtained from the Hugging Face Hub. • Prompt Format. We use each checkpoint’s tokenizer-provided chat template to render prompts, via 
+
+tokenizer.apply_chat_template(. . . , add_generation_prompt=True) for both training and evaluation (Face). A typical rendered prompt (shown here for clarity) has the following structure: 
+
+<|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user {problem_description}<|im_end|> <|im_start|>assistant 
+
+where {problem_description} is the prob-lem text from the dataset. • Implementation Note. Although our exper-iments use full-parameter fine-tuning rather than PEFT, they are motivated by the broader goal of robust adaptation for large models. This perspective is related to prior work on reducing adaptation overhead in large models (Tian et al., 2026; Dong et al., 2025b; Chang et al., 2026, 2025) and to continual-adaptation strategies that aim to preserve useful knowl-edge under iterative updates (Chen and Zeng, 2025). 
+
+B Implementation Details and Pseudocode 
+
+This section describes the implementation of BV-Blend (BV-Blend), including the historical-moments buffer, update ordering, and simplified pseudocode for advantage computation and train-ing. 
+
+B.1 Historical Moments Buffer 
+
+BV-Blend maintains semantic-cluster-conditioned 
+
+historical reward moments, rather than per-prompt (UID-level) statistics. Let the clustering codebook have K clusters (Sec. 3.2.1). For each cluster 
+
+k ∈ { 1, . . . , K }, we store three EMA statistics: (i) the EMA mean m1(k), (ii) the EMA second raw moment m2(k), and (iii) the EMA effective mass N eff  
+
+> k
+
+. In practice, we implement these as dense length-K buffers m1[K] , m2[K] , n_eff[K] ,together with a boolean seen[K] flag, which sim-plifies distributed aggregation and implementation. 
+
+Cold-start initialization and update ordering. 
+
+For each batch, BV-Blend computes the confi-dence weight wk from the pre-update EMA state (i.e., before incorporating the current batch). If a cluster k has not been observed previously (seen[k]=False ), we treat it as cold start: we set 
+
+wk = 0 for this batch (pure prompt-local normal-ization), and initialize its EMA state after the policy update using batch statistics: 
+
+N eff  
+
+> k
+
+← N0,m1(k) ← μB(k),m2(k) ← μB(k)2 + Vprior .
+
+(12) For clusters with an existing EMA state, we update moments post-update using aggregated sufficient statistics from the current batch (Eq. (6)). 
+
+Distributed aggregation. Given batch 
+
+B, we compute per-cluster sufficient statistics S1,B(k) = P  
+
+> (m,i )∈I B(k)
+
+R(m) 
+
+> i
+
+,
+
+S2,B(k) = P 
+
+> (m,i )∈I B(k)
+
+(R(m) 
+
+> i
+
+)2, and 
+
+NB(k) = |I B(k)|. In distributed training, we all-reduce (sum) these dense buffers across workers before applying EMA updates. 
+
+B.2 BV-Blend Training Loop and Advantage Computation 
+
+Algorithm 2 shows the overall loop. Algorithm 1 details BV-Blend advantage computation, which blends baseline and variance statistics and then standardizes once (Eq. (10) –(11) ). As in the main text, we stop gradients through all reward statistics, including μ(m) 
+
+> G
+
+, σ(m) 
+
+> G
+
+, and EMA moments. 
+
+B.3 Model and Optimization Model Architecture. We perform full-parameter fine-tuning on all base models. We do not use parameter-efficient fine-tuning (PEFT) methods such as LoRA (Hu et al., 2022), and we do not add adapters or custom heads; the transformer ar-chitecture remains unchanged. 
+
+Optimization Objective. During each policy up-date, we optimize a PPO-style clipped surrogate objective (Schulman et al., 2017) using the BV-Blend advantages ABV ,(m) 
+
+> i
+
+(Sec. 3). Concretely, we maximize 
+
+J (θ) = Em
+
+"
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+Et∼τ (m)
+
+> i
+
+h
+
+min 
+
+
+
+r(m) 
+
+> i,t
+
+(θ) ABV ,(m) 
+
+> i
+
+,
+
+˜r(m) 
+
+> i,t
+
+(θ) ABV ,(m)
+
+> i
+
+i #
+
+− β Em,i 
+
+h
+
+Et∼τ (m)
+
+> i
+
+KL 
+
+
+
+πθ(· | st)
+
+πref (· | st)
+
+i
+
++ λent Em,i 
+
+h
+
+Et∼τ (m)
+
+> i
+
+H(πθ(· | st)) i
+
+,
+
+(13) where r(m) 
+
+> i,t
+
+(θ) and ˜r(m) 
+
+> i,t
+
+(θ) are defined in Eq. (1) ,and Et∼τ (m)
+
+> i
+
+[·] denotes the completion-token mean with the same masking convention as Eq. (2) . We implement training by minimizing the loss L(θ) = 
+
+−J (θ). Unless otherwise specified, we set λent =0.01 and use a fixed reference policy πref ; in our main comparisons, we set β = 0 .
+
+B.4 Prompting Strategy 
+
+We format inputs using each model’s tokenizer-provided chat template via 
+
+tokenizer.apply_chat_template(. . . , add_generation_prompt=True) for both train-ing and evaluation, which improves reproducibility and avoids formatting mismatches across back-bones (Face). Unless otherwise stated, we use a generic assistant system message and provide the problem statement as the user message. We do not require additional task-specific instructions for Qwen-based math models; they typically produce multi-step solutions by default. For Llama-3.1-Instruct in the robustness experiments, we optionally prepend a short reasoning cue (e.g., “Let’s think step by step.”) to encourage step-by-step solutions (Wei et al., 2022). 
+
+Rendered prompt for Qwen-based chat models (schematic) 
+
+<|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user {problem_description}<|im_end|> <|im_start|>assistant 
+
+Rendered prompt for Llama-3.1-Instruct (schematic) 
+
+User: {problem_description} 
+
+Assistant: Let’s think step by step. 
+
+Notation. For convenience, Table 3 summarizes the key symbols used throughout the paper, con-sistent with Sec. 3. We group notation into (i) tra-jectories and PPO-style optimization, (ii) prompt-local (GRPO-style) reward statistics, and (iii) BV-Blend’s semantic clustering, historical EMA mo-ments, and SEM-based confidence weighting. Un-less otherwise stated, prompts are indexed by m,trajectories by i, completion-token positions by t,clusters by k, and codebook entries by j. All re-ward/statistics terms used to form advantages (e.g., 
+
+μ(m) 
+
+> G
+
+, σ(m) 
+
+> G
+
+, and statistics derived from historical EMA moments) are treated as stop-gradient con-stants. 
+
+C Extended Experimental Results 
+
+This section presents supplementary quantitative results and ablations that complement the main pa-per. Throughout, we compare against the on-policy GRPO baseline under the same PPO-style clipped objective and vary only the advantage estimator. 
+
+C.1 Further Ablation Studies Confidence-to-weight mapping. We ablate the functional form that maps historical uncertainty to the confidence weight wk. All variants compute the same SEM-style uncertainty SEM hist (k) from pre-update EMA statistics (Eq. (8) ) and use the same baseline/variance blending (Eq. (10) ); they differ only in the mapping wk = g(uk), where uk ≜
+
+SEM hist (k)/T . Table 4 reports results on AIME 2024 (avg@32). Among the tested monotone map-pings, the exponential form wk = exp( −uk) per-forms best, which is consistent with the use of a smooth confidence schedule rather than a hard threshold. 
+
+C.2 Robustness Across Diverse Models 
+
+To assess robustness beyond our primary Qwen2.5-Math-7B setting, we evaluate BV-Blend on three additional backbones: Qwen2.5-Math-1.5B, Qwen2.5-7B-Instruct, and LLaMA-3.1-8B. As shown in Fig. 5, BV-Blend improves over the best baseline included in our comparison on all three settings: +2.1 points on Qwen2.5-Math-1.5B and +1.6 points on Qwen2.5-7B-Instruct. The most Instruct 
+
+> SFT
+> On-policy RL
+> LUFFY
+> BV-Blend
+> 0
+> 10
+> 20
+> 30
+> 40
+> Average Score
+> Qwen2.5-Math-1.5B
+> Instruct
+> SFT
+> On-policy RL
+> LUFFY
+> BV-Blend
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Average Score
+> Llama-3.1-8B
+> Instruct
+> SFT
+> On-policy RL
+> LUFFY
+> BV-Blend
+> 0
+> 10
+> 20
+> 30
+> 40
+> Average Score
+> Qwen2.5-7B-Instruct
+
+Figure 5: Cross-backbone robustness. Performance of BV-Blend relative to baselines across diverse model backbones under the same RLVR setup. 
+
+challenging case is LLaMA-3.1-8B, where stan-dard prompt-local estimators exhibit pronounced instability under our RLVR setup and can substan-tially degrade final performance; in this regime, BV-Blend reaches 19.9, improving by 2.8 points over the best-performing baseline. While absolute performance on LLaMA-3.1-8B remains modest under this setup, the relative trend is still informa-tive: BV-Blend reduces degradation and remains more stable than prompt-local normalization when within-group reward dispersion is small. Overall, these results suggest that BV-Blend is a practical replacement for prompt-local advantage normal-ization in on-policy RLVR across heterogeneous backbones and training conditions. 
+
+C.3 Proof that GRPO Advantages Vanish Under Uniform Prompt-Group Rewards 
+
+We show that the GRPO-style prompt-local stan-dardized advantage is exactly zero when all rollouts within a prompt group receive the same reward. 
+
+Theorem 1 (Prompt-local collapse in GRPO) .
+
+Fix a prompt q(m) with rollout set G(q(m)) =
+
+{τ (m) 
+
+> i
+
+}Gi=1 . If R(m) 
+
+> i
+
+= c for all i ∈ { 1, . . . , G }
+
+and some constant c, then AGRPO ,(m) 
+
+> i
+
+= 0 for all 
+
+i.Proof. By Eq. (3), 
+
+AGRPO ,(m) 
+
+> i
+
+= R(m) 
+
+> i
+
+− μ(m)
+
+> G
+
+σ(m) 
+
+> G
+
++ δ ,
+
+where μ(m) 
+
+> G
+
+and σ(m) 
+
+> G
+
+are the mean and standard deviation of {R(m) 
+
+> i
+
+}Gi=1 , and δ > 0. If R(m) 
+
+> i
+
+= c
+
+for all i, then μ(m) 
+
+> G
+
+= c and σ(m) 
+
+> G
+
+= 0 . Substituting yields 
+
+AGRPO ,(m) 
+
+> i
+
+= c − c
+
+0 + δ = 0 ,
+
+for all i.
+
+C.4 Difficulty Stratification and Subset Definition 
+
+For the analysis in Fig. 3, we assign each prompt to one of four fixed difficulty buckets (Easy, Medium, Hard, Hardest) using a pre-RL difficulty estimate computed before policy optimization. The same bucket assignment is shared across all compared methods and kept fixed throughout training and evaluation. We further partition the evaluation prompts into Standard and Complex subsets us-ing the same precomputed protocol, and report checkpoint-wise verifier accuracy and average com-pletion length separately for the two subsets. This analysis is intended only to provide a consistent difficulty-stratified comparison between BV-Blend and GRPO; it does not affect training, sampling, or model selection. 
+
+D Bias–Variance Analysis of the BV-Blend Advantage Estimator 
+
+This section analyzes the statistical behavior of BV-Blend’s advantage construction. Rather than mix-ing two advantage estimators directly, BV-Blend blends a baseline and variance statistics (which determine the scale) and then performs a single standardization: 
+
+ABV ,(m) 
+
+> i
+
+= R(m) 
+
+> i
+
+− b(m)
+
+s(m) + δ , (14) where (b(m), s (m)) are defined by Eq. (10) .Throughout, we treat the confidence weight wk
+
+as fixed within the current batch because it is com-puted from pre-update EMA moments (Sec. 3.2.3) and gradients are stopped through all reward statis-tics. Conditional mean and variance (given 
+
+b(m), s (m)). Conditioned on the (stop-gradient) statistics (b(m), s (m)), BV-Blend is an affine transform of the trajectory reward: 
+
+E
+
+h
+
+ABV ,(m) 
+
+> i
+
+| b(m), s (m)i
+
+= E[R(m) 
+
+> i
+
+] − b(m)
+
+s(m) + δ ,
+
+(15) 
+
+Var 
+
+
+
+ABV ,(m) 
+
+> i
+
+| b(m), s (m)
+
+= Var( R(m) 
+
+> i
+
+)(s(m) + δ)2 .
+
+(16) Thus, s(m) directly controls the magnitude of the learning signal entering the PPO-style surrogate objective. 
+
+Why BV-Blend can mitigate prompt-local col-lapse. Under GRPO-style prompt-local normal-ization, s(m) = σ(m) 
+
+> G
+
+. If rewards in a prompt group are constant (all-correct or all-incorrect), then σ(m) 
+
+> G
+
+= 0 and the standardized advantages are exactly zero (Theorem 1), eliminating the learn-ing signal for that group. In BV-Blend, the blended scale satisfies 
+
+(s(m))2 = w(m)vhist (k(m)) + (1 − w(m))( σ(m) 
+
+> G
+
+)2.
+
+Therefore, when σ(m) 
+
+> G
+
+≈ 0, the scale remains non-degenerate whenever w(m) > 0 and vhist (k(m)) >
+
+0. If a prompt group has constant reward R(m) 
+
+> i
+
+= c
+
+for all i, then 
+
+b(m) = (1 − w(m))c + w(m)μhist (k(m)),s(m) =
+
+q
+
+w(m)vhist (k(m)),
+
+which yields 
+
+ABV ,(m) 
+
+> i
+
+= w(m) c − μhist (k(m))pw(m)vhist (k(m)) + δ . (17) Thus, BV-Blend can retain a non-zero advantage even when prompt-local dispersion vanishes, pro-vided w(m) > 0 and vhist (k(m)) > 0; conversely, if 
+
+w(m) = 0 (e.g., an unseen cluster) or vhist (k(m)) = 0, the advantage may still collapse for that batch. 
+
+A bias–variance viewpoint via moment shrink-age. BV-Blend can be viewed as constructing 
+
+shrunk estimators of the reward mean and variance (within a semantic cluster), and then standardizing once. Let μ⋆(k) and v⋆(k) denote the (hypothet-ical) population moments for cluster k under the current policy, and let μ(m) 
+
+> G
+
+and (σ(m) 
+
+> G
+
+)2 be the prompt-local sample moments computed from G
+
+rollouts. BV-Blend uses 
+
+b(m) = w(m)μhist (k(m)) + (1 − w(m))μ(m) 
+
+> G
+
+,
+
+(18) 
+
+(s(m))2 = w(m)vhist (k(m)) + (1 − w(m))( σ(m) 
+
+> G
+
+)2,
+
+(19) i.e., convex combinations of a low-variance histori-cal estimate (aggregating many past samples) and a high-variance prompt-local estimate (based on G
+
+rollouts). For intuition, under the approximation that (i) w(m) is fixed within the batch and (ii) the prompt-local moments are approximately unbiased for (μ⋆, v ⋆) up to standard finite-sample effects, the bias of b(m) inherits the historical bias scaled by 
+
+w(m):
+
+Bias 
+
+
+
+b(m)
+
+≈ w(m) Bias 
+
+
+
+μhist (k(m))
+
+
+
+. (20) Similarly, the variance of b(m) is reduced relative to the prompt-local estimator when the historical estimate is substantially more certain: 
+
+Var 
+
+
+
+b(m)
+
+≈ (1 − w(m))2Var 
+
+
+
+μ(m)
+
+> G
+
+
+
++ ( w(m))2Var 
+
+
+
+μhist (k(m))
+
+
+
+,
+
+(21) where we typically expect the cross-covariance to be small because μhist is computed from past batches. These relations are intended as explana-tory approximations; they ignore estimation error in w(m) and s(m), as well as the additional nonlin-earity introduced by the square root and the final normalization. 
+
+Why SEM-based weighting is a useful proxy. 
+
+BV-Blend sets wk as a monotone function of the SEM-style uncertainty proxy SEM hist (k) = 
+
+σhist (k)/
+
+q
+
+N eff  
+
+> k
+
++ δN (Eq. (8) ), matching the clas-sical scaling of the standard error of the sample mean with the standard deviation and sample size. This makes wk large when historical estimates are both low-variance and supported by a large effec-tive count, and small otherwise, thereby adapting the shrinkage strength to estimated uncertainty. 
+
+D.1 Discussion of Key Assumptions 
+
+The analysis above is intended as an explanatory approximation and relies on standard assumptions: • Stop-gradient statistics. We treat 
+
+(b(m), s (m), w k) as fixed w.r.t. policy gradients, consistent with our implementation (Sec. 3). • Approximate independence across batches. 
+
+Historical EMA moments are computed from past batches, so their covariance with current prompt-local moments is often small, though not exactly zero. • Limited non-stationarity. Historical mo-ments are most informative when the reward distribution within a semantic cluster does not shift arbitrarily fast; the SEM-based weight is designed to reduce reliance on history when uncertainty is high. • No strict unbiasedness claim. Because BV-Blend uses normalization and heuristic shrink-age (and PPO further clips the objective), we do not claim that the resulting standardized quantity is a strictly unbiased estimator of the true MDP advantage. 
+
+E Reproducibility Details 
+
+All experiments were conducted on a single multi-GPU node. We report the main hardware and soft-ware stack to facilitate reproduction. 
+
+Hardware. Experiments were conducted on one node equipped with 8 NVIDIA RTX PRO 6000 GPUs (96 GB memory per GPU). Training uses PyTorch Fully Sharded Data Parallel (FSDP) across all 8 GPUs. 
+
+Software. Our implementation is based on Py-Torch 2.4.0 and the Hugging Face Transform-ers/Accelerate stack. For generation, we use vLLM (v0.6.3) with CUDA 12.1. We additionally use FlashAttention (v2.7.3), TensorDict (v0.5.0), and the verl library for RL orchestration. All experiments are conducted in a containerized CUDA 12.1 environment. 
+
+Algorithm 1 Compute BV-Blend Advantages ABV 
+
+(Simplified) 
+
+Require: Prompts {q(m)}, rewards {R(m) 
+
+> i
+
+}, EMA buffers (m1, m 2, N eff ) and flags seen , en-coder E(·), codebook {cj }.
+
+Ensure: Advantages {ABV ,(m) 
+
+> i
+
+}. 
+
+> 1:
+
+for each prompt m do  
+
+> 2:
+
+Compute prompt-local mean/std μ(m) 
+
+> G
+
+, σ (m)
+
+> G
+
+from {R(m) 
+
+> i
+
+}Gi=1 . 
+
+> 3:
+
+Assign cluster k(m) ←
+
+arg min j ∥E(q(m)) − cj ∥22. 
+
+> 4:
+
+if seen[ k(m)]=False (unseen cluster, pre-update) then  
+
+> 5:
+
+Set w(m) ← 0. (cold start; pure prompt-local)  
+
+> 6:
+
+Set b(m) ← μ(m) 
+
+> G
+
+, s(m) ← σ(m) 
+
+> G
+
+. 
+
+> 7:
+
+Mark k(m) as “needs init” for post-update initialization.  
+
+> 8:
+
+else  
+
+> 9:
+
+μhist ← m1(k(m)); vhist ←
+
+max( m2(k(m)) − m1(k(m))2, 0) . 
+
+> 10:
+
+SEM hist ← √vhist 
+
+q
+
+N eff  
+
+> k(m)
+
++ δN . 
+
+> 11:
+
+w(m) ← exp( −SEM hist /T ). 
+
+> 12:
+
+Set 
+
+b(m) ← w(m)μhist + (1 − w(m))μ(m) 
+
+> G
+
+,s(m) ←
+
+q
+
+w(m)vhist + (1 − w(m))( σ(m) 
+
+> G
+
+)2. 
+
+> 13:
+
+end if  
+
+> 14:
+
+for each trajectory i = 1 , . . . , G do  
+
+> 15:
+
+ABV ,(m) 
+
+> i
+
+← (R(m) 
+
+> i
+
+− b(m))/(s(m) + δ). 
+
+> 16:
+
+end for  
+
+> 17:
+
+end for  
+
+> 18:
+
+return {ABV ,(m) 
+
+> i
+
+}.Algorithm 2 BV-Blend (BV-Blend) Training Loop (Simplified)  
+
+> 1:
+
+Initialize policy parameters θ, reference policy 
+
+πref , and fixed clustering codebook {cj }Kj=1 . 
+
+> 2:
+
+Initialize EMA buffers 
+
+m1[K] , m2[K] , n_eff[K] and flags 
+
+seen[K] ← False . 
+
+> 3:
+
+for iteration t = 1 , 2, . . . do  
+
+> 4:
+
+Set θold ← θ. (behavior snapshot)  
+
+> 5:
+
+Sample M prompts {q(m)}Mm=1 ; for each prompt, sample G trajectories {τ (m) 
+
+> i
+
+}Gi=1 
+
+from πθold . 
+
+> 6:
+
+Compute verifier rewards R(m) 
+
+> i
+
+for all tra-jectories.  
+
+> 7:
+
+Compute BV-Blend advantages ABV ,(m) 
+
+> i
+
+us-ing Algorithm 1 (pre-update EMA).  
+
+> 8:
+
+Update θ by optimizing the PPO-style clipped objective using ABV ,(m) 
+
+> i
+
+(and op-tional KL/entropy terms).  
+
+> 9:
+
+Post-update: aggregate per-cluster sufficient statistics 
+
+{S1,B(k), S 2,B(k), N B(k)}Kk=1 across workers.  
+
+> 10:
+
+Post-update: update EMA buffers for clus-ters with NB(k) > 0 using Eq. (6) ; for previously unseen clusters, initialize using 
+
+(N0, V prior ) and set seen[k] ← True . 
+
+> 11:
+
+end for Table 3: Summary of key symbols (aligned with Sec. 3). 
+
+Symbol Definition 
+
+Trajectories and PPO-style optimization 
+
+πθ, πθold Current policy and behavior (rollout) policy snapshot. 
+
+πref Fixed reference policy used for optional KL regularization. 
+
+M Number of prompts in a training batch. 
+
+q(m) The m-th prompt in a training batch. 
+
+G Number of rollouts (trajectories) per prompt. 
+
+G(q(m)) Rollout group for prompt q(m): {τ (m) 
+
+> i
+
+}Gi=1 .
+
+τ (m) 
+
+> i
+
+The i-th trajectory sampled for prompt q(m).
+
+T (m) 
+
+> i
+
+Number of generated tokens in trajectory τ (m) 
+
+> i
+
+.
+
+R(m) 
+
+> i
+
+Trajectory-level verifier reward for τ (m) 
+
+> i
+
+.
+
+r(m) 
+
+> i,t
+
+(θ), ˜r(m) 
+
+> i,t
+
+(θ) Importance ratio and its clipped version (Eq. (1)). 
+
+ϵ PPO clipping parameter. 
+
+m(m) 
+
+> i,t
+
+Completion-token mask used in token means (Eq. (2)). 
+
+Et∼τ [ · ] Generic notation for the masked mean over completion tokens (Eq. (2)). 
+
+Prompt-local (GRPO-style) statistics 
+
+μ(m) 
+
+> G
+
+, σ(m) 
+
+> G
+
+Prompt-local mean/std of {R(m) 
+
+> i
+
+}Gi=1 .
+
+AGRPO ,(m) 
+
+> i
+
+GRPO-style standardized advantage (Eq. (3)). 
+
+δ Small constant for numerical stability in advantage computation. 
+
+BV-Blend: clustering and historical EMA moments 
+
+E(·) Frozen prompt encoder. 
+
+K, {cj }Kj=1 Number of clusters and fixed K-means codebook. 
+
+k(m) Cluster assignment for prompt q(m) (Eq. (5)). 
+
+m1(k), m2(k) EMA mean and EMA second raw moment for cluster k.
+
+N eff  
+
+> k
+
+EMA effective mass for cluster k.
+
+μhist (k), vhist (k), σhist (k) Historical mean/variance/std derived from EMA moments (Eq. (7)). 
+
+γ EMA update rate (Eq. (6)). 
+
+B Current rollout batch. 
+
+S1,B(k), S2,B(k), NB(k) Per-cluster sufficient statistics in batch B.
+
+N0, Vprior Cold-start initialization hyperparameters for new clusters. 
+
+BV-Blend: confidence and advantage 
+
+SEM hist (k) SEM-style uncertainty proxy (Eq. (8)). 
+
+δN Small constant in SEM computation (Eq. (8)). 
+
+T Temperature controlling sensitivity in wk (Eq. (9)). 
+
+wk Historical confidence weight computed from pre-update EMA statistics. 
+
+w(m) Confidence weight for prompt m: w(m) = wk(m) .
+
+b(m), s(m) Blended baseline and scale for prompt m (Eq. (10)). 
+
+ABV ,(m) 
+
+> i
+
+BV-Blend advantage (Eq. (11)). Table 4: Ablation on the confidence mapping wk = g(uk) on AIME 2024 (avg@32), where uk = SEM hist (k)/T .
+
+Confidence Mapping g(u) AIME 2024 (%) 
+
+1/(1 + u) 32.5 Linear decay: max(0 , 1 − u) 30.1 
+
+Exponential decay: exp( −u) (ours) 34.2

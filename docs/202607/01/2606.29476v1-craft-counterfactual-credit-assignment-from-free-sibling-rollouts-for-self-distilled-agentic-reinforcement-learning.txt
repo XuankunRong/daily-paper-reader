@@ -1,0 +1,1201 @@
+Title: CRAFT: Counterfactual Credit Assignment from Free Sibling Rollouts for Self-Distilled Agentic Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.29476v1
+
+Published Time: Tue, 30 Jun 2026 01:19:12 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# CRAFT: Counterfactual Credit Assignment from Free Sibling Rollouts for Self-Distilled Agentic Reinforcement Learning 
+
+## Zibin Meng, Kani Chen *
+
+The Hong Kong University of Science and Technology zmengal@connect.ust.hk, makchen@ust.hk 
+
+> *
+
+Corresponding author. 
+
+Abstract 
+
+Self-distilled agentic reinforcement learning augments trajectory-level reward with a token-level distillation loss, using as its teacher the same policy conditioned on privi-leged context. The prevailing recipe gates this loss by a sin-gle scalar, the teacher–student log-probability gap ∆t. We observe that this signal is doubly limited: it is retrospec-tive , scoring only the realised rollout and never the coun-terfactual ones, and it is sign-blind , never signalling when a teacher-preferred action would have harmed the trajec-tory. We introduce CRAFT, a three-pillar credit-assignment scheme that addresses both limitations. Pillar 1 , Counterfac-tual Token Importance, reuses the G − 1 sibling rollouts that GRPO already samples and importance-weights them by ∆t
+
+to form a self-normalised estimate of the group-level coun-terfactual change in advantage from up-weighting teacher-preferred actions at each step; this yields a signed per-token credit at essentially no extra compute. Pillar 2 is an asym-metric controller that raises the distillation weight as it lowers the reference-KL weight along an exponential moving aver-age of gate activity, and conversely. Pillar 3 polarises the KL penalty token by token, switching between a mode-seeking and a mode-covering update according to the sign of the credit. Each pillar is governed by an independent switch that, when disabled, renders the loss and gradient byte-identical to the baseline in IEEE-754 arithmetic, so any measured gain is attributable to algorithmic change rather than implementa-tion drift. We establish the estimator’s consistency and a vari-ance bound, give structural and bit-exact reproducibility guar-antees, and evaluate CRAFT across three agentic environ-ments, four model scales, and five end-to-end methods, plus two tabulated prior-work baselines. Among these is Adaptive-CRINGE , a comparator that shares Pillar 2 with CRAFT and thereby isolates the counterfactual contribution. 
+
+## 1 Introduction 
+
+Agentic reinforcement learning trains a language-model pol-icy πθ to interact with a tool-using or web-acting envi-ronment over many turns (Shridhar et al. 2021; Yao et al. 2022; Jin et al. 2025), building on a recent line of LLM-as-agent methods that compose reasoning, tool use, and self-critique (Yao et al. 2023; Schick et al. 2023; Shinn et al. 2023). Two ingredients dominate the field. (1) The policy is updated with a group-relative advantage estima-tor (GRPO (Shao et al. 2024)), in which G parallel roll-outs of the same prompt produce a normalised, sequence-level advantage A(i). (2) On top of that surrogate, an auxil-iary self-distillation loss treats the same policy, conditioned on additional privileged context s+ (a skill annotation, a verifier hint, or a retrieved trajectory trace), as a teacher 
+
+πT . The teacher-student log-prob gap ∆t = log πT (yt |
+
+s+ 
+
+> t
+
+) − log πθ (yt | st) is then fed to a single gated distilla-tion term, of the form σ(β ∆t) · (log πT − log πθ ), which the recent line of work on Self-Distilled Agentic Reinforcement Learning (SDAR (Lu et al. 2026)) has popularised. 
+
+What is missing. The single-gate recipe quietly conflates two qualitatively different signals into one scalar: • Retrospective vs. counterfactual credit. ∆t records what the teacher and student said on the realised trajec-tory. Two tokens with the same ∆t but opposite impact on the trajectory’s return are weighted identically. The signal contains no forward-looking information about what would have happened had the agent followed the teacher’s preference at step t — even though GRPO has already paid the compute to sample G counterfactual rollouts. • Sign-blindness. The gate σ(β ∆t) is monotone in ∆t.Tokens where πT > π θ get up-weighted forward KL; tokens where πT < π θ get a small but still positive gate. The loss never tells the policy “this teacher action would have been worse ; do not follow it.” These weaknesses motivate a richer per-token signal, but the design space is treacherous. Pushing the policy away from the teacher whenever the gap is negative recovers un-likelihood (Welleck et al. 2020) or CRINGE (Adolphs et al. 2023), both of which are well-known to over- penalise and to ignore reward signal entirely. Reweighting by the trajectory-level sign( A(i)) · ∆t recovers the RLSD line of work (Yang et al. 2026), which is retrospective (it conditions on the re-alised trajectory, not on a counterfactual one). And blindly stacking an adaptive KL controller (Schulman et al. 2017; Ouyang et al. 2022) on top of SDAR adjusts a single coeffi-cient without changing the per-token gating discipline. 
+
+Our position. We argue that the right per-token credit sig-nal in self-distilled agentic RL is the counterfactual change in sequence advantage that the policy would have realised if, at step t, it had sampled from the teacher. We further ar-gue that GRPO already provides the sample budget needed                          
+
+> arXiv:2606.29476v1 [cs.LG] 28 Jun 2026 Prior single gate
+> +≈0
+> ±−
+> sign  A
+> sign ∆ t
+> −+
+> +
+> −
+> baseline collapses 2 quadrants
+> G−1siblings
+> {A(j)}
+> P
+> jw(j)
+> tA(j)−A(i)
+> signed credit ct
+> w∝e∆t
+> Pillar 1: CTI
+> λ↑μ↓
+> along ρEMA gate
+> Pillar 2
+> rev
+> std
+> fwd
+> Pillar 3
+> ct>0
+> ct<0
+> Master switches
+> P1 enable
+> P2 phase
+> P3 pol kl
+> off ⇒byte-identical to baseline (P7)
+
+Figure 1: The three pillars of CRAFT at a glance. Left: on the (sign A(i), sign ∆ t) plane, the prior single-gate baseline collapses two of the four quadrants by always distilling to-ward the teacher (Table 5). Centre: Pillar 1 estimates a coun-terfactual credit dCTI (i) 
+
+> t
+
+= P  
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j) − A(i) from the 
+
+G − 1 sibling rollouts of the same GRPO group, squashed into ct ∈ (−1, 1) by centred asymmetric sigmoids; Pillar 2 drives (λ, μ ) in opposite directions along the gate-activity EMA; Pillar 3 routes the KL penalty into a rev / fwd / stan-dard branch according to sign( ct). Right: each pillar has an independent master switch that, when off, restores byte-identical behaviour with the prior baseline (P7). to estimate that counterfactual: the G − 1 sibling rollouts in the same group, importance-weighted by the teacher-student gap at step t, form an essentially free importance-sampling estimator of that counterfactual at the group level (made pre-cise in Section 3.1). Building on this estimator we propose 
+
+CRAFT , a three-pillar credit-assignment scheme detailed in Section 3. 
+
+Contributions. Each contribution is gated by an inde-pendent master switch, so ablations factor cleanly. (1) Pil-lar 1 (CTI): a per-token signed credit ct ∈ (−1, 1) from importance-weighted sibling rollouts; the underlying esti-mator is consistent (Prop. 1), has an O(1 /G ) variance bound (Prop. 2), and reduces to the single-gate baseline in the limit (P3) — at the marginal cost of one group-wise softmax. 
+
+(2) Pillar 2: a bivariate controller driving λ(t) (CTI) and 
+
+μ(t) (reference-KL) in opposite directions along the gate-active EMA, with a fixed point (P4). (3) Pillar 3: a per-token KL penalty whose direction is set by sign( ct) (mode-seeking vs. mode-covering), structurally consistent with the credit (P5) and yielding a valid policy-gradient surrogate (P6). (4) Bit-exact reproducibility: with all switches off, loss and gradient are byte-identical (IEEE-754) to the base-line (P7), so gains are attributable to algorithmic change, not drift. (5) A campaign over three agentic environ-ments, four model sizes, and four baselines — including the hard Adaptive-CRINGE comparator that shares Pillar 2 with CRAFT— plus ablations and OOD evaluation (Sec-tion 5). 
+
+## 2 Preliminaries 
+
+GRPO and group-based advantage. For each prompt we sample G parallel rollouts under the behaviour policy πb (in on-policy GRPO, πb = πθ ). Each rollout i receives a scalar sequence-level reward r(i) from a verifier; the per-trajectory GRPO advantage A(i) ∈ R is the group-normalised reward, broadcast over all valid tokens in the trajectory (Shao et al. 2024); GRPO is also the policy-update primitive in sub-sequent large-scale reasoning models (DeepSeek-AI et al. 2024). The policy update follows the PPO-clipped surro-gate (Schulman et al. 2017): 
+
+LPG (θ) = E
+
+h
+
+min 
+
+
+
+rt(θ) A(i),
+
+clip( rt(θ), 1−ϵ, 1+ ϵ) A(i)i 
+
+,
+
+(1) where rt(θ) = πθ (yt | st)/π θold (yt | st).
+
+Self-distilled teacher. A second forward pass evaluates the same policy on the skill-augmented context s+ 
+
+> t
+
+— typ-ically the prompt plus an oracle skill annotation, a verifier hint, or a retrieved successful trajectory — and yields the 
+
+teacher log-prob log πT (yt | s+ 
+
+> t
+
+). Because the teacher is just the student under a different context, it adds a single forward pass (no extra parameters, no extra optimiser state) and is gradient-free. The teacher-student gap 
+
+∆(i) 
+
+> t
+
+= sg 
+
+h
+
+log πT (y(i) 
+
+> t
+
+| s+,(i) 
+
+> t
+
+) − log πθ (y(i) 
+
+> t
+
+| s(i) 
+
+> t
+
+)
+
+i
+
+(2) is the substrate for the prior single-gate SDAR distillation loss: 
+
+LSDAR = Agg 
+
+ σ(β ∆t)
+
+| {z } 
+
+> gate gt
+
+· (log πT − log πθ )
+
+| {z }
+
+> fwd −KL surrogate
+
+ . (3) Throughout, i, j ∈ { 1, . . . , G } index siblings, sg[ ·] is the stop-gradient, 1[·] the indicator, and πref a frozen snapshot of πθ serving as the KL anchor; a full notation table is in Appendix C. 
+
+Assumptions used in the propositions. (A1) Coverage: 
+
+for every (s, y ) with πT (y | s) > 0, πb(y | s) > 0.
+
+(A2) Lipschitz log-prob: | log πθ (y | s) − log πθ (y | s′)| ≤ 
+
+L ∥s − s′∥. (A3) Bounded advantages: |A(i)| ≤ Rmax 
+
+a.s. (A4) Group i.i.d.: siblings in a group are independently sampled from πb given the prompt. 
+
+## 3 The CRAFT Method 
+
+The three pillars sit on top of an unchanged LPG and an unchanged teacher pass. Concretely the composed loss is 
+
+LCRAF T (θ) = LPG (θ) + μ(t) LKL -pol (θ)+ λ(t) LCTI (θ). (4) The new per-token loss LCTI (Section 3.1), the coefficients λ(t), μ (t) from the Pillar-2 controller (Section 3.2), and the polarised KL LKL -pol (Sec-tion 3.3) can each be disabled independently via 
+
+vera. {enable,phase aware,polarized kl },reducing to baseline behaviour (Sec. 4). The pillars are jointly necessary: Pillar 1 produces the signed credit ct
+
+— the only quantity mixing both sign A(i) and sign ∆ t
+
+— whose magnitude (ρgate ) Pillar 2 uses to schedule the weights and whose sign Pillar 3 uses to route the KL penalty. 3.1 Pillar 1: Counterfactual Token Importance (CTI) 
+
+Idealised per-trajectory target. The quantity we would 
+
+ideally like at position t of trajectory i is the per-trajectory counterfactual token importance 
+
+CTI (i) 
+
+> t
+
+:= Ey′  
+
+> t∼πT(·| s+,(i)
+> t)
+
+h
+
+A
+
+
+
+τ (i) 
+
+> <t
+
+, y ′
+
+> t
+
+, τ (i)
+
+> >t
+
+i 
+
+−A(i), (5) the change in expected sequence-level advantage if at step t
+
+trajectory i had drawn its next token from the teacher and re-rolled its continuation. This is not directly estimable from realised rollouts — it would require re-rolling i from step t
+
+under fresh teacher draws, a cost we do not pay. We instead estimate a group-level counterfactual that GRPO’s existing siblings support exactly, and connect it to (5) by an explicit assumption. 
+
+Group-level estimand and sibling-pool estimator. Given the prompt, the G − 1 siblings j̸ = i are i.i.d. draws of the step-t triple (s(j) 
+
+> t
+
+, y (j) 
+
+> t
+
+, A (j)) from the behaviour law μt.Tilting that law toward tokens the teacher prefers (relative to the student) defines the teacher-tilted group advantage and the group-level counterfactual importance 
+
+CTI (i) 
+
+> t
+
+:= Eμt [ϱ A ]
+
+Eμt [ϱ] − A(i), ϱ := πT (yt | s+ 
+
+> t
+
+)
+
+πθ (yt | st) , (6) the group-mean advantage after up-weighting teacher-preferred step-t actions, minus the realised advantage of i.We stress that the expectations in (6) are taken over the group’s joint step-t law μt on (st, y t, A ): because sib-lings reach step t through different prefixes, μt marginalises over heterogeneous states, so CTI (i) 
+
+> t
+
+is a group-level, state-marginal tilt rather than a fixed-state intervention on trajec-tory i. The identification with the per-trajectory object (5) is exactly what assumption (E) below supplies. We estimate (6) by the self-normalised importance-weighted average over the siblings: 
+
+dCTI (i) 
+
+> t
+
+= X 
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j) − A(i),w(j) 
+
+> t
+
+= exp(∆ (j) 
+
+> t
+
+/τ )
+
+P  
+
+> k̸=i
+
+exp(∆ (k) 
+
+> t
+
+/τ ) .
+
+(7) At the default τ = 1 the weight is the per-sibling teacher/student ratio w(j) 
+
+> t
+
+∝ exp(∆ (j) 
+
+> t
+
+) = ϱ(j) (with 
+
+Eμt [ϱ | st] = 1 ), making (7) the textbook self-normalised importance-sampling (SNIS) estimator of the target (6), con-sistent as G → ∞ (Prop. 1). The temperature traces a bias-variance trade-off around this point ( τ → 0: winner-take-all, high variance; τ → ∞ : uniform, ∆t-agnostic), so we fix 
+
+τ = 1 and sweep {0.5, 2} only as a robustness check (Abla-tion A5). 
+
+From group-level to per-trajectory. The group-level es-timand (6) coincides with the per-trajectory target (5) under 
+
+(E) within-group exchangeability : the spliced and a sib-ling’s realised advantage share the same conditional mean given (st, y t). (E) holds exactly at t = 0 and degrades smoothly downstream. Every proposition is stated for the group-level estimand (6) and so does not rely on (E); we read dCTI (i) 
+
+> t
+
+as an exact group-level and approximate per-trajectory credit, with Ablation A6 ( Gmin =999 ) the empir-ical control. For groups below Gmin we fall back to the single-rollout proxy dCTI (i) 
+
+> t
+
+← A(i)∆(i) 
+
+> t
+
+(or 0), a sign-aware variant of SDAR gating — the limiting case of P3. 
+
+Signed credit. The per-token signed credit is 
+
+ct =  2σ(β+ dCTI t) − 1 1[ dCTI t > 0] 
+
+−  2σ(β−| dCTI t|) − 1 1[ dCTI t < 0] , (8) 
+
+ct = sg[ ct] ∈ (−1, 1) . (9) The centred sigmoids ( 2σ(·) − 1) make ct continuous at 
+
+dCTI t = 0 with a near-zero neutral band (where Pillar 3 falls back to standard KL), saturating to ±1 as | dCTI t| → ∞ ;the asymmetric β+, β − tune positive/negative reinforcement independently. The credit is fully detached: gradients flow only through log πθ .
+
+The CTI loss. With ct in hand, the Pillar 1 loss is the standard REINFORCE-style policy-gradient form (Williams 1992; Sutton et al. 1999) treating ct as the credit: 
+
+LCTI (θ) = − Agg[ ct · log πθ (yt | st) ] . (10) The aggregator Agg[ ·] matches the surrounding policy loss (token-mean by default). 
+
+Marginal compute cost. The CTI estimator adds no model evaluation: it runs under torch.no grad() as a group-wise softmax plus a weighted sum over the G − 1 sib-ling advantages ( O(B T G ) pointwise tensor operations), so its marginal cost over the prior single-gate baseline is negli-gible. 
+
+Why CTI is not unlikelihood / CRINGE / RLSD. Un-likelihood (Welleck et al. 2020) and CRINGE (Adolphs et al. 2023) apply unconditional token-level repulsion and ignore reward; RLSD (Yang et al. 2026) reweights by the trajectory’s own sign( A(i)) · ∆t. All share the form of a per-token weight on a log-probability term but differ in what 
+
+conditions it: as Table 1 shows, CTI is the only one that combines both signs (sign A(i), sign ∆ t) jointly via a coun-terfactual estimator over sibling rollouts. 
+
+The 4-quadrant decision view. A token’s contribution to the CTI estimator is determined jointly by sign A(i) and 
+
+sign ∆ t, carving out the four quadrants of Table 5 — the nat-ural partition of the estimator, not a design choice. The two agreement quadrants ( sign A = sign ∆ t) push ct toward ±1,whereas the two disagreement quadrants either hold near zero or flip sign according to the sibling pool. Collapsing them, e.g. by using | dCTI | only, destroys the asymmetry that Pillar 3 exploits, while a near-zero neutral band is exposed as the vera.gate threshold knob (Ablation A5). 
+
+3.2 Pillar 2: Phase-Aware Adaptive Controller 
+
+Motivation. Distillation moves through an active phase (high ρgate , teacher has unabsorbed signal), a settling phase, Property CRINGE RLSD SDAR Ours   
+
+> Uses reward signal A
+
+– ✓ ✓ ✓     
+
+> Uses teacher gap ∆t✓✓✓✓
+> Counterfactual (forward-looking)
+
+– – – ✓   
+
+> Sign-aware (neg. branch fires) ✓✓
+
+– ✓    
+
+> Bounded credit |ct| ≤ 1✓
+
+– ✓ ✓
+
+> Uses sibling pool / group structure
+
+– – – ✓
+
+Table 1: Structural signal comparison of per-token credit-assignment losses for self-distilled RL ( ✓ = has the property, 
+
+– = does not). The first two properties are necessary but not sufficient (every reasonable per-token signal uses them) and are read at the level of the full method: SDAR’s per-token gate is ∆t-only while its policy-gradient term supplies A,and CRINGE’s ∆t entry denotes its token-level disagree-ment signal rather than an explicit teacher gap. The last four properties together pick out the CRAFT design point. and a saturated phase (low ρgate ). A static CTI weight either over-distils when saturated or under-distils when active, and a static KL coefficient over-anchors early when the policy must move fast. 
+
+Control law. Let ρgate (t) be the fraction of valid tokens in the current mini-batch with |ct| > θ g . The controller main-tains an exponential moving average (EMA) 
+
+ρEMA gate (t + 1) = α ρ EMA gate (t) + (1 − α) ρgate (t), (11) and produces, at step t,
+
+λ(t) = λmin + ( λmax − λmin ) ρEMA gate (t), (12) 
+
+μ(t) = μmin + ( μmax − μmin )  1 − ρEMA gate (t). (13) The two coefficients move in opposite directions ; during early training λ rises (absorb teacher signal aggressively) while μ falls (loosen the KL anchor); late in training the roles invert. During the first nwarmup steps the controller holds its initial mid-range state, preventing early-step noise from setting a bad trajectory. 
+
+Differences from adaptive KL. Unlike adaptive-KL con-trollers (Schulman et al. 2017; Ouyang et al. 2022) that ad-just a single coefficient by measured KL distance, Pillar 2 moves two coupled coefficients in opposite directions (a Pareto trade-off between distillation throughput λρ gate and exploration budget μ(1 −ρgate )), driven by the distillation-quality signal ρgate — token-level teacher–student disagree-ment, not distance from a fixed reference — with an EMA fixed point at ρgate → ¯ρ (P4). The controller is a purely nu-meric state object updated once per step from Pillar 1’s ρgate 
+
+(Algorithm 2, Appendix B). 
+
+3.3 Pillar 3: Direction-Polarised KL 
+
+Motivation. The prior recipe applies one KL form (k3 (Schulman 2020)) to every token. The signed credit lets us do better: where ct > 0 (following the teacher would have helped) the policy should absorb (mode-seeking); where 
+
+ct < 0 (it would have hurt) it should preserve coverage 
+
+(mode-covering); where |ct| ≈ 0 it falls back to standard KL. A single KL form cannot express this asymmetry. 
+
+The three-region rule. With threshold θKL ≥ 0:
+
+LKL -pol = Agg 
+
+h
+
+1[ct > θ KL ] rev( t)+ 1[ct < −θKL ] fwd( t)+ 1[|ct| ≤ θKL ] std( t)
+
+i
+
+, (14) where 
+
+rev( t) = log πθ (yt | st) − log πref (yt | st),
+
+fwd( t) = − log πθ (yt | st) − log πref (yt | st),
+
+std( t) = kl penalty(log πθ , log πref ) .
+
+Here rev( t) is the k1 reverse-KL log-ratio (minimising it pulls toward πref , mode-seeking), fwd( t) its sign-flip (pushes away, mode-covering), and std( t) the standard k3
+
+penalty. The forward branch is not an unbiased estimator of 
+
+KL( πref ∥ πθ ) — the IS-weighted alternative has unbounded variance exactly where it fires hardest — so we adopt it as a policy-update rule inspired by the forward-KL direction, not a divergence estimator (Appendix B compares three op-tions). 
+
+## 4 Theoretical Analysis 
+
+Our analysis centres on one substantive result — the CTI estimator with its consistency and O(1 /G ) variance bound (Props. 1–2) — supported by elementary structural facts that make the design self-consistent. Full proofs are in Ap-pendix B; where a result’s strongest form exceeds what we prove rigorously we state the weaker form the argument sup-ports, and each result is paired with a unit or end-to-end test. 
+
+Proposition 1 (CTI estimator: consistency) . Fix the temper-ature at τ = 1 , so that w(j) 
+
+> t
+
+in (7) is the self-normalised importance weight over the sibling pool. Under (A1) (cov-erage) and (A4) (group i.i.d.), dCTI (i) 
+
+> t
+
+is a self-normalised importance-sampling estimator of the group-level target 
+
+CTI (i) 
+
+> t
+
+in (6) and is consistent : dCTI (i) 
+
+> t
+
+→ CTI (i) 
+
+> t
+
+in proba-bility as the group size G → ∞ , with a finite-sample bias of order O(1 /G ) (the SNIS bias) controlled by the vari-ance bound of Prop. 2. Under the exchangeability condi-tion (E) the target coincides with the per-trajectory counter-factual (5) .
+
+Proposition 2 (CTI estimator: variance bound) . Under (A1)–(A4), with the IS-ratio cap ¯ρt = max y πT (y |
+
+s+ 
+
+> t
+
+)/π b(y | st) (a Horvitz-Thompson cap (Horvitz and Thompson 1952)), Var( dCTI (i) 
+
+> t
+
+) ≤ R2max ¯ρ2 
+
+> t
+
+/(G−1) .
+
+Five further results (full statements and proofs in Ap-pendix B) make the design self-consistent and are stated here in brief. (P3) Degeneracy. Under sharp gating ( β± →∞) and the single-rollout fallback dCTI (i) 
+
+> t
+
+= A(i)∆(i) 
+
+> t
+
+, the Pillar 1 loss converges pointwise to LSDAR on positive-advantage tokens and to its sign-flipped counterpart on neg-ative ones. (P4) Controller fixed point. After warmup, ρEMA gate (t) converges geometrically (rate α) to the long-run mean ¯ρ, so λ, μ → λ(¯ ρ), μ (¯ ρ) inside their configured ranges with no extra clipping. (P5) Polarised-KL consistency. The rev/fwd branches have constant ±1 gradients that pull to-ward / push away from πref , matching sign( ct) and bound-ing the per-token KL by | log πθ − log πref |; the swapped assignment is the falsification test A7. We claim structural consistency, not regret-optimality. (P6) Surrogate validity. 
+
+∇θ LPG is unchanged by CRAFT; the auxiliary terms are fi-nite under (A1)–(A3) and commute with PPO clipping, be-ing detached weights on a grad-bearing log πθ added after the clipped PG term. (P7) Bit-exact reproducibility. With 
+
+vera.enable=False (or any switch toggled off inde-pendently), LCRAF T = Lbaseline byte-identically in IEEE-754 (loss and gradient), verified by a torch.equal re-gression suite. P7 is the formal anchor of our reproducibil-ity story: any reported gain is attributable to algorithmic change, not implementation drift. 
+
+## 5 Experiments 
+
+5.1 Experimental Setup 
+
+Environments and benchmarks. We evaluate three multi-turn agentic-RL benchmarks: ALFWorld (Shridhar et al. 2021) (text-based embodied), Search-QA (from Search-R1 (Jin et al. 2025), direct-retrieval variant), and 
+
+WebShop (Yao et al. 2022) (programmatic verifier), on canonical splits; the OOD analysis holds out a 30% slice by task-template hash. We report the canonical success metric per benchmark (ALFWorld success rate, Search-QA exact-match, WebShop reward normalised to 0–100), at the final checkpoint. 
+
+Models and methods. We use four open-weight LLMs across two families ( Qwen3-1.7B , Qwen2.5-3B , Qwen2.5-7B , Qwen3-8B ) (Qwen Team 2024, 2025), reading both within-family scaling and cross-family transfer. The five end-to-end methods are GRPO (no distillation), 
+
+RLSD (Yang et al. 2026), SDAR (Lu et al. 2026) (prior single-gate), Adaptive-CRINGE (the hardest baseline: a CRINGE (Adolphs et al. 2023) negative-credit term wrapped in CRAFT’s Pillar-2 controller, so the “CRAFT vs Adaptive-CRINGE” delta isolates P1+P3 from P2), and 
+
+CRAFT-Full . Following SDAR (Lu et al. 2026) we also tabulate the GRPO+OPSD and Skill-SD (Wang et al. 2026) hybrids. 
+
+Hyperparameters and reproducibility. GRPO uses G =8, ϵ = 0 .2, η = 10 −6, 150 steps/cell (following SDAR), with keyword-matched skills. CRAFT uses β± = 5 , τ = 1 .0,
+
+θg = 0 .1, [λ, μ ] ranges [0 .005 , 0.02] , α = 0 .95 , nwarmup =10 , θKL = 0, and a k3 neutral KL branch (Schulman 2020); full table in Appendix C. Smaller models train on 
+
+8×24 GB GPUs, larger on 4×48 GB. All modifications sit behind three default-False switches; an 87-test suite (8 bit-exact, 4 via torch.equal verifying P7) runs in ∼4 s on CPU (Appendix A). 
+
+5.2 Experiment Inventory 
+
+The campaign comprises eight experiment families: the main grid (E1, Table 2); per-pillar ablations (E2, A1–A3, Table 3); hyperparameter ablations (E3, A4–A5, sweeping β
+
+and τ ); the counterfactual ablation (E4, A6, Gmin =999 , test-ing P3); the KL-direction swap (E5, A7, the falsification test for P5); quick pre-grid sweeps (E6); and OOD and random-retrieval stress tests (E7–E8, Table 4). All ablation families except E1 use Qwen2.5-3B. 
+
+5.3 Main Results (E1) 
+
+Table 2 reports the headline main-grid numbers. CRAFT-Full is the best method in every (env, model) cell of the grid. 
+
+Our headline comparison is CRAFT-Full > Adaptive-CRINGE : that delta isolates the Pillar 1 (CTI) + Pillar 3 (polarised KL) contribution independently of the adaptive controller, defusing both the “CRAFT is just an adaptive KL controller” and “CRAFT is just CRINGE” framings. Across the grid this isolated delta is consistently positive (e.g. 
+
++2 .6 ALFWorld and +2 .3 WebShop on Qwen3-1.7B; +1 .2
+
+Search-QA on Qwen2.5-3B), confirming that the counter-factual signal contributes beyond the shared Pillar-2 con-troller. The plain “CRAFT vs SDAR” delta is on the order of 2–3% absolute (largest on the smallest model, Qwen3-1.7B: +3 .4 ALFWorld, +2 .6 Search-QA, +5 .5 WebShop; shrinking but remaining positive at 7B/8B), exactly the size-scaling pattern predicted in Section 7; it is reported but is not 
+
+the headline. 
+
+5.4 Per-Pillar Ablations (E2) 
+
+Table 3 reports the per-pillar gain decomposition, and the measured pattern matches what P3 and the role of each pillar predict: (a) +P1 alone (A1) already captures the bulk of the gain ( +1 .9/+2 .0/+1 .5 over SDAR on ALFWorld/Search-QA/WebShop), confirming that Pillar 1 is the substan-tive estimator; (b) +P1+P2 (A2) adds a small increment (≤ 0.4) on top of A1, consistent with the controller helping most where the distillation-phase duration is vari-able; (c) +P1+P3 (A3) is a completeness contribution: the marginal gain is small ( ∼ 0.3–0.5% ) but the asym-metric KL is what makes Pillar 1’s signed credit self-consistent. The two falsification rows behave as the the-ory requires: removing the counterfactual mechanism ( A6 ,
+
+Gmin =999 ) collapses the gain to essentially the SDAR base-line ( 84 .2/43 .5/84 .8, within 0.2 points), the empirical con-trol for the per-trajectory approximation in Section 3.1; and swapping the rev/fwd KL assignment ( A7 ) drops below the SDAR baseline ( 83 .1/42 .6/83 .9), the apples-to-apples falsi-fication test for the direction choice of P5. 
+
+5.5 Generalisation and Retrieval Robustness (E7, E8) 
+
+We run two exploratory stress tests on Qwen2.5-3B (Ta-ble 4): OOD , evaluating the final checkpoint only on a held-out 30% slice split by task-template hash; and random re-trieval , rewiring the teacher’s privileged context s+ to a ran-dom rather than canonical retrieval. The measured numbers Qwen3-1.7B Qwen2.5-3B Qwen2.5-7B Qwen3-8B Method ALF SQA WS ALF SQA WS ALF SQA WS ALF SQA WS GRPO 46.1 40.8 67.3 75.0 36.4 79.8 81.2 42.0 80.9 82.6 43.8 82.1 GRPO+OPSD 32.0 42.2 70.7 81.2 44.6 77.8 80.4 47.0 86.8 82.0 48.5 88.2 Skill-SD 52.3 40.8 81.8 73.4 44.1 75.9 85.1 47.8 86.1 86.4 48.9 87.6 RLSD 42.2 40.6 74.0 79.7 43.8 84.4 82.0 49.0 87.4 83.5 50.1 88.9 SDAR 53.9 41.9 76.8 84.4 43.4 85.0 85.9 49.0 89.4 87.3 50.4 90.7 Adaptive-CRINGE † 54.7 42.6 80.0 85.3 44.9 85.9 86.6 49.7 90.1 88.0 51.0 91.3 CRAFT-Full 57.3 44.5 82.3 87.0 46.1 87.3 87.8 50.7 91.0 89.4 52.3 92.5 
+
+Table 2: Main grid (E1) across four model scales. Per-model columns: ALF = ALFWorld success rate, SQA = Search-QA exact-match, WS = WebShop score (all in %; higher is better, ↑). Baseline rows (GRPO, GRPO+OPSD, Skill-SD, RLSD, SDAR) report prior-work numbers from the SDAR suite (Lu et al. 2026); our cells (CRAFT-Full and Adaptive-CRINGE) report our measured results. Bold marks the best method per column; CRAFT-Full leads in every (env, model) cell. † Adaptive-CRINGE reuses CRAFT’s Pillar 2 controller verbatim; the “CRAFT vs Adaptive-CRINGE” delta is the P1+P3 contribution in isolation.                         
+
+> Variant ALFW. Search-QA WebShop
+> SDAR (baseline) 84.4 43.4 85.0 SDAR + P1 (A1) 86.3 45.4 86.5 SDAR + P1 + P2 (A2) 86.7 45.6 86.8 SDAR + P1 + P3 (A3) 86.6 45.9 87.0 CRAFT-Full 87.0 46.1 87.3
+> A6: no CTI ( Gmin =999 )84.2 43.5 84.8 A7: KL-direction swap 83.1 42.6 83.9
+
+Table 3: Per-pillar ablations on Qwen2.5-3B. All scores are in % (higher is better, ↑). The SDAR-baseline row is a prior-work number (Lu et al. 2026); all other cells report our mea-sured results. The first block (SDAR +Pk) decomposes the gain; the second block reports the counterfactual-ablation (A6) and KL-direction swap (A7) falsification tests. Bold 
+
+marks CRAFT-Full. point the same way on both axes: CRAFT-Full has the small-est in-distribution →OOD gap on all three environments ( 6.2
+
+vs SDAR’s 9.5 on ALFWorld), and degrades moderately rather than catastrophically under random retrieval ( 78 .5 vs SDAR’s 72 .0), matching prediction (b) of Section 7. 
+
+## 6 Related Work 
+
+We organise the related literature around the four design axes CRAFT touches and isolate the dimension along which we are distinct. 
+
+Self-distillation as an auxiliary RL objective. Skill-augmented self-distillation (Lu et al. 2026; Wang et al. 2026) constructs a teacher by conditioning the same pol-icy on privileged context s+ and uses a single confidence-gated forward-KL term per token (descending from (Hinton, Vinyals, and Dean 2015)). Adjacent lines bootstrap from the policy’s own outputs via self-generated rationales (Zelikman et al. 2022, 2024), retrieval-augmented self-training (Xu et al. 2024), reinforced self-training (Gulcehre et al. 2023), self-play fine-tuning (Chen et al. 2024), or self-reward mod-elling (Yuan et al. 2024); on-policy distillation of language                      
+
+> In-dist →OOD gap (↓)Rand. retr. (↑)
+> Method ALFW. Search WebShop ALFW. SDAR 9.5 7.8 8.6 72.0 Adaptive-CRINGE 8.0 6.9 7.4 74.5 CRAFT-Full 6.2 5.3 5.8 78.5
+
+Table 4: OOD and random-retrieval results on Qwen2.5-3B. The OOD gap is the in-distribution score minus the held-out 30% slice; smaller is better. The random-retrieval column reports the final ALFWorld score with random-retrieved s+.
+
+Bold marks the best entry per column. Conclusions drawn from this table are exploratory; the follow-up is left as future work. models from their own mistakes (Agarwal et al. 2024) is the closest non-RL relative of our setting. All of these supervise on full traces and do not place a per-token credit on top of a separate RL surrogate. CRAFT is in this family but replaces the single retrospective gate by a counterfactual, sign-aware, bounded credit (Section 3.1). The Adaptive-CRINGE base-line (Section 5) isolates this change from CRAFT’s other pillars. 
+
+Token-level credit assignment in language RL. Unlike-lihood training (Welleck et al. 2020) and CRINGE (Adolphs et al. 2023) apply token-level repulsion at disagreement po-sitions, ignoring the reward signal entirely. RLSD (Yang et al. 2026) reweights each token by the trajectory’s own 
+
+sign( A(i))·∆t — a retrospective sign attached to a realised rollout. Token-level DPO (Rafailov et al. 2023) variants and iterative preference-optimisation methods over reason-ing chains (Pang et al. 2024) formulate contrastive log-ratio objectives that, like CRINGE, remain reward-agnostic at the token level. CRAFT’s CTI differs from all of these along the 
+
+counterfactual axis (Table 1): the credit reflects what would 
+
+have happened on alternative rollouts, not what did on the realised one. Two further lines are close enough to require explicit sep-aration. Group-baseline estimators such as RLOO (Ahma-dian et al. 2024) subtract a leave-one-out average of the other group samples as a variance-reduced REINFORCE base-line; structurally, CTI’s P  
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j) − A(i) is a teacher-tilted, per-token leave-one-out term, but it differs in two essentials: (i) the siblings are reweighted by the teacher– student ratio exp(∆ (j) 
+
+> t
+
+) rather than averaged uniformly, and (ii) the quantity is used as a signed per-token credit on a distillation surrogate, not as a sequence-level baseline inside the policy-gradient term (which CRAFT leaves untouched). 
+
+Rollout-based per-step credit such as VinePPO (Kazemne-jad et al. 2024) estimates step-level value by re-rolling fresh Monte-Carlo continuations from intermediate states; this pays additional sampling compute per step, whereas CRAFT reuses the G − 1 siblings GRPO has already drawn, trad-ing the freshness of VinePPO’s re-rolls for zero marginal sampling cost (at the price of the exchangeability approxi-mation discussed in Section 3.1). Process-reward-model ap-proaches (Lightman et al. 2024; Wang et al. 2024) obtain step-level signal from a separately trained verifier rather than from the policy’s own siblings, and are complementary to the present verifier-free construction. 
+
+Counterfactual reasoning in RL. Counterfactual pol-icy evaluation has a long history in off-policy RL (Pre-cup, Sutton, and Singh 2000), causal RL (Pearl 2009; Buesing et al. 2019), and counterfactual risk minimisation from logged bandit feedback (Swaminathan and Joachims 2015), typically in the form of synthetic-rollout planning or importance-weighted return estimation. Our estimator is a self-normalised importance-sampling estimator over a sib-ling pool with ∆t as the importance weight, in the Horvitz– Thompson inverse-probability-weighting tradition (Horvitz and Thompson 1952); the methodological novelty is recog-nising that GRPO’s parallel rollouts — already sampled, then mostly discarded after group normalisation — are an essentially free counterfactual sample pool. 
+
+Adaptive KL control. Trust-region (Schulman et al. 2015) and adaptive-KL methods in PPO (Schulman et al. 2017), InstructGPT (Ouyang et al. 2022), and RLHF pipelines (Bai et al. 2022) put an adaptive or static coefficient 
+
+on a single KL term tracking distance from a reference. Pil-lar 2 instead moves two coupled coefficients in opposite di-rections, driven by the distillation-quality signal ρgate rather than a KL distance (P4). 
+
+Mode-seeking vs. mode-covering KL. The re-verse/forward KL asymmetry is well-known in variational inference (Minka 2005) and recurs as a global RLHF hyperparameter; Pillar 3 instead ties it to a per-token credit ,selecting rev/fwd by sign( ct) and falsifying the choice with the A7 swap (P5). 
+
+Multi-turn agentic-RL benchmarks. ALFWorld (Shrid-har et al. 2021), Search-QA (from Search-R1 (Jin et al. 2025)), and WebShop (Yao et al. 2022) are standard targets stressing long-horizon planning, retrieval ground-ing, and structured action selection; related environ-ments (BabyAI (Chevalier-Boisvert et al. 2019), Science-World (Wang et al. 2022)) and suites (AgentBench (Liu et al. 2024)) host prompting-time methods like ReAct (Yao et al. 2023) and Reflexion (Shinn et al. 2023). Pure math-reasoning benchmarks (Cobbe et al. 2021; Hendrycks et al. 2021) lie outside this regime. 
+
+## 7 Discussion and Limitations 
+
+What the paper claims, what it does not. We claim the three pillars form a clean, gated, theoretically grounded credit-assignment scheme whose campaign — with the bit-exact guarantee (P7) — answers “does this help, and by what mechanism?” We do not claim single-pillar optimality: Pil-lar 3 alone is a small completeness contribution that exists because Pillar 1’s signed credit only becomes self-consistent with an asymmetric KL. 
+
+Two mechanistic predictions. (a) Size-scaling. Pillar 1 contributes signal only on non-zero-credit tokens, so its gain factorises into the gated-token mass ρgate times the mean CTI magnitude. Larger models place more mass on teacher-student-agreement tokens, shrinking ρgate ; we therefore pre-dict a larger absolute gain for smaller models , positive throughout, which Table 2 confirms (up to +5 .5 on Qwen3-1.7B, shrinking to ∼1.6–2.1 at 7B/8B). (b) Robustness to noisy context. Because E8 randomises only the task-specific part of s+ and Pillar 1 gates out small-CTI tokens, we pre-dict a moderate, not catastrophic drop — borne out in Ta-ble 4. 
+
+Limitations. (L1) Pillar 1 needs group rollouts ( G ≥ 2); non-group backbones via synthetic siblings are future work. 
+
+(L2) Nine new hyperparameters, mitigated by the defaults in Appendix C. (L3) Pillar 3’s standalone gain is small (a completeness, not magnitude, contribution). (L4) All benchmarks are text-based agentic and the OOD analysis is within-domain; multi-modal and cross-domain-family gen-eralisation is future work. (L5) The Pillar 3 negative branch is a forward-KL-inspired update rule, not an unbiased KL estimator (Appendix B). 
+
+## 8 Conclusion 
+
+Self-distilled agentic RL has converged on a single-gate recipe that conflates retrospective and counterfactual sig-nal. We argued that the right per-token credit is the coun-terfactual change in sequence advantage from sampling from the teacher, that GRPO’s parallel rollouts already pay its sampling cost via a group-level importance-sampling estimator, and that the resulting signed credit admits a self-consistent three-pillar decomposition — estimator (P1), magnitude controller (P2), sign router (P3). Two method-ological elements generalise beyond this method: bit-exact reproducibility as a falsifiable substrate, so gains are at-tributable to algorithmic change not drift; and the Adaptive-CRINGE comparator that shares P2 with CRAFT, isolating the counterfactual signal independently of the controller. A natural next step is to estimate the within-group exchange-ability gap directly, calibrating the group-level credit back to the per-trajectory counterfactual it approximates. References 
+
+Adolphs, L.; Gao, T.; Xu, J.; Shuster, K.; Sukhbaatar, S.; and Weston, J. 2023. The CRINGE Loss: Learning What Lan-guage Not to Model. In Annual Meeting of the Association for Computational Linguistics (ACL) .Agarwal, R.; Vieillard, N.; Zhou, Y.; Stanczyk, P.; Ramos, S.; Geist, M.; and Bachem, O. 2024. On-Policy Distillation of Language Models: Learning from Self-Generated Mis-takes. In International Conference on Learning Representa-tions (ICLR) .Ahmadian, A.; Cremer, C.; Gall´ e, M.; Fadaee, M.; Kreutzer, J.; Pietquin, O.; ¨ Ust¨ un, A.; and Hooker, S. 2024. Back to Ba-sics: Revisiting REINFORCE-Style Optimization for Learn-ing from Human Feedback in LLMs. In Annual Meeting of the Association for Computational Linguistics (ACL) .Bai, Y.; Kadavath, S.; Kundu, S.; Askell, A.; Kernion, J.; Jones, A.; Chen, A.; Goldie, A.; Mirhoseini, A.; McKinnon, C.; et al. 2022. Constitutional AI: Harmlessness from AI Feedback. In arXiv preprint arXiv:2212.08073 .Buesing, L.; Weber, T.; Zwols, Y.; Heess, N.; Racaniere, S.; Guez, A.; and Lespiau, J.-B. 2019. Woulda, Coulda, Shoulda: Counterfactually-Guided Policy Search. In Inter-national Conference on Learning Representations (ICLR) .Chen, Z.; Deng, Y.; Yuan, H.; Ji, K.; and Gu, Q. 2024. Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models. In International Conference on Machine Learning (ICML) .Chevalier-Boisvert, M.; Bahdanau, D.; Lahlou, S.; Willems, L.; Saharia, C.; Nguyen, T. H.; and Bengio, Y. 2019. BabyAI: A Platform to Study the Sample Efficiency of Grounded Language Learning. In International Conference on Learning Representations (ICLR) .Cobbe, K.; Kosaraju, V.; Bavarian, M.; Chen, M.; Jun, H.; Kaiser, L.; Plappert, M.; Tworek, J.; Hilton, J.; Nakano, R.; Hesse, C.; and Schulman, J. 2021. Training Veri-fiers to Solve Math Word Problems. In arXiv preprint arXiv:2110.14168 .DeepSeek-AI; Liu, A.; Feng, B.; Xue, B.; Wang, B.; Wu, B.; Lu, C.; Zhao, C.; Deng, C.; Zhang, C.; et al. 2024. DeepSeek-V3 Technical Report. In arXiv preprint arXiv:2412.19437 .Gulcehre, C.; Le Paine, T.; Srinivasan, S.; Konyushkova, K.; Weerts, L.; Sharma, A.; Siddhant, A.; Ahern, A.; Wang, M.; Gu, C.; Macherey, W.; Doucet, A.; Firat, O.; and de Freitas, N. 2023. Reinforced Self-Training (ReST) for Language Modeling. In arXiv preprint arXiv:2308.08998 .Hendrycks, D.; Burns, C.; Kadavath, S.; Arora, A.; Basart, S.; Tang, E.; Song, D.; and Steinhardt, J. 2021. Measuring Mathematical Problem Solving with the MATH Dataset. In 
+
+NeurIPS Track on Datasets and Benchmarks .Hinton, G.; Vinyals, O.; and Dean, J. 2015. Distilling the Knowledge in a Neural Network. In NIPS Deep Learning and Representation Learning Workshop .Horvitz, D. G.; and Thompson, D. J. 1952. A Generalization of Sampling Without Replacement from a Finite Universe. 
+
+Journal of the American Statistical Association , 47(260): 663–685. Jin, B.; Wang, X.; Wang, H.; Pan, L.; Ji, Y.; Sui, Z.; and Han, J. 2025. Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning. In 
+
+arXiv preprint arXiv:2503.09516 .Kazemnejad, A.; Aghajohari, M.; Portelance, E.; Sordoni, A.; Reddy, S.; Courville, A.; and Le Roux, N. 2024. VinePPO: Unlocking RL Potential for LLM Reasoning through Refined Credit Assignment. In arXiv preprint arXiv:2410.01679 .Lightman, H.; Kosaraju, V.; Burda, Y.; Edwards, H.; Baker, B.; Lee, T.; Leike, J.; Schulman, J.; Sutskever, I.; and Cobbe, K. 2024. Let’s Verify Step by Step. In International Confer-ence on Learning Representations (ICLR) .Liu, X.; Yu, H.; Zhang, H.; Xu, Y.; Lei, X.; Lai, H.; Gu, Y.; Ding, H.; Men, K.; Yang, K.; Zhang, S.; Deng, X.; Zeng, A.; Du, Z.; Zhang, C.; Shen, S.; Zhang, T.; Su, Y.; Sun, H.; Huang, M.; Dong, Y.; and Tang, J. 2024. AgentBench: Evaluating LLMs as Agents. In International Conference on Learning Representations (ICLR) .Lu, Z.; Yao, Z.; Han, Z.; Wang, Z.-H.; Wu, J.; Gu, Q.; Cai, X.; Lu, W.; Xiao, J.; Zhuang, Y.; and Shen, Y. 2026. SDAR: Self-Distilled Agentic Reinforcement Learning. In arXiv preprint arXiv:2605.15155 .Minka, T. 2005. Divergence Measures and Message Passing. In Microsoft Research Technical Report MSR-TR-2005-173 .Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C. L.; Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.; Schulman, J.; Hilton, J.; Kelton, F.; Miller, L.; Simens, M.; Askell, A.; Welinder, P.; Christiano, P.; Leike, J.; and Lowe, R. 2022. Training Language Models to Follow In-structions with Human Feedback. In Advances in Neural Information Processing Systems (NeurIPS) .Pang, R. Y.; Yuan, W.; Cho, K.; He, H.; Sukhbaatar, S.; and Weston, J. 2024. Iterative Reasoning Preference Optimiza-tion. In Advances in Neural Information Processing Systems (NeurIPS) .Pearl, J. 2009. Causality: Models, Reasoning and Inference. In Cambridge University Press, Second Edition .Precup, D.; Sutton, R. S.; and Singh, S. 2000. Eligibility Traces for Off-Policy Policy Evaluation. In International Conference on Machine Learning (ICML) .Qwen Team. 2024. Qwen2.5 Technical Report. In arXiv preprint arXiv:2412.15115 .Qwen Team. 2025. Qwen3 Technical Report. In arXiv preprint arXiv:2505.09388 .Rafailov, R.; Sharma, A.; Mitchell, E.; Manning, C. D.; Ermon, S.; and Finn, C. 2023. Direct Preference Op-timization: Your Language Model is Secretly a Reward Model. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Schick, T.; Dwivedi-Yu, J.; Dess` ı, R.; Raileanu, R.; Lomeli, M.; Zettlemoyer, L.; Cancedda, N.; and Scialom, T. 2023. Toolformer: Language Models Can Teach Themselves to Use Tools. In Advances in Neural Information Processing Systems (NeurIPS) .Schulman, J. 2020. Approximating KL Divergence. In Blog post, joschu.net .Schulman, J.; Levine, S.; Moritz, P.; Jordan, M. I.; and Abbeel, P. 2015. Trust Region Policy Optimization. In In-ternational Conference on Machine Learning (ICML) .Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal Policy Optimization Algorithms. In arXiv preprint arXiv:1707.06347 .Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Zhang, M.; Li, Y.-K.; Wu, Y.; and Guo, D. 2024. DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. In arXiv preprint arXiv:2402.03300 .Shinn, N.; Cassano, F.; Berman, E.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Language Agents with Verbal Reinforcement Learning. In Advances in Neural Information Processing Systems (NeurIPS) .Shridhar, M.; Yuan, X.; Cˆ ot´ e, M.-A.; Bisk, Y.; Trischler, A.; and Hausknecht, M. 2021. ALFWorld: Aligning Text and Embodied Environments for Interactive Learning. In Inter-national Conference on Learning Representations (ICLR) .Sutton, R. S.; McAllester, D.; Singh, S.; and Mansour, Y. 1999. Policy Gradient Methods for Reinforcement Learn-ing with Function Approximation. In Advances in Neural Information Processing Systems (NeurIPS) .Swaminathan, A.; and Joachims, T. 2015. Counterfactual Risk Minimization: Learning from Logged Bandit Feed-back. In International Conference on Machine Learning (ICML) .Wang, H.; Wang, G.; Xiao, H.; Zhou, Y.; Pan, Y.; Wang, J.; Xu, K.; Wen, Y.; Ruan, X.; Chen, X.; and Qi, H. 2026. Skill-SD: Skill-Conditioned Self-Distillation for Multi-turn LLM Agents. In arXiv preprint arXiv:2604.10674 .Wang, P.; Li, L.; Shao, Z.; Xu, R.; Dai, D.; Li, Y.; Chen, D.; Wu, Y.; and Sui, Z. 2024. Math-Shepherd: Verify and Re-inforce LLMs Step-by-step without Human Annotations. In 
+
+Annual Meeting of the Association for Computational Lin-guistics (ACL) .Wang, R.; Jansen, P.; Cˆ ot´ e, M.-A.; and Ammanabrolu, P. 2022. ScienceWorld: Is your Agent Smarter than a 5th Grader? In Conference on Empirical Methods in Natural Language Processing (EMNLP) .Welleck, S.; Kulikov, I.; Roller, S.; Dinan, E.; Cho, K.; and Weston, J. 2020. Neural Text Generation with Unlikelihood Training. In International Conference on Learning Repre-sentations (ICLR) .Williams, R. J. 1992. Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning. In 
+
+Machine Learning , volume 8, 229–256. Xu, H.; Lu, S.; Hao, Y.; Chen, W.; and Chen, M. 2024. REST: Retrieval-Augmented Self-Training for Tool-Use Language Models. In arXiv preprint .Yang, C.; Qin, C.; Si, Q.; Chen, M.; Gu, N.; Yao, D.; Lin, Z.; Wang, W.; Wang, J.; and Duan, N. 2026. Self-Distilled RLVR. In arXiv preprint arXiv:2604.03128 .Yao, S.; Chen, H.; Yang, J.; and Narasimhan, K. 2022. Web-Shop: Towards Scalable Real-World Web Interaction with Grounded Language Agents. In Advances in Neural Infor-mation Processing Systems (NeurIPS) .Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations (ICLR) .Yuan, W.; Pang, R. Y.; Cho, K.; Li, X.; Sukhbaatar, S.; Xu, J.; and Weston, J. 2024. Self-Rewarding Language Models. In International Conference on Machine Learning (ICML) .Zelikman, E.; Harik, G.; Shao, Y.; Jayasiri, V.; Haber, N.; and Goodman, N. D. 2024. Quiet-STaR: Language Models Can Teach Themselves to Think Before Speaking. In arXiv preprint arXiv:2403.09629 .Zelikman, E.; Wu, Y.; Mu, J.; and Goodman, N. D. 2022. STaR: Bootstrapping Reasoning with Reasoning. In Advances in Neural Information Processing Systems (NeurIPS) .
+
+## A Appendix A: Reproducibility Protocol 
+
+Anchoring commit and tags. The implementation is forked from an open-source RL training stack at a pub-licly tagged commit (identifier withheld for anonymity; will be restored in the camera-ready). All CRAFT-specific code lives behind three master switches 
+
+algorithm.vera. {enable,phase aware, polarized kl }, defaulting to False . Per-phase snapshots (phase1-baseline-ready through 
+
+phase9-experiments-complete ) provide an-chored states for git-bisect across the implementation history. 
+
+Regression suite. The suite ( tests/vera/ ) contains 87 tests organised as follows: 8 bit-exact regression tests 
+
+(4 verifying byte-identical equality with the upstream baseline using torch.equal when all switches are off, and 4 verifying correct metric-emission contracts when the switches are toggled in isolation), 24 math-correctness tests (CTI unit math, vectorised-vs-loop-reference equiv-alence on the CTI estimator, polarised-KL three-region decomposition, fallback-path degeneracy, numerical verifi-cation of the Pareto welfare functional from Appendix B), and 55 engineering-contract tests (controller dynamics, 
+
+ρtarget operating-point re-centering, Adaptive-CRINGE / Pillar-2 ρtarget alignment for clean isolation of Pillar 1 + Pillar 3, typed meta info key contract, switch-ON determinism under replay, robustness under sharp-sigmoid and near-zero-temperature edge cases, distinct 
+
+baseline/ {token cringe, adaptive cringe }/
+
+wandb namespaces, checkpoint round-trip, group-index plumbing, baseline-comparator mutual-exclusion checks). The suite runs in ∼4 s on CPU and is part of continuous integration. 
+
+On prior work and anonymity. The prior methods we build on and compare against — SDAR (Lu et al. 2026), RLSD (Yang et al. 2026), and Skill-SD (Wang et al. 2026) — are third-party, publicly available works with arXiv iden-tifiers and openly released code, and are cited normally in author-level form. The only identifiers withheld for double-blind anonymity are those that could reveal the present au-thors: the exact tagged commit of the RL training stack we fork and our own repository / phase-snapshot tags. These will be restored in the camera-ready version. 
+
+## B Appendix B: Full Proofs and Auxiliary Definitions 
+
+We give full proofs for Propositions 1 and 2 and for the struc-tural results P4, P6, and P7 stated in Section 4; for P3 we give the supporting argument for the (calibrated, pointwise) statement, and for P5 we collect the structural facts the main-text statement relies on. 
+
+B.1 Proof of Proposition 1 
+
+Fix a GRPO group of size G and a position t, and set 
+
+τ = 1 . Under (A4) the sibling triples {(s(j) 
+
+> t
+
+, y (j) 
+
+> t
+
+, A (j))}j̸ =i
+
+are i.i.d. draws from the step-t behaviour law μt, and un-der (A1) the ratios ϱ(j) := πT (y(j) 
+
+> t
+
+| s+,(j) 
+
+> t
+
+)/π θ (y(j) 
+
+> t
+
+|
+
+s(j) 
+
+> t
+
+) = exp(∆ (j) 
+
+> t
+
+) are finite. Note Eμt [ϱ | st] = P 
+
+> y
+
+πθ (y |
+
+st) πT (y | s+ 
+
+> t
+
+)/π θ (y | st) = 1 , so Eμt [ϱ] = 1 .At τ = 1 the weights are exactly the self-normalised im-portance weights w(j) 
+
+> t
+
+= ϱ(j)/ P  
+
+> k̸=i
+
+ϱ(k), so the first term of (7) is the standard self-normalised importance-sampling (SNIS) estimator 
+
+bμG =
+
+> 1
+> G−1
+
+P  
+
+> j̸=i
+
+ϱ(j)A(j)1
+
+> G−1
+
+P  
+
+> j̸=i
+
+ϱ(j)
+
+> p
+
+−−−−→
+
+> G→∞
+
+Eμt [ϱ A ]
+
+Eμt [ϱ] ,
+
+where the convergence is by the weak law of large num-bers applied separately to numerator and denominator (both have finite mean under (A1) and (A3)) and the continuous-mapping theorem. Subtracting the deterministic A(i) gives 
+
+dCTI (i)
+
+> tp
+
+−→ CTI (i) 
+
+> t
+
+of (6): the estimator is consistent for the group-level target. Under the exchangeability condition (E) of Section 3.1, the change of measure Eμt [ϱ A ]/Eμt [ϱ] = 
+
+Ey′  
+
+> t∼πT(·| s+,(i)
+> t)
+
+[A(τ (i) 
+
+> <t
+
+, y ′
+
+> t
+
+, τ (i) 
+
+> >t
+
+)] identifies this limit with the per-trajectory counterfactual (5); absent (E) the limit re-mains the well-defined group-level credit the propositions use. SNIS is consistent but not unbiased at finite G; its bias is 
+
+O(1 /G ) with constant governed by Var μt (ϱ), which is ex-actly the quantity bounded in Prop. 2. Lowering τ below 1
+
+sharpens the weights toward the teacher-modal sibling (re-ducing the effective sample size and raising variance); rais-ing τ flattens them toward a ∆t-agnostic uniform average (adding bias). Hence τ = 1 is the operating point and the temperature is a bias-variance knob around it. 
+
+B.2 Proof of Proposition 2 
+
+The term A(i) in dCTI (i) 
+
+> t
+
+= P  
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j) − A(i) is de-terministic given i, so we bound the variance of Z := 
+
+P  
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j). With ϱ(j) = exp(∆ (j) 
+
+> t
+
+) (τ = 1 ), Z is the 
+
+ratio (self-normalised) estimator 
+
+Z = Sf
+
+S1
+
+, Sf := 1
+
+> G−1
+
+X 
+
+> j̸=i
+
+ϱ(j)A(j), S1 := 1
+
+> G−1
+
+X 
+
+> j̸=i
+
+ϱ(j),
+
+with Eμt [S1] = Eμt [ϱ] = 1 and Eμt [Sf ] = μ := CTI (i) 
+
+> t
+
++
+
+A(i) = Eμt [ϱ A ] under (A1). The standard delta-method ex-pansion of a ratio estimator around (μ, 1) gives, under the i.i.d. sampling of (A4), 
+
+Var( Z) = 1
+
+G − 1 Var μt
+
+ ϱ (A − μ) + O (G − 1) −2.
+
+Bounding the importance ratio by its cap ϱ ≤ ¯ρt (the IS/Horvitz–Thompson cap of the statement) and the centred advantage by |A − μ| ≤ Rmax (A3) yields Var μt (ϱ(A −
+
+μ)) ≤ ¯ρ2 
+
+> t
+
+R2max , hence the leading-order bound 
+
+Var 
+
+dCTI (i)
+
+> t
+
+
+
+≤ R2max ¯ρ2
+
+> t
+
+G−1 + O (G − 1) −2.
+
+The O(1 /G ) leading term is the regime relevant for the group sizes G ≥ 8 used in practice; the cap ¯ρt is what the fallback to dCTI t ← 0 enforces when a teacher–student ra-tio would otherwise be unbounded (A1 violated). We note that the bound is only as tight as ¯ρt: under weak coverage 
+
+¯ρt can be large and the bound correspondingly loose, so it should be read as a finite-variance guarantee with an explicit dependence on the worst-case importance ratio rather than as a sharp constant. 
+
+B.3 Argument for P3 (pointwise degeneracy) 
+
+The main-text statement claims pointwise convergence 
+
+LCTI → LSDAR per token under (S1) sharp gating and (S2) the single-rollout fallback dCTI (i) 
+
+> t
+
+= A(i)∆(i) 
+
+> t
+
+. The ar-gument: under (S1) the centred asymmetric sigmoids in (8) saturate to indicators 1[ dCTI t ≷ 0] in the limit β± → ∞ ;under (S2) sign( dCTI t) = sign( A(i)) sign(∆ t), so on tokens with A(i) > 0 the indicators coincide with 1[∆ t ≷ 0] and (10) reduces, per token, to the prior single-gate loss (3); on tokens with A(i) < 0 the signs flip and the loss reduces to the sign-flipped counterpart (the intended sign-aware asym-metry of (8)). We have deliberately not claimed a global 
+
+O(β−1) rate: a uniform-residual bound across the token dis-tribution would require additional hypotheses (e.g. uniform tail control on dCTI t) that the main text does not assume. The pointwise claim is sufficient for the operational use of the proposition: it certifies that CRAFT’s auxiliary term col-lapses to the prior-baseline term in the sharp-gating, single-rollout regime, and the bit-exact regression suite (P7) ex-tends this to the disabled-switch regime in IEEE-754 repre-sentation. 
+
+B.4 Proof of P4 
+
+We assume the warmup period n ≤ nwarmup has elapsed and the controller has begun updating. Let ρn := ρgate (n)
+
+be the per-step input, treated as a bounded random variable with long-run mean ¯ρ ∈ [0 , 1] (by (A3) on advantages and the bounded-credit construction (8)). The EMA recursion is ρEMA  
+
+> n
+
+= α ρ EMA  
+
+> n−1
+
++(1 −α) ρn with 
+
+α ∈ (0 , 1) . Unrolling from n0 := nwarmup + 1 ,
+
+ρEMA  
+
+> n
+
+= αn−n0 ρEMA  
+
+> n0−1
+
++ (1 − α)
+
+> n
+
+X
+
+> k=n0
+
+αn−k ρk.
+
+Taking expectations, the first term vanishes geometrically with rate α; for the second, monotone convergence and the geometric identity Pnk=n0 αn−k → 1/(1 − α) as n → ∞ 
+
+give E[ρEMA  
+
+> n
+
+] → ¯ρ.By the linearity of the maps λ(·) and μ(·) in (12)–(13), 
+
+E[λn] → λ(¯ ρ) ∈ [λmin , λ max ] and E[μn] → μ(¯ ρ) ∈
+
+[μmin , μ max ]. The contractive factor of the bias term is 
+
+αn−n0 , giving geometric convergence with rate α.
+
+B.5 Supporting facts for P5 (structural consistency of polarised KL) 
+
+The main-text P5 avoids any regret-functional / locally-optimal claim. The three facts it relies on are elementary and we list them here for completeness. (F1) Gradient di-rections. ∂log πθ rev( t) = +1 and ∂log πθ fwd( t) = −1, by direct differentiation. The rev branch therefore pulls log πθ
+
+toward log πref (the textbook mode-seeking gradient direc-tion); the fwd branch pushes it away (the mode-covering direction on sampled tokens). (F2) Per-token bound. On the rev / fwd regions, the per-token KL contribution equals 
+
+±(log πθ − log πref ) and is therefore uniformly bounded by | log πθ − log πref |, regardless of the credit magnitude. The neutral branch’s bound is inherited from the underly-ing kl penalty estimator. (F3) Empirical falsifiability. 
+
+The swapped assignment (rev on negative, fwd on posi-tive) is a concrete, single-flag alternative; Ablation A7 pro-duces a direct empirical comparison. We deliberately do not claim a regret-bound optimality of the shipped assign-ment over the swap, because a publication-ready regret func-tional with the right boundary behaviour (the sign-flipped 
+
+k1 form behaves differently from a true KL divergence as 
+
+πθ (yt | st) → 0+) is not within scope here. A future variance-reduced, importance-weighted forward-KL variant (L5 in Section 7) is the natural setting in which such an optimal-ity argument might be made rigorous. 
+
+B.6 Proof of P6 (surrogate validity) 
+
+(i) holds by construction: LPG is the standard clipped GRPO surrogate and is not modified by CRAFT. (ii) follows by chaining bounds: |ct| ≤ 1 by (8); λ(t) ∈ [λmin , λ max ] and 
+
+μ(t) ∈ [μmin , μ max ] by P4; |LCTI | < ∞ follows from boundedness of ct and the assumption that log πθ is finite on the support of sampled tokens; |LKL -pol | < ∞ follows from Lipschitz log-probs (A2) applied to each of the three branches. (iii) The auxiliary terms are added after the PG term is composed, and they consume only detached weights (ct, λ(t), μ(t)) on a grad-bearing log πθ ; PPO importance-ratio clipping operates inside LPG on the ratio πθ /π old and never touches the auxiliary terms. 
+
+B.7 Proof of P7 
+
+The proposition is verified computationally rather than analytically. The four bit-exact regression tests in tests/vera/test bit exact sdar.py use 
+
+torch.equal (IEEE-754 representational equality, not 
+
+torch.isclose ) to compare: (1) the composed loss tensor under vera.enable=False with the upstream baseline loss on the same batch; (2) the gradient with re-spect to model parameters in the same configuration; (3) the static-λ fallback path used when phase aware=False 
+
+(no meta info keys are written); (4) the standard-KL fallback when polarized kl=False (the polarised-KL branch is bypassed). The four configurations exhaust the disabled-switch combinations required by the proposition. The test pass record is captured in the phase-5 pytest log shipped with the codebase.                 
+
+> sign A(i)sign ∆ tReading ct
+> ++Good rollout; teacher would have agreed. Absorb.
+> ++−Good rollout; student already past teacher. Hold.
+> ≈0
+> −+Bad rollout; teacher dis-agreed. Maybe absorb.
+> ±−−Bad rollout; student already past teacher. Repel.
+> −
+
+Table 5: Four-quadrant interpretation of the CTI estimator. The last column reports the typical sign of ct each quadrant produces. 
+
+B.8 Pillar 1 and Pillar 2 pseudocode 
+
+Algorithm 1 Counterfactual Token Importance (Pillar 1) 
+
+Require: Student log-probs log πθ (yt | st) (grad-bearing), teacher log-probs log πT (yt | s+ 
+
+> t
+
+) (detached), per-trajectory advantage A(i), group indices gi, sharpnesses 
+
+β+, β −, temperature τ , gate threshold θg . 
+
+> 1:
+
+∆(i) 
+
+> t
+
+← log πT (y(i) 
+
+> t
+
+| s+,(i) 
+
+> t
+
+) − sg[log πθ (y(i) 
+
+> t
+
+| s(i) 
+
+> t
+
+)]  
+
+> 2:
+
+for all groups g with |g| ≥ Gmin do  
+
+> 3:
+
+for all i ∈ g do  
+
+> 4:
+
+w(j) 
+
+> t
+
+← softmax j̸ =i
+
+
+
+∆(j) 
+
+> t
+
+/τ 
+
+ 
+
+> 5:
+
+dCTI (i) 
+
+> t
+
+← P  
+
+> j̸=i
+
+w(j) 
+
+> t
+
+A(j) − A(i) 
+
+> 6:
+
+end for  
+
+> 7:
+
+end for  
+
+> 8:
+
+For groups with |g| < G min : dCTI (i) 
+
+> t
+
+← A(i)∆(i) 
+
+> t
+
+(fall-back).  
+
+> 9:
+
+ct ← (2 σ(β+ dCTI t)−1) 1[ dCTI t > 0] −(2 σ(β−| dCTI t|)−
+
+1) 1[ dCTI t < 0]  
+
+> 10:
+
+ct ← sg[ ct]; ρgate ← 1
+
+> |V|
+
+P 
+
+> t∈V
+
+1[|ct| > θ g ] 
+
+> 11:
+
+return ct, ρ gate 
+
+B.9 Pareto interpretation of the Pillar 2 controller 
+
+Define the steady-state absorption rate Φabs (ρ) = λ(ρ)ρ
+
+and exploration budget Φexp (ρ) = μ(ρ)(1 − ρ) at ρ := 
+
+ρEMA gate . Substituting (12)–(13), both are concave in ρ with the Algorithm 2 Phase-Aware Adaptive Controller (Pillar 2) 
+
+Require: EMA decay α, warmup nwarmup , ranges 
+
+[λmin , λ max ] and [μmin , μ max ].
+
+1: ρEMA gate ← 0.5; n ← 0
+
+2: while training do 
+
+3: Run actor step; receive ρgate from Pillar 1. 
+
+4: n ← n + 1 
+
+5: if n > n warmup then 
+
+6: ρEMA gate ← α ρ EMA gate + (1 − α) ρgate {ρEMA gate held at 
+
+0.5 during warmup }
+
+7: end if 
+
+8: λ ← λmin + ( λmax − λmin ) ρEMA gate 
+
+9: μ ← μmin + ( μmax − μmin ) (1 − ρEMA gate )
+
+10: Inject λ, μ into the next step’s loss as in (4). 
+
+11: end while 
+
+common factor ρ(1 − ρ), so as ρ varies in [0 , 1] they trace a strictly concave Pareto frontier whose interior maximiser of Φabs + Φ exp equals ρ⋆ = 12 exactly when λmin = μmin 
+
+(our default, ρtarget = 0 .5); otherwise the trade-off is re-weighted through rho target . This is a structural picture — every ρ is a trade-off point on a concave frontier — not a claim that ρ⋆ = 1 /2 is task-optimal. 
+
+B.10 Comparison of polarised-KL negative-branch options 
+
+For the negative branch we considered (O1) the sign-flipped 
+
+k1 form −(log πθ − log πref ) that we ship; (O2) a k3-style form with reversed arguments, which is biased and expo-nentially unstable; and (O3) the importance-sampled true forward KL, unbiased but with unbounded variance when 
+
+log πθ ≫ log πref — exactly where the negative branch fires hardest. We ship O1: a bounded |± 1| gradient that integrates cleanly with Pillar 2’s μ, an honest policy-update rule rather than a divergence estimator. 
+
+## C Appendix C: Notation and Hyperparameters 
+
+This appendix collects reference material for the main text. Table 6 lists the default hyperparameters of CRAFT together with their role and provenance, and Table 7 summarises the notation used throughout. All values are the defaults iden-tified through the preliminary smoke runs of Section 5 and held fixed across every (env, model) cell of the main grid; we did not re-tune per environment. The hyperparameters fall into three groups: the inherited GRPO / SDAR settings, the Pillar-1 estimator knobs ( β±, τ, G min , θ g ), and the Pillar-2 controller ranges. 
+
+Hyperparameter Default Role / source 
+
+G (group size) 8 GRPO sample budget 
+
+ϵ (PPO clip) 0.2 GRPO surrogate clip 
+
+λSDAR 0.01 prior distillation weight 
+
+βSDAR 5.0 prior gate sharpness 
+
+λCRAFT (static) 0.01 P1 weight (fallback) 
+
+β+, β − 5.0 sigmoid sharpness, signed credit 
+
+τ (CTI temperature) 1.0 P1 softmax temperature 
+
+Gmin 2 min group for CTI 
+
+θg (gate threshold) 0.1 active-gate definition 
+
+[λmin , λ max ] [0 .005 , 0.02] P2 range 
+
+[μmin , μ max ] [0 .005 , 0.02] P2 range 
+
+α (EMA decay) 0.95 P2 EMA 
+
+nwarmup 10 P2 hold-out window 
+
+ρtarget 0.5 P2 fixed-point target 
+
+θKL (polarisation threshold) 0.0 P3 dead-band KL estimator (neutral branch) k3 Schulman low-var KL 
+
+Table 6: Default hyperparameters of CRAFT. 
+
+Symbol Meaning 
+
+πθ , π T , π ref student / teacher / reference policy 
+
+πb behaviour policy ( = πθ in on-policy GRPO) 
+
+i, j ∈ { 1, . . . , G } sibling indices in a GRPO group of size 
+
+Gt ∈ [0 , T ) token position inside a trajectory of length TA(i) sequence-level GRPO advantage of trajectory i
+
+∆(i) 
+
+> t
+
+teacher-student log-prob gap at (i, t )
+
+dCTI (i) 
+
+> t
+
+estimated counterfactual token importance (P1) 
+
+ct ∈ (−1, 1) signed credit (P1 output) 
+
+ρgate , ρ EMA gate gate-active ratio and its EMA (P2) 
+
+λ(t), μ (t) adaptive coefficients on CTI and KL (P2) 
+
+β+, β − sigmoid sharpness on positive / negative credit 
+
+τ softmax temperature in the CTI estimator 
+
+θg gate threshold for ρgate 
+
+θKL polarisation threshold (P3) 
+
+α EMA decay of the P2 controller 
+
+nwarmup controller warmup hold-out window 
+
+Table 7: Notation used throughout the paper.

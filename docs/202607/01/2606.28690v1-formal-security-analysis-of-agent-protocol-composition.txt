@@ -1,0 +1,534 @@
+Title: Formal Security Analysis of Agent Protocol Composition
+
+URL Source: https://arxiv.org/pdf/2606.28690v1
+
+Published Time: Tue, 30 Jun 2026 00:21:55 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# Formal Security Analysis of Agent Protocol Composition 
+
+# Shenghan Zheng 
+
+Dartmouth College USA 
+
+# Qifan Zhang 
+
+Palo Alto Networks USA 
+
+# Zheng Zhang 
+
+Meta USA 
+
+# Haonan Li 
+
+UC Riverside USA 
+
+# Christophe Hauser 
+
+Dartmouth College USA 
+
+## Abstract 
+
+AI agent protocols define how agents use tools, delegate work, and coordinate across software systems, but their security requirements remain incomplete and inconsistently enforced across deployments. We present AgentThread, a source-linked framework for security assurance analysis of agent protocols, from specification text to running SDKs. AgentThread contributes a layered security scope, protocol-derived checks formalized as TLA + invariants, and a two-phase checker that compiles protocol specifications into model-checkable models and replays executable counterexamples against real SDKs through protocol adapters. For each finding, AgentThread records the source text behind the check and separates violated protocol requirements from missing recommendations, hardening gaps, and unassigned cross-protocol responsibilities. Across five emerging agent protocols, AgentThread identifies 35 specification-level findings, supports them with 80 implementation tests against production SDKs and reference servers, and finds 30 additional failures that emerge only under protocol composition. We further show that only one protocol enforces a security-relevant control in practice and no protocol assigns enforcement for cross-protocol behavior. Insecurity in agent protocols is therefore not only a specification or implementation problem, but also a responsibility gap across protocols, SDKs, and deployments. 
+
+## Keywords 
+
+AI agent protocols, formal verification, TLA+, protocol security, model checking, composition safety 
+
+## 1 Introduction 
+
+AI agent protocols are becoming software infrastructure. MCP [ 8 ], for example, defines how agents discover tools and connect model-driven workflows to local files, cloud services, peer agents, and developer environments. These protocols are no longer narrow APIs around a single service: they mediate tool access, delegation, and shared context across autonomous workflows. As these protocols mediate tool access, delegation, and shared context, they create a software-engineering assurance problem, and recent vulnerabilities show that these risks are no longer hypo-thetical. MCP servers have already had command injection, server-side request forgery, and arbitrary file read bugs [ 45 – 47 ]. Such single-server failures matter, but they are not enough to charac-terize current agent deployments. Agent runtimes routinely com-pose multiple servers, so one server may supply untrusted content while another provides file access or network egress. A Snyk Labs study [ 49 ] illustrates this composed failure: an agent fetches an attacker-controlled webpage through one MCP server; the hidden instruction enters the model context; the agent then invokes a sec-ond MCP server that reads a local file and uses the first server again to exfiltrate the result. No single MCP server owns the whole failure. The unsafe behavior emerges from composition, implicit authority transfer, missing consent, and weak audit visibility across the agent runtime. Existing approaches only partially address this problem. Classi-cal protocol verification is strong for message formats, authen-tication, secrecy, and channel integrity [ 10 , 14 , 32 , 42 , 43 ], but agent deployments also require reasoning about semantic pay-loads, delegated authority, and bridge/host behavior. Agent-security work has documented prompt injection, tool abuse, and runtime threats [ 22 , 27 , 29 , 40 , 61 ], but typically studies attacks, benchmarks, or applications rather than protocol specifications and SDK behav-ior. Recent formal-methods work for agentic systems verifies plans or repairs coordination artifacts [ 34 , 58 ]; our object of analysis is different: public communication protocols, their implementations, and the software bridges that compose them. The central difficulty is maintaining an evidence chain from protocol text to formal checks and implementation tests. Protocols evolve quickly, their requirements are spread across prose, schemas, SDK behavior, and security guidance, and many controls are dele-gated to applications or developers. As a result, failures can arise from three different places: a specification may omit or weaken a security control, an SDK may not enforce the control that the specification describes, or a composed deployment may create a responsibility that no single protocol owns. A useful assurance method must ask what security properties agent protocols should guarantee, how those guarantees can be checked against specifica-tions and implementations, and who is responsible when they fail under composition. We present AgentThread, a source-linked framework for secu-rity assurance and composition analysis of agent protocols. Agent-Thread collects protocol sources, extracts normative clauses into typed intermediate records, compiles those records into TLA + mod-els [ 33 ], uses the TLC model checker [ 60 ] to generate counterex-ample traces, and replays those traces against real SDKs where an executable path exists. The workflow is automated after IR ac-ceptance: source collection and protocol adapters remain human-supplied, while extraction and IR construction are machine-assisted and validation-gated. TLA + specifies state-machine behavior and invariants, matching protocol states, tool calls, and cross-server traces. The same intermediate records also track ownership and enforcement evidence, so a finding can be interpreted as a standards non-conformance bug, a recommendation gap, a hardening gap, or an unassigned composition responsibility. 
+
+> 1
+> arXiv:2606.28690v1 [cs.CR] 27 Jun 2026
+
+We study five protocols spanning tool invocation, multi-agent delegation, identity-oriented networking, coding-agent access, and agent lifecycle management: Model Context Protocol (MCP) [ 8], Agent-to-Agent Protocol (A2A) [ 1 ], Agent Network Protocol (ANP) [ 5], Agent Communication Protocol (ACP) [ 2], and Agent Client Proto-col (ACP-Client) [ 4 ]. Across these protocols, AgentThread identifies 35 specification-level findings, supports them with 80 implementa-tion tests against production SDKs and MCP reference servers, and finds 30 additional failures that appear only in composed deploy-ments. The results show that agent-protocol insecurity is not only a matter of individual implementation bugs. It is also a problem of fast-moving specifications, SDK enforcement gaps, and responsibil-ity left outside any one protocol boundary. 
+
+Contributions. This paper makes three contributions: 
+
+• A systematic formal analysis of agent protocols. We define a layered security scope for agent communication protocols and derive checkable TLA + invariants for seman-tic content flow, delegated authority, session and capability state, audit, and composition. 
+
+• A source-linked workflow from protocol text to tests. 
+
+AgentThread drafts clause, transition, property, and respon-sibility records; validates their source links and types; com-piles accepted records to formal models; and turns exe-cutable TLC traces into SDK replay tests. The workflow preserves source references so findings can be reproduced and revised as protocols change. 
+
+• An empirical study across protocols, implementations, and compositions. We evaluate five protocols, production SDKs, MCP reference servers, and eight composed mod-els, showing that many failures appear only when protocol behavior is checked against SDKs or composed through runtime bridges. 
+
+## 2 Motivation 
+
+We use a real MCP multi-server failure pattern reported by Snyk Labs [ 49 ] as a running example and Figure 1 shows the attack chain. An agent runtime/host is connected to two MCP servers. One server fetches web content; another converts local or remote files into Markdown. The vulnerable point is not a malformed MCP message, but an unguarded bridge from untrusted content to later tool authority: an attacker-controlled page places hidden instructions into the agent’s model context, after which the agent uses the file-capable server to read local data and the network-capable server to send the result to an attacker-controlled endpoint. The attack is possible because four controls fail together. First, semantic content flows from an untrusted webpage into model state and can steer later actions. Second, authority composes across protocol servers: the same host can invoke a network-capable tool and a file-capable tool in one workflow. Third, the consent bound-ary is missing or too coarse, so the user’s request to summarize a page is not separated from later local-file access and outbound transmission. Fourth, audit visibility is weak: each action appears tool-valid in isolation, while the harmful intent is visible only in the composed trace. These failures are increasingly relevant as software-engineering agents become multi-turn, tool-using, and multi-agent systems [25, 36]. User 
+
+> Request
+> “Please
+> summarize
+> information from
+> xx.com”
+> Agent Host
+> + Model Context
+> Shared Model
+> Context
+> • System prompt
+> • Tool schemas
+> • Retrieved content
+> Unsafe behavior emerges
+> from shared context
+> + cross-server composition
+> Fetch MCP
+> Server
+> HTTP fetch tool
+> Attacker-
+> Controlled
+> Webpage
+> Content
+> with hidden
+> instruction
+> File/Markdown
+> MCP Server
+> Read file tool
+> Local File
+> Sensitive data
+> Fetch MCP
+> Server
+> HTTP fetch tool
+> Attacker
+> Endpoint
+> Exfiltrated data
+> fetch
+> page
+> 2
+> page
+> retrieval
+> (fetch tool)
+> 3
+> hidden instruction /prompt injection
+> CVE-2025-5276
+> 4
+> read local file
+> (file/markdown
+> tool)
+> exfiltrate file
+> contents
+> (via fetch tool)
+> 1
+> arbitrary
+> read
+> CVE-2025-
+> 5273
+> command injection CVE-2025-
+> 5277
+> 5
+
+Figure 1: Motivating multi-MCP server composition. A hid-den instruction fetched from the network can enter shared model context, steer a later local-file read, and send the result through a network-capable server. 
+
+## 2.1 Text Becomes Tool Action 
+
+The first step in the example is ordinary web retrieval. The security-relevant event happens later, when hidden webpage text is placed into the model context and interpreted as an instruction. This is the core lesson of indirect prompt injection: untrusted content can become operational intent once it reaches a tool-integrated agent [ 27 , 40 , 61 ]. Agent benchmarks such as AgentDojo make the same point in a controlled setting: defenses must reason about both the data an agent observes and the tools it may invoke [22]. In the MCP chain, no message is malformed. Fetching a page, reading a file, and sending a URL are each normal tool actions. The bug appears because the runtime fails to bind later tool calls to the user’s original intent. A protocol-level analysis therefore cannot stop at syntax or authentication. It must also ask whether semantic content can cross into authority-bearing actions. 
+
+## 2.2 Local Hardening Is Not Enough 
+
+Snyk’s practical guidance is correct: MCP servers should be treated as untrusted third-party code, hardened and tested for familiar bugs such as command injection, server-side request forgery, and path traversal, and isolated from the main environment [ 49 ]. These practices reduce the blast radius of a single server. They do not, by themselves, explain what happens when two correctly functioning servers are composed by the same agent runtime. In Figure 1, checking either server alone misses the end-to-end path from attacker-controlled content to local-file access and net-work exfiltration. The relevant state is distributed across the host, the two clients, two servers, and the model context that connects them. This motivates explicit composition models: when protocol endpoints are joined by a runtime or bridge, security properties must hold across the bridge, not only inside each endpoint. This view matches recent observations that A2A–MCP integration is moving from ad hoc glue code toward protocol-level infrastruc-ture [37]. 
+
+## 2.3 The Owner Is Between Components 
+
+The final difficulty is ownership. In the example, the fetch server owns network access, the Markdown server owns file conversion, 
+
+> 2
+
+the host owns tool selection, and the user interface may own con-sent. No component, viewed alone, owns the rule: “content fetched from the network must not authorize a later local file read and outbound send.” A server maintainer can fix a path-validation bug, but the composed control remains: who prevents the flow, who logs it, and which specification requires it? This is also a practical triage problem. Security programs expect reproducible proof of concepts, demonstrable impact, and action-able remediation paths [ 50 ], but agent-composition failures are multi-step, cross-component, and stateful, so each step may look intended in isolation. The disputed MCP STDIO case illustrates this gap: reports describe behavior treated upstream as by design, while downstream systems still needed mitigations once concrete exploit paths appeared [ 17 , 19 ]. Protocol churn further makes one-time au-dits stale as prose, schemas, SDK behavior, and bridge code change. We therefore need a workflow that preserves source references, emits formal checks, regenerates replay tests, and records whether any specification or SDK owns the relevant cross-component con-trol. 
+
+## 3 Overview 
+
+AgentThread analyzes agent protocols as composed software sys-tems rather than as isolated message formats. The input is a set of authoritative protocol artifacts: prose specifications, role-specific client/server/agent documentation, schemas, examples, SDKs, and reference implementations. The output is a set of source-linked findings that explain (1) which source clause or missing clause mo-tivates a check, (2) whether the formal model admits a violating execution, (3) whether an SDK or reference server exposes the same behavior, and (4) who, if anyone, owns the relevant control. 
+
+Threat model. We assume a protocol-level Dolev–Yao adver-sary [ 24 ] augmented with agent-specific capabilities. The adver-sary can inject instructions through tool outputs, webpages, or peer-agent messages; forge or inflate capability metadata; and am-plify authority through delegation or tool chains. This captures a broader class of agent-mediated security failures: untrusted exter-nal content, capability metadata, or delegated context enters model state and influences later API or tool calls, a pattern observed in real LLM-integrated applications and systematized in agent bench-marks [22, 27, 40, 61]. 
+
+Security scope. We treat transport security as an assumed sub-strate and focus on the security obligations visible at the protocol and agent layers. Figure 2 groups the scope into two parts. The 
+
+RPC layer captures concerns inherited from remote-procedure-call protocols: message and wire-format validity, request/session corre-lation, and identity or capability binding [ 3 , 52 , 57 ]. The agent layer 
+
+captures the concerns exposed by Figure 1: semantic operation con-trol and audit/accountability. In the motivating example, the hidden webpage instruction steering a later file read is a semantic-operation failure, while the cross-server file-read-and-egress path is an au-dit/accountability failure because composition controls are missing. In composition, AgentThread lifts the same layers across bridge boundaries: L1 checks well-formed translation, L2 checks lifecycle cascade, L3 checks authority monotonicity, L4 checks semantic-to-authority isolation, and L5 checks audit/provenance continuity.      
+
+> L5 Audit / accountability
+> L4 Semantic operation controls
+> L3 Identity / capability binding
+> L2 Session lifecycle
+> L1 Message / wire-format integrity
+> Agent layer
+> RPC layer
+
+Figure 2: Layered security scope used by AgentThread. TLA+ model     
+
+> Phase 0 Formalization
+> Phase 1
+> Spec checking
+> Phase 2
+> Implementation
+> replay
+> Normative clause
+> extraction
+> Typed IR layer
+> source-backed
+> Responsibility IR
+> TLC checker
+> check each property
+> Counterexample
+> trace
+> violating trace
+> Triage
+> failure reason
+> Test generator
+> trace → replay script
+> Protocol
+> adapters
+> model actions
+> →SDK/API calls
+> Live SDKs
+> / servers
+> implementations
+> under test
+> Finding
+> report
+> finding + evidence
+> owner + gap
+> compile
+> check
+> classify
+> generate
+> replay
+> Bridge Records
+> For Composition
+> Protocol
+> artifacts
+> 📄 Spec docs
+> { } Schemas
+> </> SDK/refs
+
+Figure 3: AgentThread workflow. Protocol artifacts are nor-malized into source-backed clauses and typed IR, compiled into formal checks, and replayed against implementations when counterexamples are executable. Design rationale. The workflow is organized around three frictions exposed by the motivating example. First, protocol re-quirements are written across natural language, role-specific docu-mentation, schemas, examples, and SDK behavior, so AgentThread separates source collection, clause extraction, typed IR construction, and TLA + compilation while preserving source provenance. Sec-ond, responsibility is distributed across specifications, SDKs, hosts, users, and bridges, so the IR records not only protocol state but also ownership and enforcement evidence. Third, formal counterexam-ples are useful to practitioners only when they can be reproduced, so AgentThread lowers TLC traces through protocol adapters into implementation replays or source/type checks, keeping the formal trace as the test oracle. 
+
+Workflow. Figure 3 summarizes the end-to-end workflow. Agent-Thread first normalizes collected protocol artifacts into source-backed clauses and typed IR records. It then compiles the IR with bridge records into TLA + models and runs TLC to produce either verified checks or counterexample traces. When a counterexample corresponds to executable behavior, AgentThread lowers the trace through a protocol adapter into an SDK or reference-server replay; otherwise, it records source/type-level evidence. The final report links each finding back to its source text, formal trace, implementa-tion evidence, and responsible owner. 
+
+## 4 The AgentThread Framework 
+
+This section describes how AgentThread turns the scope in §3 into executable checks. We first map the RPC and agent-layer scope to verification targets (§4.1), then describe the Protocol IR and 
+
+> 3
+
+Table 1: Examples of how layer-derived checks are classified.                  
+
+> Layer Proto. Cls. Evidence
+> RPC-L1: Message / wire-format integrity ANP SM MUST encrypt messages RPC-L2: Session lifecycle MCP SM MUST reject unauthorized requests RPC-L3: Identity / capability binding ANP SM MUST verify DID identity RPC-L3: Identity / capability binding MCP FH Capability attestation NS Agent-L4: Semantic operation control MCP SR SHOULD obtain consent Agent-L5: Audit / accountability MCP SR SHOULD log security events
+> Class types: SM = Spec-Mandated; SR = Spec-Recommended; FH = Framework harden-ing; LC = Layer completeness; NS = Not Specified.
+
+two-phase assurance checker (§4.2–§4.4). We then introduce the Responsibility IR (§4.3) and the composition methodology (§4.5). 
+
+## 4.1 Layer-Derived Checks 
+
+Starting from the five layers in §3, AgentThread asks whether the protocol text provides enough normative structure to state a safety property and whether the SDK exposes enough behavior to test it. We instantiate the layers as a compact set of verification targets. RPC-layer targets include wire-format integrity, session lifecycle, identity verifiability, capability attestation, credential or registry integrity, and fail-secure defaults. Agent-layer targets in-clude prompt/content integrity, consent explicitness, audit com-pleteness, delegation monotonicity, and composition safety. The set is intentionally small: it is meant to cover the recurring security state needed by current agent protocols, not to define a universal checklist. Each target becomes a protocol-specific TLA + invariant over the state variables and actions generated from the Protocol IR. 
+
+Property taxonomy. To avoid calling every failed check a pro-tocol violation, each property carries a source-evidence label. Spec-Mandated properties are backed by MUST-level protocol text; a failed check is standards non-conformance. Spec-Recommended 
+
+properties are backed by SHOULD-level or best-practice text; a failed check is a recommendation gap. Framework hardening 
+
+properties are required by our layer-derived checks but absent from the documentation; a failed check is a design gap. Layer com-pleteness properties capture missing architectural obligations at a layer. This taxonomy is used throughout the evaluation: only MUST-backed failures are reported as protocol violations. Table 1 shows representative classifications across the layers. 
+
+Counterexample triage. TLC counterexamples are first triaged at the specification level as Spec-Fail (the specification permits an unsafe execution), Model-Fail (the abstraction introduced an unsupported behavior), or Ambiguity-Fail (the source text does not determine a unique behavior). Phase 2 then adds implemen-tation evidence: a replayed or source-confirmed implementation failure is reported as Impl-Fail when the specification forbids the behavior, and Both-Fail when both the specification and the imple-mentation admit it. This separation prevents TLC results from being mistaken for implementation evidence and makes false positives explicit instead of hiding them in the analysis workflow. 
+
+## 4.2 Protocol IR: From Specifications to a Typed Representation 
+
+AgentThread formalizes protocol behavior through a Protocol IR rather than translating informal prose directly into TLA +. The IR serves two purposes. First, it makes the formalization provenance-preserving: every TLA + action and invariant is linked to a specific extracted clause. Second, it makes the automation boundary ex-plicit: source collection and adapters are human-supplied; Steps 2–3 are machine-assisted and validation-gated; and compilation, model checking, trace extraction, and replay are automated after IR ac-ceptance. We describe each step below using the MCP multi-server flow from Figure 1 as the running example. 
+
+Step 1: Source collection (manual). For each protocol we col-lect authoritative artifacts: prose specifications, role-specific(client/server/agent) documentation, schemas, examples, SDK documentation, and refer-ence implementations. Because obligations are often split across these sources, we assign precedence (normative role/spec text >
+
+schema > SDK/reference code > example) and record disagreements unresolved with precedence as ambiguities rather than silently choosing one interpretation. 
+
+Step 2: Normative clause extraction (machine-assisted, validation-gated). The extractor captures clauses that affect be-havior, safety, authority, lifecycle, or trust boundaries. Each clause is stored with its modality ( must , should , may , or not specified ,per RFC 2119 [ 16 ]), a source reference (URL + anchor), an actor binding—that is, the principal the clause applies to, a client, server, agent, bridge, or adversary as distinct from the human users these principals serve—and an explicit ambiguity flag. The ambiguity flag is set to true when a clause admits more than one legal reading; Step 4 will render ambiguous clauses as nondeterministic TLA +
+
+actions so that TLC explores both interpretations. In the MCP run-ning example, clauses governing tool results, user consent, and server responsibility become distinct IR clause records with source references and modality tags; the content-integrity property then records whether the relevant obligation is mandated, recommended, or absent. Static rules split sections and identify RFC-style modali-ties; machine assistance handles semantic cases such as actor/topic tagging and compound clauses. Records are rejected if their source span is absent from the document or their modality/enums are ill-formed. The resulting records include the source links needed to inspect the corresponding IR chain and compiled TLA + action. 
+
+Step 3: Typed IR construction (machine-assisted, validation-gated). Unlike prior staged extraction pipelines such as Pacheco et al. [ 51 ], Hermes [ 6], and PROSPER [ 55 ], which primarily recover protocol state machines or logical transition formulas from specifi-cation text, we use the IR not only to encode protocol behavior but also to preserve source modality, layer-derived security properties, and responsibility or enforcement ownership. The Protocol IR has three record families: clause records preserve provenance, transition records encode protocol behavior—who acts, under what conditions, with what state update and modality—and property records attach the taxonomy labels from §4.1. This lets downstream findings be interpreted directly as standards non-conformance, hardening gaps, or under-specification without re-inspecting the source text. These records are typed and structured (one record per clause, transition, or property). Human mapping proposes transition components, 
+
+> 4
+
+Table 2: IR-to-TLA + compilation mapping.                    
+
+> IR construct TLA +construct
+> actor Quantified principal in ∀/∃
+> trigger Guarded-action enabled predicate
+> preconditions Action enabled conjunct
+> state_writes Primed variable update
+> kind: Protocol Action in ProtocolNext kind: Environment Action in EnvNext kind: Adversary Action in AdvNext MUST Safety invariant
+> SHOULD Annotated hardening invariant
+> NOT_SPECIFIED Under-specification finding
+> ambiguity: true Nondeterministic action branches
+
+while templates instantiate common layer-derived property records. Validators check source references, action kinds, property classes, and required TLA + action/invariant names before draft IR artifacts are emitted. 
+
+Step 4: IR-to-TLA + compilation (automated). A syntax-directed compiler turns the IR into a TLA + specification. Actors become quantified principals, triggers and preconditions become guarded actions, state writes become primed variable updates, and modality determines whether a property becomes a safety invariant, harden-ing check, or under-specification finding. Clauses flagged as am-biguous produce nondeterministic branches so that TLC explores all interpretations. The compiler also preserves the action kind: protocol actions are transitions licensed by the specification, envi-ronment actions model nondeterministic but non-malicious events (e.g., token expiry), and adversary actions model explicit attacker capabilities from §3. Table 2 summarizes the compilation mapping. 
+
+## 4.3 Responsibility IR: From Specifications to Responsibility Records 
+
+In addition to the Protocol IR, AgentThread extracts Responsibil-ity IR records that track who owns each control and whether the SDK enforces it. Each record links the governing clause, modality, security-policy clause, claimed principal, observed SDK enforce-ment, ownership/gap type, and evidence. Listing 1 shows a compact MCP example: the transition record is compiled into TLA +, while the responsibility record drives ownership and enforcement analy-sis.                      
+
+> 1ProtocolIR.transition {
+> 2id: "MCP-L4-read-after-content",
+> 3actor: "agent_host", kind: "Protocol",
+> 4trigger: "invoke file tool",
+> 5reads: ["model_context", "tool_capabilities"],
+> 6writes: ["local_file_read := TRUE"],
+> 7modality: "NOT_SPECIFIED",
+> 8source_refs: ["MCP-C-tool-results"],
+> 9tla_action: "ReadLocalFile"
+> 10 }
+> 11 ResponsibilityIR.control {
+> 12 control_id: "MCP-L5-composition-accountability",
+> 13 spec_clause: "MCP-C-tool-results",
+> 14 modality: "NOT_SPECIFIED",
+> 15 policy_clause: "content cannot authorize file reads or egress",
+> 16 sdk_enforcement: "absent",
+> 17 owner_type: "composition-orphan",
+> 18 evidence_level: "behavioral+source"
+> 19 }
+
+Listing 1: Example Protocol and Responsibility IR records. 
+
+Responsibility records are generated from the same source-backed clauses as the Protocol IR and then validated against SDK or reference-server evidence. For each security target, AgentThread records the clause and modality, any corresponding security-policy text, the principal named by the specification, the observed enforcement mechanism, and the resulting gap type: ownership, split-duty, en-forcement, scope, or composition-orphan (see §6.5 for empirical use). In spirit this extends NIST OSCAL [ 44 ] from fixed control catalogs to protocol-derived normative clauses, but the records are specialized for agent protocols whose controls often span specifica-tions, SDKs, hosts, and bridges. 
+
+## 4.4 Two-Phase Assurance Checker 
+
+Phase 1: Spec-level analysis. Phase 1 checks each layer-derived invariant independently using TLC. Rather than bundling all invari-ants into a single conjunction (which would cause TLC to stop at the first violation), we generate a separate TLC configuration for each invariant, producing one counterexample per violated check. The spec-level analysis parses TLC output to extract (1) which invari-ant was violated, (2) the depth of the counterexample, and (3) the full state trace with variable values at each step. Each counterex-ample is classified using the triage taxonomy (§4.1), which treats 
+
+Model-Fail and Ambiguity-Fail findings as first-class outcomes. 
+
+Phase 2: Implementation-level testing. Phase 2 converts TLC counterexample traces into executable test cases when the trace has an executable implementation path. The same Protocol IR property that generated the invariant in Phase 1 also provides the Phase 2 oracle, giving one chain from a source clause to a replayed SDK test. Protocol adapters map TLA + actions to concrete SDK or API calls; composed traces use a harness that hosts both protocol stacks plus a bridge module and dispatches each step to the relevant adapter. When a trace cannot be replayed directly, AgentThread records source/type-level evidence for the absent mechanism instead. This counterexample-to-test workflow follows the tradition of rigorous protocol conformance testing [ 13 ], but uses formally checked TLA +
+
+traces as the oracle source. 
+
+## 4.5 Composition Methodology 
+
+A key strength of the Protocol IR is that it composes: when two protocols meet through a bridge, conductor, or agent runtime, we can build a composed TLA + model by reusing the per-protocol IR transitions and adding bridge-level actions that transfer state across protocol boundaries. Each bridge action is paired with a finite capa-bility contract that states which context, credential, tool, consent, delegation, or audit rights the bridge/runtime may read, write, or exercise. This is the same workflow as §4.2–§4.4; composition does not require a separate framework, only additional IR records. We restrict analysis to pairwise combinations; triples would multiply TLC’s state space and obscure which bridge action created a failure. Pairwise models keep the composition boundary explicit. 
+
+Composed-model construction. A composed TLA + model for protocols 𝑃 1 and 𝑃 2 is built from four ingredients: (1) the IR transitions of 𝑃 1, imported as-is and namespaced; (2) the IR tran-sitions of 𝑃 2, imported as-is and namespaced; (3) a set of bridge 
+
+> 5
+
+actions that model how the conductor, relay, or agent runtime car-ries state from 𝑃 1 to 𝑃 2 (e.g., “the MCP tool output becomes A2A task input”); (4) a set of composition safety invariants that assert that security properties of 𝑃 1 or 𝑃 2 are preserved under the bridge actions. Bridge actions are declared as kind=Protocol when they are licensed by either specification, kind=Environment when they are deployment-level glue that neither specification normatively defines, and kind=Adversary when they model a bridge-level com-promise (ADV-1 through ADV-3 acting through the bridge). In the generated TLA + model, the bridge contract is a finite capability set used as an action guard. For example, an MCP tool result can be forwarded into agent context only if the bridge has the correspond-ing context-write right, and a file-read-plus-egress trace requires both file and network rights. Counterexamples therefore identify not only that state crossed a protocol boundary, but also which bridge/runtime capability made the transfer possible. 
+
+Invariant design. For each protocol pair, AgentThread instanti-ates security obligations from the layer-lifted templates introduced in §3. The templates lift each local layer obligation across the bridge boundary: L1 checks translation well-formedness, L2 lifecycle prop-agation, L3 authority monotonicity, L4 semantic-to-authority isola-tion, and L5 audit/provenance continuity. We distinguish two obli-gation classes. Boundary-risk obligations ask whether composition exposes a cross-protocol attack path, such as content-to-authority flow or stale delegated authority. Bridge-contract preservation obli-gations are positive controls: they check that a bridge does not mint authentication, rewrite grant baselines, hide delegation records, or produce local side effects without source state allowed by its contract. Model-specific names such as InjectionToFileWrite are con-crete instantiations of these templates. We check model-validation invariants separately. These cover state-domain separation, lifecycle/counter bounds, authority do-mains, bridge-source guards, and audit-counter bounds. They vali-date that the composed model is well-scoped and are excluded from the security-obligation denominator in §6.4. 
+
+## 5 Implementation 
+
+Adapters and replay loop. Each executable target has a small adapter module that maps the TLA + action names emitted by Phase 1 to concrete SDK or reference-server calls. Adapters are hand-written because each target exposes a different call surface, but they share a common base class that implements counterex-ample replay: given a trace, the base walks the action sequence, dispatches each action to the adapter, and after each step evaluates the invariant predicate that the generating Protocol IR property points to. The composition harness defined in §4.4 reuses this ma-chinery, hosting two adapters plus a bridge module in one process. The bridge module implements the same capability contract used in the generated TLA + model, so replayed steps identify both the crossed boundary and the bridge/runtime right that enabled it. 
+
+Automation boundary. Source collection and adapter imple-mentation are manual setup steps. The extraction front end is machine-assisted: it proposes source-backed clauses, transition skeletons, property records, responsibility records, and bridge ca-pability records; rejects malformed outputs through validators; and emits draft ir_clauses.json , ir_transitions.json , and 
+
+Table 3: Evaluation coverage by protocol and analysis axis.                                                                          
+
+> Axis MCP A2A ANP ACP-Cap ACP-Client
+> Protocol IR ✓(37) ✓(17) ✓(16) ✓(12) ✓(15) TLA +model ✓✓✓✓✓
+> TLC model checking ✓✓✓✓✓
+> SDK analysis/tests ✓(18) ✓(13) ✓(8) ✓(9) ✓(16) Server proof-of-concept ✓(7) ––––Composition models ✓(5) ✓(4) ✓(2) ✓(2) ✓(1) Composition behavioral ✓(1) –––✓(1) Responsibility IR ✓(14) ✓(9) ✓(5) –✓(7)
+> Technical evidence L3 L3 L3 L2 L2
+> Numbers indicate record/test counts. L0 = spec only, L1 = source inspection, L2 = behavioral confirmation, L3 = reproducible exploit chain.
+
+ir_properties.json . Accepted IR is the boundary for downstream automation. From accepted IR onward, model checking, output pars-ing, counterexample-trace extraction, and replay against existing adapters are automated. 
+
+Implementation footprint. The implementation consists of source-extraction scripts, validators, Protocol and Responsibility IR files, bridge capability records, generated TLA + specifications, a TLC driver, adapters, and replay or source-check tests. The evalu-ation reports the corpus size, checked model bounds, and replay coverage used in this study. 
+
+## 6 Evaluation 
+
+We evaluate AgentThread through four research questions: 
+
+RQ1 (Specification) What specification-level security gaps ap-pear in individual agent-protocol specifications? 
+
+RQ2 (Implementation) Which model-checked findings repro-duce against real SDKs or reference servers? 
+
+RQ3 (Composition) What failures appear only when protocols are composed through an agent runtime, relay, or bridge? 
+
+RQ4 (Responsibility) Who owns and enforces the controls involved in these findings? 
+
+## 6.1 Evaluation Setup 
+
+Every TLA + action and invariant is linked to IR records. IR counts (clauses / transitions / properties) are MCP 37/11/7, A2A 17/6/6, ANP 16/11/7, ACP-Cap 8/7/6, and ACP-Client 15/9/7. Each property carries a taxonomy tag ( spec-mandated , spec-recommended ,
+
+framework hardening , or layer completeness ). The TLC driver is v2.19; the SDK versions are MCP v1.26.0, A2A v0.3.25, ACP-Cap v1.0.3, ANP v0.7.2, and ACP-Client v0.9.0. Additionally, we test three official MCP reference servers (mcp-server-fetch, mcp-server-sqlite, mcp-server-git) as real-world proof-of-concept targets. Table 3 summarizes the evidence available for each protocol. We use these evidence levels to scope claims: behavioral replay and source inspection are reported separately rather than treated as interchangeable implementation evidence. 
+
+Role and bounds of TLC. Clause extraction can flag absent or weak requirements, but it does not show whether the corre-sponding bad state is reachable or provide a replayable trace. We therefore use TLC as a bounded counterexample generator with 
+
+> 6
+
+Table 4: TLC model checking performance(operation-count bound = 12). Failed-check times are small because TLC ter-minates at the first counterexample.                                                         
+
+> Model Constants Viol. Viol. Time Sec. PASS
+> MCP S=3, T=3, M=8 7/9 <3 min each ✓
+> A2A A=4, C=3, M=8 4/6 <5 min each ✓
+> ANP A=3, M=6 4/7 <2 min each ✓
+> ACP-Cap A=3, C=3, M=6 4/6 <1 min each ✓
+> ACP-Client Ops=10 5/7 <2 min each ✓
+> MCP+A2A S=2, A=3, C=3, M=8 7/9 <5 min each ✓
+> MCP+MCP M=8 5/7 <2 min each ✓
+> MCP+ACP-Cap M=6 3/4 <1 min each ✓
+> A2A+ACP-Cap A=3, C=3, M=6 3/5 <4 min each ✓
+> A2A+A2A A=3, C=3, M=6 2/4 <5 min each ✓
+> MCP+ACP-Cl Ops=10 4/6 <1 min each ✓
+> ANP+MCP Ops=8 3/4 <1 min each ✓
+> ANP+A2A Ops=8 3/4 <3 min each ✓
+> S = sessions, T = tools, A = agents, C = capabilities, M = messages, Ops = operations. Sec. PASS means at least one security obligation passes; model-validation checks are separate and pass under the same bound.
+
+an operation-count bound of 12: each invariant is checked in a separate configuration, so a failed check returns the shortest reach-able trace and concrete state values for Phase 2. The constants in our TLC configurations are intentionally small but instantiate the attack schemas we report: the required principals, sessions, capa-bilities, messages, and, for composition, a bridge. Larger constants add symmetric interleavings but are not needed to witness these findings. This matches recent agent-protocol incidents and the Snyk motivating example which requires one tool per server and Git-server CVEs turn on a single exposed endpoint or tool boundary rather than large deployments [ 45 – 49 ]. Table 4 reports the explicit TLC bounds used for each model. These bounds are model-specific because each model is a verification slice for a particular family of invariants, not a cartesian product of all protocol dimensions. For example, in the standalone MCP model, sessions, tools, and messages remain explicit because the single-protocol checks reason about those dimensions directly. But in some composed models, the MCP side is specialized to the minimal role-level path needed for the cross-protocol invariant like one session or one tool-response path to make only the message or operation bound tunable. 
+
+## 6.2 RQ1: Specification-Level Findings 
+
+Table 5 presents the complete 5 × 11 security-check matrix. Across 55 protocol–check cells, we observe 35 spec-level findings: 12 are confirmed by implementation tests, 23 are specification-only, 10 pass, and 10 are not applicable or not checked because of proto-col scope (e.g., MCP has no delegation model, so the delegation check is N/A). The taxonomy introduced in §4.1 determines how to read each failed check: spec-mandated findings are protocol non-conformance, spec-recommended findings are recommendation gaps, and framework hardening or layer-completeness findings are design gaps. No protocol passes all checks. Two gaps appear across all five protocols: audit completeness and credential/registry integrity are either violated, only recommended, unenforced, or underspecified. 
+
+Table 5: Security-check matrix by layer-derived check. BOTH = failed at both specification/model and implemen-tation levels; SPEC = specification/model-level finding only; 
+
+✓ = pass; – = not applicable.                                                             
+
+> Layer-derived check MCP A2A ANP ACP-Cap ACP-Cl
+> RPC-L1 message / wire format SPEC ✓✓✓✓
+> RPC-L2 session lifecycle SPEC ✓✓✓SPEC RPC-L3 identity binding SPEC ✓✓SPEC –RPC-L3 capability attestation BOTH ✓–SPEC –RPC-L3 credential / registry BOTH BOTH SPEC BOTH SPEC Agent-L4 delegation monotonicity –BOTH –SPEC –Agent-L4 content integrity BOTH ––SPEC SPEC Agent-L4 consent explicitness BOTH BOTH SPEC BOTH SPEC Agent-L5 audit completeness BOTH BOTH SPEC BOTH SPEC Cross-layer fail-secure defaults SPEC SPEC SPEC SPEC SPEC Agent-L5 composition safety SPEC SPEC SPEC ––
+
+We therefore separate failures by source evidence. MCP’s content-integrity check is spec-mandated : the specification requires sani-tization, but the SDK does not comply. A2A’s delegation, consent, audit, and credential-lifecycle checks and the ACP-Client findings are instead framework hardening gaps because the specifications leave those requirements absent or permissive. Only MUST-backed failures are protocol non-conformance; the rest are recommenda-tion, hardening, or design gaps. The most severe single-protocol result is ACP-Client’s fail-secure sandboxing check. The protocol exposes filesystem writes without protocol-level restrictions on target paths, so an agent may modify security-sensitive locations outside the intended project scope. Be-cause permission is may -level rather than mandatory, this check can be skipped entirely; combined with content-integrity gaps, un-trusted repository content can steer the agent toward persistent security-critical changes. More broadly, security architecture does not imply assurance. ANP includes the strongest built-in mecha-nisms in our study—DID-based identity, end-to-end encryption, and token lifecycle support—yet still fails on consent, audit, fail-secure replay prevention, and credential revocation. 
+
+Representative counterexamples. We highlight three rep-resentative counterexamples. Each illustrates a different binding between a failed invariant and protocol evidence: recommendation gap, framework-derived design gap, and standards non-conformance. (1) MCP credential/registry integrity (spec-recommended ). TLC finds a trace where a session is initialized and closed, yet the credential is never revoked. No adversary action is required: session termination does not terminate the authority that the ses-sion created. The spec does not specify revocation and only recom-mends token lifetime controls, so this is a recommendation/lifecycle gap rather than standards non-conformance. (2) A2A delegation monotonicity (framework hardening ). TLC finds a trace where one agent delegates a capability, after which an adversarial step re-delegates it beyond the receiving agent’s original grant. The spec does not define delegation-scope constraints, so transitive re-delegation can amplify authority across hops. This is a framework-derived design gap, not a violation of an explicit A2A requirement. (3) MCP content integrity (spec-mandated ). TLC finds a trace 
+
+> 7
+
+Table 6: Implementation-level results summary Coverage: B = includes behavioral evidence, S = source/type-only ab-sence or structural evidence.                                    
+
+> Target Tests Cov. Outcome summary
+> MCP 18 Bcapability, content, consent, audit, credential = BOTH; fail-secure = SPEC A2A 13 Bdelegation, consent, audit, credential = BOTH ACP-Client 16 Bcapability, content, consent, audit, fail-secure, credential = BOTH ANP 8Bidentity, format = pass; consent, audit = BOTH; fail-secure, credential = partial ‡
+> ACP-Cap 9Bformat, session = pass; consent, audit, credential = BOTH; fail-secure = partial ‡
+> Composition harness
+> MCP+MCP chained 4B4 composition findings MCP+ACP-Cl composed 4S4 composition findings MCP+ACP-Cl behavioral 1Binjection confirmed
+> MCP reference-server proof-of-concept tests ∗
+> fetch 2B5/5 web payloads sqlite 2B3/3 stored payloads git 3B3/3 vectors
+> Total 80
+> ∗Proof-of-concept counts are distinct injection patterns that passed through the server unsanitized.
+> ‡“partial” = mechanism exists in the SDK but its enforcement is incomplete.
+
+where a compromised tool response is incorporated into the sys-tem’s control state—a protocol-level prompt-injection failure. The MCP spec explicitly states that servers must sanitize tool outputs, but the reference SDK performs zero sanitization, making this a direct standards non-conformance. 
+
+## 6.3 RQ2: Implementation Reproduction 
+
+Phase 2 uses 80 implementation tests: 18 MCP SDK tests, 13 A2A tests, 16 ACP-Client tests, 8 ANP tests, 9 ACP-Cap tests, 9 com-position tests, and 7 MCP reference-server proof-of-concept tests. Table 6 reports the outcomes. We separate behavior claims from 
+
+absence claims : behavioral tests show that an executable SDK path reaches a violating state, while source/type-level checks support claims that no callable hook, endpoint, field, or type exists to en-force the property. This distinction is why MCP has the strongest evidence (SDK, composition, and reference-server tests), A2A has behavioral SDK evidence but no server proof-of-concept target, and composition pairs without production bridges remain model-only. 
+
+Key results. Nine of the ten MCP ↔A2A behavioral findings re-produce at both the specification and implementation levels; the ex-ception is MCP’s fail-secure/session check, where the HTTP trans-port layer compensates for the session-layer gap. MCP’s content-integrity check is a direct non-conformance: the specification says servers must sanitize tool outputs, but five injection payloads pass through the SDK tool-call path unmodified. By contrast, A2A’s del-egation, consent, audit, and credential-lifecycle checks are frame-work hardening gaps because the specification does not require delegation scope, consent, audit, or credential revocation. The ANP fail-secure/credential checks and ACP-Cap fail-secure checks only provide partial mechanisms.      
+
+> MCP Tool (adversary)
+> MCP Server Bridge / Host
+> A2A Agent 1 cap={1}
+> A2A Agent 2 cap={2}
+> ➊inject
+> ➋compromise
+> ➌amplify
+> delegated cap 2
+> ➍No audit trail
+
+Figure 4: Cross-protocol attack chain: MCP prompt injection propagates through a shared bridge to amplify A2A delega-tion. Table 7: Security-oriented composition obligations across 8 composed models. CEX = counterexamples.                                           
+
+> Model Sec. oblig. CEX Layers Representative finding
+> MCP ↔A2A 97L2–L5 bridge-driven authority escalation MCP ↔MCP chained 75L3–L5 injection chain / transitive trust MCP ↔ACP-Cap 43L3–L5 consent bypass A2A ↔ACP-Cap 53L2–L3 authority-model mismatch A2A ↔A2A federated 42L3 federation amplification MCP ↔ACP-Client 64L3–L5 injection-to-action flow ANP ↔MCP 43L3–L5 identity ≠content safety ANP ↔A2A 43L3/L5 identity ≠delegation control
+> Total 43 30
+
+## 6.4 RQ3: Composition Failures 
+
+We now evaluate the eight composed models constructed via the composition methodology of §4.5. Across these models, Agent-Thread instantiates 43 security-oriented composition obligations: 31 boundary-risk obligations and 12 bridge-contract preservation obligations. Thirty admit counterexamples (Table 7). We also check 40 bounded model-validation invariants; all pass and are excluded from this denominator because they validate the encoding rather than security obligations. Thus, 30/43 is the counterexample rate for layer-derived cross-boundary security obligations, not for all TLC checks. 
+
+Representative case study: MCP ↔A2A. Figure 4 shows a common composed deployment: MCP tool output enters an A2A conductor that coordinates downstream agents. The composed model keeps the MCP session and tool-output state, the A2A capa-bility and delegation state, and the bridge action that moves content between them. TLC finds a trace where unsanitized MCP output taints the bridge; the bridge then causes A2A authority to exceed the recipient’s original grant, and the escalation has no complete audit trail because the bridge sits outside both local audit scopes. This failure is not visible in either protocol alone: MCP exposes a content-integrity gap and A2A exposes a delegation-scope gap, but the authority expansion appears only at the boundary. 
+
+Results across protocol pairs. We extend beyond the MCP ↔A2A case study to the broader space of realistic protocol pairings. Ta-ble 7 summarizes the results: 30 counterexamples across 43 security-oriented composition obligations in 8 composed models. 
+
+Cross-pair synthesis. The seven additional protocol pairings cluster into three failure modes that recur regardless of which two protocols we compose. (1) Hidden intermediaries: chained MCP relays, A2A federation, and ANP-discovered MCP tool use all produce failed checks that neither endpoint’s local checks can                                                        
+
+> 8Id.
+> Cap.
+> Deleg.
+> Content
+> Consent
+> Audit
+> Fail-sec.
+> Cred.
+> Format
+> Session
+> Comp.
+> MCP AC—DCCBC✓✓EA2A ✓CAACACC✓✓EANP ✓———CA✓C✓✓—ACP-Client AA—ACACA✓✓E
+> AOwnership gap BSplit-duty CEnforcement gap DScope gap EComposition control ✓Enforced — N/A
+
+Figure 5: Responsibility gap heatmap across layer-derived checks. Agent-layer and composition controls are dominated by ownership, enforcement, scope, and orphan gaps. 
+
+observe (e.g., transitive credential cascade, federated delegation am-plification, encrypted injection). (2) Authority/consent semantic mismatches: MCP ↔ACP-Cap and A2A ↔ACP-Cap fail because consent and delegation models differ across the two protocols and the bridge resolves the difference silently. (3) Identity is orthog-onal to content and scope: the two ANP compositions confirm that even DID-based identity verification provides no mechanism to bound content integrity or delegation scope. 
+
+Implications. The composition results support four conclusions. (1) Individual protocol analysis is necessary but insufficient. 
+
+A protocol can satisfy its own local checks and still fail once its outputs become another protocol’s trusted inputs. (2) Compo-sition failures are heterogeneous but systematic. Some are authority-amplification failures, some are consent-routing failures, some are provenance and audit failures, and some are direct content-to-action flows. What unifies them is that they emerge only at the boundary between protocols. (3) Two structural patterns recur: hiding intermediaries and exposing local actions. Chained MCP collapses provenance, trust, and credential boundaries in a common deployment pattern. MCP ↔ACP-Client turns untrusted semantic content into local side effects. (4) Bridge components are unowned responsibility points. The most security-critical logic often sits in the bridge, conductor, relay, or agent runtime that connects two protocols, yet these components are typically outside the normative security scope of either protocol. Composi-tion safety is therefore not only a verification problem, but also a responsibility-allocation problem. 
+
+## 6.5 RQ4: Responsibility Allocation 
+
+We apply the Responsibility IR methodology of §4.3 to obtain 35 responsibility records across four protocols (MCP 14, A2A 9, ANP 5, ACP-Client 7; ACP-Cap is archived). The findings expose who owns each security control and whether that ownership translates into enforcement. 
+
+Key results. Figure 5 shows three patterns. First, only one security-relevant control is both owned and enforced: ANP’s DID-based identity verification check; the other enforced controls are structural wire-format or session-lifecycle checks. Second, enforce-ment gaps dominate: 18 of 32 total gaps assign responsibility in the specification but provide no SDK mechanism. Third, composition is universally orphaned: no protocol owns bridge security for chained MCP servers, A2A conductors, or MCP tools inside ACP-Client agents. These results explain why local protocol fixes are insuf-ficient: the most security-critical obligations often belong to the runtime bridge or deployment policy that connects two otherwise independent protocols. 
+
+## 7 Discussion 
+
+Why composition failures are hard to fix . Single-protocol find-ings usually have a clear disclosure target: the specification author, the SDK maintainer, or the application developer. Cross-protocol composition findings do not. In cases such as MCP ↔ACP-Client, sanitization, local-action control, and cross-protocol behavior are allocated across different parties, but no single party controls the full composed path. This is why composition failures often survive the normal disclosure pipeline: the responsibility chain has no clear endpoint. Our results suggest that composition safety should be treated as a first-class protocol property, not as an application-level afterthought. 
+
+Implications for protocol deployment . The broader lesson is that agent protocol security cannot be improved solely through better individual specifications or SDK patches. It also requires coor-dination mechanisms for security requirements that span protocol boundaries. Mature communication stacks have such structures; agent protocols largely do not. Our contribution is therefore not only to identify concrete gaps, but to provide protocol-derived checks and a source-linked analysis workflow that makes those cross-protocol requirements explicit early in the design process. 
+
+## 8 Related Work 
+
+Agentic software systems and protocol infrastructure. Re-cent work on LLM and agent security has studied prompt injec-tion, tool abuse, agent benchmarks, and deployment-level threat models [ 7, 22 , 27 , 29 , 31 , 40 , 41 , 61 ]. Developer-facing discussions increasingly treat MCP, A2A, ANP, ACP, and ACP-Client as in-frastructure for tool use, coding agents, and multi-agent work-flows [ 1, 2, 4 , 5 , 8, 53 ]. Qualitative work has begun to analyze A2A–MCP integration as a glue-code-to-protocol problem [ 37 ], and security labs have reported concrete failures in MCP server deploy-ments [ 49 ]. AgentThread complements this work by treating the protocol-mediated deployment stack—specification, SDK, runtime bridge, and responsibility allocation—as the unit of analysis. 
+
+Formal verification and conformance testing. Security has long been integral to protocol design [ 52 ], with formal analysis ap-plied to classical and deployed protocols via CSP [ 42 ], ProVerif and Tamarin [ 14 , 43 ], and direct reasoning against modern standards [ 10 ,12 , 20 , 21 , 23 , 26 , 30 , 32 , 38 , 56 ]. Agentic formal-methods systems address adjacent objects: VeriPlan verifies end-user plans [ 34 ], and TraceFix repairs coordination logic from TLA + counterex-amples [ 58 ]. AgentThread instead checks public communication protocols and replays counterexamples against SDKs, following the tradition of protocol conformance testing [ 13 , 15 , 39 , 54 ] and verification-linked implementation assurance [9]. 
+
+Specification extraction and responsibility evidence. Our extraction front end builds on work that recovers behavioral arti-facts from protocol prose, including state machines, parseable struc-ture, ambiguity, and parser constraints [ 6, 11 , 35 , 51 , 55 , 59 , 62 ]. The closest control-evidence analogue is OSCAL [ 44 ], which structures 
+
+> 9
+
+security controls and evidence. Our Responsibility IR adapts that idea to protocol-derived controls and connects it to system-security and requirements-analysis concerns [ 18 , 28 ]: when agent protocols are composed, the missing requirement is often not a local check but an unowned bridge responsibility. 
+
+## 9 Threats to Validity 
+
+Construct validity. Our layer-derived checks may not always correspond to explicit design goals of every protocol. We there-fore classify failures by evidence: only MUST-backed failures are standards nonconformance; SHOULD-backed failures are recom-mendation gaps; and framework or layer-completeness failures are design or responsibility gaps. 
+
+Modeling and extraction validity. Protocol documents can be ambiguous, incomplete, or inconsistent with their SDKs. Although clause extraction and typed-IR preparation are validation-gated, the resulting IR is still an abstraction of the analyzed source snapshots. To reduce this threat, records retain source references and modality tags, ambiguous clauses are modeled as nondeterministic alterna-tives, generated TLA + actions are type-checked, and executable counterexamples are replayed when an implementation surface exists. We model protocol effects of semantic content and delegated authority, not full LLM internals. 
+
+External validity. Our empirical results cover five protocols, selected SDKs and reference servers, bounded TLC configurations, and the protocol versions available during the study. The results should not be read as prevalence estimates or proofs for unbounded systems. We mitigate this by choosing bounds that instantiate ob-served attack schemas, separating behavioral from source/type evidence, and versioning source snapshots and generated artifacts. 
+
+## 10 Conclusion 
+
+Agent protocols are becoming the connective tissue of agentic software systems, but their security properties are split across spec-ifications, SDKs, runtime bridges, and application policy. Agent-Thread makes these split obligations explicit by turning protocol sources into formal checks, counterexample traces, implementation tests, and responsibility records. Across five protocols and eight composed models, we find that many failures appear only when semantic content, delegated authority, and tool access cross proto-col boundaries. Future protocols therefore need not only stronger local requirements, but also explicit composition contracts and enforcement responsibility for the runtimes that join them. 
+
+## References 
+
+[1] A2A Project. 2025. Agent-to-Agent Protocol (A2A). https://github.com/a2aproj ect/A2A. Announced April 2025; now under Linux Foundation. Retrieved March 2026. [2] ACP Contributors. 2025. Agent Communication Protocol. https://agentcommu nicationprotocol.dev/introduction/welcome. Under active development via RFDs. Retrieved March 2026. [3] William Adamson and Nicolas Williams. 2016. Remote Procedure Call (RPC) Security Version 3. RFC 7861. [4] Agent Client Protocol Contributors. 2025. Agent Client Protocol (ACP). https: //github.com/agentclientprotocol/agent-client-protocol. retrieved March 2026. [5] Agent Network Protocol Team. 2025. AgentNetworkProtocol (ANP): An Open Protocol for Agent Communication. https://github.com/agent- network-protocol/AgentNetworkProtocol. Retrieved March 2026. [6] Abdullah Al Ishtiaq, Sarkar Snigdha Sarathi Das, Syed Md Mukit Rashid, Ali Ran-jbar, Kai Tu, Tianwei Wu, Zhezheng Song, Weixuan Wang, Mujtahid Akon, Rui Zhang, et al . 2024. Hermes: Unlocking security analysis of cellular network pro-tocols by synthesizing finite state machines from natural language specifications. In 33rd USENIX Security Symposium (USENIX Security 24) . 4445–4462. [7] Zeynab Anbiaee, Mahdi Rabbani, Mansur Mirani, Gunjan Piya, Igor Opushnyev, Ali Ghorbani, and Sajjad Dadkhah. 2026. Security Threat Modeling for Emerging AI-Agent Protocols: A Comparative Analysis of MCP, A2A, Agora, and ANP. 
+
+arXiv preprint arXiv: 2602.11327 (2026). [8] Anthropic. 2024. Model Context Protocol Specification. https://modelcontextpr otocol.io/specification/2025-11-25. retrieved March 2026. [9] Linard Arquint, Malte Schwerhoff, Vaibhav Mehta, and Peter Müller. 2023. A Generic Methodology for the Modular Verification of Security Protocol Imple-mentations. In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security (Copenhagen, Denmark) (CCS ’23) . Association for Computing Machinery, New York, NY, USA, 1377–1391. doi:10.1145/3576915.36 23105 [10] David Basin, Jannik Dreier, Lucca Hirschi, Saša Radomirovic, Ralf Sasse, and Vincent Stettler. 2018. A Formal Analysis of 5G Authentication. In Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security 
+
+(Toronto, Canada) (CCS ’18) . Association for Computing Machinery, New York, NY, USA, 1383–1396. doi:10.1145/3243734.3243846 [11] David Basin, Nate Foster, Kenneth L. McMillan, Kedar S. Namjoshi, Cristina Nita-Rotaru, Jonathan M. Smith, Pamela Zave, and Lenore D. Zuck. 2025. It Takes a Village: Bridging the Gaps between Current and Formal Specifications for Protocols. Commun. ACM 68, 8 (July 2025), 50–61. doi:10.1145/3706572 [12] Karthikeyan Bhargavan, Davor Obradovic, and Carl A. Gunter. 2002. Formal verification of standards for distance vector routing protocols. J. ACM 49, 4 (July 2002), 538–576. doi:10.1145/581771.581775 [13] Steve Bishop, Matthew Fairbairn, Michael Norrish, Peter Sewell, Michael Smith, and Keith Wansbrough. 2005. Rigorous specification and conformance testing techniques for network protocols, as applied to TCP, UDP, and sockets, Vol. 35. Association for Computing Machinery, New York, NY, USA, 265–276. doi:10.114 5/1090191.1080123 [14] B Blanchet et al . [n. d.]. An efficient cryptographic protocol verifier based on prolog rules. 2014. doi 10, 82–96. [15] Gregor V. Bochmann and Alexandre Petrenko. 1994. Protocol testing: review of methods and relevance for software testing. In Proceedings of the 1994 ACM SIGSOFT International Symposium on Software Testing and Analysis (Seattle, Washington, USA) (ISSTA ’94) . Association for Computing Machinery, New York, NY, USA, 109–124. doi:10.1145/186258.187153 [16] Scott Bradner. 1997. Key words for use in RFCs to Indicate Requirement Levels. RFC 2119. [17] Moshe Siman Tov Bustan, Mustafa Naamnih, Nir Zadok, and Roni Bar. 2026. The Mother of All AI Supply Chains: Critical, Systemic Vulnerability at the Core of Anthropic’s MCP. OX Security Blog, https://www.ox.security/blog/the-mother-of-all-ai-supply-chains-critical-systemic-vulnerability-at-the-core-of-the-mcp/. Accessed June 2026. [18] Yi Chen, Di Tang, Yepeng Yao, Mingming Zha, XiaoFeng Wang, Xiaozhong Liu, Haixu Tang, and Dongfang Zhao. 2022. Seeing the Forest for the Trees: Understanding Security Hazards in the 3GPP Ecosystem through Intelligent Analysis on Change Requests. In 31st USENIX Security Symposium (USENIX Security 22) . USENIX Association, Boston, MA, 17–34. https://www.usenix.org /conference/usenixsecurity22/presentation/chen-yi [19] Cloud Security Alliance AI Safety Initiative. 2026. MCP by Design: RCE Across the AI Agent Ecosystem. Cloud Security Alliance Lab Space, https://labs.clo udsecurityalliance.org/research/csa-research-note-mcp-by-design-rce-ox-security-20260420-csa/. Accessed June 2026. [20] Cas Cremers, Alexander Dax, and Aurora Naska. 2023. Formal Analysis of SPDM: Security Protocol and Data Model version 1.2. In 32nd USENIX Security Symposium (USENIX Security 23) . USENIX Association, Anaheim, CA, 6611–6628. https://www.usenix.org/conference/usenixsecurity23/presentation/cremers-spdm [21] Cas Cremers, Benjamin Kiesl, and Niklas Medinger. 2020. A Formal Analysis of IEEE 802.11’s WPA2: Countering the Kracks Caused by Cracking the Counters. In 
+
+29th USENIX Security Symposium (USENIX Security 20) . USENIX Association, 1– 17. https://www.usenix.org/conference/usenixsecurity20/presentation/cremers [22] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr. 2024. Agentdojo: A dynamic environment to eval-uate prompt injection attacks and defenses for llm agents. Advances in Neural Information Processing Systems 37, 82895–82920. [23] Vincent Diemunsch, Lucca Hirschi, and Steve Kremer. 2025. A comprehensive formal security analysis of OPC UA. In Proceedings of the 34th USENIX Conference on Security Symposium (Seattle, WA, USA) (SEC ’25) . USENIX Association, USA, Article 363, 20 pages. [24] Danny Dolev and Andrew Yao. 2003. On the security of public key protocols. 
+
+IEEE Transactions on information theory 29, 2 (2003), 198–208. [25] Pengfei Gao and Chao Peng. 2025. More with less: An empirical study of turn-control strategies for efficient coding agents. arXiv preprint arXiv:2510.16786 
+
+(2025). 
+
+> 10
+
+[26] Jacob Ginesin, Max von Hippel, Evan Defloor, Cristina Nita-Rotaru, and Michael Tüxen. 2024. A Formal Analysis of SCTP: Attack Synthesis and Patch Verification. In 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, Philadelphia, PA, 3099–3116. https://www.usenix.org/conference/usenixsecuri ty24/presentation/ginesin [27] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection. In Proceedings of the 16th ACM workshop on artificial intelligence and security . 79–90. [28] Allenoush Hayrapetian and Rajeev Raje. 2018. Empirically Analyzing and Eval-uating Security Features in Software Requirements. In Proceedings of the 11th Innovations in Software Engineering Conference (Hyderabad, India) (ISEC ’18) .Association for Computing Machinery, New York, NY, USA, Article 9, 11 pages. doi:10.1145/3172871.3172879 [29] Feng He, Tianqing Zhu, Dayong Ye, Bo Liu, Wanlei Zhou, and Philip S. Yu. 2026. The Emerged Security and Privacy of LLM Agent: A Survey with Case Studies. 
+
+ACM Comput. Surv. 58, 6 (2026), 162:1–162:36. doi:10.1145/3773080 [30] Charlie Jacomme, Elise Klein, Steve Kremer, and Maïwenn Racouchot. 2023. A comprehensive, formal and automated analysis of the EDHOC protocol. In 
+
+32nd USENIX Security Symposium (USENIX Security 23) . USENIX Association, Anaheim, CA, 5881–5898. https://www.usenix.org/conference/usenixsecurity 23/presentation/jacomme [31] Dezhang Kong, Shi Lin, Zhenhua Xu, Zhebo Wang, Minghao Li, Yufeng Li, Yilun Zhang, Hujin Peng, Xiang Chen, Zeyang Sha, Yuyuan Li, Changting Lin, Xun Wang, Xuan Liu, Ningyu Zhang, Chaochao Chen, Chunming Wu, Muham-mad Khurram Khan, and Meng Han. 2025. A Survey of LLM-Driven AI Agent Communication: Protocols, Security Risks, and Defense Countermeasures. arXiv preprint arXiv: 2506.19676 (2025). [32] Tomas Kulik, Brijesh Dongol, Peter Gorm Larsen, Hugo Daniel Macedo, Steve Schneider, Peter W. V. Tran-Jørgensen, and James Woodcock. 2022. A Survey of Practical Formal Methods for Security. Form. Asp. Comput. 34, 1, Article 5 (July 2022), 39 pages. doi:10.1145/3522582 [33] Leslie Lamport. 2002. Specifying systems . Vol. 388. Addison-Wesley Boston. [34] Christine P Lee, David Porfirio, Xinyu Jessica Wang, Kevin Chenkai Zhao, and Bilge Mutlu. 2025. Veriplan: Integrating formal verification and llms into end-user planning. In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems . 1–19. [35] Hui Li, Zhen Dong, Siao Wang, Hui Zhang, Liwei Shen, Xin Peng, and Dongdong She. 2025. Extracting Formal Specifications From Documents Using LLMS for Test Automation. In 2025 IEEE/ACM 33rd International Conference on Program Comprehension (ICPC) . IEEE Computer Society, 1–12. [36] Han Li, Yuling Shi, Shaoxin Lin, Xiaodong Gu, Heng Lian, Xin Wang, Yantao Jia, Tao Huang, and Qianxiang Wang. 2025. Swe-debate: Competitive multi-agent debate for software issue resolution. arXiv preprint arXiv:2507.23348 (2025). [37] Qiaomu Li and Ying Xie. 2025. From glue-code to protocols: A critical anal-ysis of a2a and mcp integration for scalable agent systems. arXiv preprint arXiv:2505.03864 (2025). [38] Felix Linker, Ralf Sasse, and David Basin. 2025. A formal analysis of apple’s iMessage PQ3 protocol. In Proceedings of the 34th USENIX Conference on Security Symposium (Seattle, WA, USA) (SEC ’25) . USENIX Association, USA, Article 258, 20 pages. [39] R. J. Linn. 2006. Conformance evaluation methodology and protocol testing. 
+
+IEEE J.Sel. A. Commun. 7, 7 (Sept. 2006), 1143–1158. doi:10.1109/49.44561 [40] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024. Formalizing and Benchmarking Prompt Injection Attacks and Defenses. In 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, Philadel-phia, PA, 1831–1847. https://www.usenix.org/conference/usenixsecurity24/pre sentation/liu-yupei [41] Yinuo Liu, Ruohan Xu, Xilong Wang, Yuqi Jia, and Neil Zhenqiang Gong. 2025. WAInjectBench: Benchmarking Prompt Injection Detections for Web Agents. 
+
+arXiv preprint arXiv: 2510.01354 (2025). [42] Gavin Lowe. 1996. Breaking and fixing the Needham-Schroeder public-key protocol using FDR. In International Workshop on Tools and Algorithms for the Construction and Analysis of Systems . Springer, 147–166. [43] Simon Meier, Benedikt Schmidt, Cas Cremers, and David Basin. 2013. The TAMARIN prover for the symbolic analysis of security protocols. In International conference on computer aided verification . Springer, 696–701. [44] National Institute of Standards and Technology. 2024. Open Security Controls Assessment Language (OSCAL). https://pages.nist.gov/OSCAL/. Accessed April 2026. [45] National Vulnerability Database. 2025. CVE-2025-49596: MCP Inspector remote code execution vulnerability. https://nvd.nist.gov/vuln/detail/CVE-2025-49596. [46] National Vulnerability Database. 2025. CVE-2025-68143: Anthropic MCP Git server path handling vulnerability. https://nvd.nist.gov/vuln/detail/CVE-2025-68143. [47] National Vulnerability Database. 2025. CVE-2025-68144: Anthropic MCP Git server argument injection vulnerability. https://nvd.nist.gov/vuln/detail/CVE-2025-68144. [48] National Vulnerability Database. 2025. CVE-2025-68145: Anthropic MCP Git server repository boundary vulnerability. https://nvd.nist.gov/vuln/detail/CVE-2025-68145. [49] Raul Onitza-Klugman. 2025. Prompt Injection Meets MCP: A New Exploitation Vector Emerging? Snyk Labs, https://labs.snyk.io/resources/prompt-injection-mcp/. Accessed June 2026. [50] OpenAI. 2026. Introducing the OpenAI Safety Bug Bounty Program. https: //openai.com/index/safety-bug-bounty/. Accessed June 2026. [51] Maria Leonor Pacheco, Max von Hippel, Ben Weintraub, Dan Goldwasser, and Cristina Nita-Rotaru. 2022. Automated attack synthesis by extracting finite state machines from protocol specification documents. In 2022 IEEE Symposium on Security and Privacy (SP) . IEEE, 51–68. [52] Eric Rescorla and Brian Korver. 2003. Guidelines for Writing RFC Text on Security Considerations. RFC 3552. [53] Shubham Saboo and Kristopher Overholt. 2026. A Developers’ Guide to AI Agent Protocols. https://developers.googleblog.com/developers-guide-to-ai-agent-protocols/. Accessed April 2026. [54] B Sarikaya. 1986. Formal specification-based conformance testing. In Proceedings of the ACM SIGCOMM Conference on Communications Architectures & Protocols 
+
+(Stowe, Vermont, USA) (SIGCOMM ’86) . Association for Computing Machinery, New York, NY, USA, 236–240. doi:10.1145/18172.18199 [55] Prakhar Sharma and Vinod Yegneswaran. 2023. Prosper: Extracting protocol specifications using large language models. In Proceedings of the 22nd ACM workshop on hot topics in networks . 41–47. [56] Min Shi, Jing Chen, Kun He, Haoran Zhao, Meng Jia, and Ruiying Du. 2023. Formal Analysis and Patching of BLE-SC Pairing. In 32nd USENIX Security Symposium (USENIX Security 23) . USENIX Association, Anaheim, CA, 37–52. https://www.usenix.org/conference/usenixsecurity23/presentation/shi-min [57] Robert Thurlow. 2009. RPC: Remote Procedure Call Protocol Specification Version 2. RFC 5531. [58] Shuren Xia, Qiwei Li, Taqiya Ehsan, and Jorge Ortiz. 2026. TraceFix: Repairing Agent Coordination Protocols with TLA+ Counterexamples. In Proceedings of the ACM Conference on AI and Agentic Systems . 181–196. [59] Jane Yen, Tamás Lévai, Qinyuan Ye, Xiang Ren, Ramesh Govindan, and Barath Raghavan. 2021. Semi-automated protocol disambiguation and code generation 
+
+(SIGCOMM ’21) . Association for Computing Machinery, New York, NY, USA, 272–286. doi:10.1145/3452296.3472910 [60] Yuan Yu, Panagiotis Manolios, and Leslie Lamport. 1999. Model checking TLA+ specifications. In Advanced research working conference on correct hardware design and verification methods . Springer, 54–66. [61] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. 2024. Injecagent: Benchmarking indirect prompt injections in tool-integrated large language model agents. In Findings of the Association for Computational Linguistics: ACL 2024 .10471–10506. [62] Mingwei Zheng, Danning Xie, Qingkai Shi, Chengpeng Wang, and Xiangyu Zhang. 2025. Validating Network Protocol Parsers with Traceable RFC Document Interpretation. Proc. ACM Softw. Eng. 2, ISSTA, Article ISSTA078, 23 pages. doi:10.1145/3728955

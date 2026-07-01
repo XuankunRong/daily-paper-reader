@@ -1,0 +1,3614 @@
+Title: ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.30072v1
+
+Published Time: Tue, 30 Jun 2026 02:02:27 GMT
+
+Number of Pages: 33
+
+Markdown Content:
+Reinforcement Learning Journal 2026 Cover Page 
+
+# ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Daiki E. Matsunaga, Junho Na, Tri Wahyu Guntara, Scott Sanner, Pascal Poupart, Jongmin Lee, Kee-Eung Kim 
+
+Keywords: Cooperative Multi-Agent Reinforcement Learning (MARL), Centralized Training Decentralized Execution (CTDE) 
+
+# Summary 
+
+Cooperative tasks in Multi-Agent Reinforcement Learning (MARL) require agents to col-lectively maximize a shared return. Under the Centralized Training with Decentralized Exe-cution (CTDE) paradigm, policy gradients have remained difficult to compute directly. Prior methods largely follow two approaches: independent factorized updates with centralized crit-ics, which lack general joint-improvement guarantees without value decomposition assump-tions, or alternating best-response updates, which can converge to suboptimal Nash Equilibria. In this paper, we show the joint policy gradient admits an exact decentralized decomposi-tion of per-agent terms, each formed from per-agent score functions and decentralized critics. Based on this decomposition, we develop Agent-Chained Policy Optimization (ACPO), where actors are trained independently, with their updates together constituting a single step on the joint policy gradient. Central to this result is a serialized view of the simultaneous joint deci-sion in which agents commit actions one at a time, each conditioning on a belief over preceding actions. The belief acts as the coordination mechanism which ties the independent per-agent updates into a joint gradient step. We evaluate ACPO on Multi-Robot Warehouse, SMACv2, and MA-MuJoCo, where it outperforms strong baselines, with the gap widening as the number of agents grows. 
+
+# Contribution(s) 
+
+1. We introduce the Agent-Chained Belief MDP (AC-BMDP), a formalization that combines serialization with belief augmentation to enable optimal joint policy learning under Central-ized Training with Decentralized Execution (CTDE). 
+
+Context: Prior work on serialization (Kovaˇ rík et al., 2023; Peralez et al., 2025) showed that simultaneous MMDPs can be converted to sequential problems, but did not address the partial observability arising from unobserved preceding agent actions under CTDE. Our formalism is also motivated by a classical result in game theory which states that any si-multaneous game can be equivalently recast as a serialized decision process with imperfect information (Shoham & Leyton-Brown, 2008, 5.2.2). 2. We develop Agent-Chained Policy Optimization (ACPO), a practical actor-critic algorithm where independent policy updates together constitute a single-step on the joint policy gra-dient. In tabular settings, this converges to the optimal joint policy in the underlying Multi-Agent MDP (MMDP) rather than to Nash Equilibria. 
+
+Context: Alternating policy optimization methods (Kuba et al., 2022; Zhong et al., 2024) guarantee convergence to Nash Equilibria, which can be arbitrarily suboptimal in coopera-tive settings. Independent policy optimization methods (Lowe et al., 2017; Yu et al., 2022) lack convergence guarantees without strong structural assumptions such as value decompo-sition. 3. We introduce on-policy (PPO-based) and off-policy (TD3-based) instantiations of ACPO and demonstrate empirically that ACPO consistently outperforms state-of-the-art baselines across three standard benchmarks (Multi-Robot Warehouse, SMACv2, MA-MuJoCo), with performance gains that scale with the number of agents. 
+
+Context: None 
+
+> arXiv:2606.30072v1 [cs.AI] 29 Jun 2026
+
+ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+# ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Daiki E. Matsunaga 1, Junho Na 1, Tri Wahyu Guntara 2, Scott Sanner 3,Pascal Poupart 4†, Jongmin Lee 5†, Kee-Eung Kim 1†
+
+{dematsunaga, jhna, kekim}@ai.kaist.ac.kr, wahyu.guntara@krafton.com, ssanner@mie.utoronto.ca, ppoupart@uwaterloo.ca, jongminlee@yonsei.ac.kr 
+
+> 1
+
+KAIST 2KRAFTON 3University of Toronto 4University of Waterloo 5Yonsei University 
+
+Abstract 
+
+Cooperative tasks in Multi-Agent Reinforcement Learning (MARL) require agents to collectively maximize a shared return. Under the Centralized Training with Decentral-ized Execution (CTDE) paradigm, policy gradients have remained difficult to compute directly. Prior methods largely follow two approaches: independent factorized updates with centralized critics, which lack general joint-improvement guarantees without value decomposition assumptions, or alternating best-response updates, which can converge to suboptimal Nash Equilibria. In this paper, we show the joint policy gradient admits an exact decentralized decomposition of per-agent terms, each formed from per-agent score functions and decentralized critics. Based on this decomposition, we develop Agent-Chained Policy Optimization (ACPO), where actors are trained independently, with their updates together constituting a single step on the joint policy gradient. Cen-tral to this result is a serialized view of the simultaneous joint decision in which agents commit actions one at a time, each conditioning on a belief over preceding actions. The belief acts as the coordination mechanism which ties the independent per-agent updates into a joint gradient step. We evaluate ACPO on Multi-Robot Warehouse, SMACv2, and MA-MuJoCo, where it outperforms strong baselines, with the gap widening as the number of agents grows. 
+
+1 Introduction 
+
+Cooperative multi-agent reinforcement learning (MARL) seeks decentralized policies that jointly maximize a shared return, in domains ranging from autonomous vehicle fleets (Zhang et al., 2024) and traffic signal control (Chu et al., 2020) to fleet management (Lin et al., 2018), power net-works (Wang et al., 2021a), and Large Language Models (Wu et al., 2024; Liu et al., 2025). Under-lying every cooperative MARL problem is a single-agent Markov Decision Process over the joint action space (Multi-Agent MDP) (Boutilier, 1996), whose optimal policy maximizes the shared re-turn (Boutilier, 1996). Single-agent policy gradient methods (Lillicrap et al., 2016; Schulman et al., 2015; 2017) extend to this MDP in principle, with the joint policy playing the role of a single cen-tralized agent’s policy. In real-world deployments, however, this joint policy must factorize across agents and each agent must act on its own information without inter-agent communication. This is the setting of Centralized Training with Decentralized Execution (CTDE) (Lowe et al., 2017; Foerster et al., 2018). Computing the Multi-Agent MDP (MMDP) policy gradient under decentralized execution has proven to be a challenge. Existing CTDE methods either do not handle the non-stationarity in- 
+
+> †Equal advising.
+
+Reinforcement Learning Journal 2026 curred by independent policy updates or solve a different problem. Independent policy optimiza-tion (MAPPO (Yu et al., 2022), MADDPG (Lowe et al., 2017)) trains each decentralized actor against a centralized critic conditioned on the joint action. As actors are trained independently without accounting for the non-stationarity incurred by the other agents’ changing policies, joint improvement guarantees do not hold in general (Appendix A). Alternating policy optimization (HA-TRPO/HAPPO (Kuba et al., 2022; Zhong et al., 2024)) sidesteps the MMDP by updating each agent against a per-agent reduced MDP with the others’ policies fixed. This monotonically improves the joint return at each step, but the underlying problem is now a sequence of unilateral best-response problems, and the fixed point is a Nash Equilibrium that can be arbitrarily far from the optimal joint policy 1 (Table 1). In this paper, we show that the policy gradient in the MMDP can be computed directly under the de-centralized execution constraint, via an exact decomposition into decentralized per-agent terms. The decomposition is enabled by augmenting each agent’s state with a belief over the actions committed by preceding agents in a serialized view of the joint decision. Our key result is the Multi-Agent Policy Gradient Decomposition Theorem (Theorem 4.2): the joint policy gradient decomposes into per-agent terms, each involving only a per-agent score function and a per-agent critic, with the updates coordinated through beliefs. Unlike value decomposition methods (Sunehag et al., 2018; Rashid et al., 2018; Wang et al., 2021b; Zhang et al., 2021), this decomposition is made without any structural assumption on the joint value function. The per-agent critics are determined by a chained Bellman recursion in which each agent bootstraps from the next agent in the chain (Figure 1). We instantiate the decomposition as Agent-Chained Policy Optimization (ACPO), a general actor-critic algorithm with on-policy (PPO-based (Schulman et al., 2017)) and off-policy (TD3-based (Fu-jimoto et al., 2018)) variants. Each agent updates its actor against its own decentralized critic, and the independent per-agent updates collectively conduct a single gradient step on the MMDP joint policy. On Multi-Robot Warehouse, SMACv2, and MA-MuJoCo, ACPO outperforms strong base-lines, with the gap widening substantially as the number of agents grows. 
+
+2 Background 
+
+2.1 Multi-Agent MDP 
+
+We consider a cooperative multi-agent reinforcement learning (MARL) setting with 
+
+N = {1, . . . , N } agents, formally modeled as a Multi-Agent Markov Decision Pro-cess (MMDP) (Boutilier, 1996). At time step t, each agent i ∈ N simultaneously takes action a(i) 
+
+> t
+
+∈ A (i) sampled from individual policy π(i)(a(i) 
+
+> t
+
+| st) where st ∈ S is the state. The state transition is Markovian, i.e. the next state st+1 is given by transition function T (st+1 |st,⃗ a t)
+
+where ⃗a t is the joint action ⃗a t = [ a(1)  
+
+> t
+
+, . . . , a (N ) 
+
+> t
+
+]. Each agent receives shared reward rt generated by the common reward function R(st,⃗ a t).The goal of cooperative MARL is to find a set of agent policies ⃗π = [ π (1) , . . . , π (N )] that maximize the total expected return J(⃗π) = E⃗ π [P 
+
+> t
+
+γtrt] where γ is the discount factor. Following standard practice in cooperative MARL, we adopt the Centralized Training with Decentralized Execution (CTDE) setting where policies are trained with shared information, but executed independently 2.
+
+2.2 Previous CTDE Approaches in Cooperative MARL Independent Policy Optimization One way to solve MMDPs is to apply single-agent RL on the joint action space with independently factorized policies (Lowe et al., 2017; Yu et al., 2022). Each policy is trained via an objective of the form J(π(i)) = Eπ(i) E⃗π −i [Q(s, a (i),⃗ a −i)] , where Q is the centralized action-value function, and ⃗a −i,⃗ π −i are the joint actions and joint policies exclud-ing agent i. The N agents each maximize J(π(i)) independently. MADDPG (Lowe et al., 2017)   
+
+> 1In game theory terminology, the optimal joint policy in cooperative MARL is the social optimum that maximizes welfare.
+> 2See Appendix B for further discussion of CTDE.
+
+ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning                                                       
+
+> ABCA5−20 −20
+> B−20 10 −20
+> C−20 −20 20
+> 3x3 Matrix Game
+> ABCA100
+> B000
+> C000
+> Independent PO
+> ABC
+> 100000000
+> Alternating PO
+> ABC
+> 100000000
+> HASPI ( α=1)
+> ABC
+> 000000001
+> HASPI ( α=5)
+> ABC
+> 000000001
+> ACPO (Ours)
+
+Table 1: A 3x3 Matrix Game and converged policy values when initialized to π(1) (A) = π(2) (A) = 0.6. ACPO (Ours) converges to the optimal joint policy which selects (C, C ) regardless of the initialization. instantiates this with deterministic policy gradients via a learned Q (Lillicrap et al., 2016), and MAPPO (Yu et al., 2022) uses a centralized state-value function with GAE (Schulman et al., 2016; 2017) to compute advantages A(s, a (i),⃗ a −i). Both train policies in parallel and scale well in prac-tice. However, there is no general guarantee of joint policy improvement even in tabular settings. As we show in Appendix A, simple counter-examples exist where these methods diverge. Convergence holds only in restricted settings where the optimal action-value decomposes such that independent updates align with joint improvement. 
+
+Alternating Policy Optimization A second approach defines a reduced MDP for each agent and learns the best response policy, yielding monotonic improvement of the joint policy and convergence to a Nash Equilibrium (NE) (Bertsekas, 2020). Each agent i alternates and solves ⟨S , A(i), T (i), R (i)⟩, where T (i)(st+1 | st, a (i) 
+
+> t
+
+) := E⃗π −i [T (st+1 | st, a (i) 
+
+> t
+
+,⃗ a −i)] and 
+
+R(i)(st, a (i) 
+
+> t
+
+) := E⃗π −i [R(st, a (i) 
+
+> t
+
+,⃗ a −i)] marginalize over the other agents’ actions under their most recent policies ⃗π −i. When π(i) is being updated, the previous agent policies ⃗π <i have already been updated. HATRPO (Kuba et al., 2022) and HAPPO (Zhong et al., 2024) instantiate alternating best-response updates with trust-region (Schulman et al., 2015) or clipped-surrogate (Schulman et al., 2017) optimization. The advantage A(i)(s, a (i)) is well-defined in the reduced MDP, and bounded sequential updates yield monotonic improvement. The fixed point, however, is only an NE, which can be arbitrarily suboptimal in cooperative settings. Without a mechanism for joint updates, agents have no way to escape suboptimal NEs. Sequential updates also scale poorly since training time increases with the number of agents. 
+
+2.3 Limitations of Existing CTDE Approaches 
+
+Consider the simple Matrix Game in Table 1 with 2 agents and 3 actions, which was considered in Liu et al. (2024). The three NEs are (A, A ), (B, B ), (C, C ), since there is no incentive for either agent to change its action at each of those NEs. (C, C ) is a social optimum of the game since it achieves the highest return. As shown in Table 1, independent policy optimization (Independent PO) and alternating policy optimization (Alternating PO), which are the foundations for MAPPO and HAPPO, respectively, cannot escape suboptimal NEs. The only way it can converge to (C, C )
+
+is for the policy to be initialized with high probability towards (C, C ). Similarly, Heterogeneous-Agent Soft Policy Iteration (HASPI) (Liu et al., 2024) can only find the optimal policy for spe-cific combinations of the entropy parameter α and the initialization of the policy (e.g., α = 5 and 
+
+π(1) (A) = π(2) (A) = 0 .6), if it happens to coincide with the QRE. Similar to NE, there is no guarantee that the QRE will coincide with the optimal policy. Our goal is to derive a principled algorithm which directly targets the optimal joint policy in the MMDP. In Section 4, we present Agent-Chained Policy Optimization (ACPO) which converges to the optimal joint policy under tabular domains. Detailed analysis on how ACPO solves the Matrix Game (regardless of the policy initialization) is provided in Appendix C. Reinforcement Learning Journal 2026 
+
+3 Agent-Chained Belief MDP (AC-BMDP) 
+
+A classical result in game theory states that any simultaneous game can be equivalently recast as a serialized decision process with imperfect information (Shoham & Leyton-Brown, 2008, 5.2.2). This sequential representation is equivalent for any agent order. We instantiate this translation in cooperative MARL and formalize it as the AC-BMDP. We decompose each environment step t into N micro-steps indexed by the acting agent i ∈{1, . . . , N }. Let ⃗a <i t := [ a(1)  
+
+> t
+
+, . . . , a (i−1)  
+
+> t
+
+] denote the actions committed by agents 1 through i − 1
+
+within the current environment step, with ⃗a <1 
+
+> t
+
+= ∅. The serialized fully-observed state is [st,⃗ a <i t ].The micro-step transitions are deterministic and rewards are 0 until the final agent commits (Details in Appendix D). 
+
+State Augmentation with Belief over Preceding Actions. We start by making explicit the structure of standard policy parameterizations in RL. Each agent’s policy decomposes into a deterministic mapping from state to action distribution, followed by stochastic sampling, 
+
+π(i) : S → ∆( A(i)), φ(i) 
+
+> t
+
+= π(i)(st), a(i) 
+
+> t
+
+∼ φ(i) 
+
+> t
+
+.
+
+The action distribution φ(i) 
+
+> t
+
+can be the probability vector of a softmax policy for discrete action spaces, or the mean and standard deviation of a Gaussian for continuous action spaces. 3
+
+While the realized action a(i) 
+
+> t
+
+is private, the action distribution φ(i) 
+
+> t
+
+is deterministically computed from the shared state and is therefore accessible to other agents that have knowledge of π(i), with no inter-agent communication required. This makes φ(i) 
+
+> t
+
+fully compatible with decentralized execu-tion. 4
+
+Let ⃗φ <i t := [ φ(1)  
+
+> t
+
+, . . . , φ (i−1)  
+
+> t
+
+]. Since actions are sampled independently across agents, the belief over preceding realized actions factorizes as 
+
+b(i) 
+
+> t
+
+(⃗a <i t ) ≜ Pr( ⃗a <i t | st,⃗ φ <i t ) = 
+
+> i−1
+
+Y
+
+> j=1
+
+φ(j) 
+
+> t
+
+(a(j) 
+
+> t
+
+),
+
+with b(1)  
+
+> t
+
+= ∅ for agent 1. The belief is fully determined by the compact sufficient statistic ⃗φ <i t .
+
+Definition 3.1. (AC-BMDP) We define an MDP with augmented state and action spaces 
+
+⟨S × B (i), Φ(i), R, T, γ ′⟩, where B(i) is the space of beliefs over ⃗a <i (equivalently represented by ⃗φ <i ). The state at micro-step i is [st, b (i) 
+
+> t
+
+], with b(1)  
+
+> t
+
+empty. The action space is the set of action distributions Φ(i) := ∆( A(i)). Agent i’s policy selects φ(i) ∈ Φ(i), and the subsequent sample 
+
+a(i) ∼ φ(i) is treated as part of the environment. This makes the action publicly observable, allowing subsequent agents to update their beliefs. 
+
+Reward. Rewards follow serialization but are marginalized over the unobserved realized actions, 
+
+R
+
+
+
+[st, b (N ) 
+
+> t
+
+], φ (N )
+
+> t
+
+
+
+= X⃗a <N t
+
+b(N ) 
+
+> t
+
+(⃗a <N t ) X 
+
+> a(N)
+> t
+
+φ(N ) 
+
+> t
+
+(a(N ) 
+
+> t
+
+) R(st,⃗ a t)
+
+Rewards for agents i ∈ { 1, . . . , N − 1} are always 0. 
+
+Transition. For i ∈ { 1, . . . , N − 1}, the environment state is unchanged and only the belief is updated deterministically,   
+
+> 3This parameterization encompasses both algorithms for learning stochastic policies (Schulman et al., 2017) and deter-ministic target policies with a stochastic behavior policy (Fujimoto et al., 2018).
+> 4Knowledge of other agents’ policies is a standard assumption in game theory. In practice, ⃗φ<i tcan be computed exactly by querying a shared policy with each preceding agent’s index, or by maintaining copies of the preceding agents’ policies. In partially observable settings it must be approximated (Section 4.2).
+
+ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+T
+
+
+
+[st, b (i+1)  
+
+> t
+
+] | [st, b (i) 
+
+> t
+
+], φ (i)
+
+> t
+
+
+
+=
+
+(
+
+1, b(i+1)  
+
+> t
+
+= τ ([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+),
+
+0, otherwise ,
+
+where τ is the belief update (Appendix E). At i = N , the environment transitions according to the original MMDP dynamics marginalized over the joint action, 
+
+T
+
+
+
+[st+1 , ∅] | [st, b (N ) 
+
+> t
+
+], φ (N )
+
+> t
+
+
+
+= X⃗a <N t
+
+b(N ) 
+
+> t
+
+(⃗a <N t ) X 
+
+> a(N)
+> t
+
+φ(N ) 
+
+> t
+
+(a(N ) 
+
+> t
+
+) T (st+1 | st,⃗ a t).
+
+Belief update. The serialized micro-step transition deterministically appends the realized action, so 
+
+τ simplifies to the product-form update 
+
+b(i+1)  
+
+> t
+
+(⃗a <i t , a (i) 
+
+> t
+
+) = b(i) 
+
+> t
+
+(⃗a <i t ) φ(i) 
+
+> t
+
+(a(i) 
+
+> t
+
+).
+
+Equivalently, the belief-state can be represented by the preceding action distributions via the deter-ministic append ⃗φ <i +1  
+
+> t
+
+= [ ⃗φ <i t , φ (i) 
+
+> t
+
+], with b(i) 
+
+> t
+
+recovered through the factorization above. The Bellman operator under the AC-BMDP is given by the following. 
+
+Definition 3.2. (Agent-Chained Bellman Operators) 
+
+∀i ∈ { 1, . . . , N − 1}
+
+(T⃗π Q(i+1) )([ s, b (i)], φ (i)) := γ′E b(i+1) =T ([ s,b (i)],φ (i))
+
+> φ(i+1) ∼π(i+1) (·| s,b (i+1) )
+
+h
+
+Q(i+1) 
+
+[s, b (i+1) ], φ (i+1) i 
+
+(T⃗π Q(1) )([ s, b (N )], φ (N )) := R
+
+
+
+[s, b (N )], φ (N )
+
++ γ′Es′∼T (·| [s,b (N )],φ (N ))
+
+> φ(1) ∼π(1) (·| s′)
+
+h
+
+Q(1) 
+
+s′, φ (1) i 
+
+The key structure is agent-chaining . The target for Q(i) is Q(i+1) , giving each agent its own decen-tralized value function without requiring value decomposition assumptions (Sunehag et al., 2018; Rashid et al., 2018; Zhang et al., 2021). Each Q(i)([ s, b (i)], φ (i)) captures how agent i’s action affects the next agent’s value, providing a natural mechanism for credit assignment. 
+
+Theoretical Properties of the AC-BMDP. The AC-BMDP is an equivalent serialized represen-tation of the MMDP with the state and action space augmented. The optimal policy of the AC-BMDP is also optimal in the MMDP. It also follows that in tabular settings, running policy iteration (Agent-Chained Policy Iteration ) on the AC-BMDP converges to the optimal joint policy in the un-derlying Multi-Agent MDP (MMDP) rather than to Nash Equilibria. We formalize these results in Appendix F. 
+
+4 Agent-Chained Policy Optimization (ACPO) 
+
+Section 3 recasts the MMDP as the AC-BMDP. We now show that this construction yields an exact decomposition of the joint policy gradient into N independent per-agent terms, each computable from a per-agent score function and a decentralized critic. The decomposition is the foundation of ACPO, where every agent improves its own policy against its own critic independently, and the updates collectively constitute a gradient step on the joint MMDP objective. 
+
+Agent-Chained Policy Gradient Applying the single-agent policy gradient theorem to the AC-BMDP yields 
+
+∇θ JAC (⃗π θ ) = E[s,b (i)]∼d⃗πγ′ , φ (i)∼π(i)
+
+> θ
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(φ(i) | s, b (i)) · Q(i)([ s, b (i)], φ (i))
+
+i
+
+, (1) where d⃗πγ′ denotes the occupancy measure in the AC-BMDP under a policy ⃗π.Reinforcement Learning Journal 2026 
+
+Figure 1: Value Network Architecture for the PPO instantiation of ACPO (ACPPO) with N = 3 
+
+agents. Each agent’s value function V (i) takes the state augmented with preceding belief estimates as input. TD residuals chain across Agent 1, Agent 2, and Agent 3. The score function is over the lifted action space ∆( A(i)), where the importance ratios required by trust-region and clipped-surrogate optimizers are not well-defined. The following proposition reduces it to the original action space A(i).
+
+Theorem 4.1. (Agent-Chained Policy Gradient Theorem) 
+
+∇θ JAC (⃗π θ ) = E[s,b (i)]∼d⃗πγ′ , a (i)∼π(i) 
+
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(a(i) | s, b (i)) · Q(i)([ s, b (i)], a (i))
+
+i
+
+. (2) 
+
+Proof. See Appendix G.1. The MMDP joint policy gradient ∇θ J(⃗π θ ) can in turn be written as a sum of N such per-agent terms. 
+
+Theorem 4.2. (Multi-Agent Policy Gradient Decomposition Theorem) 
+
+∇θ J(⃗π θ ) = 1(γ′)N −1
+
+> N
+
+X
+
+> i=1
+
+E [s,b (i)]∼d⃗πγ′ 
+
+> a(i)∼π(i)
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i)
+
+> θ
+
+
+
+a(i) s, b (i)
+
+· Q(i)
+
+[s, b (i)], a (i)i 
+
+.
+
+(3) 
+
+Proof. See Appendix G.2. The belief b(i) makes each term in (3) a function of agent i alone: Q(i)([ s, b (i)], a (i)) depends on preceding agents only through their action distributions encoded in b(i), and never on their realized actions. Each per-agent gradient is computable from agent i’s own decentralized critic. The N
+
+updates therefore can be conducted simultaneously where the collective update is a single gradient step on the joint MMDP objective. The PPO instantiation we present next is a practical approximation that replaces the explicit trust region with a clipped surrogate (Schulman et al., 2017), just as PPO approximates TRPO in the single-agent case. 
+
+4.1 ACPPO: PPO Instantiation of ACPO Agent-Chained TD Residuals. Following the Bellman operators in Definition 3.2, the Temporal Difference (TD) residuals are 
+
+ζ(i) 
+
+> t
+
+= γ′V (i+1) 
+
+[st, b (i+1)  
+
+> t
+
+]
+
+
+
+− V (i) 
+
+[st, b (i) 
+
+> t
+
+]
+
+
+
+, ∀i ∈ { 1, . . . , N − 1},ζ(N ) 
+
+> t
+
+= R
+
+
+
+[st, b (N ) 
+
+> t
+
+], a (N )
+
+> t
+
+
+
++ γ′V (1) (st+1 ) − V (N ) 
+
+[st, b (N ) 
+
+> t
+
+]
+
+
+
+≈ rt + γ′V (1) (st+1 ) − V (N ) 
+
+[st, b (N ) 
+
+> t
+
+]
+
+
+
+,
+
+where the reward R is zero for any agent i ∈ { 1, . . . , N − 1} during micro-steps (see Figure 1). For intermediate agents i < N , the residual ζ(i) 
+
+> t
+
+measures how agent i’s action shifts the value for the next agent in the chain. Only the last agent’s residual ζ(N ) 
+
+> t
+
+incorporates the environment reward and bootstraps to V (1) at the next timestep. ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning (a) Fully Observable Settings (b) Partially Observable Settings           
+
+> For fully observable settings (MMDP) under CTDE, the previous
+> agents' policies can be used for exact belief inference.
+> For partially observable settings (Dec -POMDPs), the previous
+> agents’ action distribution is estimated using its own history.
+> Agent 3 Policy Agent 1 Policy Agent 2 Policy Action Belief Networ k:predicted action distribution
+
+Figure 2: Policy architecture for ACPO under (a) fully observable settings (MMDP) and (b) par-tially observable settings (Dec-POMDP). In the MMDP case, ⃗φ <i t is computed exactly by querying preceding agents’ networks with the shared state st. In the Dec-POMDP case, each agent learns an action belief network ˆπ(j) to approximate φ(j) 
+
+> t
+
+from its own history. 
+
+Agent-Chained Generalized Advantage Estimation. The advantage is an exponentially-weighted sum over the chained TD residuals, 
+
+A(i) 
+
+> t
+
+([ st, b (i) 
+
+> t
+
+], a (i) 
+
+> t
+
+) = 
+
+> N
+
+X
+
+> j=i
+
+(γ′λ′)j−iζ(j) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−iζ(j)
+
+> t+k
+
+,
+
+with the full derivation provided in Appendix H. The first sum aggregates TD residuals within the current timestep t from agent i through agent N . The second sum extends across future timesteps, cycling through all N agents at each step. 
+
+PPO Objective Using the advantage estimates, the PPO objective can be written as a variant of policy gradient with a clipped probability ratio: 
+
+L(i)(θ) = Ea(i)   
+
+> t∼π(i)
+> θold (·| st,b (i)
+> t)
+
+[min( w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+)A(i) 
+
+> t
+
+, clip 
+
+
+
+w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+), 1 ± ϵ
+
+
+
+A(i) 
+
+> t
+
+)] 
+
+(4) where w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+) := π(i) 
+
+> θ
+
+(a(i) 
+
+> t
+
+|st, b (i) 
+
+> t
+
+)/π (i) 
+
+> θold
+
+(a(i) 
+
+> t
+
+|st, b (i) 
+
+> t
+
+).
+
+Per-Agent Importance Sampling Ratio. The importance sampling ratio w(i) in Eq. 4 is nat-urally defined per agent and does not require a product over all agents’ policies. In contrast, alternating policy update approaches such as HAPPO and HATRPO use a ratio of the form 
+
+w(i)
+
+> BR
+
+(s,⃗ a) := QNj=1 π(j) 
+
+> θ
+
+(a(j)|s)/ QNj=1 π(j) 
+
+> θold
+
+(a(j)|s), whose variance scales exponentially with the number of agents (Wang et al., 2021b). MAPPO requires the same ratio in principle but ignores the product, resulting in a biased PPO objective. 
+
+4.2 Belief Approximation for Practical Implementations 
+
+The AC-BMDP belief b(i) 
+
+> t
+
+is fully determined by ⃗φ <i t = [ φ(1)  
+
+> t
+
+, . . . , φ (i−1)  
+
+> t
+
+], a distribution over preceding actions within each environment step . Computing ⃗φ <i t therefore reduces to evaluating the preceding agents’ policy networks at the current step. The procedure differs depending on whether the environment is fully or partially observable (Figure 2). 
+
+MMDP (Fully Observable) All agents share the same state st, so the preceding agents’ action distributions are obtained exactly by querying their policy networks. With shared parameters and Reinforcement Learning Journal 2026 0 10 20 30 40                                     
+
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> Episode Return
+> Small 2-Easy
+> 010 20 30 40
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> Small 4-Medium
+> 010 20 30 40 50 60
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Small 8-Hard
+> 020 40 60 80 100
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Small 12-Hard
+> 010 20 30 40
+> Steps (10 6)
+> 0
+> 5
+> 10
+> 15
+> 20
+> Episode Return
+> Tiny 2-Easy
+> 010 20 30 40
+> Steps (10 6)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> Tiny 4-Medium
+> 010 20 30 40
+> Steps (10 6)
+> 0
+> 10
+> 20
+> 30
+> Tiny 8-Hard
+> 010 20 30 40 50 60
+> Steps (10 6)
+> 0
+> 10
+> 20
+> 30
+> Tiny 12-Hard
+> ACPPO (ours) MAPPO HAPPO HATRPO
+
+Figure 3: Return for Multi-Robot Warehouse (RWARE) where return is the number of items col-lected and delivered successfully. The mean and standard error over 10 seeds are reported for all tasks. The performance advantage of ACPPO grows significantly as the number of agents increase and the map becomes smaller, where agents need higher levels of coordination being crowded in a tight space. agent ID as an additional input, φ(j) 
+
+> t
+
+= πθ (st, φ (1)  
+
+> t
+
+, . . . , φ (j−1)  
+
+> t
+
+; j) for each j < i . With separate parameters, agent i maintains copies of π(j) 
+
+> θ(j)
+
+for j < i , accessible during centralized training under CTDE, and queries them directly with st. In both cases, ⃗φ <i t is computed exactly. 
+
+Dec-POMDP (Partially Observable). In Dec-POMDPs, each agent conditions on its own action-observation history h(i) 
+
+> t
+
+= ⟨⃗o (i)
+
+> ≤t
+
+,⃗ a (i)
+
+> <t
+
+⟩, and the preceding agents’ action distributions cannot be com-puted exactly. We apply agent modelling (Albrecht & Stone, 2018; Papoudakis et al., 2021a) (Al-brecht et al., 2024, Section 9.6), where each agent maintains an action belief network ˆπ(j) that predicts ⃗φ <i t from its own history, 
+
+ˆφ(j) 
+
+> t
+
+= ˆ π(j)(h(i) 
+
+> t
+
+), j < i. 
+
+The network is trained by minimizing DKL (φ(j) 
+
+> t
+
+∥ ˆφ(j) 
+
+> t
+
+) against the centralized target φ(j) 
+
+> t
+
+=
+
+π(j)(h(j) 
+
+> t
+
+), available during centralized training. Algorithm 3 in Appendix I provides the full proce-dure. 
+
+Relation to Previous Work in Opponent Modelling Our work is related to the concept of in-teractive states (Gmytrasiewicz & Doshi, 2005), which augments the state with a model of other agents. Such opponent models often face the problem of infinite recursive reasoning , where agent i
+
+must model agent j’s model of agent i, and so on. Public belief states (Brown et al., 2020; Nayyar et al., 2013; Foerster et al., 2019) break this recursion by introducing a common belief state shared by all agents. The AC-BMDP avoids it differently. Serialization makes the reasoning dependencies 
+
+acyclic , where agent i only requires the action distributions of preceding agents j < i and never models future agents. As a result, recursive belief hierarchies do not arise. Other Deep MARL approaches typically treat opponent modelling as an auxiliary algorithmic mod-ule. LIAM (Papoudakis et al., 2021a), for instance, augments policy inputs with a representation trained to predict the private histories of all other agents ⃗ h−i. Specifically, LIAM’s decoder is trained against the sampled observations and realized actions of the modelled agents as reconstruc-tion targets. The realized actions are a higher-variance learning signal than the underlying action distribution because actions are stochastically sampled from the behavior policy. In ACPO, the ac-tion belief networks are trained directly against the action distributions of preceding agents, which is a deterministic quantity required by the chained Bellman operator. ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning                                                                                
+
+> VDN QMIX HAPPO MAPPO ACPPO (Ours) protoss_5_vs_5 16 .20 ±0.49 16 .53 ±0.55 15 .93 ±0.54 17 .03 ±0.92 16 .98 ±0.47
+> zerg_5_vs_5 11 .77 ±0.41 14 .33 ±0.63 11 .81 ±0.63 11 .84 ±0.80 12 .82 ±1.39
+> protoss_10_vs_11 14 .74 ±0.50 14 .53 ±1.06 13 .39 ±0.50 14 .57 ±0.33 15 .23 ±0.30
+> terran_10_vs_11 11 .59 ±0.67 13 .50 ±0.73 10 .57 ±0.58 12 .03 ±0.50 13 .98 ±1.43
+> zerg_10_vs_11 13 .38 ±0.63 14 .61 ±0.66 10 .77 ±0.35 12 .48 ±0.52 13 .52 ±1.18
+
+Table 2: Mean return and standard error over 5 seeds on SMACv2. The corresponding training learning curves are provided in Figure 7. 0 2 4 6 8 10                        
+
+> Steps (10 6)
+> 1000
+> 2000
+> 3000
+> 4000
+> Episode Return
+> Walker2d 2 × 3
+> 0246810
+> Steps (10 6)
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> HalfCheetah 2 × 3
+> 0246810
+> Steps (10 6)
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> HalfCheetah 6 × 1
+> 0246810
+> Steps (10 6)
+> 0
+> 2000
+> 4000
+> Ant 2 × 4
+> 0246810
+> Steps (10 6)
+> 0
+> 2000
+> 4000
+> Ant 4 × 2
+> ACPPO (Ours) HATRPO MAPPO HAPPO
+
+Figure 4: Comparison of On-Policy Algorithms on MA-MuJoCo (Gymnasium). In environment names such as Ant 2 ×4, the first number denotes the number of agents, while the second number indicates the action dimension per agent. 
+
+5 Experimental Results 
+
+Environments We focus our empirical evaluation on Multi-Robot Warehouse (RWARE) (Pa-poudakis et al., 2021b) which simulates a real-world warehouse environment consisting of multiple robots picking up requested shelves and returning them to a designated location. The main chal-lenge in RWARE is coordination where the agents must avoid collisions and maximize the number of shelves successfully delivered. We also evaluate our approach on StarCraft Multi-Agent Chal-lenge v2 (SMACv2) (Ellis et al., 2023) and Multi-Agent MuJoCo (Peng et al., 2021), which are popular benchmarks in cooperative MARL with discrete and continuous action spaces, respectively. For SMACv2 and MA-MuJoCo, we closely follow the experimental setup in Zhong et al. (2024). 
+
+Baselines Our main baselines for ACPPO are MAPPO, representing independent policy optimiza-tion, and HAPPO/HATRPO, representing alternating policy optimization 5. MAPPO and HAPPO are the current state-of-the-art on-policy methods in the three domains we consider. Following the baselines considered in Zhong et al. (2024), we also compare against value decomposition meth-ods including VDN (Sunehag et al., 2018) and QMIX (Rashid et al., 2018), which are off-policy value-based methods for discrete action spaces which shows strong performance in SMACv2. For a fair comparison, we use the code for all baselines provided in MARLLib (Hu et al., 2023), with the same PPO backbone. For all baselines, we use the reported hyperparameters from Papoudakis et al. (2021b) for RWARE, from Ellis et al. (2023) for SMACv2 and from Zhong et al. (2024) for MA-MuJoCo. We only tune appropriate values when the code failed to reproduce the reported performance. For MAPPO, we found the reported hyperparameters to be sufficient for reproducing the results. For ACPPO, the same hyperparameters as MAPPO are used for all experiments in order to isolate the effect of agent-chaining, and do not conduct any additional hyperparameter tuning specific to ACPPO. Furthermore, we set the total number of parameters used by the policy to be similar between ACPPO (policy + action belief network) and the baselines (policy). Further details on the policy network as well as hyperparameters are provided in Appendix N. 
+
+> 5
+
+We do not compare HATRPO on SMACv2 as it is estimated to take up to 40 days for training, which exceeds our computational budget for this work. Moreover, the results from Zhong et al. (2024) showed HATRPO is a weaker baseline in SMACv2 in comparison to HAPPO, MAPPO and QMIX. Further details are provided in Appendix O. Reinforcement Learning Journal 2026 0 10 20 30 40                 
+
+> Steps (10 6)
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> Episode Return
+> Small 4-Medium
+> 010 20 30 40 50 60
+> Steps (10 6)
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Small 8-Hard
+> 010 20 30 40
+> Steps (10 6)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> Tiny 4-Medium
+> 010 20 30 40
+> Steps (10 6)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> Tiny 8-Hard
+> ACPPO (ours) ACPPO w/o Agent Chaining MAPPO
+
+Figure 5: Ablation Results for Agent-Chaining 
+
+Comparative Evaluation Our main results in Figure 3 show that ACPPO outperforms all base-lines 6 on all tasks in RWARE, despite having the same PPO backbone and the same hyperparameters as MAPPO. We also see that the gap widens substantially as the number of agents increases, where the widest gap is seen in 8-agent and 12-agent domains. This provides evidence that ACPPO per-forms substantially better when the environment requires higher levels of coordination. Intuitively, the 12-agent maps require the most coordination among agents since it is the scenario with the most agents crowded in a tight space. Thus, the performance gap jumps even further for the tiny map. In the results for MA-MuJoCo (Figures 4) and SMACv2 (Table 2), ACPPO is on par with or out-performs all baselines on all tasks. Crucially, ACPPO outperforms or matches MAPPO on all tasks with the same hyperparameters, which demonstrates the benefit of agent-chaining. For SMACv2, ACPPO outperforms all on-policy baselines, MAPPO and HAPPO. ACPPO is also the only on-policy algorithm competitive with QMIX. Finally, we also provide additional experimental results in Appendix L for an off-policy instantiation of ACPO called ACTD3, which incorporates agent-chaining into TD3 (Fujimoto et al., 2018). The algorithm is described in Appendix J. The performance of ACTD3 is compared against strong off-policy baselines for continuous control, including MADDPG (Lowe et al., 2017) a simultaneous policy optimization method and HATD3 (Zhong et al., 2024) an alternating policy optimization method. The results for MA-MuJoCo (Figure 8) show that ACTD3 consistently outperforms all baseline methods, and shows that agent-chaining can be generally applied to off-policy algorithms as well. 
+
+Ablation Results We ablate the core component of ACPPO, which is the advantage computation based on agent chaining. As shown in Figure 5, the variant ACPPO without agent chaining can be interpreted as MAPPO augmented with belief states as additional policy inputs. The performance of this variant remains close to MAPPO, indicating that the observed gains of ACPPO are not at-tributable to the extra input, but rather to the agent-chained advantage computation itself. 
+
+6 Conclusion 
+
+We introduced an exact decomposition of the cooperative MMDP policy gradient into a sum of per-agent terms, each computable from a per-agent score function and a decentralized critic, with no structural assumption on the joint value function. The decomposition is enabled by the Agent-Chained Belief MDP, which lifts the simultaneous joint decision into a serialized one where each agent conditions on a belief over the actions of preceding agents. We instantiated this as ACPO with on-policy and off-policy variants, and showed empirically that it outperforms strong baselines on Multi-Robot Warehouse, SMACv2, and MA-MuJoCo, with the gap widening as the number of agents grows. 
+
+> 6
+
+Note that we also compared with QMIX (Rashid et al., 2018) on RWARE. However, as QMIX failed to learn any meaningful behavior, we do not report their full results. This is consistent with the results reported in Papoudakis et al. (2021b), and shows the limitations of value decomposition assumptions in complex coordination tasks. ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Limitations and Future Work First, the belief computation scales linearly with the number of agents. Each agent i requires i − 1 forward passes to compute ⃗φ <i , and the last agent effectively requires N − 1 sequential forward passes. Hence the total number of forward passes across all agents grows as O(N 2). While the wall-clock overhead remains modest in our experiments (Ap-pendix M), this scaling could become a bottleneck for domains with very large numbers of agents. A promising avenue for future work is to distill the autoregressive belief computation into a single feedforward network, where each agent directly predicts ⃗φ <i from the state (or observation his-tory) without sequential queries. Second, our work follows the standard MMDP setup in CTDE, so our decomposition relies on full observability. The correct form of the policy gradient for Dec-POMDPs under CTDE remains open: existing theorems are established under centralized control via occupancy states (Peralez et al., 2025), while practical CTDE methods rely on surrogates such as state-based centralized critics that are known to be biased under partial observability (Lyu et al., 2023). A proper treatment of the agent-chained decomposition under partial observability would re-quire analysis through occupancy states or public beliefs (Nayyar et al., 2013; Foerster et al., 2019), which we leave to future work. 
+
+References 
+
+Alekh Agarwal, Nan Jiang, and Sham M. Kakade. Reinforcement learning: Theory and algorithms. 2019. URL https://api.semanticscholar.org/CorpusID:148567317 .Stefano V. Albrecht and Peter Stone. Autonomous agents modelling other agents: A comprehensive survey and open problems. Artificial Intelligence , 258:66–95, 2018. ISSN 0004-3702. DOI: https://doi.org/10.1016/j.artint.2018.01.002. URL https://www.sciencedirect.com/ science/article/pii/S0004370218300249 .Stefano V. Albrecht, Filippos Christianos, and Lukas Schäfer. Multi-Agent Reinforcement Learning: Foundations and Modern Approaches . MIT Press, 2024. URL https://www.marl-book. com .Christopher Amato. A first introduction to cooperative multi-agent reinforcement learning, 2024. URL https://arxiv.org/abs/2405.06161 .Dimitri Bertsekas. Multiagent value iteration algorithms in dynamic programming and reinforce-ment learning, 2020. URL https://arxiv.org/abs/2005.01627 .Craig Boutilier. Planning, learning and coordination in multiagent decision processes. In Proceed-ings of the 6th Conference on Theoretical Aspects of Rationality and Knowledge , TARK, pp. 195–210, 1996. ISBN 1558604179. Noam Brown, Anton Bakhtin, Adam Lerer, and Qucheng Gong. Combining deep re-inforcement learning and search for imperfect-information games. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (eds.), Advances in Neural In-formation Processing Systems , volume 33, pp. 17057–17069. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/2020/ file/c61f571dbd2fb949d3fe5ae1608dd48b-Paper.pdf .Petros Christodoulou. Soft actor-critic for discrete action settings, 2019. URL https://arxiv. org/abs/1910.07207 .Tianshu Chu, Jie Wang, Lara Codecà, and Zhaojian Li. Multi-agent deep reinforcement learning for large-scale traffic signal control. IEEE Transactions on Intelligent Transportation Systems , 21(3): 1086–1095, 2020. Benjamin Ellis, Jonathan Cook, Skander Moalla, Mikayel Samvelyan, Mingfei Sun, Anuj Mahajan, Jakob Nicolaus Foerster, and Shimon Whiteson. SMACv2: An improved benchmark for coop-erative multi-agent reinforcement learning. In NeurIPS Datasets and Benchmarks Track , 2023. URL https://openreview.net/forum?id=5OjLGiJW3u .Reinforcement Learning Journal 2026 Jakob Foerster, Gregory Farquhar, Triantafyllos Afouras, Nantas Nardelli, and Shimon Whiteson. Counterfactual multi-agent policy gradients. AAAI , 2018. URL https://ojs.aaai.org/ index.php/AAAI/article/view/11794 .Jakob Foerster, Francis Song, Edward Hughes, Neil Burch, Iain Dunning, Shimon Whiteson, Matthew Botvinick, and Michael Bowling. Bayesian action decoder for deep multi-agent re-inforcement learning. In ICML . PMLR, 2019. URL https://proceedings.mlr.press/ v97/foerster19a.html .Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in actor-critic methods. In Jennifer G. Dy and Andreas Krause (eds.), ICML . PMLR, 2018. URL 
+
+http://proceedings.mlr.press/v80/fujimoto18a.html .Piotr J. Gmytrasiewicz and Prashant Doshi. A framework for sequential planning in multi-agent settings. Journal of Artificial Intelligence Research , 2005. Carlos Guestrin, Daphne Koller, and Ronald Parr. Multiagent planning with factored mdps. In 
+
+NeurIPS: Natural and Synthetic . MIT Press, 2001. Siyi Hu, Yifan Zhong, Minquan Gao, Weixun Wang, Hao Dong, Xiaodan Liang, Zhihui Li, Xiaojun Chang, and Yaodong Yang. Marllib: A scalable and efficient multi-agent reinforcement learning library. JMLR , 24(315):1–23, 2023. URL http://jmlr.org/papers/v24/23-0378. html .Vojtˇ ech Kovaˇ rík, Martin Schmid, Neil Burch, Michael Bowling, and Viliam Lisý. Rethinking for-mal models of partially observable multiagent decision making (extended abstract). In IJCAI ,2023. ISBN 978-1-956792-03-4. DOI: 10.24963/ijcai.2023/783. URL https://doi.org/ 10.24963/ijcai.2023/783 .Jakub Grudzien Kuba, Ruiqing Chen, Muning Wen, Ying Wen, Fanglei Sun, Jun Wang, and Yaodong Yang. Trust region policy optimisation in multi-agent reinforcement learning. In ICLR , 2022. URL https://openreview.net/forum?id=EcGGFkNTxdJ .Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa, David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. In 4th International Conference on Learning Representations, ICLR 2016, San Juan, Puerto Rico, May 2-4, 2016, Conference Track Proceedings , 2016. URL http://arxiv.org/abs/1509. 02971 .Kaixiang Lin, Renyu Zhao, Zhe Xu, and Jiayu Zhou. Efficient large-scale fleet management via multi-agent deep reinforcement learning. In Proceedings of the 24th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining , pp. 1774–1783. Association for Computing Machinery, 2018. URL https://doi.org/10.1145/3219819.3219993 .Jiarong Liu, Yifan Zhong, Siyi Hu, Haobo Fu, QIANG FU, Xiaojun Chang, and Yaodong Yang. Maximum entropy heterogeneous-agent reinforcement learning. In ICLR , 2024. URL https: //openreview.net/forum?id=tmqOhBC4a5 .Shuo Liu, Zeyu Liang, Xueguang Lyu, and Christopher Amato. Llm collaboration with multi-agent reinforcement learning, 2025. URL https://arxiv.org/abs/2508.04652 .Ryan Lowe, YI WU, Aviv Tamar, Jean Harb, OpenAI Pieter Abbeel, and Igor Mordatch. Multi-agent actor-critic for mixed cooperative-competitive environments. In NeurIPS , vol-ume 30, 2017. URL https://proceedings.neurips.cc/paper_files/paper/ 2017/file/68a9750337a418a86fe06c1991a1d64c-Paper.pdf .Xueguang Lyu, Andrea Baisero, Yuchen Xiao, Brett Daley, and Christopher Amato. On centralized critics in multi-agent reinforcement learning. J. Artif. Int. Res. , 77, June 2023. ISSN 1076-9757. DOI: 10.1613/jair.1.14386. URL https://doi.org/10.1613/jair.1.14386 .ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning Ashutosh Nayyar, Aditya Mahajan, and Demosthenis Teneketzis. Decentralized stochastic control with partial history sharing: A common information approach. IEEE Transactions on Automatic Control , 58(7):1644–1658, 2013. DOI: 10.1109/TAC.2013.2239000. OpenAI. Benchmarks for spinning up implementations, 2018. URL https://spinningup. openai.com/en/latest/spinningup/bench.html .Georgios Papoudakis, Filippos Christianos, and Stefano V Albrecht. Agent modelling under partial observability for deep reinforcement learning. In A. Beygelzimer, Y. Dauphin, P. Liang, and J. Wortman Vaughan (eds.), Advances in Neural Information Processing Systems , 2021a. URL 
+
+https://openreview.net/forum?id=QcwJmp1sTnk .Georgios Papoudakis, Filippos Christianos, Lukas Schäfer, and Stefano V Albrecht. Benchmarking multi-agent deep reinforcement learning algorithms in cooperative tasks. In NeurIPS Datasets and Benchmarks Track (Round 1) , 2021b. URL https://openreview.net/forum?id= cIrPX-Sn5n .Bei Peng, Tabish Rashid, Christian Schroeder de Witt, Pierre-Alexandre Kamienny, Philip Torr, Wendelin Boehmer, and Shimon Whiteson. FACMAC: Factored multi-agent centralised policy gradients. In NeurIPS , 2021. URL https://openreview.net/forum?id= wZYWwJvkneF .Johan Peralez, Aurélien Delage, Jacopo Castellini, Rafael F. Cunha, and Jilles Steeve Dibangoye. Optimally solving simultaneous-move dec-pomdps: The sequential central planning approach. In AAAI , pp. 23276–23285, 2025. DOI: 10.1609/AAAI.V39I22.34494. URL https://doi. org/10.1609/aaai.v39i22.34494 .Aswin Raghavan, Saket Joshi, Alan Fern, Prasad Tadepallia, and Roni Khardonb. Planning in fac-tored action spaces with symbolic dynamic programming. In AAAI , pp. 1802–1808, 2012. Tabish Rashid, Mikayel Samvelyan, Christian Schroeder, Gregory Farquhar, Jakob Foerster, and Shimon Whiteson. QMIX: Monotonic value function factorisation for deep multi-agent re-inforcement learning. In ICML , volume 80, pp. 4295–4304. PMLR, 2018. URL https: //proceedings.mlr.press/v80/rashid18a.html .John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region policy optimization. In ICML , volume 37, pp. 1889–1897. PMLR, 2015. URL https:// proceedings.mlr.press/v37/schulman15.html .John Schulman, Philipp Moritz, Sergey Levine, Michael I. Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. In ICLR , 2016. URL 
+
+http://arxiv.org/abs/1506.02438 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms, 2017. URL https://arxiv.org/abs/1707.06347 .Yoav Shoham and Kevin Leyton-Brown. Multiagent Systems: Algorithmic, Game-Theoretic, and Logical Foundations . Cambridge University Press, New York, NY, 2008. Peter Sunehag, Guy Lever, Audrunas Gruslys, Wojciech Marian Czarnecki, Vinicius Zambaldi, Max Jaderberg, Marc Lanctot, Nicolas Sonnerat, Joel Z. Leibo, Karl Tuyls, and Thore Graepel. Value-decomposition networks for cooperative multi-agent learning based on team reward. In Proceed-ings of the 17th International Conference on Autonomous Agents and MultiAgent Systems , pp. 2085–2087. International Foundation for Autonomous Agents and Multiagent Systems, 2018. Jiangxing Wang, Deheng Ye, and Zongqing Lu. More centralized training, still decentralized execution: Multi-agent conditional policy factorization. In ICLR , 2023. URL https:// openreview.net/forum?id=znLlSgN-4S0 .Reinforcement Learning Journal 2026 Jianhong Wang, Wangkun Xu, Yunjie Gu, Wenbin Song, and Tim C Green. Multi-agent reinforce-ment learning for active voltage control on power distribution networks. In NeurIPS , 2021a. URL 
+
+https://openreview.net/forum?id=hwoK62_GkiT .Yihan Wang, Beining Han, Tonghan Wang, Heng Dong, and Chongjie Zhang. {DOP}: Off-policy multi-agent decomposed policy gradients. In ICLR , 2021b. URL https://openreview. net/forum?id=6FqKiVAdI3Y .Muning Wen, Jakub Grudzien Kuba, Runji Lin, Weinan Zhang, Ying Wen, Jun Wang, and Yaodong Yang. Multi-agent reinforcement learning is a sequence modeling problem. In NeurIPS , 2022. ISBN 9781713871088. Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadallah, Ryen W White, Doug Burger, and Chi Wang. Autogen: Enabling next-gen LLM applications via multi-agent conversations. In 
+
+COLM , 2024. URL https://openreview.net/forum?id=BAakY1hNKS .Jianing Ye, Chenghao Li, Jianhao Wang, and Chongjie Zhang. Towards global optimality in cooperative marl with the transformation and distillation framework, 2023. URL https: //arxiv.org/abs/2207.11143 .Chao Yu, Akash Velu, Eugene Vinitsky, Jiaxuan Gao, Yu Wang, Alexandre Bayen, and Yi Wu. The surprising effectiveness of PPO in cooperative multi-agent games. In NeurIPS Datasets and Benchmarks Track , 2022. URL https://openreview.net/forum?id=YVXaxB6L2Pl .Ruiqi Zhang, Jing Hou, Florian Walter, Shangding Gu, Jiayi Guan, Florian Röhrbein, Yali Du, Panpan Cai, Guang Chen, and Alois Knoll. Multi-agent reinforcement learning for autonomous driving: A survey, 2024. URL https://arxiv.org/abs/2408.09675 .Tianhao Zhang, Yueheng Li, Chen Wang, Guangming Xie, and Zongqing Lu. {FOP}: Factorizing optimal joint policy of maximum-entropy multi-agent reinforcement learning. In ICML , volume 139, pp. 12491–12500. PMLR, 2021. URL https://proceedings.mlr.press/v139/ zhang21m.html .Jian Zhao, Xunhan Hu, Mingyu Yang, Wengang Zhou, Jiangcheng Zhu, and Houqiang Li. Ctds: Centralized teacher with decentralized student for multiagent reinforcement learning. IEEE Transactions on Games , 16(1):140–150, 2024. DOI: 10.1109/TG.2022.3232390. Yifan Zhong, Jakub Grudzien Kuba, Xidong Feng, Siyi Hu, Jiaming Ji, and Yaodong Yang. Heterogeneous-agent reinforcement learning. JMLR , 25(32):1–67, 2024. URL http://jmlr. org/papers/v25/23-0488.html .ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+# Supplementary Materials 
+
+The following content was not necessarily subject to peer review. 
+
+A Limitations of Previous Methods 
+
+A BA 0 1B 1 2Table 3: A simple 2 × 2 matrix game where value decomposition holds and independent policy optimization methods can converge to the optimum (B, B ).
+
+Decomposable Matrix Games In this matrix game, the rewards can be additively decomposed. The individual utility functions can be decomposed as follows: r(1) (A) = r(2) (A) = 0 and 
+
+r(1) (B) = r(2) (B) = 1 .As described in Section 2.2, independent policy optimization methods such as MAPPO optimize 
+
+A(i)(s, a (i)) := Eπ(i),⃗ π −i
+
+h
+
+A s, a (i),⃗ a −ii
+
+for each agent separately, treating ⃗π −i as fixed at the current policy. Suppose the joint policy is initialized at the suboptimal outcome AA , which yields reward 0. For agent 1, deviating to B while agent 2 keeps playing A leads to R(BA ) = 1 > R (AA ) = 0 , so its independent update pushes probability mass toward B. By symmetry, agent 2 also prefers deviating from A to B, since R(AB ) = 1 > R (AA ) = 0 . When both agents update simultaneously, the joint policy moves toward BB , which attains the global optimum with reward 2. In this decomposable setting, each agent’s local improvement direction is aligned with improvement of the joint policy. A BA 0 1B 1 -10 Table 4: A simple 2 × 2 matrix game where independent policy optimization can converge to the catastrophic joint action (B, B ).
+
+Matrix Game motivating alternating policy optimization Now consider the matrix game in Table 4, and suppose the joint policy is initialized to select AA , yielding a reward of 0. For agent 1, deviating to B while agent 2 plays A (i.e., the joint action BA ) gives a higher reward than AA , so its independent update drives it toward playing B. The same holds symmetrically for agent 2, since AB 
+
+yields a higher reward than AA . Because both agents update independently and simultaneously, the joint policy can move toward BB , which receives a reward of −10 . Note that further updates will move the joint policy toward AA again. In other words, independent policy optimization methods will not converge. This failure mode motivates alternating policy optimization methods such as HAPPO, where each agent updates its policy while holding the other agents fixed, and guarantee monotonic improvement of the joint policy at each update step. In the game in Table 4, if agent 1 updates first, it will switch to playing B deterministically, since BA is better than AA . When agent 2 subsequently updates, it prefers to keep playing A, because BA is better than BB . Thus the joint policy converges to BA ,avoiding the catastrophic outcome BB . However, as discussed in detail in Section 2.3, the fixed points of alternating policy optimization methods are Nash Equilibria, which is not necessarily the optimal joint policy. In the game in Table 6, all the Nash Equilibria happen to be globally optimal, Reinforcement Learning Journal 2026 whereas this is not the case for the matrix game in Table 1. In contrast, ACPI directly targets the optimal joint policy in the underlying MMDP and therefore does not rely on value decomposition assumptions or on properties of Nash equilibria. 
+
+B Details on Centralized Training with Decentralized Execution (CTDE) 
+
+In our work, we consider the standard MARL paradigm of Centralized Training Decentralized Ex-ecution (CTDE), which allows multiple policies to be jointly trained but must be executed in a decentralized fashion. Here we introduce related work in three different settings that are often considered in MARL: Centralized Training Centralized Execution (CTCE), Centralized Teacher with Decentralized Stu-dent (CTDS) 7, and CTDE. 
+
+Centralized Training Centralized Execution (CTCE) Centralized Training Centralized Execu-tion (CTCE) methods such as Multi-Agent Transformer (MAT) (Wen et al., 2022) use a joint policy of the form π(a(1) , . . . , a (N )|s) during both training rollouts and execution. MAT is a centralized Transformer model defined on the joint action space, and uses a joint observation encoder and joint policies during both training and execution. While a decentralized policy version is also considered, MAT requires a joint observation encoder during both training and execution. In MMDPs, the CTCE setting reduces to a Factored-Action MDP (Guestrin et al., 2001; Raghavan et al., 2012), which is a single-agent MDP with factored action spaces. In this case, single-agent techniques such as policy iteration and value iteration can be applied directly. Generally, centralized control (CTCE) is not applicable to many real-world multi-agent systems such as power grids Wang et al. (2021a), traffic signal control Chu et al. (2020), and large-scale fleet management Lin et al. (2018) due to the large joint action space and prohibitive communication costs. 
+
+Centralized Teacher with Decentralized Student (CTDS) (Zhao et al., 2024; Ye et al., 2023; Wang et al., 2023) aims to decentralize centralized solutions, by assuming that a single-agent joint policy can be used for training rollout. This joint policy is used during centralized training and dis-tilled to decentralized policies before execution. As a single-agent problem, this assumption makes convergence to optimal policies straightforward as in the CTCE case. We can view this setting as a special case of our work where we assume further access to a joint policy during training rollouts. With this additional assumption, we can solve the serialized problem introduced in Appendix D without considering beliefs. However, this line of research inherits similar weaknesses of CTCE, and cannot be applied to many real-world multi-agent systems with a massive action space or pro-hibitive communication costs. 
+
+Centralized Training Decentralized Execution (CTDE) In CTDE, the policy must be decentral-ized (fully factorized) during both training and execution, with the policy form ⃗π = ⟨π (1) , . . . π (N )⟩
+
+where π(i) : S → A(i). This is the natural MARL paradigm we consider in our work. Algorithms for independent policy optimization methods (Lowe et al., 2017; Yu et al., 2022), alternating pol-icy optimization methods (Kuba et al., 2022; Zhong et al., 2024; Liu et al., 2024) as well as value decomposition methods (Rashid et al., 2018; Zhang et al., 2021) all fall under CTDE. 
+
+C Exact Calculation of Policies in the Matrix Game 
+
+Here we provide details on how ACPI (the tabular version of ACPO) can solve the Matrix Game provided in Table 1 and repeated in Figure 6.   
+
+> 7CTDS is also referred to as Decentralizing Centralizing Solutions (Amato, 2024).
+
+ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+A B CA 5 −20 −20 
+
+B −20 10 −20 
+
+C −20 −20 20 
+
+Figure 6: 3x3 Matrix Game Due to serialization, ACPO considers this as a 2-step game even though the underlying game is a 1-step game. Since we are in a simple toy setting which can be solved by policy iteration, we only consider deterministic action distributions φ.Policy evaluation for agent 1 is conducted as follows. 
+
+Q(1) (φ(1) ) = γ′E b(2) =φ(1) 
+
+> φ(2) ∼π(2) (·| b(2) )
+
+h
+
+Q(2) (b(2) , φ (2) )
+
+i
+
+When we only consider deterministic φ:
+
+Q(1) (δ(1)  
+
+> A
+
+) = γ′Ea(2) ∼π(2) (·| b(2) =A)
+
+h
+
+Q(2) (b(2) = A, a (2) )
+
+i
+
+Q(1) (δ(1)  
+
+> B
+
+) = γ′Ea(2) ∼π(2) (·| b(2) =B)
+
+h
+
+Q(2) (b(2) = B, a (2) )
+
+i
+
+Q(1) (δ(1)  
+
+> C
+
+) = γ′Ea(2) ∼π(2) (·| b(2) =C)
+
+h
+
+Q(2) (b(2) = C, a (2) )
+
+i
+
+where we have used b(2) = A to denote the fact that agent 2 knows with probability 1 that it is in state A since it knows that π(1) chooses A deterministically. Also, we used the notation δ(1)  
+
+> A
+
+to denote a particular action distribution φ which deterministically selects A.For agent 2, policy evaluation is simply the reward function given in the Matrix game: 
+
+Q(2) (b(2) = A, A ) = R(A, A ) = 5 
+
+...
+
+Q(2) (b(2) = B, B ) = R(B, B ) = 10 
+
+...
+
+Q(2) (b(2) = C, C ) = R(C, C ) = 20 
+
+For policy improvement, 
+
+π(2) (b(2) = A) ← arg max 
+
+> a(2) ∈{ A,B,C }
+
+Q(2) (b(2) = A, a (2) )
+
+π(2) (b(2) = B) ← arg max 
+
+> a(2) ∈{ A,B,C }
+
+Q(2) (b(2) = B, a (2) )
+
+π(2) (b(2) = C) ← arg max 
+
+> a(2) ∈{ A,B,C }
+
+Q(2) (b(2) = C, a (2) )
+
+.Thus, π(2) will select A, B, C given agent 1 deterministically selects A, B, C , respectively. For agent 1, 
+
+π(1) ← arg max 
+
+> a(1) ∈{ A,B,C }
+
+γ′Q(2) (b(2) = a(1) , π (2) (b(2) = a(1) )) 
+
+Now, let’s say we are in an adversarial starting point where the policy is initialized to deterministi-cally select (A, A ).Initially, policy improvement for π(1) leads agent 1 to continue selecting A since π(2) deterministi-cally selects A and R(A, A ) = 5 is better than R(B, A ) = R(C, A ) = −20 . However, after the first Reinforcement Learning Journal 2026 iteration, agent 2 will update its policy to select A, B, C for b(2) = A, b (2) = B, b (2) = C, respec-tively. Thus, agent 1 in iteration 2 will select C since C = arg max a(1) γ′Q(2) (b(2) = a(1) , π (2) ),where π(2) is now updated. 
+
+D Serializing the MMDP 
+
+The serialized multi-agent problem can be described as follows: • Action space A(i) of individual actions for some i ∈ N 
+
+• States [st,⃗ a <i t ] which augments the original state space with actions selected by previous agents ⃗a <i t .• Reward function 
+
+R([ st,⃗ a <i t ], a (i) 
+
+> t
+
+) = 
+
+(
+
+R(st,⃗ a t) if i = N
+
+0 otherwise • Transition function 
+
+T ([ st+1 , ∅] | [st,⃗ a <i t ], a (i) 
+
+> t
+
+) = T (st+1 | st,⃗ a t) if i = NT ([ st,⃗ a <i +1  
+
+> t
+
+] | [st,⃗ a <i t ], a (i) 
+
+> t
+
+)= I{[⃗a <i t , a (i) 
+
+> t
+
+] = ⃗a <i +1  
+
+> t
+
+} if i ∈ { 1, . . . , N − 1}
+
+• Discount factor γ′ where γ′ = γ1/N 
+
+The optimal policy for this serialized problem is in fact optimal for the original MMDP as well. 
+
+Theorem D.1. (Peralez et al., 2025) For every MMDP, there exists a serialized multi-agent problem, of which its optimal policy is also optimal for the underlying MMDP. Proof. Let ⃗π = ⟨π (1) , . . . , π (N )⟩ be any policy over the serialized MMDP. 
+
+V (i)([ s,⃗ a <i ]; ⃗π)= E
+
+
+
+> N
+
+X
+
+> j=i
+
+(γ′)j−iR
+
+
+
+s0,⃗ a <j  
+
+> 0
+
+, a (j)0
+
+
+
+| s0 = s,⃗ a <i  
+
+> 0
+
+=⃗a <i ,⃗ π
+
+ + E
+
+X
+
+> t=1
+> N
+
+X
+
+> j=1
+
+(γ′)tN +j−iR
+
+
+
+st,⃗ a <j t , a (j)
+
+> t
+
+
+
+|⃗π
+
+
+
+= E
+
+h
+
+(γ′)N −iR
+
+
+
+s0,⃗ a <N  
+
+> 0
+
+, a (N )0
+
+
+
+| s0 = s,⃗ a <i  
+
+> 0
+
+=⃗a <i ,⃗ π
+
+i
+
++ E
+
+"X
+
+> t=1
+
+(γ′)tN +N −iR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+|⃗π
+
+#
+
+= E
+
+h
+
+(γ′)N −iR
+
+
+
+s0,⃗ a <N  
+
+> 0
+
+, a (N )0
+
+
+
+| s0 = s,⃗ a <i  
+
+> 0
+
+=⃗a <i ,⃗ π
+
+i
+
++ E
+
+"X
+
+> t=1
+
+(γ′)N −iγtR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+|⃗π
+
+#
+
+= E
+
+"X
+
+> t=0
+
+(γ′)N −iγtR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+| s0 = s,⃗ a <i  
+
+> 0
+
+=⃗a <i ,⃗ π
+
+#
+
+= ( γ′)N −iE
+
+"X
+
+> t=0
+
+γtR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+| s0 = s,⃗ a <i  
+
+> 0
+
+=⃗a <i ,⃗ π
+
+#
+
+(5) 
+
+V (1) (s) = ( γ′)N −1E
+
+hP 
+
+> t=0
+
+γtR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+| s0 = s,⃗ π
+
+i
+
+for agent 1.
+
+V (N )([ s,⃗ a <N ]) = E
+
+hP 
+
+> t=0
+
+γtR
+
+
+
+st,⃗ a <N t , a (N )
+
+> t
+
+
+
+| s0 = s,⃗ a <N  
+
+> 0
+
+=⃗a <N ,⃗ π
+
+i
+
+for agent N .Thus, we have established that any policy ⃗π in the serialized problem will obtain the same expected value in the MMDP (times a constant factor). There is a 1-1 mapping between serialized and simul-taneous policies which yield the same value. ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+E Belief Update 
+
+τ
+
+
+
+[st, b (i) 
+
+> t
+
+], φ (i)
+
+> t
+
+
+
+(⃗a <i +1  
+
+> t
+
+)= 1
+
+η([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+)
+
+X⃗a <i t
+
+b(i) 
+
+> t
+
+(⃗a <i t )T
+
+
+
+[st,⃗ a <i +1  
+
+> t
+
+]|[st,⃗ a <i t ], φ (i)
+
+> t
+
+
+
+= 1
+
+η([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+)
+
+X⃗a <i t
+
+b(i) 
+
+> t
+
+(⃗a <i t ) X
+
+> a(i)
+> t
+
+φ(i) 
+
+> t
+
+(a(i) 
+
+> t
+
+)T
+
+
+
+[st,⃗ a <i +1  
+
+> t
+
+]|[st,⃗ a <i t ], a (i)
+
+> t
+
+
+
+Finally, η is the normalization factor defined as 
+
+η([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+) = X⃗a <i +1 
+
+> t
+
+X⃗a <i t
+
+b(i) 
+
+> t
+
+(⃗a <i t ) X
+
+> a(i)
+> t
+
+φ(i) 
+
+> t
+
+(a(i) 
+
+> t
+
+)T
+
+
+
+[st,⃗ a <i +1  
+
+> t
+
+]|[st,⃗ a <i t ], a (i)
+
+> t
+
+
+
+F Proofs for Policy Iteration Convergence 
+
+Here we present Agent-Chained Policy Iteration (ACPI), a policy iteration procedure defined on the AC-BMDP. ACPI is the tabular version of ACPO introduced in Section 4. Unlike alternating policy optimization approaches (Zhong et al., 2024) where the fixed point of policy iteration is a NE, we prove that ACPI converges to the optimal joint policy of the MMDP. 
+
+F.1 Agent-Chained Policy Evaluation 
+
+By repeatedly applying T⃗π , we can obtain the Q-values for a given joint policy ⃗π:
+
+Lemma F.1. (Agent-Chained Policy Evaluation) The Agent-Chained Bellman Operators in Def-inition 3.2 are a contraction mapping under the infinity norm. Thus, starting with any ⃗ Q =
+
+⟨Q(1) , . . . Q (N )⟩ and a joint policy ⃗π = ⟨π (1) , . . . , π (N )⟩, the repeated application of T⃗π will return a set of Q-values for each agent ⟨Q(1 ,⃗ π) , . . . Q (N,⃗ π) ⟩ in the limit. Proof. First, note that we can view ⟨Q(1) , . . . , Q (N )⟩ as a single Q-function with the state space further augmented by agent ID. Under this perspective, we now have a single policy denoted as π
+
+and a corresponding value function Qπ , defined on the AC-BMDP. Since the AC-BMDP is a single-agent Belief MDP, the rest follows standard convergence results of policy evaluation (Agarwal et al., 2019), which we include for completeness. For any agent i ∈ { 1, . . . N − 1}, state [s, b (i), i ], action φ(i) and arbitrary Q-values Q1, Q 2,
+
+T π Q1([ s, b (i), i ], φ (i)) − T π Q2([ s, b (i), i ], φ (i))
+
+= E[s,b (i+1) ,i +1]= T ([ s,b (i),i ],φ (i))
+
+> φ(i+1) ∼π(·| s,b (i+1) ,i +1)
+
+h
+
+γ′Q1([ s, b (i+1) , i + 1] , φ (i+1) ) − γ′Q2([ s, b (i+1) , i + 1] , φ (i+1) )
+
+i
+
+≤ γ′ max 
+
+> φ(i+1)
+
+Q1([ s, b (i+1) , i + 1] , φ (i+1) ) − Q2([ s, b (i+1) , i + 1] , φ (i+1) )
+
+≤ γ′ max  
+
+> φ(i+1) ,b (i+1) ,j ∈{ 1,...,N }
+
+Q1([ s, b (i+1) , j ], φ (i+1) ) − Q2([ s, b (i+1) , j ], φ (i+1) )Reinforcement Learning Journal 2026 For agent N ,
+
+T π Q1([ s, b (N ), N ], φ (N )) − T π Q2([ s, b (N ), N ], φ (N ))
+
+= E[s′,1] ∼T (·| [s,b (N ),N ],φ (N ))
+
+> φ(1) ∼π(·| s′,1)
+
+h
+
+γ′Q1([ s′, 1] , φ (1) ) − γ′Q2([ s′, 1] , φ (1) )
+
+i
+
+≤ γ′ max 
+
+> s′,φ (1)
+
+Q1([ s′, 1] , φ (1) ) − Q2([ s′, 1] , φ (1) )
+
+≤ γ′ max  
+
+> s′,φ (1) ,j ∈{ 1,...,N }
+
+Q1([ s′, j ], φ (1) ) − Q2([ s′, j ], φ (1) )
+
+Thus, T π is a contraction mapping under the infinity norm, i.e. there exists γ′ ∈ [0 , 1) such that 
+
+∥T π Q1 − T π Q2∥∞ ≤ γ′∥Q1 − Q2∥∞
+
+Since T π is a contraction mapping, we have the following: 
+
+∥Qk − Qπ ∥∞ = ∥T π Qk−1 − T π Qπ ∥∞
+
+≤ γ′∥Qk−1 − Qπ ∥∞
+
+...
+
+≤ (γ′)k∥Q0 − Qπ ∥∞
+
+If we let k → ∞ , ∥Qk − Qπ ∥∞ = 0 , and lim k→∞ Qk = Qπ . By the Banach fixed-point theorem, this solution is unique. 
+
+F.2 Agent-Chained Policy Improvement 
+
+During policy improvement, each agent’s policy π(i) is updated to select the greedy action distribu-tion with respect to its own Q(i):
+
+π(i)
+
+> new
+
+([ s, b (i)]) ← arg max 
+
+> φ(i)
+
+Q(i,⃗ π) ([ s, b (i)], φ (i)) ∀i, b (i), s. (6) 
+
+Lemma F.2. (Agent-Chained Policy Improvement) Given a policy ⃗π = ⟨π (1) , . . . , π (N )⟩, let Q(i,⃗ π)
+
+denote the i-th agent’s value function for a joint policy ⃗π. If we update the new policy ⃗π new =
+
+⟨π(1) 
+
+> new
+
+, . . . , π (N ))  
+
+> new
+
+⟩ by Eq. 6, then 
+
+Q(i,⃗ π new )([ s, b (i)], φ (i)) ≥ Q(i,⃗ π) ([ s, b (i)], φ (i))
+
+Proof. As in the proof for Lemma F.1, we consider ⃗π to be a single policy π which is augmented by agent ID in the state space. For any i ∈ { 1, . . . N − 1}, s, b (i), φ (i),
+
+Qπ ([ s, b (i), i ], φ (i)) = γ′E[s,b (i+1) ,i +1]= T ([ s,b (i),i ],φ (i))
+
+> φ(i+1) ∼π(·| [s,b (i+1) ,i +1])
+
+h
+
+Qπ 
+
+[s, b (i+1) , i + 1] , φ (i+1) i 
+
+≤ γ′E[s,b (i+1) ,i +1]= T ([ s,b (i),i ],φ (i))
+
+
+
+max 
+
+> φ(i+1)
+
+Qπ 
+
+[s, b (i+1) , i + 1] , φ (i+1) 
+
+= γ′E[s,b (i+1) ,i +1]= T ([ s,b (i),i ],φ (i)) 
+
+> φ(i+1) ∼πnew (·| [s,b (i+1) ,i +1])
+
+h
+
+Qπ 
+
+[s, b (i+1) , i + 1] , φ (i+1) i ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning For i = N and any s, b (i), φ (i),
+
+Qπ ([ s, b (N ), N ], φ (N ))= R([ s, b (N ), N ], φ (N )) + γ′E[s′,1]= T ([ s,b (N ),N ],φ (N ))
+
+> φ(1) ∼π(·| [s′,1])
+
+h
+
+Qπ 
+
+[s′, 1] , φ (1) i 
+
+≤ R([ s, b (N ), N ], φ (N )) + γ′E[s′,1]= T ([ s,b (N ),N ],φ (N ))) 
+
+
+
+max 
+
+> φ(1)
+
+Qπ 
+
+[s′, 1] , φ (1) 
+
+= R([ s, b (N ), N ], φ (N )) + γ′E[s′,1]= T ([ s,b (N ),N ],φ (N )) 
+
+> φ(1) ∼πnew (·| [s′,1])
+
+h
+
+Qπ 
+
+[s′, 1] , φ (1) i 
+
+Thus, for any i ∈ { 1, . . . N }, s, b (i), φ (i),
+
+Qπ ([ s, b (i), i ], φ (i)) ≤ R([ s, b (i), i ], φ (i))+ γ′E[s,b (i+1) ,i +1]= T ([ s,b (i),i ],φ (i)) 
+
+> φ(i+1) ∼πnew (·| [s,b (i+1) ,i +1])
+
+h
+
+Qπ 
+
+[s, b (i+1) , i + 1] , φ (i+1) i 
+
+...
+
+≤ Qπnew ([ s, b (i), i ], φ (i))
+
+Crucially, since each agent’s improvement in Eq. 6 only depends on its own Q(i,⃗ π) , all agents can update their policies independently. This is unlike MA-PI (Zhong et al., 2024), which requires alternating updates where π(i) can only be improved after ⃗π <i has been updated. 
+
+F.3 Characterization of Q(i, ∗)
+
+Here we provide a useful property of the optimal Q-values of the AC-BMDP, which has an affine structure. 
+
+Theorem F.3. Let Q(i, ∗) denote the i-th agent’s Q-values for the optimal policy under an AC-BMDP. Then, Q(i, ∗) is an affine function of φ(i). i.e. for all i ∈ { 1, . . . , N }, s, b (i), φ (i),
+
+Q(i, ∗)([ s, b (i)], φ (i)) = X
+
+> a(i)
+
+φ(i)(a(i))Q(i, ∗)([ s, b (i)], δ a(i) )
+
+where δa(i) denotes a particular action distribution which deterministically selects a(i).Proof. We prove the claim by induction. For any s, b (N ), φ (N ) at terminal timesteps, 
+
+Q(N )([ s, b (N )], δ a(N ) ) = R([ s, b (N )], a (N ))
+
+Q(N )([ s, b (N )], φ (N )) = R([ s, b (N )], φ (N ))= X 
+
+> a(N)
+
+φ(N )(a(N ))R([ s, b (N )], a (N ))= X 
+
+> a(N)
+
+φ(N )(a(N ))Q(N )([ s, b (N )], δ a(N ) )
+
+Q(N )([ s, b (N ) =⃗a <N ], φ (N )) = R([ s,⃗ a <N ], φ (N ))Reinforcement Learning Journal 2026 
+
+Q(N )([ s, b (N )], φ (N )) = R([ s, b (N )], φ (N ))= X⃗a <N 
+
+b(N )(⃗a <N )R([ s,⃗ a <N ], φ (N ))= X⃗a <N 
+
+b(N )(⃗a <N )Q(N )([ s,⃗ a <N ], φ (N ))
+
+where ⃗a <N in Q(N )([ s,⃗ a <N ], φ (N )) denotes the belief that assigns probability 1 to ⃗a <N .For agents i ∈ { 1, . . . , N − 1}, we recall the following definition of the belief update rule and the normalization factor: 
+
+τ
+
+
+
+[st, b (i)
+
+t ], φ (i)
+
+t
+
+
+
+(⃗a <i +1 
+
+t ) = 1
+
+η([ st, b (i)
+
+t ], φ (i)
+
+t )
+
+X⃗a <i t
+
+b(i)
+
+t (⃗a <i t )T
+
+
+
+[st,⃗ a <i +1 
+
+t ]|[st,⃗ a <i t ], φ (i)
+
+t
+
+
+
+= 1
+
+η([ st, b (i)
+
+t ], φ (i)
+
+t )
+
+X⃗a <i t
+
+b(i)
+
+t (⃗a <i t ) X
+
+a(i)
+
+> t
+
+φ(i)
+
+t (a(i)
+
+t )T
+
+
+
+[st,⃗ a <i +1 
+
+t ]|[st,⃗ a <i t ], a (i)
+
+t
+
+
+
+η([ st, b (i)
+
+t ], φ (i)
+
+t ) = X⃗a <i +1 
+
+> t
+
+X⃗a <i t
+
+b(i)
+
+t (⃗a <i t ) X
+
+a(i)
+
+> t
+
+φ(i)
+
+t (a(i)
+
+t )T
+
+
+
+[st,⃗ a <i +1 
+
+t ]|[st,⃗ a <i t ], a (i)
+
+t
+
+
+
+= X
+
+a(i)
+
+> t
+
+φ(i)
+
+t (a(i)
+
+t ) X⃗a <i t
+
+X⃗a <i +1 
+
+> t
+
+b(i)
+
+t (⃗a <i t )T
+
+
+
+[st,⃗ a <i +1 
+
+t ]|[st,⃗ a <i t ], a (i)
+
+t
+
+
+
+= X
+
+a(i)
+
+> t
+
+φ(i)
+
+t (a(i)
+
+t ) X⃗a <i t
+
+X⃗a <i +1 
+
+> t
+
+b(i)
+
+t (⃗a <i t )I
+
+
+
+[st,⃗ a <i +1 
+
+t ], [st,⃗ a <i t ], a (i)
+
+t
+
+
+
+= X
+
+a(i)
+
+> t
+
+φ(i)
+
+t (a(i)
+
+t )η([ st, b (i)
+
+t ], δ a(i)
+
+> t
+
+)
+
+Q∗([ s, b (i)], δ a(i) )= γ′ max 
+
+φ(i+1) 
+
+Q∗([ s, b (i+1) ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+X⃗a <i +1 
+
+b(i+1) (⃗a <i +1 )Q∗([ s,⃗ a <i +1 ], φ (i+1) )(by induction) 
+
+= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], δ a(i) )
+
+X⃗a <i +1 
+
+X⃗a <i 
+
+b(i)(⃗a <i )T
+
+
+
+[s,⃗ a <i +1 ]|[s,⃗ a <i ], a (i)
+
+Q∗([ s,⃗ a <i +1 ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], δ a(i) )
+
+X⃗a <i 
+
+b(i)(⃗a <i )Q∗([ s,⃗ a <i , a (i)], φ (i+1) )ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning where [s, b (i+1) ] = T ([ s, b (i)], δ a(i) ). The last equality comes from definition of deterministic tran-sition T for microsteps. 
+
+Q∗([ s, b (i)], φ (i))= γ′ max 
+
+φ(i+1) 
+
+Q∗([ s, b (i+1) ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+X⃗a <i +1 
+
+b(i+1) (⃗a <i +1 )Q∗([ s,⃗ a <i +1 ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], φ (i))
+
+X⃗a <i +1 
+
+X⃗a <i 
+
+b(i)(⃗a <i )T
+
+
+
+[st,⃗ a <i +1 
+
+t ]|[st,⃗ a <i t ], φ (i)
+
+Q∗([ s,⃗ a <i +1 ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], φ (i))
+
+X⃗a <i +1 
+
+X⃗a <i 
+
+b(i)(⃗a <i ) X
+
+a(i)
+
+φ(i)(a(i))T
+
+
+
+[s,⃗ a <i +1 ]|[s,⃗ a <i ], a (i)
+
+Q∗([ s,⃗ a <i +1 ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], φ (i))
+
+X
+
+a(i)
+
+φ(i)(a(i)) X⃗a <i 
+
+b(i)(⃗a <i )Q∗([ s, a (i),⃗ a <i ], φ (i+1) )= γ′ max 
+
+φ(i+1) 
+
+1
+
+η([ s, b (i)], φ (i))
+
+X
+
+a(i)
+
+φ(i)(a(i)) η([ s, b (i)], δ a(i) )
+
+η([ s, b (i)], δ a(i) )
+
+X⃗a <i 
+
+b(i)(⃗a <i )Q∗([ s,⃗ a <i , a (i)], φ (i+1) )= X
+
+a(i)
+
+φ(i)(a(i)) η([ s, b (i)], δ a(i) )
+
+η([ s, b (i)], φ (i)) Q∗([ s, b (i)], δ a(i) )= X
+
+a(i)
+
+φ(i)(a(i)) 1
+
+P
+
+˜a(i) φ(i)(˜ a(i)) Q∗([ s, b (i)], δ a(i) )= X
+
+a(i)
+
+φ(i)(a(i))Q∗([ s, b (i)], δ a(i) )
+
+where [s, b (i+1) ] = T ([ s, b (i)], φ (i)).For agent N ,
+
+Q∗([ s, b (N )], φ (N ))= R([ s, b (N )], φ (N )) + γ′Es′∼T (·| [s,b (N )],φ (N ))
+
+φ(1) ∼π(1) (·| s′)
+
+h
+
+Q∗(s′, φ (1) )
+
+i
+
+= X
+
+a(N )
+
+φ(N )(a(N ))R([ s, b (N )], a (N ))+ γ′ X
+
+s′
+
+T (s′ | [s, b (N )], φ (N ))Eφ(1) ∼π(1) (·| s′)
+
+h
+
+Q∗(s′, φ (1) )
+
+i
+
+= X
+
+a(N )
+
+φ(N )(a(N ))R([ s, b (N )], a (N ))+ γ′ X
+
+a(N )
+
+φ(N )(a(N )) X
+
+s′
+
+T (s′ | [s, b (N )], a (N ))Eφ(1) ∼π(1) (·| s′)
+
+h
+
+Q∗(s′, φ (1) )
+
+i
+
+= X
+
+a(N )
+
+φ(N )(a(N ))Q∗([ s, b (N )], a (N ))
+
+A direct corollary of Theorem F.3 is that only the actions a(i) need to be enumerated rather than the full space of 1-step policies φ(i).
+
+Corollary F.4. For all i ∈ { 1, . . . , N }, s, b (i),
+
+max 
+
+φ(i)
+
+Q(i, ∗) 
+
+[s, b (i)], φ (i)
+
+= max 
+
+a(i)
+
+Q(i, ∗) 
+
+[s, b (i)], δ a(i)
+
+Reinforcement Learning Journal 2026 When restricted to deterministic action distributions δa(i) (e.g. in tabular settings), the beliefs be-come deterministic and the AC-BMDP reduces to a serialized version of the MMDP. Since the optimal Q-values coincide between the AC-BMDP and the MMDP, the optimal policies coincide as well. 
+
+F.4 Agent-Chained Policy Iteration 
+
+Alternating between Agent-Chained Policy Evaluation and Policy Improvement provably converges to the optimal policy of the MMDP. 
+
+Theorem F.5. (Agent-Chained Policy Iteration) Starting from any policy ⃗π ∈ Π, the sequence of value functions ⃗ Q⃗π n and the improved policies ⃗π n+1 converges to the optimal value functions and the policy of the AC-BMDP, i.e, 
+
+Q(i, ∗)([ s, b (i)], φ (i)) = lim  
+
+> n→∞
+
+Q(i,⃗ π n)([ s, b (i)], φ (i)) ≥ Q(i,⃗ π) ([ s, b (i)], φ (i))
+
+for any ⃗π, i, s, b (i), φ (i). Furthermore the optimal policy of the AC-BMDP is also optimal in the underlying MMDP. Proof. By the monotonic improvement property in Lemma F.2, we know that for any i ∈{1, . . . , N }, b (i), s, φ (i),
+
+Q⃗π n+1 ([ s, b (i)], φ (i)) ≥ Q⃗π n ([ s, b (i)], φ (i))
+
+.If there is no improvement, 
+
+Q⃗π n ([ s, b (i)], φ (i)) = Q⃗π n+1 ([ s, b (i)], φ (i))= γ′Q⃗π n+1 ([ s, b (i+1) ], π (i+1)  
+
+> n+1
+
+([ s, b (i+1) ])) = γ′Q⃗π n ([ s, b (i+1) ], π (i+1)  
+
+> n+1
+
+([ s, b (i+1) ])) = γ′ max 
+
+> φ(i+1)
+
+Q⃗π n ([ s, b (i+1) ], φ (i+1) )) 
+
+where [s, b (i+1) ] = T ([ s, b (i)], φ (i)). Thus, at the limit lim n→∞ Q⃗π n ([ s, b (i)], φ (i)), the Bellman optimality equations are satisfied. Due to Corollary F.4, it is sufficient to consider the following policy improvement procedure con-sidering only the δa(i) , which is the space of deterministic φ(i):
+
+∀i, b (i), s, π (i)
+
+> new
+
+([ s, b (i)]) ← arg max 
+
+> a(i)
+
+Q⃗π ([ s, b (i)], δ a(i) ) (7) Note that if we restrict ourselves to an AC-BMDP defined over the space of deterministic 1-step policies δa(i) , all of the components in the AC-BMDP are equivalent to that of the serialized version of the MMDP. While the policy improvement in Eq. (6) is defined over the space of action distributions φ(i) ∈
+
+∆( A(i)), there is no loss of generality in restricting to deterministic action distributions δa(i) (Corol-lary F.4) due to the affine structure of Q(i, ∗). When φ(i) is deterministic for all agents, the belief 
+
+b(i) is also deterministic, and the AC-BMDP reduces to a serialized version of the MMDP. The full pseudocode is provided in Algorithm 1 in Appendix I. 
+
+G Proofs for Section 4 
+
+G.1 Proof for the Agent-Chained Policy Gradient Theorem Theorem 4.1. (Agent-Chained Policy Gradient Theorem) 
+
+∇θ JAC (⃗π θ ) = E[s,b (i)]∼d⃗πγ′ , a (i)∼π(i) 
+
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(a(i) | s, b (i)) · Q(i)([ s, b (i)], a (i))
+
+i
+
+. (2) ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Proof. 
+
+∇θ JAC (θ; s, b (i)) = Eφ(i)∼π(i) 
+
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(φ(i)|s, b (i))Q(i)([ s, b (i)], φ (i))
+
+i
+
+=
+
+Z
+
+> φ(i)
+
+π(i) 
+
+> θ
+
+(φ(i)|s, b (i))∇θ log π(i) 
+
+> θ
+
+(φ(i)|s, b (i))Q(i)([ s, b (i)], φ (i))dφ (i)
+
+=
+
+Z
+
+> φ(i)
+
+π(i) 
+
+> θ
+
+(φ(i)|s, b (i))∇θ log π(i) 
+
+> θ
+
+(φ(i)|s, b (i))
+
+Z
+
+> a(i)
+
+φ(i)(a(i))Q(i)([ s, b (i)], a (i))da (i)dφ (i)
+
+=
+
+Z
+
+> a(i)
+
+Z
+
+> φ(i)
+
+π(i) 
+
+> θ
+
+(φ(i)|s, b (i))∇θ log π(i) 
+
+> θ
+
+(φ(i)|s, b (i))φ(i)(a(i))dφ (i) Q(i)([ s, b (i)], a (i))da (i)
+
+=
+
+Z
+
+> a(i)
+
+Z
+
+> φ(i)
+
+∇θ π(i) 
+
+> θ
+
+(φ(i)|s, b (i))φ(i)(a)dφ (i) Q(i)([ s, b (i)], a (i))da (i)
+
+=
+
+Z
+
+> a(i)
+
+Z
+
+> φ(i)
+
+∇θ π(i) 
+
+> θ
+
+(φ(i)|s, b (i)) Pr( a(i)|φ(i))dφ (i) Q(i)([ s, b (i)], a (i))da (i)
+
+=
+
+Z
+
+> a(i)
+
+∇θ
+
+Z
+
+> φ(i)
+
+π(i) 
+
+> θ
+
+(φ(i)|s, b (i)) Pr( a(i) | φ(i))dφ (i)
+
+| {z } 
+
+> =π(i)
+> θ(a(i)|s,b (i))
+
+ Q(i)([ s, b (i)], a (i))da (i)
+
+=
+
+Z
+
+> a(i)
+
+∇θ π(i) 
+
+> θ
+
+(a(i)|s, b (i))Q(i)([ s, b (i)], a (i))da (i)
+
+=
+
+Z
+
+> a(i)
+
+π(i) 
+
+> θ
+
+(a(i)|s, b (i))∇θ log π(i) 
+
+> θ
+
+(a(i)|s, b (i))Q(i)([ s, b (i)], a (i))da (i)
+
+= Ea(i)∼π(i) 
+
+> θ(a(i)|s,b (i))
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(a(i)|s, b (i))Q(i)([ s, b (i)], a (i))
+
+i
+
+The policy structure is now in the familiar form π(i)(a(i) | s, b (i)) which stochastically outputs actions a(i). The derivation shows that a policy in the original form π(i)(φ(i) | s, b (i)) is equiva-lent. This standard policy structure allows for well-defined importance sampling ratios in the PPO objective. We prove our central result: the MMDP policy gradient admits an exact decomposition into a sum of N per-agent terms, each involving only a per-agent score function and a per-agent decentralized critic Q(i) from the AC-BMDP. The decomposition is exact and requires no structural assumption on the joint Q-function. 
+
+G.2 Proof for the Multi-Agent Policy Gradient Decomposition Theorem Theorem 4.2. (Multi-Agent Policy Gradient Decomposition Theorem) 
+
+∇θ J(⃗π θ ) = 1(γ′)N −1
+
+> N
+
+X
+
+> i=1
+
+E [s,b (i)]∼d⃗πγ′ 
+
+> a(i)∼π(i)
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i)
+
+> θ
+
+
+
+a(i) s, b (i)
+
+· Q(i)
+
+[s, b (i)], a (i)i 
+
+.
+
+(3) 
+
+Proof. The proof has two steps: split the AC-BMDP gradient by agent index, then convert from the AC-BMDP to MMDP gradient via a value-equivalence constant. 
+
+Step 1: Per-agent split of the AC-BMDP gradient. By Theorem 4.1, the AC-BMDP policy gradient is 
+
+∇θ JAC (⃗π θ ) = E[s,b (i)]∼dγ′ , a (i)∼π(i) 
+
+> θ(·| s,b (i))
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(a(i)|s, b (i)) · Q(i)([ s, b (i)], a (i))
+
+i
+
+.Reinforcement Learning Journal 2026 The AC-BMDP visitation dAC  
+
+> γ′
+
+is defined over the augmented state [s, b, i ], where the agent index i
+
+cycles deterministically through 1, . . . , N across micro-steps. Only micro-steps τ = tN + ( i − 1) 
+
+have agent index i, so the visitation factors as 
+
+dAC  
+
+> γ′
+
+([ s, b, i ]) = ( γ′)i−1 X
+
+> t≥0
+
+γt Pr 
+
+
+
+st = s, b (i) 
+
+> t
+
+= b |⃗π θ
+
+
+
+. (8) Splitting the AC-BMDP expectation along the deterministic agent-index dimension gives 
+
+∇θ JAC (⃗π θ ) = 
+
+> N
+
+X
+
+> i=1
+
+E[s,b (i)]∼dAC  
+
+> γ′(·,·,i ), a (i)∼π(i)
+> θ
+
+h
+
+∇θ log π(i) 
+
+> θ
+
+(a(i)|s, b (i)) · Q(i)([ s, b (i)], a (i))
+
+i
+
+. (9) 
+
+Step 2: Value equivalence. The AC-BMDP provides non-zero reward only at agent N ’s micro-step, where it equals the MMDP reward rt. Starting from the initial state [s0, ∅, 1] ,
+
+JAC (⃗π θ ) = E
+
+X 
+
+> τ≥0
+
+(γ′)τ RAC 
+
+> τ
+
+ = E
+
+X
+
+> t≥0
+
+(γ′)tN +( N −1) rt
+
+ = ( γ′)N −1J(⃗π θ ),
+
+since (γ′)N = γ. The constant (γ′)N −1 is independent of θ, so ∇θ JAC = ( γ′)N −1∇θ J. Substi-tuting into (9) and dividing by (γ′)N −1 gives (3), with the per-agent visitation dγ′ in the theorem statement understood as the agent-i slice dAC  
+
+> γ′
+
+(·, ·, i ).
+
+Remark on the leading constant. The factor 1/(γ′)N −1 in (3) is a positive scalar independent of 
+
+θ and is absorbed into the effective step size of any first-order or trust-region optimizer. It does not affect the gradient direction or the fixed point of the resulting optimization. 
+
+H Details on Advantage Computation for Agent-Chained Proximal Policy Optimization (ACPPO) 
+
+The advantage can be written as an exponentially-weighted sum over the TD residuals, 
+
+A(1)  
+
+> t
+
+=
+
+> N
+
+X
+
+> j=1
+
+(γ′λ′)j−1ζ(j) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−1ζ(j)
+
+> t+k
+
+A(2)  
+
+> t
+
+=
+
+> N
+
+X
+
+> j=2
+
+(γ′λ′)j−2ζ(j) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−2ζ(j)
+
+> t+k
+
+...
+
+A(N ) 
+
+> t
+
+= ζ(N ) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−N ζ(j)
+
+> t+k
+
+∴ A(i) 
+
+> t
+
+=
+
+> N
+
+X
+
+> j=i
+
+(γ′λ′)j−iζ(j) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−iζ(j)
+
+> t+k
+
+.ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Algorithm 1 Agent-Chained Policy Iteration (ACPI)  
+
+> 1:
+
+Randomly initialize ⃗π =  π(1) , . . . , π (N ) and ⃗ Q =  Q(1) , . . . , Q (N ). 
+
+> 2:
+
+while ⃗π not converged do  
+
+> 3:
+
+while ⃗ Q not converged do  
+
+> 4:
+
+# Policy Evaluation 
+
+> 5:
+
+∀i ∈ { 1, . . . , N − 1}, s, b (i), φ (i),Q(i)([ s, b (i)], φ (i)) ← γ′E b(i+1) =T ([ s,b (i)],φ (i))
+
+> φ(i+1) ∼π(i+1) (·| s,b (i+1) )
+
+h
+
+Q(i+1) 
+
+[s, b (i+1) ], φ (i+1) i 
+
+> 6:
+
+∀s, b (N ),φ (N ),Q(N )([ s, b (N )], φ (N ))
+
+← R
+
+
+
+[s, b (N )], φ (N )
+
++ γ′Es′∼T (·| [s,b (N )],φ (N ))
+
+> φ(1) ∼π(1) (·| s′)
+
+h
+
+Q(1) 
+
+s′, φ (1) i  
+
+> 7:
+
+end while  
+
+> 8:
+
+# Policy Improvement 
+
+> 9:
+
+∀i ∈ { 1, . . . , N }, s, b (i),π(i)(s, b (i)) ← arg max 
+
+> φ(i)
+
+Q(i) 
+
+[s, b (i)], φ (i) 
+
+> 10:
+
+end while 
+
+I Pseudocodes 
+
+We first present the pseudocode for ACPI which is defined directly on the action space consisting of 1-step policies. φ(i). This is a straightforward policy iteration procedure defined on the AC-BMDP. As we showed in Corollary F.4, the AC-BMDP has a special structure which ensures that it is suf-ficient to consider the (finite) space of deterministic action distributions φ(i) for finding an optimal policy. Thus, we can also define an equivalent policy iteration procedure over the action space δa(i)
+
+(Algorithm 2). Finally, we present ACPO which is a practical algorithm that aims to approximate ACPI via the PPO objective. 
+
+J Agent-Chained Twin Delayed Deterministic Policy Gradient (ACTD3) 
+
+We instantiate the ACPO framework with the Twin Delayed DDPG (TD3) algorithm (Fujimoto et al., 2018) for continuous action spaces. In AC-TD3, each agent i maintains an actor π(i) 
+
+> θ
+
+that maps its augmented state [s, b (i)] to a continuous action, along with a pair of twin critics Q(i)
+
+> ψ, 1
+
+, Q (i)
+
+> ψ, 2
+
+that follow the agent-chained structure from Definition 3.2. Target networks ¯π(i) 
+
+> θ
+
+and ¯Q(i)
+
+> ψ, 1
+
+, ¯Q(i) 
+
+> ψ, 2
+
+are maintained via Polyak averaging. 
+
+The role of φ(i) (unnoised actions) vs. a(i) (noised actions). Since TD3 policies are determinis-tic, the action distribution φ(i) = π(i) 
+
+> θ
+
+(s, b (i)) is simply the deterministic output of the actor network (i.e., the unnoised action). Independent Gaussian noise ϵ(i) ∼ N (0 , σ 2I) is added privately for exploration: 
+
+a(i) = φ(i) + ϵ(i),Reinforcement Learning Journal 2026 
+
+Algorithm 2 Agent-Chained Policy Iteration (Deterministic action distribution δa(i) )
+
+1: Randomly initialize ⃗π =  π(1) , . . . , π (N ) and ⃗ Q =  Q(1) , . . . , Q (N ).
+
+2: while ⃗π not converged do 
+
+3: while ⃗ Q not converged do 
+
+4: # Policy Evaluation 
+
+5: 
+
+∀i ∈ { 1, . . . , N − 1}, s,⃗ a <i , a (i),Q(i)([ s, b (i) =⃗a <i ], δ a(i) ) ← γ′Eb(i+1) =T ([ s,b (i)=⃗a <i ],δ a(i) ) 
+
+> δa(i+1) ∼π(i+1) (·| s,b (i+1) )
+
+h
+
+Q(i+1) 
+
+[s, b (i+1) ], δ a(i+1) 
+
+i 
+
+6: 
+
+∀s,⃗ a <N , a (N ),Q(N )([ s, b (N ) =⃗a <N ], δ a(N ) )
+
+← R
+
+
+
+[s,⃗ a <N ], a (N )
+
++ γ′Es′∼T (·| [s,b (N )=⃗a <N ],δ a(N ) ) 
+
+> δa(1) ∼π(1) (·| s′)
+
+h
+
+Q(1) (s′, δ a(1) )
+
+i
+
+7: end while 
+
+8: # Policy Improvement 
+
+9: 
+
+∀i ∈ { 1, . . . , N },s,⃗ a <i ,π(i)(s,⃗ a <i ) ← arg max 
+
+> a(i)
+
+Q(i)  [s,⃗ a <i ], δ a(i)
+
+
+
+10: end while 
+
+where a(i) is the noised action that interacts with the environment. Since the noise is private and independent across agents, only φ(i) is publicly available and used to construct the beliefs of subse-quent agents: b(i+1) = [ b(i), φ (i)].
+
+Critic objectives. Following the agent-chained Bellman operators (Definition 3.2), the critic loss for each agent i uses a clipped double-Q target ¯Q(i+1) = min( ¯Q(i+1)  
+
+> ψ, 1
+
+, ¯Q(i+1)  
+
+> ψ, 2
+
+). The 1-step targets are: for i = 1 , . . . , N − 1,
+
+J(i) 
+
+> Q
+
+(ψ) = E (s,b (i),φ (i))∼D  
+
+> φ(i+1) ∼π(i+1)
+> θ
+
+(·| s,b (i),φ (i))
+
+
+
+Q(i) 
+
+> ψ
+
+([ s, b (i)], φ (i)) − y(i)2
+
+s.t. y(i) = γ′ ¯Q(i+1) ([ s, b (i), φ (i)], ˜φ(i+1) )
+
+J(N ) 
+
+> Q
+
+(ψ) = E(s,b (N ),φ (N ),r,s ′)∼D  
+
+> φ(1) ′
+> ∼π(1)
+> θ
+
+(·| s′)
+
+
+
+Q(N ) 
+
+> ψ
+
+([ s, b (N )], φ (N )) − y(N )2
+
+s.t. y(N ) = r + γ′ ¯Q(1) ([ s′], ˜φ(1) ′)
+
+For practical implementations, it is often useful to consider k-step returns. 
+
+J(i) 
+
+> Q
+
+(ψ) = E      
+
+> st,b (i)
+> t,a (i)
+> t,{rt+j}kj=0 ,s t+k+1
+> 
+> ∼D ⃗φt+k+1 ∼⃗πθ(·| st+k+1 )
+
+
+
+Q(i) 
+
+> ψ
+
+([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+) − (γ′)N −iy(i)
+
+> t
+
+2
+
+s.t. y(i) 
+
+> t
+
+= rt + γr t+1 + · · · + γkrt+k + γk+1 Q(i+1)  
+
+> ψ
+
+([ st+k+1 , b (i)
+
+> t+k+1
+
+], φ (i+1) 
+
+> t+k+1
+
+)ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+Algorithm 3 Agent-Chained Policy Proximal Optimization (ACPPO)  
+
+> 1:
+
+Initialize : Actor networks θ0 = [ θ(1) 0 , . . . , θ (N )0 ], Critic networks ⃗ ψ0 = [ ψ(1) 0 , . . . , ψ (N )0 ], and approximate policies ⃗ ϕ0 = [ ϕ(2) 0 , . . . , ϕ (N )0 ]. 
+
+> 2:
+
+while t ≤ tmax do  
+
+> 3:
+
+Compute beliefs autoregressively: b(i) ← [π(1)  
+
+> θ
+
+(s), . . . , π (i−1)  
+
+> θ
+
+(s, b (i−1) )] , ∀i = 1 , . . . N  
+
+> 4:
+
+Collect transitions 
+
+
+
+st, {a(i) 
+
+> t
+
+}Ni=1 , r t, s t+1 
+
+
+
+by running the joint policy ⃗π θk . 
+
+> 5:
+
+Compute advantages after each episode: ∀i = 1 , . . . , N ,
+
+A(i) 
+
+> t
+
+=
+
+> N
+
+X
+
+> j=i
+
+(γ′λ′)j−iζ(j) 
+
+> t
+
++
+
+> ∞
+
+X
+
+> k=1
+> N
+
+X
+
+> j=1
+
+(γ′λ′)kN +j−iζ(j) 
+
+> t+k
+> 6:
+
+Update actors with the PPO-Clip objective: ∀i = 1 . . . , N, 
+
+Ea(i)   
+
+> t∼π(i)
+> θold (·| st,b (i)
+> t)
+
+[min( w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+)A(i) 
+
+> t
+
+, clip (w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+), 1 − ϵ, 1 + ϵ)A(i) 
+
+> t
+
+)] 
+
+where w(i)(st, b (i) 
+
+> t
+
+, a (i) 
+
+> t
+
+) := π(i)       
+
+> θ(a(i)
+> t|st,b (i)
+> t)
+> π(i)
+> θold (a(i)
+> t|st,b (i)
+> t)
+
+. 
+
+> 7:
+
+Update decentralized critics: ∀i = 1 . . . , N, ψ(i) 
+
+> new
+
+= arg min 
+
+> ψ(i)
+
+E
+
+
+
+V (i)
+
+> ψ(i)
+
+
+
+st, b (i)
+
+> t
+
+
+
+− ˆR(i)
+
+> t
+
+2 
+
+> 8:
+
+# Action Belief Network Training (Optional)  
+
+> 9:
+
+for each agent i = 2 , . . . , N do  
+
+> 10:
+
+for each preceding agent j < i do  
+
+> 11:
+
+Compute true distribution 
+
+φ(j) 
+
+> t
+
+= π(j) 
+
+> θ
+
+(· | st, b (j) 
+
+> t
+
+) 
+
+> 12:
+
+Compute predicted distribution 
+
+ˆφ(j) 
+
+> t
+
+= ˆ π(j) 
+
+> ϕ
+
+(· | st, b (j) 
+
+> t
+
+) 
+
+> 13:
+
+Update ˆπ(j) 
+
+> ϕ
+
+by minimizing 
+
+L(j) 
+
+> KL
+
+= DKL (φ(j) 
+
+> t
+
+∥ ˆφ(j) 
+
+> t
+
+) 
+
+> 14:
+
+end for  
+
+> 15:
+
+end for  
+
+> 16:
+
+end while 
+
+We find that using k-step returns in this way works better in practice as each agent now has a dense reward signal in the targets (rather than only the last agent). We note that γ denotes the discount factor in the original MMDP and γ′ = γ1/N . The (γ′)N −i discount is to adjust the micro step to match with the last agent. For example, for agent 1, the reward given at the current timestep is 
+
+(γ′)N −1rt.
+
+Actor objective and independent updates. Each actor is trained to maximize its own critic, with gradients flowing through the policy: 
+
+J(i) 
+
+> π
+
+(θ) = Es,b (i)∼D 
+
+h
+
+Q(i)
+
+> ψ, 1
+
+
+
+[s, b (i)], π (i) 
+
+> θ
+
+(s, b (i))
+
+i Reinforcement Learning Journal 2026 Since each agent has its own decentralized critic, all N actor updates can be performed indepen-dently (unlike sequential methods such as HATD3). Following standard TD3, actor and target net-work updates are delayed, occurring once every d critic updates. 
+
+Algorithm 4 Agent-Chained TD3 (ACTD3)  
+
+> 1:
+
+Input : N agents, discount γ, Polyak rate ρ, target noise σtarget , noise clip c, k-step return horizon 
+
+k 
+
+> 2:
+
+Initialize : Actor networks π(i) 
+
+> θ
+
+with parameters θ(i), twin critics Q(i)
+
+> ψ, 1
+
+, Q (i) 
+
+> ψ, 2
+
+with parameters 
+
+ψ(i), target networks ¯π(i) 
+
+> θ
+
+← π(i) 
+
+> θ
+
+, ¯Q(i) 
+
+> ψ
+
+← Q(i) 
+
+> ψ
+
+, replay buffer D 
+
+> 3:
+
+Set serialized discount γ′ ← γ1/N  
+
+> 4:
+
+for each environment step do  
+
+> 5:
+
+# Data Collection  
+
+> 6:
+
+for each agent i = 1 , . . . , N in parallel do  
+
+> 7:
+
+Compute beliefs autoregressively: b(i) ← [π(1)  
+
+> θ
+
+(s), . . . , π (i−1)  
+
+> θ
+
+(s, b (i−1) )]  
+
+> 8:
+
+Compute unnoised action: φ(i) ← π(i) 
+
+> θ
+
+(s, b (i)) 
+
+> 9:
+
+Compute noised action: a(i) ← φ(i) + ϵ(i), ϵ(i) ∼ N (0 , σ 2I) 
+
+> 10:
+
+end for  
+
+> 11:
+
+Execute joint action ⃗a = [ a (1) , . . . , a (N )], observe r, s ′ 
+
+> 12:
+
+Store (s,⃗ a, r, s ′) in D 
+
+> 13: 14:
+
+# Training  
+
+> 15:
+
+Sample mini-batch {(st,⃗ a t, {rt+j }kj=0 , s t+k+1 )} from D 
+
+> 16: 17:
+
+# Critic update  
+
+> 18:
+
+for each agent i = 1 , . . . , N in parallel do  
+
+> 19:
+
+Compute smoothed target action: ˜φ(i+1) ← clip ( ¯ φ(i+1) + clip (ϵ, −c, c ), a low , a high ) 
+
+> 20:
+
+Compute k-step target:  
+
+> 21:
+
+y(i) 
+
+> t
+
+← Pkj=0 γj rt+j + γk+1 min m ¯Q(i+1)  
+
+> ψ,m
+
+([ st+k+1 , b (i+1) 
+
+> t+k+1
+
+], ˜φ(i+1) ) 
+
+> 22:
+
+Scale target: ˆy(i) 
+
+> t
+
+← (γ′)N −i · y(i) 
+
+> t
+> 23:
+
+Update critics: ∇ψ(i)
+
+P2 
+
+> m=1
+
+Q(i)
+
+> ψ,m
+
+([ st, b (i) 
+
+> t
+
+], φ (i) 
+
+> t
+
+) − ˆy(i) 
+
+> t
+> 2
+> 24:
+
+end for  
+
+> 25: 26:
+
+# Actor update (all agents in parallel)  
+
+> 27:
+
+for each agent i = 1 , . . . , N in parallel do  
+
+> 28:
+
+∇θ(i) E
+
+h
+
+Q(i)
+
+> ψ, 1
+
+([ s, b (i)], π (i) 
+
+> θ
+
+(s, b (i))) 
+
+i 
+
+> 29:
+
+end for  
+
+> 30:
+
+# Soft update all target networks  
+
+> 31:
+
+for each agent i = 1 , . . . , N do  
+
+> 32:
+
+¯θ(i) ← ρθ (i) + (1 − ρ)¯θ(i), ¯ψ(i) ← ρψ (i) + (1 − ρ) ¯ψ(i) 
+
+> 33:
+
+end for  
+
+> 34:
+
+end for ACPO: Agent-Chained Policy Optimization for Multi-Agent Reinforcement Learning 
+
+K Learning Curve for SMACv2 
+
+Figure 7: Return for SMACv2 with mean and standard error over 5 seeds. 
+
+L Off-Policy Comparison 0 2 4 6 8 10                       
+
+> Steps (10 6)
+> 1000
+> 2000
+> 3000
+> 4000
+> Episode Return
+> Walker2d 2 × 3
+> 0246810
+> Steps (10 6)
+> 2500
+> 5000
+> 7500
+> 10000
+> HalfCheetah 2 × 3
+> 0246810
+> Steps (10 6)
+> 2000
+> 4000
+> 6000
+> 8000
+> HalfCheetah 6 × 1
+> 0246810
+> Steps (10 6)
+> 0
+> 1000
+> 2000
+> 3000
+> 4000
+> Ant 2 × 4
+> 0246810
+> Steps (10 6)
+> 0
+> 1000
+> 2000
+> 3000
+> 4000
+> Ant 4 × 2
+> ACTD3 (Ours) HATD3 MADDPG
+
+Figure 8: Comparison of Off-Policy Algorithms on MA-MuJoCo (Gymnasium). We further evaluate an off-policy variant of ACPO, referred to as ACTD3, following the on-policy experiments. ACTD3 applies the agent-chaining mechanism to TD3 (Fujimoto et al., 2018). As off-policy baselines, we compare against MADDPG (Lowe et al., 2017) and HATD3 (Zhong et al., 2024). As shown in Figure 8, ACTD3 achieves performance comparable to or better than the base-line methods across different tasks. The performance gap is the highest for Ant 4 × 2 which is the most challenging domain. We note that in HalfCheetah tasks, there is a substantial gap in episode returns between the on-policy and off-policy experiments. Similar discrepancies have been reported in prior works (Christodoulou, 2019; OpenAI, 2018) in single-agent experiments on MuJoCo. We attribute this discrepancy to the fundamental differences between on-policy and off-policy learning paradigms. On-policy methods update policies using trajectories generated by the current policy, whereas off-policy methods learn from transitions sampled from a replay buffer containing experiences collected by past policies. The ability to reuse past experiences enables off-policy methods to perform multiple gradient updates per environment interaction, which often results in better sample complexity. Finally, we note that MA-MuJoCo (Gymnasium) is a more recent benchmark in comparison to MA-MuJoCo (Gym) where the underlying physics engine uses Gymnasium/MuJoCo-v5 and Gym/MuJoCo-v2, respectively. As previous work such as Zhong et al. (2024) used the older version of MA-MuJoCo (Gym), the results from their paper cannot be directly compared to ours. 
+
+M Wall-Clock Training Time 
+
+Runtime Statistics In Figure 9, we show the wall-clock training time of running MAPPO, HAPPO, HATRPO and ACPO on RWARE for 5M timesteps. With the number of agents increasing from 2 to 12, the runtime of ACPO remains comparable to MAPPO, and is substantially faster than alternating policy optimization methods such as HAPPO and HATRPO, which require alternately updating one agent at a time. Overall, ACPO significantly outperforms baselines in terms of return with only minimal additional computational overhead compared to MAPPO. Reinforcement Learning Journal 2026 2-Easy 4-Medium 8-Hard 12-Hard    
+
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Time (h)
+> RWARE Small
+> ACPPO (ours) MAPPO HAPPO HATRPO
+
+Figure 9: Wall-Clock Training Time on RWARE (5M timesteps) 
+
+N Hyperparameter Details 
+
+For a fair comparison, we set the network type (MLP or GRU) and hidden layer size to be consistent across all algorithms. The total number of parameters used by ACPPO are set to be similar to that of other algorithms. The design choices follow the experimental setups of Zhong et al. (2024) and Papoudakis et al. (2021b). The discount factor γ is fixed, as it is inherent to the MMDP rather than a tunable hyperparameter. In contrast ACPO employs serialization, where the advantage is computed using γ′ = γ1/N .Table 5: Common Parameters for Baseline Algorithms                 
+
+> Parameter RWARE MA-MuJoCo (on-policy) MA-MuJoCo (off-policy) SMACv2 Network MLP MLP MLP GRU Hidden Sizes (48) [128, 256] [256, 256] [128, 128] [64]
+> γ0.99 0.99 0.99 0.99
+
+Table 6: Common Parameters for ACPO                     
+
+> Parameter RWARE MA-MuJoCo (on-policy) MA-MuJoCo (off-policy) SMACv2 Network MLP MLP MLP GRU Hidden Sizes [128, 128] [256, 256] [128, 128] [48] Hidden Sizes (Action Belief Network) [64, 64] −−[48, 48]
+> γ0.99 0.99 0.99 0.99
+
+For all baselines, we use the reported hyperparameters from Papoudakis et al. (2021b) for RWARE, Ellis et al. (2023) for SMACv2 and tune additional hyperparameters for HAPPO and HATRPO for MA-MuJoCo (Gymnasium) on top of the default hyperparameters from Zhong et al. (2024) for MA-MuJoCo (Gym). 
+
+O Computational Resources 
+
+For RWARE experiments, we utilized a single NVIDIA GeForce RTX 3090 graphics processing unit (GPU). The training times varied across algorithms and the number of agents. For the 2,4,8, and 12-agent environments, ACPO took 14H, 19H, 20H and 23H, respectively. The corresponding times were MAPPO (4H, 6H, 13H, 16H), HAPPO (16H, 32H, 66H, 82H) and HATRPO (18H, 30H, 59H, 90H).

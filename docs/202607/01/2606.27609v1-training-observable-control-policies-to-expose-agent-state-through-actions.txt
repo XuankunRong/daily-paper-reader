@@ -1,0 +1,617 @@
+Title: Training Observable Control Policies to Expose Agent State Through Actions
+
+URL Source: https://arxiv.org/pdf/2606.27609v1
+
+Published Time: Mon, 29 Jun 2026 00:14:21 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# Training Observable Control Policies to Expose Agent State Through Actions ‡ §
+
+Andres Enriquez Fernandez ∗ and John J. Bird †
+
+The University of Texas at El Paso, El Paso, TX, 79968 
+
+Physical or operational constraints often impose communications limitations on autonomous agents. Such limitations complicate monitoring or multiagent coordination. Even when strong communications are absent, some information may still be available. The remainder of the relevant agent state may be reconstructed via estimation. The actions taken by an agent are a potential source of information – as the agent interacts with the environment, these actions may be observed even in the absence of explicit communication. We investigate using actions to estimate the state of an agent, using reinforcement learning to develop policies which make the estimation problem more tractable. Policy observability is encouraged through the training reward and is analyzed using simulation of the trained agent. In an aircraft tracking prob-lem a policy with enhanced observability is found that has minimal impact on nominal task performance. 
+
+## I. Introduction 
+
+Effective collaboration between cooperating agents (including autonomous to autonomous agents and human to autonomous agent coordination) typically depends on a mutual understanding of at least a subset of the states of each agent. This is often achieved via direct communication that enables complex behavior, coordination, environmental information sharing, and sub-task learning [1, 2]. Reliability and availability of communications is not assured however. Communications limitations may appear at the channel level as delays, drops, and bandwidth limitations. Limited or absent direct communication can also occur because of physical or operational considerations. The environment may inhibit communication (e.g. underwater), the operation may be compromised by excessive communication, or the agents may not be equipped with common hardware or language for direct communication. Casting the problem as a partially observable Markov Decision Process (POMDP) offers one approach to resolve uncertainty introduced when states are not directly communicated. Under this formulation, the state vector of every 
+
+> ‡
+
+Estimating System State from the Actions of a Reinforcement Learning Agent, AIAA 2023-2657, Session: Autonomy V, Published Online:19 Jan 2023https://doi.org/10.2514/6.2023-2657, AIAA Scitech 2023 Forum, 23-27 January 2023, National Harbor, MD & Online 
+
+> §
+
+Enabling Inter-Vehicle Coordination Through Observable Control Policies, AIAA 2024-0989, Session: Autonomy, Published Online: 4 Jan 2024https://doi.org/10.2514/6.2024-0989, AIAA Scitech 2024 Forum, 8-12 January 2024, Orlando, FL 
+
+> ∗
+
+Graduate Research Assistant, Department of Aerospace and Mechanical Engineering, 500 W University, El Paso, TX 79968, aen-riquezf@miners.utep.edu, AIAA Member. 
+
+> †
+
+Assistant Professor, Department of Aerospace and Mechanical Engineering, 500 W University, El Paso, TX 79968, AIAA Member. 
+
+> arXiv:2606.27609v1 [cs.LG] 25 Jun 2026
+
+agent includes the agent’s belief of the state of the other agents [3], and the agents are rewarded for their collective actions [4]. This couples the decision-making model to the collective actions of all the agents. One implication of this structure is that changes to the task of even a single agent requires retraining all the agents, limiting practicality in a federated system. Another practical constraint is that the POMDP approach scales poorly as the dimension of joint action, state, and observation spaces grow exponentially with the number of agents [5]. When coordination is approached as a POMDP, an observer is implicitly developed in the agent through the training process [6]. An alternative which “decouples” the agents is to adopt the observer-controller structure common in control systems, explicitly formulating an estimator rather than training it implicitly through the expanded agent state. Here, the estimator assimilates a subset of the available information to infer the needed states of other agents, and enable coordination [7]. One option for the observations are the control actions taken by agents. These observations have the advantage that an observation model is already defined (the control policy), and that in some cases they may be visible through direct observation without explicit communication; in effect they may be “broadcast” for free. Informal examples of such implicit information sharing through the observation of actions occur in a number of contexts. For example, a ground vehicle rapidly braking or changing lanes can indicate an obstacle in the road, an aircraft observed to make a course change in the presence of nearby traffic has likely detected it visually, and an aircraft which deploys its undercarriage is likely near an airport. Enabling this implicit communication, and increasing its efficiency can enable coordination between autonomous agents in communications limited scenarios. It may also enhance the comfort and safety of mixed human-autonomous operations as human agents are more likely to understand what the agent is doing. To improve observability of an agent’s control policy, we formulate an estimator which uses as observations the actions chosen by a control policy. We train the policy to reward the estimator’s performance while the agent performs a target tracking task. The observable policy is compared to one trained only to perform the tracking task, comparing task-only performance, estimate quality, and a measure of observability. While one objective of this work is to enable coordination in communication-limited scenarios, we focus here on estimating the state of a single agent given only a limited stream of observations from that agent. If the state can be determined reliably, then collaborative control policies can be defined using the estimated states [8, 9]. The result is a scenario in which agents can be trained and updated separately, provided their control policies can be shared with other agents prior to a task. Contributions of this work include: 1) we implement an estimator for an agent’s state that uses only its control policy output as observations, 2) we improve observability of control policies using reinforcement learning, 3) we demonstrate through singular value decomposition analysis of the observability matrix and through Monte Carlo simulation that the resulting policies improve estimator performance with minimal impact on the nominal task performance. Figure 1 illustrates our test problem – a control policy must keep a fixed-wing aircraft near a target point by 2xrelative 
+
+yrelative 
+
+φφ~π(s)observed steering command obtained from control policy estimate vehicle position and velocity relative to objective xrelative 
+
+yrelative 
+
+Fig. 1 The example problem used to explore training observable control policies. The estimator must determine the agent’s state (position and velocity relative to the target) with observation only of the steering command, 𝜙 .
+
+controlling the aircraft bank angle. A second agent tries to determine the first agent’s position (𝑥 𝑟 𝑒𝑙𝑎𝑡𝑖𝑣𝑒 , 𝑦 𝑟 𝑒𝑙𝑎𝑡𝑖𝑣𝑒 ) and velocity ( ¤ 𝑥 𝑟 𝑒𝑙𝑎𝑡𝑖𝑣𝑒 , ¤𝑦 𝑟 𝑒𝑙𝑎𝑡𝑖𝑣𝑒 ) relative to the target point using as an observation only the steering command selected by the first agent. 
+
+## II. Agent Definition 
+
+Decision-making agents can broadly be described with a control policy – a mapping that associates the agent’s state (which can include both physical state and the internal information state of the agent) with a control action to be executed. The agent has the objective of steering the system from some state s𝑘 , at step 𝑘 , to a future state or set of states {s𝑜𝑏 𝑗𝑒𝑐𝑡𝑖𝑣𝑒 
+
+}. This model can describe a wide variety of systems, from classical control systems to human operators [10]. Control policies can be constructed via direct mathematical analysis or data-driven approaches, and can accommodate both deterministic and probabilistic agents and control approaches. We specifically focus on probabilistic agents, which associate states with distributions over actions: 
+
+𝜋 : s𝑘 → 𝑝 (a) ∀ a ∈ A( s𝑘 )
+
+where 𝜋 is the agent’s policy function, a is an action, 𝑝 (a) is the probability density function associated with the actions, and A( s𝑘 ) is the set of all actions which are permissible in state s𝑘 . The agent samples an action ˜ a ∼ 𝑝 (a) which is executed during each decision interval. Thus, for continuous states and actions the control is a stochastic function that maps R𝑛 → R𝑚 with 𝑛 the dimension of the state space and 𝑚 the dimension of the action space. We represent the policy function with a neural network that we train using reinforcement learning and a simulation environment. The input of the neural network is the state of the system, and the outputs are parameters of a pseudocontrol distribution which is sampled to obtain control variables. The pseudocontrol to control mapping is given by: 
+
+a𝑖 = tanh (u𝑖 )a𝑖,𝑠𝑎𝑡𝑢𝑟 𝑎𝑡𝑖𝑜𝑛 (1) where u𝑖 are elements of the sampled pseudocontrol vector which are multiplied by the control limits, a𝑖,𝑠𝑎𝑡𝑢𝑟 𝑎𝑡𝑖𝑜𝑛 .3The sampled control actions influence the evolution of the agent’s dynamics both during training and evaluation. The sampled actions are also made available to an estimation system that aims to estimate the state of the agent. 
+
+## III. Estimator and Reward Embedding 
+
+We formulate an estimator using the Unscented Kalman filter (UKF) [11], which is well suited to handle the nonlinearities in the system dynamics and control policies. The filter propagates the state estimate forward in time using known dynamics and the expected control action while assimilating the agent’s pseudocontrol actions ˜ u as observations. This pseudocontrol is sampled from the agent’s policy output distribution given its current state s𝑘 . The control policy can thus be interpreted as the filter’s measurement function, and the action distribution at each state characterizes the observation noise. The measurement update innovation is thus the difference between the actual and expected control action at the expected state: 
+
+z = ( ˜u − ˆu)
+
+= ( ˜u − E(u)) 
+
+= ( ˜u − E(𝜋 (ˆs𝑘 )) 
+
+where u is a random variable distributed according to the policy function, ˜ u is the observed realization of the action distribution, and ˆ u is the expectation of the action at the current state estimate. We assume that the estimator has a priori knowledge of the system dynamics and the control policy. However, at run time the only information available to the estimator is the agent’s pseudocontrol actions. Prior tests with this filter formulation [12] show that the estimator does not perform well for all policies. To resolve this challenge, we embed the estimator into the training environment, simulating the evolution of the estimated state as well as the actual state of the system. The estimator performance is then available as a reward signal to augment the task-only reward: 
+
+𝑟 = 𝑟 𝑡 𝑎𝑠𝑘 −𝑜𝑛𝑙𝑦 + R ( ˆ𝑥, 𝑥 ) (2) where 𝑟 is the reward for a given task and R ( ˆ𝑥, 𝑥 ) is a reward function that promotes actions which drive the estimated state to the true state. The policy now seeks to maximize task performance as well as select actions which improve estimator performance. Note that the sum allows equivalent (or greater) total reward to be achieved even if a policy results in a reduction in the task-only reward. Thus, improving the estimator performance may come at a cost to the performance on the objective task. 4A. Observability 
+
+The performance of an estimator can be diagnosed through the distribution of the error between the expected and true state. While this provides a very direct measure performance, the true state must be available. Additionally, determining why the source of error may be difficult as it can arise from sensor quality, system error, or because the available observations provide poor observability of the state. The question of observability is important because it places mathematical constraints on the performance of any estimator regardless of structure or algorithm. While observability for nonlinear systems is difficult to compute analytically, we can linearize a discrete nonlinear system: 
+
+¤𝑥 𝑘 = 𝑓 𝑘 −1 (𝑥 𝑘 −1)
+
+𝑦 𝑘 = ℎ(𝑥 𝑘 )
+
+using Taylor series approximation about state 𝑥 𝑘 −1 for the state equation and about 𝑥 𝑘 for the measurement model equation: 
+
+𝑥 𝑘 ≈ 𝑓 𝑘 −1 (𝑥 𝑘 −1) + 𝐴 𝑘 −1 (𝑥 − 𝑥 𝑘 −1)
+
+𝑦 𝑘 ≈ ℎ(𝑥 𝑘 ) + 𝐶 (𝑥 − 𝑥 𝑘 )
+
+where 𝐴 𝑘 −1 = 𝜕 𝑓 𝑘 −1
+
+𝜕𝑥 𝑥 𝑘 −1
+
+and 𝐶 = 𝜕 ℎ 𝑘 
+
+𝜕𝑥 𝑥 𝑘 
+
+. At each state, an approximate observability matrix can be computed. 
+
+O𝑟 =
+
+[
+
+𝐶 ⊺ 
+
+> 𝑟
+
+(𝐶 𝑟 𝐴 𝑟 )⊺ (𝐶 𝑟 𝐴 2 
+
+> 𝑟
+
+)⊺ . . . (𝐶 𝑟 𝐴 𝑛 −1 
+
+> 𝑟
+
+)⊺
+
+]⊺
+
+(3) where 𝐶 𝑟 is a linear approximation to the observation model, computed by taking the gradient of the nonlinear observation model with respect to the state vector at time 𝑟 , 𝐴 is analogously, a linearization of the nonlinear system dynamics at time 𝑟 , and 𝑛 is the dimension of the state vector. Observability at time 𝑟 can be assessed through the singular values of O𝑟 . In the linear case, this observability assessment is definitive – if the smallest singular values of 
+
+O𝑟 are close to zero, then some directions in the state-space are not observable. In the nonlinear case, the observable subspace can vary depending on the state; if the observable subspace evolves such that it covers the full state-space before information about the system degrades, the system can be overall observable in a dynamic sense [13]. The observability of a sequence of states {s1, s2, . . . , s𝑟 } can be approximately evaluated through the stripped observability matrix (SOM) [14]. 
+
+O𝑠 (𝑟 ) =
+
+[
+
+O⊺ 
+
+> 1
+
+O⊺ 
+
+> 2
+
+. . . O⊺
+
+> 𝑟
+
+]⊺
+
+(4) 5Agent RL-Policy 
+
+# Estimator 
+
+# Dynamics 
+
+# Reward Function Simulation 
+
+Training Environment 
+
+# Time Update 
+
+# Measurement Update 
+
+> New State action Observation, Observation Model
+
+Fig. 2 A control policy used to generate steering actions is trained using reinforcement learning. As the control is used to estimate the agent’s state, this policy also forms the estimator’s measurement function. 
+
+where O𝑟 is the approximate observability matrix, obtained by linearizing the system at each time step as described in Equation 3. Observability can be approximately assessed for the state trajectory through the singular values of O𝑠 . This measure of observability can be used to explore the impact that rewarding estimator performance has on the control policy. 
+
+## IV. Simulation Experiments 
+
+We aim to produce a control policy (observation model) that allows the agent state to be reconstructed from observations of the control actions. To accomplish this we train a control policy in an aircraft tracking task, explicitly including a measure of the estimator performance in the reward function. We also use a task-only policy trained with a reward function concerned only with the tracking task. Using simulations of agents following both policies we can evaluate the impact of rewarding estimator performance by comparing nominal task performance, estimator error, and measures of system observability. Figure 2 summarizes the general connections between the agent training, the system dynamics, and the estimator. In both training and evaluation, the estimator is implemented using the agent’s system dynamics, the sampled pseudocontrol actions ˜ u as observations, and the learned policy 𝜋 , as an observation model. 
+
+A. Aircraft Goal Point Tracking 
+
+We adopt a simple problem where a fixed-wing UAS must stay near a target on the ground. This task is representative of missions including persistent surveillance, environmental or scientific monitoring, and communication relay. Since the aircraft cannot hover, it must continuously maneuver to remain close to the target. Assuming level flight and 6neglecting the rotational dynamics, the aircraft can be modeled as a unicycle kinematic model with states: 
+
+x =
+
+[
+
+𝑥 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 𝑦 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 𝑉 𝜓 
+
+]⊺
+
+where 𝑥 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 and 𝑦 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 are the aircraft planar position states, 𝑉 is the aircraft inertial speed, and 𝜓 is the aircraft heading angle. The system dynamic equations for simulating the aircraft are given by: 
+
+𝜕 x
+
+𝜕𝑡 =
+
+
+
+𝑉 cos (𝜓 )
+
+𝑉 sin (𝜓 )
+
+𝑢 𝑎 𝑔 tan (𝑢 𝜙 )
+
+> 𝑉
+
+
+
+where 𝑢 𝑎 is the speed rate of change command (set to zero for a constant-speed aircraft), 𝑢 𝜙 is the bank angle command, and 𝑔 is the acceleration due to gravity. We assume steady turns and that the aircraft roll dynamics are fast, allowing the unicycle turn rate to be expressed as a bank angle which is more natural for fixed-wing aircraft (and which is more readily observed externally). The decision state of the agent is the relative aircraft position and velocity to the target. For this study, the target is placed at the center of the environment (0,0) with zero velocity and the agent is set to a constant velocity. The agent state is thus directly related to the aircraft state by: 
+
+s =
+
+
+
+𝑥 𝑦 𝑣 𝑥 
+
+𝑣 𝑦 
+
+
+
+=
+
+
+
+𝑥 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 − 𝑥 𝑡 𝑎𝑟 𝑔𝑒𝑡 
+
+𝑦 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 − 𝑦 𝑡 𝑎𝑟 𝑔𝑒𝑡 
+
+𝑉 cos (𝜓 ) − 𝑣 𝑥 𝑡 𝑎𝑟𝑔𝑒𝑡 
+
+𝑉 sin (𝜓 ) − 𝑣 𝑦 𝑡 𝑎𝑟𝑔𝑒𝑡 
+
+
+
+=
+
+
+
+𝑥 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 
+
+𝑦 𝑎𝑖𝑟 𝑐𝑟 𝑎 𝑓 𝑡 
+
+𝑉 cos (𝜓 )
+
+𝑉 sin (𝜓 )
+
+
+
+(5) where 𝑥 and 𝑦 are the position components relative to the target, 𝑣 𝑥 and 𝑣 𝑦 are the aircraft relative velocity components to the target, and 𝜓 is the aircraft heading angle. The control policy takes the agent state as input and outputs a corresponding bank angle 𝑢 𝜙 to control the aircraft. While it is possible to use the same state for simulation and the decision agent, it can be advantageous to distinguish between them. Frequently, the state-space required for simulation and that used for control differ. Here, the unicycle model captures the non-holonomic nature of the fixed-wing directional dynamics for simulation. However, for target tracking the relative position and velocity of the aircraft to the target is a more straightforward state definition. Defining the agent state in this way also avoids discontinuities in the agent’s state-space when heading angles are near −𝜋 or 𝜋 . The utility of distinguishing between the simulation and 7agent state becomes especially clear when considering that this policy could be used to provide navigation guidance to a six degree of freedom simulation. 
+
+B. Agent Formulation and Training 
+
+The agent’s network architecture consists of an input layer, one 256-neuron hidden layer, and an output layer. The dimension of the input is equal to that of the agent’s state. The pseudocontrol distribution is a Gaussian whose mean 
+
+𝜇 pseudo , is obtained from the output of the policy network. In principle the variance could also be predicted by the network, but in practice this often resulted in very noisy control and poor estimator performance. To avoid this noisy control, while ensuring adequate exploration of the policy space, we set 𝜎 of this distribution to 𝜎 pseudo = arctanh ( 5◦ 
+
+> 30 ◦
+
+)
+
+where 30 ◦ is the maximum allowed bank angle and 5 ◦ is the specified control action standard deviation related through Equation 1. The pseudocontrol distribution is then sampled, passed through a hyperbolic tangent function that maps its value to a range (-1,1), the output of which is scaled by the control limit, and used to step the agent dynamics. The control objective in this formulation must be introduced through the reward function, which is designed to be large near the target, and decaying with range. We implement two reward functions, a task-only reward that aims to keep the aircraft near the target and an augmented reward that adds a term for estimator performance as outlined in Equation 7. 
+
+1. Task-only Reward 
+
+We train a task-only policy using a reward which decays exponentially with distance between the aircraft position and the target. 
+
+𝑟 task −only = exp 
+
+(
+
+− 𝑑 2
+
+𝑅 20
+
+)
+
+Δ𝑡 (6) where 𝑅 0 is a distance decay scalar factor, 𝑑 is the distance from the agent to the target ( 𝑑 = (𝑥 2 + 𝑦 2) 1 
+
+> 2
+
+), and Δ𝑡 is the simulation step time size. Maximum possible reward is achieved when the aircraft is directly above the target location (0,0). A potentially high-scoring control policy is one which maintains constant reward by flying a minimum radius circular path near the target. A simple thought experiment suggests that an estimator would have difficulty estimating the true state under this policy. Consider the aircraft flying in a circle centered on the target. At every point on this circle, the bank angle is identical. Observability requires that a change in state will result in a different sequence of observations, if the aircraft were displaced to another point on the circle then the resulting sequence of (constant) bank angles would be unchanged. We would then expect the estimator to determine that the aircraft lies on this circle, but not to accurately estimate the exact relative position and velocity of the aircraft to the target. This also suggests that under such a policy that the initial sequence of commands which steer the aircraft to the 8circle may be more informative than those which maintain the circular path. These more informative observations allow the estimator to track the aircraft’s relative position and velocity to the target, but once the commands become less informative at the circular path, the estimator struggles to distinguish the different states that produce the same bank angle commands. 
+
+2. Embedded Estimator 
+
+To produce policies which are more easily estimated, we also train a policy using an augmented reward function that includes the estimator’s performance. This reward function takes the form shown in Equation 2: 
+
+𝑟 embedded = 𝑟 task −only + exp 
+
+(
+
+− 𝑒 ⊺ Σ𝑒 𝑒 
+
+𝑅 21
+
+)
+
+Δ𝑡 (7) where 𝑅 1 is a decay scale term, 𝑒 is the difference between true and the estimated state 𝑒 = s − ˆs, and Σ𝑒 is a matrix weighting the error of each state. This reward function maximizes when the norm of the error between the true and estimated states is 0. 
+
+3. Training Environment 
+
+The policy training is executed in OpenAi Gym [15], which allows developing reinforcement learning algorithms in a simulation environment. The neural network policy is implemented using the PyTorch package [16] and optimized using the soft actor critic algorithm [17, 18] for continuous action spaces. The training environment is a custom environment restricted to a two-dimensional plane, with dimensions of 500 m by 500 m. The action and observation spaces are summarized in Table 1and 2 respectively. Note that the observation space is defined larger than the simulation environment to ensure that the policy is valid even if the estimated position briefly exits the test environment. In each training episode the aircraft is randomly placed in the environment at least one turn radius from the boundary. The aircraft speed is sampled uniformly between 10 m s −1 and 20 m s −1 and remains constant for each episode. The heading angle is sampled uniformly between −𝜋 rad and 𝜋 rad. The initial state boundaries for each training episode are summarized by the observation space in Table 3. 
+
+Table 1 Action space. 
+
+Action min max 
+
+𝑢 𝜙 (rad ) − 𝜋 
+
+> 6
+> 𝜋
+> 6
+
+Episodes have a time step size of 0.5 seconds and continue for 200 seconds or until the aircraft exits the environment. No terminal reward is provided. We train the task-only and embedded policies using the same environment, true agent initialization boundaries, speed, maximum bank angle, episode duration, and step size. 9Table 2 Observation space. 
+
+Observation min max 
+
+𝑥 (m) −500 500 
+
+𝑦 (m) −500 500 
+
+𝑣 𝑥 (m s −1) −25 25 
+
+𝑣 𝑦 (m s −1) −25 25 
+
+Table 3 Initial state conditions. 
+
+Observation min max 
+
+𝑥 (m) −205 205 
+
+𝑦 (m) −205 205 
+
+𝑉 (m s −1) 10 20 
+
+𝜓 (rad ) −𝜋 𝜋 
+
+4. Selecting Reward Scale Factors 
+
+The scale factors 𝑅 0 and 𝑅 1 in Equations 6 and 7 control how rapidly the reward function decays as the tracking or estimator error increases. In the tracking task, scale factor 𝑅 0 tunes the convergence of the aircraft to the vicinity of the target. When embedding the policy in the training signal, the scale factors are used to balance reward between the tracking task and estimator performance. In previous work we observed that under the task-only reward (Equation 6), the policy tends to maximize its reward by flying directly to the target and engaging in a tight orbit centered on the target [19]. This suggests that 𝑅 0 should be set based on the distance to the target that satisfies the tracking requirements, so that closer maneuvering is possible, but receives little additional reward. To avoid control saturation, a nominal task reward is established at a distance to target equal to the turn radius achieved at half the maximum bank angle. The initial value for 𝑅 0 is set so that at this distance from the target, the task reward is equal to 1 − exp (− 1).Similarly, 𝑅 1 is chosen to specify the reward at a nominal value for estimator error. Based on prior experiments using an ad hoc estimator error reward [19] we chose an initial value of 15 with Σ𝑒 set to the identity matrix so that position and velocity states are equally weighted (because the velocity and position states both appear in the error there is not a dimensional interpretation to the error). As with 𝑅 0, the initial value for 𝑅 1 is obtained by setting the reward to 1 − exp (− 1) at the nominal error. While some further tuning of the scale factors was required, this structure allowed an informed choice of initial scale factors. Adjustments were then made in training by computing the relative task and estimator rewards, then adjusting the gains so that the rewards were approximately balanced with neither saturated. Final values for the scale factors are given in Table 4. 10 Table 4 Scale Factors. 
+
+Scale factor value 
+
+𝑅 0 121 .8
+
+𝑅 1 31 .59 
+
+Agent Reward 
+
+function 
+
+Environment 
+
+Performance 
+
+Estimator 
+
+Agent 
+
+,
+
+> Nominal
+> Embedded
+
+Fig. 3 Training diagram for task-only and embedded policies. 
+
+5. Policy Training 
+
+Computing the estimator reward requires including the estimator in the training environment. By embedding the estimator in the agent model and including its performance in the reward signal we are directly optimizing over the estimator performance and, by extension, implicitly optimizing over observability of the resulting policy. Figure 3 summarizes the training process for the task-only and embedded estimator policies. For the task-only case (black boxes), an initial state x𝑘 is sampled from initial aircraft state distribution per Table 3. At each time step the agent’s state is computed from the aircraft state (Equation 5). A bank angle 𝑢 𝜙 is obtained from the agent after sampling a pseudocontrol 𝑢 from the policy’s output distribution, passing it though the saturation function, and scaling it by the control angle limit per Equation 1. The bank angle 𝑢 𝜙 is used to simulate the aircraft state forward with the aircraft dynamics. The state is converted back to the next agent state s𝑘 +1 to calculate the task reward. For the task-only case, maximizing this reward function is the agent’s training objective. The embedded estimator policy adds the red boxes to the training process. The estimator takes the agent, the sampled pseudocontrol ˜ 𝑢 , and the initial estimated state ˆ s𝑘 
+
+given by the initial aircraft relative position and velocity to the target, to produce the next estimated agent state ˆ s𝑘 +1.The estimated and true agent state s𝑘 +1 are used to compute the estimator error performance 𝑒 . The reward function becomes the embedded reward in Equation 7 During training, the estimator state is initialized to the true agent state plus a randomly selected distance and velocity error, sampled from a Gaussian distribution. This initialization error is centered at the true state with a standard deviation of 50 m for each position component and 5 m s −1 for each velocity component. To determine when a policy has converged, the reward accumulated in each episode is compared to a threshold 11 performance. For the task-only policy this threshold is defined: 
+
+𝑅 𝑡 ℎ𝑟 𝑒𝑠ℎ𝑜𝑙𝑑,𝑡 𝑎𝑠𝑘 = (0.85 ) exp 
+
+(
+
+− minimumaircraftturnradius 2
+
+𝑅 20
+
+)
+
+𝑡 
+
+where the minimum aircraft turn radius 𝑉 2   
+
+> 𝑔 tan 𝑢 𝜙 max
+
+= 45.2 m at maximum bank angle command and nominal speed and 
+
+𝑡 is the episode duration time. For the policy which embeds the estimator, the threshold reward is set to: 
+
+𝑅 𝑡 ℎ𝑟 𝑒𝑠ℎ𝑜𝑙𝑑,𝑒𝑚𝑏𝑒𝑑𝑑𝑒𝑑 = (0.85 )
+
+(
+
+exp 
+
+(
+
+− minimumaircraftturnradius 2
+
+𝑅 20
+
+)
+
++ exp 
+
+(
+
+− expectederrorperformance 2
+
+𝑅 21
+
+)) 
+
+𝑡 
+
+with expected error performance set to 15 as described for the 𝑅 1 scale factor. The factor of 0.85 is applied as both the task and estimator performance may take some time after initialization to converge, so achieving 100% of the nominal reward is not expected. The training for each policy is terminated when the average of the accumulated reward in the last 100 episodes reaches the threshold. Applying the corresponding threshold resulted in 2,507 training episodes (493,127 simulation steps) for the task-only reward case, and 6,115 training episodes (2,354,219 simulation steps) for the embedded estimator reward case. The embedded estimator reward case is expected to have more training as it is a more complicated reward. 
+
+## V. Results 
+
+The task-only and embedded estimator reward cases are evaluated using an ensemble of 14,500 episodes, generated for a fixed policy after completion of training. To initialize each episode, the aircraft state is sampled uniformly, excluding position states within one turn radius of the boundary. In all cases, the aircraft speed is set to 16 m s −1. The initialization range for the true state initial is summarized in Table 3, excluding the initial speed 𝑉 , which is set to 16 m s −1 for all episodes. The aircraft state is converted to the agent state as per Equation 5. The estimator is initialized at the true agent state, plus a distance and velocity error sampled from a Gaussian distribution, centered at the true state with a standard deviation of 50 m for each position component, and 5 m s −1 for each velocity component. The estimator covariance is initialized consistent with this error distribution. The 𝜎 values for the Gaussian distributions used for sampling the initial condition of the estimated state, are summarized in Table 5, where all distributions are centered at the true state. 
+
+Table 5 Estimated state 𝜎 for initial condition distribution sampling. 
+
+Estimated state 𝜎 
+
+𝑥 (m) 50 
+
+𝑦 (m) 50 
+
+𝑣 𝑥 (m s −1) 5
+
+𝑣 𝑦 (m s −1) 5
+
+12 The resulting empirical cumulative distributions (ECDF) for the norm of the position and velocity error at 200 seconds of simulation time (end of the episode), are shown in Figures 4 and 5 respectively. Figure 4 shows that using the augmented control policy reduces error by a factor of approximately four at the median performance level. When considering the tail of poor performance, the augmented policy achieves less than 10 m of error in about 90 % of the cases while task-only policy can only achieve this level of error in 60 % of cases. Figure 5 displays the norm of the velocity error, showing that the augmented policy is able to reduce the velocity error relative to the task-only policy at every percentile point with a pattern similar to the position error.       
+
+> 10 −110 010 110 210 310 410 5
+> norm of position error (m) 0.00.20.40.60.81.0P(norm of position error)
+> task only embedded
+
+Fig. 4 ECDF of the log of the norm of the position error at the simulation end time.    
+
+> 10 −110 010 110 2
+> norm of velocity error (m s −1)0.00.20.40.60.81.0P(norm of velocity error)
+> task only embedded
+
+Fig. 5 ECDF of the log of the norm of the velocity error at the simulation end time. 
+
+The difference in estimator performance under these two policies is striking, but driven in part by divergence of a significant fraction of the task-only policy simulations. This in itself is significant, but a best-case comparison can be constructed by excluding runs where the estimator diverged. To evaluate this, episodes where the estimated state exits a 1 km region centered on the objective are excluded (twice the environmental boundary) for the task-only case only (very few of the embedded policy informed cases exceed this threshold). This results in 4,618 episodes removed (31.8% of the total number of episodes). Figures 6 and 7 show the ECDF for the task-only policy evaluations subset against the full set of augmented policy evaluations. Figure 6 shows that the embedded case outperforms the task-only case at almost all percentiles with a very small crossover near 10 m of error. At the median level, the norm of the position when using the task-only policy is 3.85 m, while the position error when using the embedded estimator policy is 1.29 m, a 66.5% improvement over the task-only policy. At error percentiles of 90% or greater the two estimators perform similarly. Figure 7 shows the ECDFs for the 13 norm of the velocity error which follows a trend very similar to the position performance.       
+
+> 10 −310 −210 −110 010 110 210 3
+> norm of position error (m) 0.00.20.40.60.81.0P(norm of position error)
+> task only embedded
+
+Fig. 6 ECDF of the log of the norm of the position er-ror at simulation end time when task-only cases which diverge are removed.    
+
+> 10 −110 010 110 2
+> norm of velocity error (m s −1)0.00.20.40.60.81.0P(norm of velocity error)
+> task only embedded
+
+Fig. 7 ECDF of the log of the norm of the velocity er-ror at simulation end time when task-only cases which diverge are removed. 
+
+Figures 8 and 9 show the time history of the norm of the position and velocity errors averaged over all simulation episodes. In the task-only case the position error degrades immediately, recovering only slightly after 160 seconds of simulation. In contrast, the mean estimator error in the embedded case decreases continuously until the end of the simulation. At 200 seconds, the mean of the norm of the position error is 274.3 m for the task-only reward case and 12.15 m for the embedded estimator reward case. This difference represents a 95.6% decrease in error for the embedded estimator reward case. The velocity mean error norm increases for both the task-only and embedded cases and start to decrease after 75 seconds. The mean of the norm of the velocity error at 200 seconds is 14.2 m s −1 for the task-only reward case and 2.94 m s −1 for the embedded estimator case. This difference represents a 79.3 % improvement in estimator performance. The mean error is dominated by the 30% of task-only cases in which the estimator diverges. Figure 9 shows the time history of the mean error, excluding episodes where the estimated state position exceeds the simulation region boundaries. The task-only and embedded estimator reward cases have similar convergence behavior for the initial 15 seconds. This is approximately the time required for the aircraft to reach the target location. After 15 seconds, the task-only case mean error increases to 45 m, then slowly decreases for almost the remainder of the simulation. The embedded case mean error decreases to approximately 30 m, holding steady until around 80 seconds, then decreases until the end of the simulation. At 200 seconds, the mean of the norm of the position error is 21.77 m for the task-only reward case and 12.15 m for the embedded estimator reward case. This difference represents a 44.2% decrease in error 14 for the embedded estimator reward case. The mean of the norm of the velocity error at 200 seconds is 4.33 m s −1 for the task-only reward case and 2.94 m s −1 for the embedded estimator reward case. This reduction represents a 32.1% decrease in error for the embedded estimator reward case.                 
+
+> 025 50 75 100 125 150 175 200 0100 200 300 norm of position error (m)  task only embedded
+> 025 50 75 100 125 150 175 200 time (s) 510 15 norm of velocity error (m s −1)
+
+Fig. 8 Time history of the ensemble mean of the norm of the estimator error including all episodes                 
+
+> 025 50 75 100 125 150 175 200 010 20 30 40 50 60 norm of position error (m)  task only embedded
+> 025 50 75 100 125 150 175 200 time (s) 0246810 norm of velocity error (m s −1)
+
+Fig. 9 Time history of the ensemble mean of the norm of the estimator error excluding episodes which di-verge. 
+
+Given that the augmented reward function allows a reward greater than the task-only case even if the task performance is worse (because of the estimator “bonus”), a potential concern is that the policy trained to minimize estimator error trades this for a reduction in task performance. The tracking reward ( 𝑟 𝑡 𝑎𝑠𝑘 −𝑜𝑛𝑙𝑦 in Equations 6 and 7) measures performance on the mission objective of remaining near the fixed target location. It is desirable that producing a more observable policy does not compromise the tracking task performance. To evaluate this effect, Figure 10 shows the cumulative distribution of tracking reward per episode. For the full evaluations, both the task-only and the embedded policies show close performance across all percentile points. At the 80th percentile, the rewards are 80.1 for the task-only case and 79.1 for the embedded case, a difference of 1.2%. Figure 11 illustrates true and estimated state trajectories from a single run for both reward cases. Both reward cases are initialized at the conditions corresponding to median performance from the ensemble of 14,500 simulations. The task-only and embedded reward cases both fly roughly a circular trajectory. This circle is centered roughly at the origin for the task-only case, but displaced slightly to the east in the embedded case. The corresponding time history of the position error is shown in Figure 12. The initial x-position error is 68.3 m for the task-only case, and 107.2 m for the embedded case. The initial y-position errors are 6.7 m and 25.8 m for the task-only and embedded cases, respectively. The 1 𝜎 bounds for the x-position error of the task-only reward case settle 15 72 74 76 78 80 82 84 
+
+rtask 
+
+0.00.20.40.60.81.0P( rtask  )
+
+> task only embedded
+
+Fig. 10 ECDF of the task reward obtained per episode for the task-only and embedded estimator policies. The task-only reward case performs slightly better in the task across all percentile points. 
+
+at 0.5-2.0 m. For the embedded estimator reward case, the 1 𝜎 bounds range reduces to 0.2 - 1.4 m. The 1 𝜎 bounds for the y-position error of the task-only reward case settle at 0.8-2.0 m. For the embedded estimator reward case, the 1𝜎 bounds range reduces to 0.3 - 1.0 m. For the task-only reward case, the error is within the 1 𝜎 bounds 20.7%, and 25.9% of the time for the x and y position errors, respectively. For the embedded estimator reward case, the error is within the 1 𝜎 bounds 33.2%, and 31.9% of the time for the x and y position errors, respectively. Since the initial position error for each case is different, it is more informative to compare the mean error for the last 100 seconds of simulation. For the task-only case, the x and y position mean error for the last 100 seconds is 2.24 m and 2.62 m respectively. For the embedded case, the x and y position mean error for the last 100 seconds is 0.64 m and 0.85 m respectively. Table 6 summarizes the position error results. 
+
+Table 6 Position state error 
+
+Case mean error(m) (last 100 sec.) 1𝜎 bounds(m) 1𝜎 bounds inside(%) 
+
+𝑥 −task-only 2.24 0.5-2.0 20.7 
+
+𝑥 −embedded 0.64 0.2-1.4 33.2 
+
+𝑦 −task-only 2.62 0.8-2.0 25.9 
+
+𝑦 −embedded 0.85 0.3-1.0 31.9 
+
+The time history of the velocity error is shown in Figure 13. The initial x-velocity error for the task-only case is 16 −200 −100 0 100 200 x position (m) 
+
+> −200
+> −100 0100 200 y position (m)
+
+task only     
+
+> true estimated
+> −200 −100 0100 200 x position (m)
+> −200
+> −100 0100 200
+
+embedded 
+
+> true estimated
+
+Fig. 11 True and estimated state trajectories for a single run. Left: task-only reward case. Right: embedded estimator reward case. 
+
+0.62 m s −1, and 0.76 m s −1 for the embedded case. The initial y velocity error is 0.30 m s −1 for the task-only case, and 0.09 m s −1 for the embedded case. The 1 𝜎 bounds for the x-velocity error of the task-only reward case settle at 0.25-0.60 m s −1. For the embedded estimator reward case, the 1 𝜎 bounds reduce to 0.20-0.45 m s −1. The 1 𝜎 bounds for the y-velocity error of the task-only reward case settle at 0.25-0.55 m s −1. For the embedded estimator reward case, the 1 𝜎 bounds reduce to 0.16-0.40 m s −1. For the task-only reward case, the error is within the 1 𝜎 bounds 17.5%, and 16.5% of the time for the x and y velocity errors, respectively. For the embedded estimator reward case, the error is within the 1 𝜎 bounds 28.2%, and 25.2% of the time for the x and y velocity errors, respectively. For the task-only case, the x and y velocity mean error for the last 100 seconds is 1.01 m s −1 and 1.11 m s −1
+
+respectively. For the embedded case, the x and y position mean error for the last 100 seconds is 0.43 m s −1 and 0.45 m s −1 respectively. Table 7 summarizes the velocity error results. 
+
+Table 7 Velocity state error 
+
+Case mean error(m s −1)(last 100 sec.) 1𝜎 bounds(m s −1) 1𝜎 bounds inside(%) 
+
+𝑥 −task-only 1.01 0.25-0.60 17.5 
+
+𝑥 −embedded 0.43 0.2-45 28.2 
+
+𝑦 −task-only 1.11 0.25-0.55 16.5 
+
+𝑦 −embedded 0.45 0.16-0.40 25.2 
+
+17 0 50 100 150 200 
+
+> −50 050 100 x error (m)
+
+task only      
+
+> error 1σbounds
+> 050 100 150 200
+> −50 050 100
+
+embedded             
+
+> error 1σbounds
+> 050 100 150 200 time (s)
+> −50
+> −25 025 50 y error (m)
+> error 1σbounds
+> 050 100 150 200 time (s)
+> −50
+> −25 025 50 error 1σbounds
+
+Fig. 12 Time history and 1𝜎 bounds of the position error for the task-only and embedded estimator reward cases from an example run. 
+
+## VI. Discussion 
+
+The distribution of estimator performance for the embedded estimator reward case shows superior performance at all percentiles for the full evaluation set. Even when excluding evaluations in which the task-only case diverges, the estimator achieves better performance at almost all percentiles when the agent follows the policy rewarded for estimator performance. The frequency of filter divergence is significantly higher for the task-only case compared to the embedded estimator reward case. This filter divergence suggests that poor observability of the task-only policy allows the estimate to drift outside of the region in which the policy is trained, at which point the policy function is no longer valid as either a control or observation model. The mean of the norm of the state error is significantly smaller for the estimator using the embedded estimator policy for both position and velocity for the entire simulation. When examining the mean error of only converged estimators (Figure 9), the results show that the task-only policy can produce estimates which outperform those produced under the embedded policy early in the simulation, although as time goes on, the embedded policy produces significantly better estimates. A transition in the performance of the estimators is observed around 20-30 seconds into the simulation – approxi-mately the time required for the aircraft to reach the target. It appears that the task-only case is fairly observable during the initial flight to the orbit, but becomes less so once the aircraft begins orbiting the target. The embedded case on the other hand achieves modest performance until the aircraft has completed several orbits. 18 0 50 100 150 200 
+
+> −10 010 vx error (m s −1)
+
+task only      
+
+> error 1σbounds
+> 050 100 150 200
+> −10 010
+
+embedded             
+
+> error 1σbounds
+> 050 100 150 200 time (s)
+> −10 010 vy error (m s −1) error 1σbounds
+> 050 100 150 200 time (s)
+> −10 010 error 1σbounds
+
+Fig. 13 Time history and 1𝜎 bounds of the velocity error for the task-only and embedded estimator reward cases from an example run. 
+
+In addition to reducing the error in the state estimate, the embedded policy achieves a more consistent estimate. Figures 12 and 13 indicate that the rate of estimates exceeding the 1 − 𝜎 bounds for the embedded policy are more consistent with the state covariance estimate than for the task-only policy. In prior results with an ad-hoc “observable” reward function in [12], there was a preferred trajectory for the embedded estimator reward case, which allowed the estimator to uniquely identify the true state. In contrast, the task-only reward case showed roughly a circular path around the target. A simple thought experiment suggests that no state in the orbit can be distinguished based on bank angle in a constant bank angle orbit. These results, however, show nearly no clear distinction between the two reward cases other than the center of the orbit at different locations. The embedded policy achieves observability with only subtle changes to the shape of the actual trajectory. The improvement in state quality achieved by rewarding estimator performance suggests that the resulting policy must make the system more observable. Two notions of observability are relevant – observability at each point, approximated by the linearized observability matrix (Equation 3); and observability of the trajectory, approximated by the stripped observability matrix (Equation 4). Table 8 illustrates the observability at each point as diagnosed by taking the mean of the singular values of the linearized observability matrix over every point in the example case. The smallest singular value is always practically zero for both task-only and embedded estimator reward cases. This means that at no point in the state-space visited by the aircraft is the system fully observable at that state. While neither policy is fully observable at any single point, the observability of the trajectories does differ. 19 Table 8 Mean singular values of the linearized observability matrix for one test case. 
+
+Singular Value task-only avg embedded avg 
+
+1 0.744 39.873 2 0.072 1.012 3 0.007 0.031 4 3.973 × 10 −10 2.769 × 101 −8
+
+Figure 14 compares the singular values of the stripped observability matrix for the two policies. The singular values are obtained from sections of the full SOM spanning increasing time spans in reversed order (end to beginning of simulation, so that a time span of -25 s includes the last 25 seconds of the simulation ). The time span increases by 0 .5seconds at each iteration. The singular values are obtained in reverse order in order to better isolate the observability of the system for the aircraft behavior at the target. Once approximately 50 seconds (two cycles) of data are included in the SOM, the smallest singular value of the SOM for the embedded case increases from 0 to 1, indicating that the sequence is observable. While the full state is not observable at any given epoch, our interpretation is that the direction of the unobservable subspace is not constant, which allows a sequence of states to achieve observability. This analysis would indicate that a degree of observability is achieved for state sequences under both the task-only and embedded estimator reward cases, however, all singular values for the embedded estimator reward are larger, indicating a greater degree of observability. This aligns with the policy trained with the embedded estimator reward having superior estimator performance. These results confirm that by embedding the estimator in the training system, we can improve the observability of the system. The task performance shows that there is a small “penalty” in augmenting the task-only reward with the estimator performance. While it is expected that the task-only reward case outperforms the embedded estimator reward case, previous experiments have shown reversed results [12]. These task-only reward results suggest that there appear to be cases where a number of policies achieve nearly the same task performance. Inclusion of the estimator performance guides the training to one of these policies which also provides good estimator performance. If we conceptualize a policy-space, the two policies we examine lie nearly on the same locus of policies providing a given level of task reward, by introducing the estimator reward, we are able to select a policy which also provides observability. Drawing an analogy to a linear control context, this is akin to modifying a control vector with an auxiliary objective where the difference between nominal and augmented control lies in the null space of the control matrix. Taken as a whole, the results suggest that integrating the estimator into the agent at the training stage and providing a reward signal for its performance provides a means to generate control policies whose input state can be determined from the output. The policy space appears to be large enough that the control policy can be made observable without significant impact on the task-specific performance. Embedding an estimator at training time thus appears to provide a 20 path forward for enabling coordination between autonomous agents under limited communication or direct observation. While we have embedded an estimator at training time, we still achieve a degree of separation between agents allowing them to be trained independently, and to continue to coordinate under re-tasking provided the policy used by other agents is known. This stands in contrast to “fully integrated” approaches which train all agents simultaneously, implicitly developing the estimator as part of each agent’s control policy such that it cannot be easily updated without retraining. This work does not however, fully address the objective of enabling coordination between humans and autonomous systems. While human cognition exhibits Kalman-filter-like capabilities [20–22], human understanding of a system’s state is not likely to be described by the UKF dynamics precisely. Regardless of the “algorithm,” observability can be viewed as an information-theoretic condition enabling reconstruction of state information from observations [23]. Thus, systems which are not observable cannot be made so regardless of the sophistication of the estimator. Even when a system is not precisely unobservable, such as the task-only reward policy here, an improvement in the observability should be expected to improve the quality of an estimate and to reduce the computational requirement (compute time or human cognitive effort) to obtain an estimate of given quality. 
+
+−200 −175 −150 −125 −100 −75 −50 −25 0time span (s) 10 −3
+
+10 −2
+
+10 −1
+
+10 0
+
+10 1
+
+10 2
+
+10 3        
+
+> SOM Singular Values
+> task only σ1
+> task only σ2
+> task only σ3
+> task only σ4
+> embedded σ1
+> embedded σ2
+> embedded σ3
+> embedded σ4
+
+Fig. 14 Singular values of SOM for increasing time spans starting at the end of the simulation for the task-only and embedded estimator reward cases. All singular values are larger for the embedded estimator reward case. 
+
+## VII. Conclusion 
+
+Estimation of the state of decision-making agents given observations of their control decisions is difficult as the control policy is typically not a one-to-one map between states and controls and equilibrium controls often have 21 relatively little observational diversity. To address this, we include an explicit measure of the estimator’s performance in the reward function used to train a control policy using reinforcement learning. This policy’s performance in estimating an agent’s state when only the agent’s actions are used as observations performed significantly better than a policy that does not include the estimator’s performance in its reward function. This performance improvement suggests that coordination based on action observation alone might be possible, and that we can effectively “compress” the state information stream by using a policy that is intended to be observable. The policy space may be complex enough that observable policies achieve similar performance even with the addition of an observability objective. Designing control policies for autonomous systems to be observable can make communication more efficient, or enable coordination when direct observation is possible but explicit communication is not. In a human-machine teaming context, when control policies are not observable, we expect that humans will have difficulty understanding the state of autonomous systems (and perhaps anticipating their actions). Autonomous systems guided by observable policies may be a path to enabling coordination among large numbers of autonomous systems and between humans and autonomous systems. 
+
+## Funding Sources 
+
+Portions of this work were funded by the Air Force Office of Scientific Research under award FA9550-24-1-0176. 
+
+## References                    
+
+> [1] Panait, L., and Luke, S., “Cooperative multi-agent learning: The state of the art,” Autonomous agents and multi-agent systems ,Vol. 11, 2005, pp. 387–434. https://doi.org/10.1007/s10458-005-2631-2. [2] Dorri, A., Kanhere, S. S., and Jurdak, R., “Multi-agent systems: A survey,” IEEE Access , Vol. 6, 2018, pp. 28573–28593. https://doi.org/10.1109/ACCESS.2018.2831228. [3] Roth, M., Simmons, R., and Veloso, M., “What to communicate? Execution-time decision in multi-agent POMDPs,”
+> Distributed autonomous robotic systems 7 , Springer, 2006, pp. 177–186. https://doi.org/10.1007/4-431-35881-1_18. [4] Liu, M., Amato, C., Anesta, E., Griffith, J., and How, J., “Learning for decentralized control of multiagent systems in large, partially-observable stochastic environments,” Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 30, 2016. https://doi.org/aaai.v30i1.10135. [5] Amato, C., and Oliehoek, F., “Scalable planning and learning for multiagent POMDPs,” Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 29, 2015. https://doi.org/10.1609/aaai.v29i1.9439. [6] Murphy, K. P., “A survey of POMDP solution techniques,” environment , Vol. 2, No. 10, 2000. [7] Moon, S., and Frew, E. W., “A Communication-aware Information Measure for Cooperative Information Gath-
+
+22 ering by Robotic Sensor Networks,” 2019 American Control Conference (ACC) , 2019, pp. 4701–4708. https://doi.org/10.23919/ACC.2019.8814643. [8] Yang, P., Freeman, R. A., and Lynch, K. M., “Multi-agent coordination by decentralized estimation and control,” IEEE Transactions on Automatic Control , Vol. 53, No. 11, 2008, pp. 2480–2496. https://doi.org/10.1109/TAC.2008.2006925. [9] Smith, R. S., and Hadaegh, F. Y., “Closed-loop dynamics of cooperative vehicle formations with parallel estima-tors and communication,” IEEE Transactions on Automatic Control , Vol. 52, No. 8, 2007, pp. 1404–1414. https://doi.org/10.1109/TAC.2007.902735. [10] Kelly, M., Sidrane, C., Driggs-Campbell, K., and Kochenderfer, M. J., “Hg-dagger: Interactive imitation learning with human experts,” 2019 International Conference on Robotics and Automation (ICRA) , IEEE, 2019, pp. 8077–8083. https://doi.org/10.1109/ICRA.2019.8793698. [11] Simon, D., Optimal State Estimation: Kalman, H Infinity, and Nonlinear Approaches , Wiley, 2006. [12] Fernandez, A. E., and Bird, J. J., “Estimating System State from the Actions of a Reinforcement Learning Agent,” AIAA SCITECH 2023 Forum , 2023. https://doi.org/10.2514/6.2023-2657. [13] Powel, N., and Morgansen, K. A., “Empirical Observability Gramian for Stochastic Observability of Nonlinear Systems,” 2020. URL http://arxiv.org/abs/2006.07451. [14] Li, Y., Li, Y., Rizos, C., and Xu, X. S., “Observability analysis of SINS/GPS during in-motion alignment using singular value decomposition,” Advanced Materials Research , Vol. 433, Trans Tech Publ, 2012, pp. 5918–5923. https://doi.org/10.4028/www.scientific.net/AMR.433-440.5918. [15] Brockman, G., Cheung, V., Pettersson, L., Schneider, J., Schulman, J., Tang, J., and Zaremba, W., “Openai gym,” arXiv preprint arXiv:1606.01540 , 2016. https://doi.org/10.48550/arXiv.1606.01540. [16] Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen, T., Lin, Z., Gimelshein, N., Antiga, L., Desmaison, A., Kopf, A., Yang, E., DeVito, Z., Raison, M., Tejani, A., Chilamkurthy, S., Steiner, B., Fang, L., Bai, J., and Chintala, S., “PyTorch: An Imperative Style, High-Performance Deep Learning Library,” Advances in Neural Information Processing Systems 32 , edited by H. Wallach, H. Larochelle, A. Beygelzimer, F. d 'Alché-Buc, E. Fox, and R. Garnett, Curran Associates, Inc., 2019, pp. 8024–8035. [17] Haarnoja, T., Zhu, H., Tucker, G., and Abbeel, P., “Soft Actor-Critic Algorithms and Applications,” arXiv Preprint arXiv:1812.05905v2 , 2019. https://doi.org/10.48550/arXiv.1812.05905. [18] Tabor, P., “RLs: Actor Critic Methods, SAC,” https://github.com/philtabor/Actor-Critic-Methods-Paper-To-Code/tree/master/SAC, 2020. [19] Enriquez Fernandez, A., and Bird, J. J., “Enabling Inter-Vehicle Coordination Through Observable Control Policies,” AIAA SCITECH 2024 Forum , 2024, p. 0989. https://doi.org/10.2514/6.2024-0989. 
+
+23 [20] Wittmann, M. K., Kolling, N., Akaishi, R., Chau, B. K., Brown, J. W., Nelissen, N., and Rushworth, M. F., “Predictive decision making driven by multiple time-linked reward representations in the anterior cingulate cortex,” Nature Communications , Vol. 7, No. 1, 2016, pp. 1–13. https://doi.org/10.1038/ncomms12327. [21] Miall, R. C., and King, D., “State estimation in the cerebellum,” Cerebellum , Vol. 7, No. 4, 2008, pp. 572–576. https://doi.org/10.1007/s12311-008-0072-6. [22] Blakemore, S.-J., Wolpert, D., and Frith, C., “Why can’t you tickle yourself?” NeuroReport , Vol. 11, No. 11, 2000, pp. 11–16. https://doi.org/10.1038/news981022-7. [23] Mohler, R. R., and Hwang, C. S., “Nonlinear Data Observability and Information,” Journal of the Franklin Institute , Vol. 325, No. 4, 1988, pp. 443–464. https://doi.org/10.1016/0016-0032(88)90055-5. 
+
+24

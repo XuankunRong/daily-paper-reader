@@ -1,0 +1,716 @@
+Title: TRIAGE: Role-Typed Credit Assignment for Agentic Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2606.32017v1
+
+Published Time: Wed, 01 Jul 2026 01:34:14 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+# TRIAGE: Role-Typed Credit Assignment for Agentic Reinforcement Learning 
+
+Yuanda Xu 1∗† Zhengze Zhou 1∗ Hejian Sang 1∗ Xiaomin Li 2
+
+Jiaxin Zhang 3 Xinchen Du 1‡ Zhipeng Wang 1 Alborz Geramifard 11LinkedIn Corporation 2Harvard University 3Johns Hopkins University 
+
+## Abstract 
+
+Agentic reinforcement learning requires assigning credit to environment-facing actions such as searches, clicks, edits, navigation commands, and object interac-tions. Standard GRPO uses the final verifier outcome as a uniform advantage over all action tokens. This outcome signal is useful but structurally incomplete: it punishes useful exploration in failed rollouts and reinforces redundant or regressive actions in successful rollouts. We propose TRIAGE, a role-typed credit assign-ment framework that adds a semantic role axis to outcome credit. A structured judge classifies each segment as decisive progress, useful exploration, no-progress infrastructure, or regression, and a fixed role-conditioned rule maps these labels to bounded segment-level process rewards. This keeps verifier outcomes as the source of optimization direction while correcting the two main blind spots of outcome-only credit. We further show that role-conditioned credit is the optimal segment-level correction expressible from role labels alone—a projection of the per-segment advantage residual onto the role variable—so that the fixed role con-stants reduce advantage estimation error whenever the judge is reliable, and we connect this to lower-variance policy gradients. Across ALFWorld, Search-QA, and WebShop, TRIAGE improves success rates over GRPO for two policy models and outperforms both a scalar judge-derived process reward and an outcome-supervised shared-backbone value baseline. Ablations show that the gain comes from role typing rather than merely adding dense rewards: reliable detection of regression inside successful trajectories is the dominant contributor, while exploration credit provides a consistent secondary gain; on completed ALFWorld and WebShop rollouts, TRIAGE also reduces environment-facing turns by an additional 10 .4% 
+
+and 14 .8% relative to GRPO. 
+
+## 1 Introduction 
+
+Reinforcement learning with verifiable rewards has become a standard recipe for improving language-model reasoning and agentic behavior [Shao et al., 2024, DeepSeek-AI et al., 2025, Trung et al., 2024, Yu et al., 2025, Xu et al., 2026a]. In Group Relative Policy Optimization (GRPO), a policy samples multiple trajectories for a prompt, receives final rewards from a verifier, and assigns relative advantages to the sampled outputs. This recipe is attractive because it requires no learned value model and optimizes directly against the deployment policy. However, when the output is an agentic trajectory rather than a single answer, the central credit-assignment question changes: which environment-facing actions deserve credit when supervision arrives only as a final verifier outcome?  
+
+> ∗Equal contribution. Hejian Sang’s work was done while at LinkedIn Corporation.
+> †Correspondence to yuanda@math.princeton.edu
+> ‡Work done during an internship at LinkedIn Corporation. Preprint.
+> arXiv:2606.32017v1 [cs.LG] 30 Jun 2026
+
+Figure 1: Core results. Across two policy models and three agentic benchmarks (ALFWorld, Search-QA, WebShop), TRIAGE consistently improves over the GRPO baseline (dashed line). Bar labels report mean success rate; vertical axes are truncated per panel to make differences visible. The unit of decision in this setting is not an arbitrary token span. It is an environment-facing segment: a search query, click, file edit, command, object interaction, or tool call that changes either the external state or the agent’s information state. Across WebShop, Search-QA, and ALFWorld, such segments range from decisive actions (final purchases, answer submissions, object placements) to information-gathering actions (searches, inspections, reads) and low-value infrastructure (repeated navigation or redundant clicks). Outcome credit is therefore useful but structurally incomplete. Standard GRPO treats all segments equally within a trajectory: if the trajectory succeeds, all action tokens are reinforced; if it fails, all are suppressed. This creates two systematic blind spots. First, failed rollouts can contain useful exploratory actions that should not inherit the full negative outcome credit. Second, successful rollouts can contain redundant or harmful actions that should not inherit positive credit merely because the agent later recovered. Final outcome tells us whether the trajectory solved the task, but it cannot say what local role each segment played. Recent credit-assignment and on-policy supervision methods address parts of this problem. State-anchored estimators compare actions from matched states; process reward models learn dense progress signals; outcome-statistical methods estimate whether recurring segments concentrate in successful or failed rollouts; and token-importance methods reweight supervision within sampled outputs [Wang et al., 2025, Lu et al., 2026, Xu et al., 2026b]. These approaches are useful, but they usually score each segment without specifying its semantic role: task progress, belief-state progress, harmless infrastructure, and regression should not receive the same credit rule. We test this distinction directly by comparing against two dense-signal controls—a scalar LLM process-reward baseline with the same judge and context window, and an outcome-supervised shared-backbone value baseline—so the empirical question is not whether dense segment rewards help, but whether role typing adds information beyond them. Our central claim is therefore: agentic RL needs a role axis in addition to an outcome axis . The most important distinction is that exploration is not no-progress. Exploration often has zero immediate task progress and may appear in both successful and failed trajectories. A purely outcome-statistical estimator can under-credit it because exploratory actions are not always success-specific. A generic process scorer can also conflate exploration with no-progress when no subgoal is completed imme-diately. Yet suppressing exploration is precisely how sparse-reward agent training becomes brittle: the policy learns to avoid information-gathering actions before it has enough information to act decisively. We propose TRIAGE, a simple framework for role-aware credit estimation. Like medical triage, which sorts patients by the kind of attention they need before allocating treatment, TRIAGE first sorts each environment-facing segment into a semantic role before deciding how much credit it should inherit from the trajectory outcome. TRIAGE uses a structured LLM judge as a role classifier ,not as an unconstrained reward model. Given a bounded local context around each segment, the 2Figure 2: Overview of TRIAGE. Rollouts are split into environment-facing segments, a structured judge assigns semantic roles, and role-conditioned process rewards adjust segment-level GRPO advantages. judge assigns one primary role: decisive progress, useful exploration, no-progress infrastructure, or regression. The RL algorithm then maps roles to different credit rules. Decisive progress receives strong outcome-aligned credit, useful exploration receives bounded positive credit, no-progress infrastructure is dampened toward zero, and regression is suppressed even when it appears in an otherwise successful trajectory. This design deliberately separates semantic diagnosis from optimization direction. An LLM is well suited to answering local questions such as whether an action inspected a relevant file, narrowed a search, damaged state, or repeated known information. It is less suited to replacing the verifier. TRIAGE therefore keeps the GRPO outcome advantage as the base training signal and uses the role classifier only to add bounded process rewards or penalties at the segment level. We make four contributions: 1. We identify two structural blind spots of outcome-only segment credit—useful exploration in failed rollouts and regression inside successful rollouts—and define a four-role taxonomy that adds a semantic role axis to trajectory-level outcome credit. 2. We introduce TRIAGE, a role-conditioned credit assignment framework that uses a structured LLM judge for semantic role typing while keeping the GRPO outcome advantage as the source of optimization direction. 3. We give a theoretical justification: role-conditioned credit is the MSE-optimal segment correction measurable from role labels alone, the fixed role constants reduce advantage estimation error whenever they are aligned with this optimum, and this connects to unbiased, lower-variance policy gradients (Section 4.1). 4. We empirically evaluate TRIAGE across diverse agentic tasks and show consistent gains over GRPO, scalar judge-derived process rewards, and an outcome-supervised value baseline, while using manually labeled segments and role diagnostics to explain when the improvement comes from exploration retention, infrastructure damping, or regression suppression. 
+
+## 2 Problem Setup: Segment Credit in Agentic RL 
+
+GRPO. Given a task prompt x, GRPO samples G trajectories, scores each with a verifier ri =
+
+V (τi) ∈ { 0, 1}, and assigns the group-normalized advantage AGRPO  
+
+> i
+
+= ( ri − ¯r)/(σr + ϵ) uniformly to every token in the trajectory. Some environment logs report raw success rewards on a different scale, such as 10 for success and 0 for failure; throughout training and in all equations, we binarize these raw rewards to ri ∈ { 0, 1}.
+
+From outcome credit to segment credit. An agentic trajectory τi = ( ai, 1, o i, 1, . . . , a i,K i , o i,K i )
+
+consists of environment-facing action segments ai,k and their resulting observations oi,k . Broad-casting a single AGRPO  
+
+> i
+
+to all segments treats a decisive purchase click, a useful diagnostic read, a harmless no-op, and a wrong edit identically. Process reward models offer one response by learning a dense value or progress score for each step [Lightman et al., 2024], but they do not by themselves specify whether a segment is exploration, infrastructure, or regression. Our goal is a segment-level 3Table 1: Outcome-only credit has two conflict cells. Final success or failure gives the optimization direction for the whole trajectory, but local segment roles determine whether a segment should inherit that direction unchanged.       
+
+> Local segment role Successful rollout Failed rollout Useful local segment should receive positive credit should not be fully punished Regressive local segment should not inherit success credit should be suppressed
+
+Table 2: Role taxonomy          
+
+> Role Definition Examples Default credit rule Decisive ( D)Produces verifier-checkable progress or completes a necessary subgoal take target; buy item; correct an-swer strong outcome-aligned Exploration ( E)Reveals relevant state without im-mediate completion read test; constrained search; in-spect container conditional positive No-progress ( N)Changes neither task state nor be-lief state, but is harmless duplicate click after completion; empty traversal slightly penalized Regression ( R)Corrupts state or repeats without in-formation gain wrong edit; wrong purchase; re-peated examine/click negative
+
+advantage Ai,k that reflects not only how good a segment is, but what role it plays—which requires a structured label rather than a role-agnostic score. 
+
+## 3 Why Outcome Credit Is Structurally Incomplete 
+
+Outcome credit supplies the correct trajectory-level direction, but it is a one-axis signal. It partitions rollouts into success and failure, then assigns all local decisions the same sign within each rollout. Agentic trajectories need a second axis: the local semantic role of each segment. Table 1 shows the two conflict cells that motivate this paper. A useful segment in a failed rollout should not be fully punished, and a regressive segment in a successful rollout should not inherit positive credit. We instantiate this missing role axis with four segment types. Define a role variable 
+
+ρi,k ∈ R = {D, E, N, R }, (1) where D denotes decisive progress, E useful exploration, N no-progress infrastructure, and R
+
+regression. Table 2 gives the operational definition. The taxonomy is intentionally not just an ordering by amount of progress. Exploration is not merely a small amount of progress. It is a different type of progress: it improves the information state rather than the environment state. This matters because many agent tasks are partially observable. Before editing a file, the agent must inspect relevant code and tests. Before buying an item, it must search and compare. Before manipulating an object, it may need to discover where the object or receptacle is. These actions should not be treated like repeated boilerplate just because they do not immediately satisfy the final verifier. 
+
+Role boundaries. The role boundaries are defined by what the segment changes. D changes verifier-checkable task state: taking the target object, selecting the required item, submitting the correct answer, or applying the edit that makes a test pass. E changes the information state without yet completing a subgoal: opening a container, reading a failing test, or running a targeted search. This boundary can be blurry in hindsight because an exploratory action may enable a later decisive one, but we reserve D for direct task-state progress and use E for first-time, reasonable information collection. 
+
+N and R cover the cases that should not receive positive progress credit. N is harmless infrastructure that changes neither task state nor information state, such as an empty traversal or a generic command that does not affect the next decision. R is locally harmful or redundant without information gain: a wrong edit, wrong purchase, corrupted object state, or repeated inspection/click after the relevant information is already known. Final outcome cannot resolve these distinctions. Useful exploration 4can appear in failed trajectories, and regression can appear in successful ones after later recovery, so role-aware credit must judge the local segment rather than only its trajectory-level success label. 
+
+What the judge must get right. The judge does not need perfect D/E boundary agreement. Its key capability is asymmetric error correction : in successful rollouts, find local regressions that should not inherit positive credit; in failed rollouts, find locally useful segments that should not inherit full negative credit. Operationally, regression has two subclasses: state corruption (wrong edit, wrong purchase, wrong object) and redundant-without-information-gain (repeated inspection or click after the information is already known). 
+
+Implications for diagnostics. The taxonomy also determines what we measure experimentally. Useful exploration is outcome-mixed: it appears in both successful and failed rollouts, so outcome association can make it look neutral or negative. No-progress infrastructure receives nonzero advantage under uniform broadcasting, wasting gradient on boilerplate actions. Regression can appear inside successful trajectories after later recovery, so final outcomes hide local harm. We therefore track three diagnostics in the experiments: exploration retention, infrastructure damping, and regression suppression. 
+
+## 4 TRIAGE: Role-Conditioned Segment Credit 
+
+TRIAGE has two components: a structured role judge and a role-conditioned process reward. The policy update remains the standard GRPO update. Rather than using the LLM judge as an unconstrained scalar reward model, TRIAGE uses a rubric-guided judge to assign one auditable semantic role per segment, and maps those roles to fixed credit rules. The only change is the advantage assigned to each environment-facing segment: we keep the trajectory-level GRPO advantage and add a bounded process reward whose form depends on the segment role. 
+
+Role-judge context window. The training-time role judge uses a bounded local context window around each segment; in our experiments this window includes up to five previous and five future action–observation pairs. Appendix H gives the exact window definition. The judge does not receive the final verifier outcome. Let AGRPO  
+
+> i
+
+be the outcome advantage for trajectory i. For segment ai,k , TRIAGE defines 
+
+AT RIAGE i,k = AGRPO  
+
+> i
+
++ λc ˆρi,k , (2) where cˆρi,k is a fixed process reward for the assigned role and λ controls how strongly this local signal is mixed into the GRPO advantage. The auxiliary judge scores are used only to help choose the role label, not as additional training-time notation. A simple instantiation sets 
+
+(cD , c E , c N , c R) = (1 , 0.5, −0.1, −0.5) . (3) Thus decisive progress receives a unit process reward, useful exploration receives a smaller positive reward, no-progress infrastructure receives only a small step cost, and regression receives a larger local penalty even if the trajectory succeeds. This scale follows the usual agent-RL convention that task progress is around +1 , harmless inefficiency receives a mild penalty around −0.1, and clearly unhelpful actions receive a stronger negative reward. This keeps the main comparison close to GRPO: the dominant signal is still the outcome advantage, while role typing adds only a bounded segment-level process reward. Unless otherwise stated, we use λ = 0 .4 for Search-QA and λ = 0 .2 for the other two environments, keeping (cD , c E , c N , c R) = (1 , 0.5, −0.1, −0.5) fixed across tasks. The role constants are never tuned; the only tuned hyperparameter is λ, selected on the training split by training success rate with the test set held out for final evaluation. The λ × | cR| grids in Appendix F are post-hoc sensitivity analyses and were not used to choose λ.For stability, the resulting segment advantages are whitened within each batch before being broadcast to segment tokens: 
+
+˜AT RIAGE i,k = AT RIAGE i,k − μB
+
+σB + ϵ . (4) 5The policy update is the usual clipped GRPO objective with ˜AT RIAGE i,k assigned to tokens belonging to segment k. In the evaluated environments, a segment coincides with the standard environment step used in prior agent-RL work: one admissible ALFWorld command, one WebShop search[...] or 
+
+click[...] action, or one Search-QA ⟨search ⟩ query or final ⟨answer ⟩ submission. The segment advantage is applied only to generated tokens in the corresponding environment-facing turn; prompt and observation tokens are excluded from the policy loss. 
+
+Training procedure. In each GRPO batch, we first compute the usual trajectory advantage AGRPO  
+
+> i
+
+.We then split each rollout into environment-facing action segments and ask the role judge for the segment role and auxiliary scores (q, u, h, b ). The role-conditioned process reward is added to the GRPO advantage, the resulting segment advantages are normalized within the batch, and each normalized value is broadcast to the tokens in that segment before the standard clipped GRPO update. No judge is used at evaluation time. 
+
+4.1 Theoretical Justification: Role Conditioning as an Optimal Projection 
+
+We give a justification, not a guarantee: under a stated sufficiency assumption, role-conditioned credit is the best segment-level correction expressible from role labels alone, and the fixed constants used by TRIAGE inherit a strictly smaller estimation error than uniform broadcasting whenever aligned with this optimum. We connect this to lower-variance policy gradients and flag where the assumption fails in Appendix B; all proofs are in Appendix A. 
+
+Setup. Let A∗ 
+
+> i,k
+
+denote the (unobserved) oracle per-segment advantage and let AGRPO  
+
+> i
+
+be the trajectory advantage that GRPO broadcasts to every segment. Define the credit residual 
+
+δi,k ≜ A∗ 
+
+> i,k
+
+− AGRPO  
+
+> i
+
+, (5) the within-trajectory variation in true credit that uniform broadcasting discards. A segment-level estimator that adds a correction g to AGRPO  
+
+> i
+
+incurs squared error E(AGRPO  
+
+> i
+
++ g − A∗
+
+> i,k
+
+)2 =
+
+E(g − δi,k )2.
+
+Proposition 1 (Optimal role-measurable correction) . Among all corrections g(ρ) that are measurable with respect to the segment role ρi,k , the minimizer of the segment-advantage MSE is the conditional expectation of the residual, 
+
+g⋆(ρ) = Eδi,k ρi,k = ρ, (6) 
+
+and the resulting MSE reduction relative to GRPO is 
+
+MSE GRPO − MSE g⋆
+
+= E
+
+h E[δi,k | ρi,k ]2i
+
+≥ 0. (7) Proposition 1 formalizes the paper’s central claim: role labels help exactly to the extent that they explain nonzero credit residual , i.e. whenever E[δ | ρ]̸ = 0 for some role. The four-role taxonomy is thus an interpretable, coarse discretization of the Bayes-optimal correction g⋆, with g⋆(R) < 0
+
+(regression is over-credited by broadcasting) and g⋆(E) > 0 in failed rollouts (exploration is over-punished)—precisely the two conflict cells of Table 1. TRIAGE uses fixed role constants rather than estimating g⋆. For the correction λc ˆρ, the MSE change relative to GRPO is 
+
+∆MSE = λ2E[c2ˆρ] − 2λ Cov( cˆρ, δ ), (8) so any positively aligned role signal reduces error for sufficiently small λ. This is exactly the desired sign pattern: negative for regression that GRPO over-credits and positive for exploration that GRPO over-punishes. Appendix B gives the full fixed-constant condition, connects the correction to policy-gradient variance, and states the failure modes. 
+
+## 5 Experiments 
+
+We design experiments to test role-aware credit rather than merely final performance. The central empirical question is whether TRIAGE preserves useful exploration while suppressing no-progress and regression. 6Table 3: Main results: success rate (%). ALFWorld and WebShop entries with ± are mean ± sample standard deviation over ten independent training-and-evaluation runs. Search-QA is reported as a single run because the retrieval-augmented rollout loop makes repeated full training runs substantially more expensive. The “no evidence” rows use the same Qwen3-8B-thinking judge but with a prompt that does not ask for a per-segment evidence string and only requests the role label (see Appendix H for the full default prompt that does require evidence).                                                               
+
+> Model Method ALFWorld Search-QA WebShop Qwen2.5-7B-Instruct GRPO 79 .6±1.943.3 70 .1±2.3
+> TRIAGE w/ Qwen3-8B no-think judge 76 .8±2.145.0 65 .4±2.8
+> TRIAGE w/ Qwen3-8B-thinking judge, no evidence 83 .1±2.646.4 73 .5±2.5
+> TRIAGE w/ Qwen3-8B-thinking judge 87 .5±2.448 .177 .2±2.2
+> Qwen3-1.7B-Instruct GRPO 45 .2±2.539.4 37 .5±2.8
+> TRIAGE w/ Qwen3-8B no-think judge 40 .7±2.140.2 35 .1±2.2
+> TRIAGE w/ Qwen3-8B-thinking judge, no evidence 51 .8±1.841.1 49 .6±1.9
+> TRIAGE w/ Qwen3-8B-thinking judge 56 .4±1.242.3 55 .9±1.5
+
+5.1 Experimental Setup Environments. We evaluate on three families of agentic tasks. ALFWorld tests embodied household planning with templated actions [Shridhar et al., 2021]. Search-QA tests multi-turn retrieval and answer generation, where query formulation and evidence gathering are exploratory [Dunn et al., 2017]. WebShop tests product search and purchase [Yao et al., 2022], where search/filter actions are exploratory and the purchase action is decisive. 
+
+Models and training. We evaluate Qwen2.5-7B-Instruct and Qwen3-1.7B-Instruct as deployable student policies for all three environments [Yang et al., 2024]. Training uses GRPO with G rollouts per prompt, implemented on top of the verl framework [Sheng et al., 2025]. TRIAGE uses the same rollouts and verifier rewards as GRPO, plus cached role labels from an LLM judge. All final evaluations use the unaided deployment policy without judge calls. For ALFWorld and WebShop, we repeat training and evaluation with ten independent runs and report mean ± sample standard deviation. Search-QA runs are substantially more expensive because each optimization step requires large-model rollout with multi-turn retrieval and verifier evaluation, so Search-QA results are reported from a single run under the same fixed training configuration; consequently Search-QA entries in the tables do not include a standard deviation. 
+
+5.2 Main Results 
+
+Figure 1 summarizes the main comparison, and Table 3 reports the underlying numbers. With the default Qwen3-8B-thinking judge, TRIAGE improves over GRPO on all three benchmarks for both policies, with the largest gains on ALFWorld and WebShop—the two audited environments with the highest regression mass (48% and 43%; Appendix G). The Search-QA gain is smaller but consistent, matching its more exploration-dominated, lower-regression profile. This pattern is what role-conditioned credit predicts: most of the benefit comes from withholding positive credit from regressive segments that vanilla GRPO reinforces whenever the trajectory happens to succeed. The comparison also shows that the benefit depends on judge reliability rather than on simply adding a dense reward. Substituting the Qwen3-8B no-think judge—which collapses on the R-in-success cell (Table 4)—drives TRIAGE below the GRPO baseline on ALFWorld and WebShop for both policies, confirming that the gains stem from accurate role typing and not from the extra reward term alone. Removing the evidence requirement (“no evidence” rows) keeps TRIAGE above GRPO but consistently trails the default prompt, so thinking is necessary for the hard R-in-success cell while structured evidence acts as a low-cost calibration knob on top of it. 
+
+5.3 Does the Judge Recover the Conflict Cells? 
+
+Because TRIAGE relies on a role judge, we audit whether the judge recovers local segment roles rather than simply echoing the final outcome. Two annotators independently label 135 environment-facing segments from 18 logged trajectories (3 ALFWorld, 3 WebShop, 12 Search-QA), reaching 7Table 4: Qwen3 role judge F1 (%) across 135 labeled segments, split by hand-labeled role and trajectory outcome. Column counts give the number of positive examples in each cell.                                                  
+
+> Config Rin success rollouts Rin failed rollouts Ein success rollouts Ein failed rollouts Din success rollouts
+> (n= 35) (n= 20) (n= 29) (n= 21) (n= 25)
+> 8B no-think 29.2 81.1 56.1 90.0 55.6 8B think 86.1 91.9 78.7 95.2 65.1 14B no-think 5.7 80.0 54.0 90.9 62.9 14B think 72.7 86.5 70.8 90.9 56.4 32B no-think 35.9 74.3 56.4 82.6 73.7
+> 32B think 88.6 83.3 70.8 88.9 65.1
+
+Table 5: Comparison with stronger credit-assignment baselines on Qwen2.5-7B-Instruct: success rate (%). All methods are our own runs under an identical protocol (see Appendix D for the shared-backbone value baseline). The GRPO and TRIAGE rows are repeated from Table 3 for reference. GiGPO’s Search-QA entry is left blank because its step-level state grouping degenerates to episode-level GRPO when per-step states embed retrieved documents that almost never recur across rollouts.                                       
+
+> Method ALFWorld Search-QA WebShop GRPO 79 .6±1.943.3 70 .1±2.3
+> PPO 81 .7±2.145.3 71 .5±2.0
+> GiGPO 87 .8±2.2–74 .3±2.9
+> Shared-backbone value baseline (App. D) 85 .2±2.746.8 70 .8±3.7
+> TRIAGE w/ Qwen3-8B-thinking judge 87 .5±2.448 .177 .2±2.2
+
+88.1 % raw agreement; disagreements are adjudicated by a senior annotator and used as ground truth. The prompt, labels, and examples are in Appendix H. Table 4 reports binary F1 by role–outcome cell, focusing on the two conflict cells: R inside successful rollouts and E inside failed rollouts. We omit D in failed rollouts because it has zero support in this labeled set. The result supports the two-blind-spot framing. Thinking is not uniformly useful; its large effect is concentrated in R-in-success, where it raises F1 from roughly 24 to 82 averaged over model sizes. The easy cell is E-in-failure (F1 > 82 even without thinking); the hard cell is finding regression exactly where the verifier says the rollout succeeded. Scaling helps less than enabling thinking: 8B-thinking is within three F1 points of 32B-thinking on R-in-success at substantially lower inference cost. We therefore use Qwen3-8B with thinking enabled as the default judge. 
+
+5.4 Comparisons and Ablations 
+
+All comparisons and ablations in this section use Qwen2.5-7B-Instruct. We organize the analysis around three questions: how TRIAGE compares with stronger credit-assignment baselines, whether role typing adds value beyond generic dense process rewards, and whether the trained policy exhibits the intended behavioral changes. 
+
+External credit-assignment baselines. Table 5 situates TRIAGE against stronger credit-assignment baselines reproduced under an identical protocol: PPO with a learned critic, GiGPO, which assigns step-level credit by grouping actions from recurring states [Feng et al., 2025], and a shared-backbone value baseline that learns a dense per-segment signal from the same verifier rewards. TRIAGE improves over PPO on all three benchmarks without a separate value network. Relative to GiGPO, TRIAGE is higher on WebShop and statistically tied on ALFWorld, while GiGPO does not apply to Search-QA because its state grouping degenerates when per-step states almost never recur. Relative to the value baseline, TRIAGE tests the central claim of the paper: dense segment credit alone is not enough when productive and regressive actions have similar outcome-trained values, and the missing information is the segment’s semantic role. The key difference is signal source: GiGPO derives micro-advantages structurally from recurring states, the value baseline derives them statistically from outcome regression, and TRIAGE derives them semantically from role labels—targeting the conflict cells that role-agnostic dense signals cannot resolve. 8Table 6: Ablation results on Qwen2.5-7B-Instruct: success rate (%). We test role-reward components, focusing on the frequent/high-impact failure modes: regression and exploration.                                                
+
+> Ablation Change ALFWorld Search-QA WebShop Raw GRPO no role judge or process reward 79 .6±1.943.3 70 .1±2.3
+> Scalar process reward 8B-thinking judge, no role typ-ing
+> 84 .8±2.845.9 72 .1±2.8
+> No regression penalty set cR= 0 81 .4±2.646.7 73 .1±2.3
+> No exploration bonus set cE= 0 85 .8±2.447.5 75 .5±2.2
+> TRIAGE none 87 .5±2.448 .177 .2±2.2
+
+The shared-backbone value baseline improves over GRPO on the two longer-rollout environments (ALFWorld 79 .6 → 85 .2, +5 .6; Search-QA 43 .3 → 46 .8, +3 .5), confirming that a learned dense per-segment baseline trained on the same verifier reward is a meaningful upgrade over uniform broadcast. On WebShop, however, it barely moves ( 70 .1 → 70 .8, within run-to-run variance), while TRIAGE reaches 77 .2. The reason is structural: WebShop regressions are repeated clicks of an already-selected attribute that leave the observation almost unchanged, so an outcome-trained value head cannot separate the productive click from its redundant repeat, whereas the role classifier reads the action history and labels the repeat R. Appendix D gives the full analysis. 
+
+Role-reward ablations. We also include a scalar process-reward baseline to separate the value of role typing from the value of adding any judge-derived dense reward. This baseline uses the same Qwen3-8B-thinking judge and the same local context window as TRIAGE, but asks for a single progress score si,k ∈ [−1, 1] rather than a discrete role. We add this score to the GRPO advantage as 
+
+Ai,k = AGRPO  
+
+> i
+
++ λs i,k , (9) and apply the same batch whitening as TRIAGE. This controls for judge access, local context, and dense reward shaping while removing role-conditioned credit rules. Thus the comparison isolates whether the advantage comes from a generic process reward or from the role-specific mapping that treats exploration, no-progress infrastructure, and regression differently. Table 6 isolates the two role-reward components and the role-typing effect itself. The scalar process-reward baseline improves over GRPO, confirming that dense segment feedback is useful, but it remains below TRIAGE on every benchmark. Removing either role component further degrades TRIAGE, so the gain is not an artifact of simply adding a dense reward from the same judge. The regression penalty ( cR) is the dominant contributor: zeroing it costs 1.8–6.1 points across benchmarks and leaves ALFWorld and WebShop only marginally above raw GRPO. The exploration bonus ( cE )provides a smaller but consistently positive top-up ( 0.6–1.7 points). This ordering matches the role audit: ALFWorld and WebShop carry regression mass of ≈ 48% and ≈ 43% (Appendix G), so most of TRIAGE’s gain comes from suppressing R credit inside successful trajectories. Consistent with this mechanism, TRIAGE also reduces completed-rollout length by 10 .4% and 14 .8% relative to GRPO on the two environments (Appendix E). TRIAGE is stable to the role-constant scale and λ
+
+within a reasonable range (Appendix F). 
+
+## 6 Discussion and Limitations 
+
+Limitations. Role labels are semantic estimates, not ground truth. A judge can overvalue plausible exploration, miss subtle regressions, or rely too much on final outcomes. TRIAGE mitigates this by using the judge only for structured role diagnosis and keeping verifier outcomes as the base optimization signal, but it does not remove judge error. Role usefulness is also context-dependent. The same search, read, or test command can be informative once and redundant later, so the classifier must condition on local state and redundancy rather than action strings alone. Finally, role-aware credit is not causal identification: it improves local attribution, but counterfactual environment interventions would be needed to prove that a segment was necessary. 
+
+Future work. This paper uses one primary role per segment to keep the signal auditable. A natural extension is a soft role distribution, e.g., (pD , p E , p N , p R), with credit computed as an expectation under role-specific constants. This could better represent mixed segments, such as a search that 9Table 7: Where TRIAGE sits among agentic credit-assignment methods. Expl. ̸ = no-prog. : separates useful exploration from harmless no-progress; Regr. in success : can withhold credit from regressive steps inside successful rollouts; No state match : works without recurring or matchable states.                   
+
+> Method family Granularity Expl. ̸=
+> no-prog. Regr. in success No state match Outcome / group RL trajectory ✗✗✓
+> GiGPO [Feng et al., 2025] step ✗partial ✗
+> Step / process rewards [Wang et al., 2025, Lightman et al., 2024] step ✗✗✓
+> TRIAGE (ours) step ✓✓✓
+
+reveals useful evidence while also introducing distractors, but it would require reliable calibration and stronger audit procedures. TRIAGE is also compatible with segment bucketing and outcome-statistical estimators. Bucketing can decide which segments share statistical evidence, while role labels decide how that evidence should be interpreted. Combining the two is a promising direction for domains where exact action arguments are sparse and repeated segments are rare. Finally, the discrete four-role label is only the first layer of role-aware judging. On harder tasks or stronger base agents, obvious loops, wrong purchases, and repeated inspections become rare, and the credit problem shifts from detecting coarse failures to estimating how much each segment advances the task or belief state. In that regime the same framework can use a stronger judge to assign finer-grained process rewards within each role rather than a single discrete label. 
+
+## 7 Related Work 
+
+Agentic credit assignment. Agentic RL requires assigning credit across environment-facing deci-sions rather than only across tokens. Table 7 summarizes the closest design choices. State-anchored methods such as GiGPO compare actions taken from matched states [Feng et al., 2025]; stepwise progress and process-reward methods learn scalar dense scores for intermediate steps [Wang et al., 2025, Lightman et al., 2024]. TRIAGE is complementary: it keeps the outcome advantage but adds a semantic role label, so the update can distinguish useful exploration from no-progress behavior and regression from ordinary low progress. 
+
+Process reward models and LLM judges. Process reward models provide dense supervision by scoring intermediate reasoning or agent steps [Lightman et al., 2024]. LLM-as-judge methods can evaluate generated outputs, critique trajectories, or assign rubric scores [Shinn et al., 2023, Madaan et al., 2023, Fang et al., 2026]. Unstructured process scores can be brittle: they may punish correct actions in failed trajectories, over-credit plausible narration, or conflate exploration with lack of progress. TRIAGE uses the judge more narrowly as a structured classifier over segment roles. This reduces the burden on the judge and makes the resulting signal easier to audit. 
+
+Exploration in language agents. Language agents often rely on information-gathering actions such as search, inspect, read, and test execution [Yao et al., 2023a, Schick et al., 2023]. Related prompting and self-improvement methods also exploit multiple sampled reasoning paths, search trees, or self-generated rationales to expose useful intermediate information [Wang et al., 2023, Yao et al., 2023b, Zelikman et al., 2022]. These actions change the agent’s belief state rather than immediately completing the task. In sparse-reward RL, such actions are easy to misclassify as neutral or wasteful. TRIAGE makes belief-state progress an explicit credit category, allowing training to preserve useful exploration while still suppressing redundant or irrelevant exploration. 
+
+On-policy distillation and token weighting. On-policy distillation and token-importance methods refine supervision on sampled trajectories [Xu et al., 2026b,a, Agarwal et al., 2024]. These methods mostly operate at token or response granularity. TRIAGE operates at the agentic segment level and can be applied to either RL advantages or distillation losses: role labels can gate which action turns receive strong distillation or reinforcement. 10 8 Conclusion 
+
+We argued that agentic credit assignment requires distinguishing what role each environment-facing segment plays. The key missing distinction is that exploration is not no-progress: an action can improve the agent’s belief state without immediately completing a subgoal. TRIAGE operationalizes this idea with a structured role judge and role-conditioned credit rules, keeping the GRPO outcome advantage as the optimization direction while adding a bounded, role-typed correction. Across ALFWorld, Search-QA, and WebShop, this lifts success rates over GRPO for two policy models—by up to 7.9 points on Qwen2.5-7B and 18 .4 on Qwen3-1.7B—and shortens completed rollouts by 
+
+10 .4% –14 .8% , with ablations and a manual role audit confirming that suppressing regression inside successful trajectories is the dominant source of the gain. Theoretically, role-conditioned credit is the MSE-optimal correction expressible from role labels alone, so the benefit is tied directly to judge reliability, which our audit measures rather than assumes. By reinforcing decisive progress, preserving useful exploration, damping no-progress infrastructure, and suppressing regression, TRIAGE offers a principled path toward sparse-reward RL for agents whose success depends on information gathering and recovery. 
+
+## References 
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. DeepSeek-AI, Daya Guo, et al. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning. Nature , 645:633–638, 2025. doi: 10.1038/s41586-025-09422-z. Luong Trung, Xinbo Zhang, Zhanming Jie, Peng Sun, Xiaoran Jin, and Hang Li. ReFT: Reasoning with reinforced fine-tuning. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 7601–7614, Bangkok, Thailand, 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.acl-long.410. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. DAPO: An open-source LLM reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 , 2025. Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. Beyond GRPO and on-policy distillation: An empirical sparse-to-dense reward principle for language-model post-training. arXiv preprint arXiv:2605.12483 , 2026a. Hanlin Wang, Chak Tou Leong, Jiashuo Wang, Jian Wang, and Wenjie Li. SPA-RL: Reinforcing LLM agents via stepwise progress attribution. arXiv preprint arXiv:2505.20732 , 2025. Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. Self-distilled agentic reinforcement learning. 
+
+arXiv preprint arXiv:2605.15155 , 2026. Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. TIP: Token importance in on-policy distillation. arXiv preprint arXiv:2604.14084 , 2026b. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations , 2024. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre C ˆot ´e, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. ALFWorld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representations , 2021. Matthew Dunn, Levent Sagun, Mike Higgins, V. Ugur Guney, Volkan Cirik, and Kyunghyun Cho. SearchQA: A new Q&A dataset augmented with context from a search engine. arXiv preprint arXiv:1704.05179 , 2017. 11 Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. WebShop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Systems , 2022. An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2024. Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. HybridFlow: A flexible and efficient RLHF framework. In Proceedings of the Twentieth European Conference on Computer Systems (EuroSys) , 2025. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for LLM agent training. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. arXiv preprint arXiv:2303.11366 , 2023. Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir Yazdanbakhsh, and Peter Clark. Self-refine: Iterative refinement with self-feedback. arXiv preprint arXiv:2303.17651 , 2023. Junfeng Fang, Zhepei Hong, Mao Zheng, Mingyang Song, Gengsheng Li, Houcheng Jiang, Dan Zhang, Haiyun Guo, Xiang Wang, and Tat-Seng Chua. Rubric-based on-policy distillation. arXiv preprint arXiv:2605.07396 , 2026. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In International Conference on Learning Representations , 2023a. Timo Schick, Jane Dwivedi-Yu, Roberto Dess `ı, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. arXiv preprint arXiv:2302.04761 , 2023. Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V. Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language models. In International Conference on Learning Representations , 2023. Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik Narasimhan. Tree of thoughts: Deliberate problem solving with large language models. In 
+
+Advances in Neural Information Processing Systems , 2023b. Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah D. Goodman. STaR: Bootstrapping reasoning with reasoning. arXiv preprint arXiv:2203.14465 , 2022. Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In International Conference on Learning Representations , 2024. Evan Greensmith, Peter L. Bartlett, and Jonathan Baxter. Variance reduction techniques for gradient estimates in reinforcement learning. Journal of Machine Learning Research , 5:1471–1530, 2004. John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. In International Conference on Learning Representations (ICLR) , 2016. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. 12 Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Y. Wu, and Zhifang Sui. Math-Shepherd: Verify and reinforce LLMs step-by-step without human annotations. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) ,2024. 
+
+## A Additional Theory and Proofs 
+
+Proof of Proposition 1. Minimizing E[( g(ρ) − δ)2] over all ρ-measurable g is an L2 projection of δ onto the subspace of ρ-measurable functions; the minimizer is the conditional expectation 
+
+g⋆(ρ) = E[δ | ρ]. Uniform GRPO is the special case g ≡ 0, with MSE E[δ2]. By the law of total variance, E[δ2] − E[( δ − g⋆)2] = E[( E[δ | ρ]) 2] ≥ 0.
+
+Proposition 2 (MSE reduction under fixed constants) . With the fixed role correction AT RIAGE i,k =
+
+AGRPO  
+
+> i
+
++ λc ˆρi,k , the batch MSE satisfies 
+
+MSE T RIAGE = MSE GRPO + λ2σ2 
+
+> c
+
+− 2λ Cov( cˆρ, δ ), (10) 
+
+with σ2 
+
+> c
+
+= E[c2ˆρ]. TRIAGE strictly reduces MSE iff Cov( cˆρ, δ ) > 0 and 0 < λ < 2 Cov( cˆρ, δ )/σ 2 
+
+> c
+
+,with optimum λ⋆ = Cov( cˆρ, δ )/σ 2 
+
+> c
+
+and maximal reduction Cov 2(cˆρ, δ )/σ 2 
+
+> c
+
+.Proof of Proposition 2. Expand (AGRPO  
+
+> i
+
++ λc ˆρ − A∗)2 = ( λc ˆρ − δ)2 = δ2 + λ2c2ˆρ − 2λc ˆρδ and average over the batch; the correction λ2σ2 
+
+> c
+
+− 2λCov is a convex quadratic in λ, minimized at λ⋆.
+
+## B Extended Theoretical Discussion 
+
+This appendix expands the short discussion following Proposition 2: why the fixed constants should align with the residual, how the correction connects to policy-gradient variance, and when the argument fails. 
+
+Alignment of fixed constants. The covariance Cov( cˆρ, δ ) is maximized when the role constants match the sign pattern of the optimal correction g⋆(ρ) = E[δ | ρ]. In the two conflict cells, this means assigning negative credit to R segments inside successful trajectories, which GRPO would otherwise over-credit, and positive credit to useful E segments inside failed trajectories, which GRPO would otherwise over-punish. The constants (cD , c E , c N , c R) = (1 , 0.5, −0.1, −0.5) implement this ordering without per-environment tuning. 
+
+From estimation error to policy-gradient variance. The target of training is policy improvement, not estimation accuracy per se. The bridge is standard: in policy-gradient estimators, adding any 
+
+action-history–measurable baseline to the advantage leaves the gradient unbiased while changing its variance, and the variance-minimizing baseline is the conditional expectation of the return [Green-smith et al., 2004, Schulman et al., 2016]. Role labels are functions of the local action–observation window, hence admissible baselines; Proposition 1 identifies the role-measurable correction that minimizes residual energy, and Proposition 2 shows the fixed-constant surrogate reduces it whenever aligned. Because TRIAGE additionally whitens within the batch (Eq. 4), only the sign and relative ordering of the correction must be correct—an order-preserving transform of an aligned correction remains aligned (Appendix F). 
+
+Remark 3 (Where the assumption fails) . The benefit hinges on role labels capturing a nontrivial share of the credit residual ( E[δ | ρ]̸ = 0 ) and on the judge recovering ρ accurately enough to keep 
+
+Cov( cˆρ, δ ) > 0. Both can fail: (i) role is only a partial summary of local credit, so g⋆ leaves residual error—e.g. the D/E boundary is genuinely ambiguous (Table 4, D-in-success F1 ≈ 65 ); and (ii) an unreliable judge can drive Cov( cˆρ, δ ) ≤ 0, in which case no λ > 0 helps. This is the theoretical counterpart of the no-think judge degrading TRIAGE below GRPO (Table 3) and of the degradation at large λ and |cR| (Table 10). We therefore present these results as a justification conditional on judge reliability, which our audit (Section 5, Appendix H) measures directly rather than assumes. 
+
+13 Table 8: Training hyperparameters. Here η is the learning rate, G is the number of rollouts per prompt, Steps is the number of optimization steps, ϵ is the GRPO clip ratio, λ is the role-reward mixing coefficient, β is unused by TRIAGE, αKL is the KL coefficient, cρ denotes role-reward constants, Lp
+
+is the maximum prompt length, Lr is the maximum response length, and B is the PPO mini-batch size.                                     
+
+> Method ηGSteps ϵλβαKL cρLpLrB
+> GRPO 10 −68150 0.2 ––0.01 –4096 512 64 TRIAGE 10 −68150 0.2 0.2-0.4 –0.01 (1 ,0.5,−0.1,−0.5) 4096 512 64
+
+## C Training Hyperparameters 
+
+Computational overhead. TRIAGE adds an LLM judge call per segment during training, which increases per-batch wall-clock time. However, the relevant comparison is not raw compute parity but whether the same compute spent on additional GRPO training yields equivalent gains. In our experiments, the GRPO baseline is already near saturation at 150 steps: extending training to 300 steps yields ALFWorld success below 85% and WebShop below 75%, still short of the TRIAGE results (87 .5 and 77 .2 respectively). The performance plateau is expected because the credit-assignment bottleneck is structural—broadcasting a single trajectory advantage over 10–30 segments dilutes gradient regardless of how many optimization steps are taken—and more steps cannot fix a noisy per-segment signal. From a long-rollout perspective, the LLM judge is also structurally advantageous in several respects: (i) credit dilution worsens with trajectory length, so the marginal value of correct per-segment attribution grows with the number of segments; (ii) unlike a learned value critic (as in PPO), the LLM judge generalizes zero-shot across environments without requiring environment-specific training data or reward-model fitting; and (iii) the judge leverages semantic reasoning about task goals, information gain, and state corruption that a scalar critic trained on sparse binary rewards cannot easily acquire. Thus, while the judge adds inference cost, it addresses a qualitatively different bottleneck than the one more training steps would solve. 
+
+## D Shared-Backbone Value Baseline 
+
+To isolate the contribution of role typing from the contribution of any dense per-segment signal, we compare TRIAGE against a shared-backbone value baseline. This baseline keeps the GRPO policy update but attaches a learned scalar value head to the same policy backbone and trains it on the same on-policy rollouts. The recipe follows the standard actor–critic instantiation used in PPO-style RLHF [Schulman et al., 2017] and the outcome-supervised value learning popularized by Wang et al. [2024], adapted to the agentic segment setting. 
+
+Architecture. The value head Vϕ : Rdmodel → R is a single linear projection on top of the final-layer hidden state of the policy backbone, evaluated at the last token of each segment’s observation. The backbone is shared with the policy and kept frozen throughout training, so only ϕ (a few thousand parameters) receives gradients. This avoids a separate critic network and keeps the additional wall-clock cost negligible relative to GRPO. 
+
+Labels: no extra annotation required. We do not collect any process-level labels and do not call an external judge. The value head is supervised on per-segment discounted Monte-Carlo returns derived from the same binary verifier reward GRPO already computes, 
+
+yi,k = γTi−k ri, ri = V (τi) ∈ { 0, 1}, (11) where Ti is the number of environment-facing segments in trajectory i. The head is trained by mean-squared regression LV (ϕ) = 1
+
+> N
+
+P
+
+> i,k
+
+ Vϕ(si,k ) − yi,k 
+
+2 jointly with each GRPO step on the freshly collected rollouts. This is the same outcome-only supervision Math-Shepherd-style PRMs use, but with the policy backbone shared rather than a separate model fitted on logged data. 
+
+Mixing into GRPO. At credit-assignment time the head’s per-segment value increment is added to the trajectory advantage and whitened with the same batch statistics as TRIAGE before broadcasting 14 to segment tokens: 
+
+Ai,k = AGRPO  
+
+> i
+
++ λ V ¯ϕ(si,k ) − V ¯ϕ(si,k −1), (12) where ¯ϕ is an exponential-moving-average copy of ϕ used to decouple value updates from policy updates. 
+
+Hyperparameters. GRPO parameters ( η, G, optimization steps, clip ratio ϵ, KL coefficient αKL ,
+
+Lp, Lr, batch size B) are shared with TRIAGE (Table 8). Value-head–specific settings: discount 
+
+γ = 0 .95 for ALFWorld and WebShop and γ = 0 .9 for Search-QA (reflecting its shorter answer-terminating rollouts); head learning rate ηV = 10 −4; 10-step head warmup at λ = 0 so ϕ converges to a reasonable baseline before being injected into the policy update; EMA target update rate τ = 0 .99 ;per-segment value increment clipped to [−0.5, 0.5] to bound early-training noise; mixing coefficient 
+
+λ matched to TRIAGE’s value per benchmark ( λ = 0 .4 on Search-QA, λ = 0 .2 on ALFWorld and WebShop), so any performance difference reflects the source of the dense signal rather than its scale. 
+
+What this baseline isolates. Both TRIAGE and the shared-backbone value baseline add a bounded, 
+
+λ-scaled dense per-segment correction on top of the same GRPO advantage; both whiten within the batch; both use only labels that the GRPO loop already produces (verifier rewards alone for the value baseline, verifier rewards plus role labels from a small judge for TRIAGE). The remaining methodological difference is the source of the per-segment signal: a learned scalar critic regressing trajectory-level outcomes, versus a semantic role classifier with role-conditioned credit rules. Table 5 shows that the value baseline improves over GRPO on the two longer-rollout environments (ALF-World 79 .6 → 85 .2, +5 .6; Search-QA 43 .3 → 46 .8, +3 .5) but barely moves WebShop ( 70 .1 → 70 .8,well inside run-to-run variance), while TRIAGE reaches 87 .5/48 .1/77 .2. The per-benchmark gap to TRIAGE ( −2.3/−1.3/−6.4) is largest precisely on WebShop, where regressions take the form of re-clicks of an already-selected attribute that leave the visible observation almost unchanged; the value head therefore receives near-identical Monte-Carlo targets for the productive click and its redundant repeat and credits them near-identically, while the role classifier reads the action history and labels the repeat R. The pattern is consistent with the intended interpretation: outcome-trained scalar critics capture coarse per-segment progress when the observation actually evolves, but cannot supply role-level distinctions in action spaces where harmful repetitions leave the local state intact. 
+
+## E Rollout Efficiency 
+
+Because TRIAGE suppresses no-progress infrastructure and regression, trained policies should complete tasks with fewer environment-facing actions than GRPO. Table 9 measures rollout length as the number of action–observation segments per completed evaluation trajectory. Table 9: Post-training rollout length on Qwen2.5-7B-Instruct.                    
+
+> Environment Starting policy GRPO length TRIAGE length ALFWorld 43.9 24 .45 ±1.86 21 .90 ±2.03
+> WebShop 14 .80 ±0.18 8.00 ±0.45 6.82 ±0.24
+
+The length results show that both RL methods learn shorter trajectories than the starting policy, but TRIAGE removes more redundant interaction steps than GRPO. On ALFWorld, GRPO reduces the average completed-trajectory length from 43 .9 to 24 .45 segments, while TRIAGE further reduces it to 21 .90 , an additional 10 .4% reduction relative to GRPO. On WebShop, GRPO reduces rollout length from 14 .80 to 8.00 segments, while TRIAGE reaches 6.82 , an additional 14 .8% reduction. This matches the intended mechanism of role-conditioned credit: suppressing repeated inspections, redundant attribute clicks, and other no-progress or regressive segments improves not only success rate but also interaction efficiency. The effect is especially important for long-horizon agents, where every unnecessary environment-facing step compounds inference cost and increases the opportunity for later mistakes. 15 F Sensitivity to Role Constants and λ
+
+The main text fixes the role constants (cD , c E , c N , c R) = (1 , 0.5, −0.1, −0.5) and tunes only the mixing coefficient λ per environment, with λ selected on the training split alone (Section 4). This appendix probes how sensitive TRIAGE is to these choices along the two axes that matter most for the conflict cells: the magnitude of the regression penalty |cR| and the overall mixing strength λ.The sweeps below are post-hoc diagnostics computed on the test set after λ was already fixed; they characterize robustness and were not used to select any reported hyperparameter. All runs use Qwen2.5-7B-Instruct with the default Qwen3-8B-thinking judge; every other hyperpa-rameter is held at its main-text value. 
+
+Joint λ × | cR| sweep. Table 10 sweeps λ ∈ { 0.1, 0.2, 0.4} against |cR| ∈ { 0.25 , 0.5, 1.0} on WebShop, keeping (cD , c E , c N ) = (1 , 0.5, −0.1) fixed. The default configuration ( λ = 0 .2, |cR| =0.5) is highlighted. Success rate is stable across the interior of the grid and degrades only at the corners, where either an overly large penalty ( |cR| = 1 .0) or an overly strong mixing ( λ = 0 .4) begins to over-punish segments the judge mislabels as R.Table 10: WebShop success rate (%) on Qwen2.5-7B-Instruct under a joint sweep of the mixing coefficient λ and the regression-penalty magnitude |cR|. Entries are mean ± sample standard deviation over ten runs. The default TRIAGE configuration ( λ = 0 .2, |cR| = 0 .5) is shown in bold. GRPO baseline: 70 .1 ± 2.3.                                   
+
+> |cR|= 0 .25 |cR|= 0 .5|cR|= 1 .0
+> λ= 0 .174 .8±2.675 .6±2.474 .1±2.7
+> λ= 0 .276 .0±2.577 .2±2.274 .9±2.8
+> λ= 0 .474 .3±2.774 .6±2.971 .8±3.1
+
+Varying |cR| at the default λ. Isolating |cR| at the per-environment default λ confirms the same robustness on the two environments not covered by the WebShop grid above. Extending the zero-penalty ablation of Table 6 to halved, default, and doubled penalties, ALFWorld success for |cR| ∈ {0, 0.25 , 0.5, 1.0} is 81 .4/85 .9/87 .5/85 .1 and Search-QA is 46 .7/47 .6/48 .1/46 .9, where |cR| = 0 
+
+reproduces the “no regression penalty” row of Table 6 and |cR| = 0 .5 is the TRIAGE default. The corresponding WebShop trend is the λ = 0 .2 row of Table 10 ( 76 .0/77 .2/74 .9 for |cR| ∈ {0.25 , 0.5, 1.0}). In all three environments, halving |cR| retains most of the gain while doubling it stays above GRPO but begins to erode performance, consistent with heavier punishment of misjudged exploration in the more under-explored Search-QA setting. 
+
+Takeaway. The sensitivity results support two conclusions. First, TRIAGE does not rely on a knife-edge choice of cR: both the half-penalty and default settings remain well above GRPO and the 
+
+cR = 0 ablation. Second, performance degrades when the role correction becomes too aggressive, especially at larger 
+
+λ and doubled |cR|, matching the expected failure mode of over-penalizing judge false positives for 
+
+R. We therefore use the default constants as a conservative operating point rather than as a heavily tuned optimum. 
+
+Interaction with batch whitening. Equation (4) whitens the combined advantage AT RIAGE i,k =
+
+AGRPO  
+
+> i
+
++ λc ˆρi,k within each batch before broadcasting it to tokens. A natural concern is that a batch containing many large negative R corrections could shift μB and inflate σB enough to undo the intended penalty. Two properties bound this effect. First, whitening is an order-preserving affine map: subtracting a common μB and dividing by a positive σB cannot reverse the relative ordering of two segments, so a segment that received a lower combined advantage because it was labeled R still receives a lower normalized advantage than its non-R peers in the same outcome group. The whitening rescales the 
+
+magnitude of the correction but never flips its sign .16 Second, the correction is deliberately small relative to the outcome advantage: with λ ≤ 0.4 and the audited role distribution, the role term contributes a raw standard deviation of only 0.09 –0.28 
+
+(Section 4), so it perturbs rather than dominates μB and σB.Empirically, the interior stability of Table 10 confirms that whitening does not cancel the role signal across the operating range we use; degradation appears only when λ or |cR| is pushed to the grid corners, exactly where the unnormalized correction grows large enough to compete with the outcome advantage. 
+
+## G Empirical Role Distribution Audit on Logged Trajectories 
+
+Setup. We sampled six trajectories from production GRPO baseline runs of 
+
+Qwen2.5-7B-Instruct : three from ALFWorld and three from WebShop. Trajectories were chosen to span the observed outcome distribution rather than randomly: a clean efficient success, a long success containing redundant action repeats, and (where available) a failure where the agent committed early to an incorrect product or container. These six trajectories are a subset of the hand-labeled set in Appendix H; we reuse its adjudicated per-segment role labels, which were produced by two annotators who did not participate in defining the four-role taxonomy of Section 3 (D = decisive progress, E = useful exploration, N = no-progress infrastructure, R = regression) and adjudicated by a senior annotator, and we apply that taxonomy to every environment-facing segment. The audit below focuses on ALFWorld and WebShop trajectories with complete per-segment logs; Search-QA examples are audited separately in Appendix H. 
+
+G.1 ALFWorld Trajectories A1. Clean optimal trajectory. Task: “put a clean butterknife in diningtable”. Outcome: success, 6 steps, raw environment reward 10. Role distribution: 5D + 1 E + 0 N + 0 R. Table 11 shows the per-segment role assignment. This trajectory contains a single E segment (the initial location guess) and five D segments completing the task. 
+
+Vanilla GRPO : broadcasts AGRPO = +( r − ¯r)/σ r uniformly to all six segments. With no redundant or regressive segments to absorb credit, this is essentially the right behavior. TRIAGE : under the hand-audited roles, the role-conditioned rule adds λc D to the five D segments and λc E to the initial 
+
+E. Net effect is a slight concentration of credit onto the decisive segments. This is the regime in which TRIAGE and vanilla GRPO behave nearly identically; the point of including this trajectory is to confirm that role-conditioning does not hurt when the trajectory is already efficient. Table 11: Trajectory A1 (ALFWorld, clean success): per-segment hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 4/6). Roles: D = decisive progress, E = useful exploration, N = no-progress, R = regression.                                   
+
+> tAction Hand Justification Judge Agree 0go to countertop 1 EFirst location, no prior evidence of but-terknife position
+> E✓
+> 1take butterknife 2 from counter-top 1
+> DTarget object acquired D✓
+> 2go to sinkbasin 1 DNavigate to required clean facility E×
+> 3clean butterknife 2with sinkbasin 1
+> DRequired transformation D✓
+> 4go to diningtable 1 DNavigate to destination E×
+> 5move butterknife 2 to diningtable 1
+> DFinal placement, reward triggers D✓
+
+A2. Lucky-recovery success. Task: “put a toiletpaper in toiletpaperhanger”. Outcome: success in 22 steps, raw environment reward 10. Role distribution: 4D + 7 E + 1 N + 10 R (Table 12). The agent does not find the target until step 17 and spends the prior 16 steps re-examining the same toilet, returning to already-visited locations, and repeating inventory checks. Ten segments are clearly redundant repeats meeting the operational definition of R; the final four are D completing the task; seven are E (genuine first-time inspections that yielded information); one is N (an empty-handed traversal). 17 Vanilla GRPO : applies positive AGRPO uniformly to all 22 segments because the trajectory even-tually succeeded. The 10 R segments—repeated examine toilet 1 , inventory , back-and-forth between two locations—all receive the same positive reinforcement as the four decisive D segments at the end. This is exactly the failure mode above: success masks regression in hindsight credit. 
+
+TRIAGE : under the hand-audited roles, steps 4, 6, 9–16 are R and receive the negative process reward 
+
+λc R from Section 4, which lowers their segment advantage even though r = 10 . The preserved positive credit concentrates on the four closing D segments and the genuine E segments earlier in the trajectory. Net effect: the trajectory contributes the same outcome signal but roughly 4/22 ≈ 18% of its segment positions carry the bulk of the gradient, against 22 /22 = 100% under vanilla GRPO. Table 12: Trajectory A2 (ALFWorld, success with extensive redundancy), all 22 steps; hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 16/22).                                                                                                                   
+
+> tAction Hand Justification Judge Agree 0go to toilet 1 ESemantic guess, no prior info E✓
+> 1examine toilet 1 EFirst inspection, info gain E✓
+> 2inventory EInitial hand check E✓
+> 3go to toiletpaperhanger 1 NEmpty-handed traversal E×
+> 4examine toilet 1 RRepeat of step 1 R✓
+> 5examine toiletpaperhanger 1 EFirst inspection of hanger E✓
+> 6examine toilet 1 RRepeat R✓
+> 7go to countertop 1 ENew location attempt E✓
+> 8examine countertop 1 EFirst inspection E✓
+> 9go to toilet 1 RRepeated return, no new info R✓
+> 10 examine toilet 1 RRepeat R✓
+> 11 go to countertop 1 RRepeat N×
+> 12 go to toilet 1 RRepeat N×
+> 13 examine toilet 1 RRepeat R✓
+> 14 inventory RRepeat, hand still empty N×
+> 15 examine toilet 1 RRepeat R✓
+> 16 examine toilet 1 RRepeat R✓
+> 17 go to cabinet 1 EFirst container attempt E✓
+> 18 open cabinet 1 DReveals toiletpaper E×
+> 19 take toiletpaper 1 from cabinet 1 DTarget acquired D✓
+> 20 go to toiletpaperhanger 1 DNavigate to destination N×
+> 21 move toiletpaper 1 to toiletpaper-hanger 1
+> DFinal placement, reward triggers D✓
+
+A3. Pathological loop with lucky recovery. Task: “put a cool apple in garbagecan”. Outcome: success in 34 steps, raw environment reward 10. Role distribution: 5D + 8 E + 1 N + 20 R (Table 13). The agent enters a tight loop of 15 consecutive examine fridge 1 actions (steps 2–16) without any state change, then explores other containers for another 12 steps before acquiring the target apple at step 29 and completing the task at step 33. 
+
+Vanilla GRPO : a single positive trajectory advantage is broadcast to all 34 segments, including the 15-step examine fridge 1 loop, providing direct gradient encouragement for the policy to repeat no-op observations. This is the most acute illustration in our sample of success masking regression in hindsight credit. After thousands of such trajectories, the resulting policy would be biased toward repeating idle inspections at the start of every task. TRIAGE : under the hand-audited roles, steps 2–16 (the entire loop), steps 21–24 (alternating cabinet re-examines), and step 27 (countertop re-examine) are R and receive lower segment advantages with λc R. The remaining positive role-reward mass concentrates on the genuine first-time exploration (steps 0, 1, 17, 18, 20, 25, 26, 28) and the five decisive segments at the end (29–33). Net effect: of 34 segments, 5 carry strong positive credit and 8 carry moderate information-gain credit, against 34 carrying uniform positive credit under vanilla GRPO. Under the hand-audited roles, the trajectory contributes the same outcome signal but stops teaching the policy to enter the examine fridge 1 loop. 
+
+G.2 WebShop Trajectories W1. Clean optimal trajectory. Task: “Find me hand wash men’s sleep & lounge with long sleeve, elastic waistband, color: multi 9, size: medium, price <$80”. Outcome: success in 6 steps. Role distribution: 3D +2 E +1 N +0 R (Table 14). The agent issues a well-formed search query containing 18 Table 13: Trajectory A3 (ALFWorld, pathological loop followed by lucky recovery), all 34 steps; hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 27/34). 
+
+t Action Hand Justification Judge Agree 0 go to fridge 1 E Semantic guess (fridge is the cool facil-ity) 
+
+E ✓
+
+1 open fridge 1 E Reveals contents; apple not inside D ×
+
+2 examine fridge 1 R Repeat of step 1 inspection E ×
+
+3 examine fridge 1 R Repeat R ✓
+
+4 examine fridge 1 R Repeat R ✓
+
+5 examine fridge 1 R Repeat R ✓
+
+6 examine fridge 1 R Repeat R ✓
+
+7 examine fridge 1 R Repeat R ✓
+
+8 examine fridge 1 R Repeat R ✓
+
+9 examine fridge 1 R Repeat R ✓
+
+10 examine fridge 1 R Repeat R ✓
+
+11 examine fridge 1 R Repeat R ✓
+
+12 examine fridge 1 R Repeat R ✓
+
+13 examine fridge 1 R Repeat R ✓
+
+14 examine fridge 1 R Repeat R ✓
+
+15 examine fridge 1 R Repeat R ✓
+
+16 examine fridge 1 R Repeat (15th consecutive examine fridge )
+
+R ✓
+
+17 go to cabinet 1 E First container switch, info gain E ✓
+
+18 open cabinet 1 E First inspection of new container D ×
+
+19 examine cabinet 2 N Inspect without arriving at the cabinet E ×
+
+20 open cabinet 2 E First inspection of cabinet 2 D ×
+
+21 examine cabinet 1 R Repeat of step 18 R ✓
+
+22 examine cabinet 2 R Repeat of step 20 R ✓
+
+23 examine cabinet 1 R Repeat R ✓
+
+24 examine cabinet 2 R Repeat R ✓
+
+25 go to countertop 1 E New location E ✓
+
+26 examine countertop 1 E First inspection E ✓
+
+27 examine countertop 1 R Repeat R ✓
+
+28 go to countertop 2 E New location E ✓
+
+29 take apple 1 from countertop 2 D Target acquired D ✓
+
+30 go to fridge 1 D Navigate to cool facility N ×
+
+31 cool apple 1 with fridge 1 D Required transformation D ✓
+
+32 go to garbagecan 1 D Navigate to destination E ×
+
+33 move apple 1 to garbagecan 1 D Final placement, reward triggers D ✓
+
+all task constraints, clicks the first returned product for inspection, selects the matching color and size attributes, and clicks buy now . A duplicate buy now after task completion is the only no-progress (N ) segment. 
+
+Vanilla GRPO : applies positive credit uniformly to all six segments; the duplicate buy now receives the same reinforcement as the three genuine decisive clicks. TRIAGE : under the hand-audited roles, the role-conditioned rule adds λc D on the three verifier-facing D segments, λc E on the initial search and product inspection, and a small negative local correction on the post-completion duplicate; net effect is a slight credit concentration with no behavior change at this trajectory’s outcome level. As with A1, this trajectory exists to confirm that TRIAGE does not degrade efficient short rollouts. Table 14: Trajectory W1 (WebShop, clean success): hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 3/6). 
+
+s Action Hand Justification Judge Agree 0 search[hand wash men’s sleep & lounge . . . multi] 
+
+E Spec-aligned initial search E ✓
+
+1 click[b09nd8p2qr] E Initial product inspection R ×
+
+2 click[multi 9] D Color attribute match D ✓
+
+3 click[medium] D Size attribute match D ✓
+
+4 click[buy now] D Reward triggers R ×
+
+5 click[buy now] N Post-completion duplicate, harmless R ×
+
+19 W2. Long success with redundant attribute clicks. Task: “Find me home office furniture sets, color: navy | red, shape: round, size: 3’7” x 5’2”, price <$70”. Outcome: success in 13 steps, raw environment reward 10. Role distribution: 4D + 2 E + 2 N + 5 R (Table 15). After all attributes are selected by step 4, the agent re-clicks the same three attributes (size, shape, color) four more times before finally clicking buy now at step 9, then clicks buy now two more times after the purchase is recorded. 
+
+Vanilla GRPO : applies positive credit to all 13 segments. The five redundant attribute re-clicks at steps 5–8 and 10 receive the same reinforcement as the genuine attribute selection at steps 2–4 and the buy now at step 9. Training on many such trajectories teaches the policy a wrong lesson: that re-clicking already-selected attributes is part of the successful template. TRIAGE : under the hand-audited roles, steps 5, 6, 7, 8, 10 are R and receive lower segment advantages through the bounded correction λc R. Net effect: instead of 13 segments sharing the outcome credit equally, the four D
+
+segments (containing the actual purchase logic) receive relatively higher segment advantages, while the redundant re-clicks receive lower relative credit. This trajectory is the most concrete WebShop instance of success masking regression because the wrong-lesson risk is quantitatively measurable: each redundant attribute re-click under vanilla GRPO contributes the same positive log-likelihood gradient as a legitimate D action. Table 15: Trajectory W2 (WebShop, success with redundant attribute clicks): hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 6/13).                                                                            
+
+> sAction Hand Justification Judge Agree 0search[home office furniture sets navy red round . . . ]
+> ESpec-aligned initial search D×
+> 1click[b07fkgqkz1] EInitial product inspection E✓
+> 2click[3 ft 7 in x 5 ft 2 in] DSize selected E×
+> 3click[round] DShape selected E×
+> 4click[navy |red] DColor selected; all attributes set E×
+> 5click[3 ft 7 in x 5 ft 2 in] RRedundant size re-click R✓
+> 6click[round] RRedundant shape re-click R✓
+> 7click[navy |red] RRedundant color re-click R✓
+> 8click[3 ft 7 in x 5 ft 2 in] RSecond redundant size re-click R✓
+> 9click[buy now] DReward triggers R×
+> 10 click[navy |red] RPost-purchase attribute re-click R✓
+> 11 click[buy now] NPost-completion duplicate R×
+> 12 click[buy now] NPost-completion duplicate R×
+
+W3. Failure from early commit to wrong product. Task: “Find me non slip desks for living room, color: christmasgoo3302, size: 19.7x31.5in+19.7x63in, price <$50”. Outcome: failure in 11 steps, raw environment reward 0. Role distribution: 0D + 3 E + 0 N + 8 R (Table 16). The initial search returns a Christmas kitchen mat (B09CQ45ZRB) as the top result. The agent clicks it at step 1, incorrectly committing to a non-desk product. Subsequent steps issue two reformulated searches that re-rank the same item to the top, and the agent clicks the same wrong product again at step 6. Steps 7–10 attempt attribute clicks and a purchase against the wrong product. The bottleneck error is step 1; the second-chance failure is step 6. 
+
+Vanilla GRPO : applies negative credit uniformly to all 11 segments because r = 0 . This includes the two legitimate recovery search attempts at steps 4 and 5, which the agent should be encouraged to take after recognizing the wrong commitment. Uniform negative reinforcement teaches the policy to avoid recovery search-after-mistake, the exact opposite of the desired behavior. TRIAGE : under the hand-audited roles, steps 0, 4, 5 are E (legitimate exploration: initial good-faith search and two recovery attempts). Under the rule in Section 4, E in a failed trajectory receives the bounded process reward λc E rather than only the negative outcome credit. Steps 1, 6 (both clicks of the wrong product) are R and receive strong negative credit from λc R. This illustrates outcome-mixed exploration: the recovery searches at steps 4–5 are useful exploration appearing inside a failure trajectory, and outcome-only credit assigns them the same negative sign as the wrong-product clicks. Net effect: the policy learns “do not click the wrong product twice” (the steps 1 and 6 lesson) without also learning “do not re-search after a mistake” (the spurious lesson vanilla GRPO would teach). 20 Table 16: Trajectory W3 (WebShop, failure via early wrong commitment): hand role, justification, and Qwen3-8B-thinking judge label (judge agreement 8/11).                                                           
+
+> sAction Hand Justification Judge Agree 0search[non-slip desk Christmas-goo3302 . . . ]
+> EGood-faith spec-aligned search E✓
+> 1click[b09cq45zrb] RWrong product type (Christmas kitchen mat, not a desk)
+> R✓
+> 2click[19.7x31.5in+19.7x63in] RAttribute click on wrong product D×
+> 3click[19.7x31.5in+19.7x63in] RRedundant repeat R✓
+> 4search[non slip desk christmas-goo3302 . . . ]
+> ERecovery attempt: re-search E✓
+> 5search[non slip desk color: christmasgoo3302 . . . ]
+> ERecovery attempt: refined search D×
+> 6click[b09cq45zrb] RRe-clicks same wrong product R✓
+> 7click[christmasgoo3302] RAttribute click on wrong product D×
+> 8click[christmasgoo3302] RRedundant R✓
+> 9click[19.7x31.5in+19.7x63in] RAttribute click on wrong product R✓
+> 10 click[buy now] RPurchases wrong product, reward stays 0
+> R✓
+
+G.3 Aggregate Observations 
+
+Table 17 summarizes the role distribution in the six audited trajectories. Table 17: Role distribution in logged GRPO rollouts (length-weighted mean over the audited ALFWorld and WebShop trajectories). Regression mass is high in both environments—exactly where TRIAGE yields its largest gains—and much of it sits inside successful trajectories that vanilla GRPO still reinforces. 
+
+Environment D E N R
+
+ALFWorld 23% 26% 3% 48% WebShop 23% 23% 10% 43% 
+
+The main takeaway is that regression is common in these logged rollouts, especially as redundant repetition rather than irreversible state corruption. Several successful trajectories contain substantial 
+
+R mass, so vanilla GRPO would still broadcast positive credit to repeated inspections or repeated attribute clicks. This makes R-in-success the most important diagnostic cell for TRIAGE and motivates calibrating the role-conditioned mixing coefficient λ on a small per-environment annotated sample. 
+
+## H Judge Model Audit: Side-by-Side Hand vs Qwen3-8B-Thinking Labels 
+
+Role-judge context window. For a segment k, the training-time role judge sees a bounded lo-cal window around that segment. In our implementation, the window contains the task goal, up to five previous action–observation pairs (ai,k −5, o i,k −5, . . . , a i,k −1, o i,k −1), the current ac-tion ai,k , the immediate resulting observation oi,k , and up to five future action–observation pairs 
+
+(ai,k +1 , o i,k +1 , . . . , a i,k +5 , o i,k +5 ) when they exist. Boundary cases use the available prefix or suffix. The short future window helps identify whether an exploratory segment enabled later progress or whether an apparently harmless step was redundant. We do not feed the entire trajectory to every segment-level judge call because long inputs make repeated high-quality judging expensive and empirically make the classifier less focused on the local causal role. Controlling the input length keeps the role classifier usable at segment scale and reduces the chance that it relies on distant recovery patterns instead of the current action. The judge still does not receive the final verifier outcome or an unbounded future trajectory, so the role label diagnoses local causal behavior rather than copying the trajectory-level reward that GRPO already supplies. 21 Setup. We audit a Qwen3-8B judge with thinking mode enabled on 18 logged trajectories (9 success, 9 failure) across three environments: 3 ALFWorld (captured from the trained GRPO policy), 3 WebShop (trained policy), and 12 Search-QA (base-model rollouts to obtain failure-rich data). To keep the ground truth independent of the rubric design, two annotators who did not participate in defining the role taxonomy of Section 3 each labeled all 135 segments independently. The two annotators reached 88.1 % raw label agreement (119 of 135 segments); segments on which they disagreed were adjudicated by a senior annotator, and the adjudicated labels are used as ground truth. For each audited segment, the judge was given the same bounded window used during training: the task, up to five previous action–observation pairs, the current action and immediate observation, and up to five future action–observation pairs when available. The judge was not given the final verifier outcome or the unbounded full trajectory. It was asked to output one role for the current segment using the Qwen3 chat-template enable thinking=True flag. All inference used temperature 0.Together with the merged ALFWorld and WebShop tables in Appendix G, this appendix reports every trajectory with both hand and judge labels per step. Aggregate judge metrics are reported in Table 4. 
+
+Judge prompt. The audit used the following role-classification prompt. We require a short evidence string for every segment, which forces the judge to ground each label in the local action–observation context rather than emitting only a free-floating role tag; in practice this makes label audits easier and improves judge consistency. 
+
+You are an expert evaluator of multi-turn agent trajectories. You will see a local window around one target segment: the task, up to five previous action-observation pairs, the CURRENT action and observation, and up to five future action-observation pairs. Classify only the CURRENT action into ONE of four roles: D (DECISIVE) The action completes a required sub-goal or makes a verifier-checkable state change directly required by the task (e.g. takes the target object, performs a required transformation like cool/heat/clean, places the target in the destination, executes the final purchase, selects a task-mandated attribute). E (EXPLORATION) The action gathers information or visits a new state for the first time without completing a sub-goal. First-time inspection of a container, first navigation to a candidate location, an initial search query, a refined search after recognizing a wrong commitment. N (NO-PROGRESS) The action neither changes the task state nor reveals new information. Empty-handed traversal, harmless duplicate after task completion, generic navigation through an irrelevant location with no investigation. R (REGRESSION) Clear setback: the action either corrupts state, picks the wrong object, commits to a non-matching product, performs the wrong transformation, OR is a redundant repeat of an already-completed action that yields no new information ("examine X" when X was just examined; re-click of an already-selected attribute; re-purchase after success). CALIBRATION RULES - Judge LOCAL causal role using only the supplied window. Do not infer credit from distant recovery or distant failure outside the window. - For the current step, provide brief evidence grounded in the local action/observation, e.g. "first inspection reveals new object", "repeat with no new information", or "correct target acquired". 
+
+22 - First-time examine/inspect = E. Second-time examine of the same target without state change = R. - "Nothing happens." in observation means the action was invalid; if action repeats, label R. - A buy/place/take/heat/cool of the correct target = D. - Re-click of already-selected attribute = R, even if the local observation reports success. OUTPUT FORMAT After your reasoning, output ONLY a JSON object on a single line at the very end: {"labels": ["D"|"E"|"N"|"R", ...], "evidence": ["short reason per step", ...]} Both lists must have length equal to the number of steps shown. 
+
+ALFWorld and WebShop trajectories. The six ALFWorld and WebShop trajectories audited here (A1–A3, W1–W3) are the same rollouts analyzed in Appendix G. To avoid duplicating their per-step action listings, their hand labels, Qwen3-8B-thinking judge labels, and per-step agreement are reported together with the role-distribution analysis in Tables 11–16 (judge agreement per trajectory is stated in each caption). The Search-QA trajectories below are audited only here. 
+
+Search-QA trajectory summary. Table 18 summarizes all 12 Search-QA audit trajectories. The table keeps the outcome, question, number of search turns, final answer, hand-label sequence, judge-label sequence, and agreement count; Table 19 then gives the only Search-QA disagreement case step by step. Table 18: Search-QA audit summary. Label sequences are ordered by environment-facing segment; 
+
+Sm → A denotes m search turns followed by one answer turn.                                                                                                      
+
+> ID Outcome Question / final answer Pattern Hand labels Judge labels Agreement SQ-F1 fail first Nobel Prize in Physics / Wilhelm R ¨ontgen S2→AE,E,R E,E,R 3/3 SQ-F2 fail next Deadpool movie release / Deadpool 3 S3→AE,E,E,R E,E,E,R 4/4 SQ-F3 fail short-wave broadcast mode / AM S3→AE,E,E,R E,E,E,R 4/4 SQ-F4 fail southwest wind across Nigeria / February and June
+> S3→AE,E,E,R E,E,E,R 4/4 SQ-F5 fail first declaration of human rights / John Peters Humphrey
+> S3→AE,E,R,R E,E,E,R 3/4 SQ-F6 fail next Scandal episode / April 19, 2018 S3→AE,E,R,R E,E,R,R 4/4 SQ-F7 fail Philadelphia last Super Bowl win / 2018 S2→AE,E,R E,E,R 3/3 SQ-F8 fail first lady nominated to Rajya Sabha / Rajvanshi Devi
+> S3→AE,R,R,R E,R,R,R 4/4 SQ-S1 success Swan Lake, Sleeping Beauty, Nutcracker com-poser / Pyotr Ilyich Tchaikovsky
+> S2→AE,E,D E,E,D 3/3 SQ-S2 success Dragon Ball Z episode count / 291 S2→AE,E,D E,E,D 3/3 SQ-S3 success garden city of New Earswick designer / Ray-mond Unwin
+> S3→AE,E,E,D E,E,E,D 4/4 SQ-S4 success filming location of The Curse of Oak Island /Oak Island
+> S2→AE,E,D E,E,D 3/3
+
+Representative Search-QA disagreement. SQ-F5 is the only Search-QA trajectory in this audit where Qwen3-8B-thinking disagrees with the adjudicated hand labels. The disagreement is instructive: the third search shifts from the human-rights question to a declaration-of-independence query, so annotators mark it as regression, while the judge still treats it as exploration. Table 19: Trajectory SQ-F5: representative Search-QA disagreement. 
+
+t Action Hand Qwen3-8B-think Agree 0 <search >who wrote the first declaration of human rights </sea E E ✓
+
+1 <search >who wrote the first declaration of human rights decl E E ✓
+
+2 <search >who wrote the declaration of independence </search > R E ×
+
+3 <answer >John Peters Humphrey </answer > R R ✓
+
+23 Audit blind spot. None of the nine failure trajectories in this set contain any hand-labeled D
+
+segment. This is a structural property of the calibration set rather than a sampling artifact: WebShop W3 commits to the wrong product at step 1 and accumulates only R thereafter, and the eight Search-QA failures all terminate with a wrong ⟨answer ⟩ (R) after a sequence of ⟨search ⟩ queries ( E). The cell “ D in failed rollouts” is therefore not measurable on this calibration set. Verifying that the judge correctly identifies decisive intermediate progress within failed trajectories (for example, an ALFWorld agent that correctly heats the target object but then places it in the wrong receptacle, or a Search-QA agent that correctly identifies the bridge entity but issues a malformed final answer) is the principal extension required of a larger follow-up audit. 
+
+## I Verbatim Search-QA Query Reformulations 
+
+For completeness, this section restores the exact per-step text behind the compressed label sequences of Table 18. For every one of the twelve audited Search-QA trajectories we list each environment-facing segment in order: search-turn queries followed by the final answer turn, reproduced verbatim from the logged rollout (a few strings were truncated at capture time and are marked with “. . . ”). Each segment is tagged with its adjudicated hand role [D/E/N/R ]; the single judge disagreement in this set is SQ-F5 segment 2, where the judge predicts E instead of the adjudicated R, marked 
+
+[R | judge E]. Segments separated by “ | ”; the answer turn is prefixed by a.
+
+Failure trajectories. SQ-F1 
+
+(answer “Wilhelm R ¨ontgen”) s0 [E] first nobel prize in physics | s1 [E] Wilhelm R ¨ontgen first Nobel Prize in Physics | a [R] Wilhelm R¨ ontgen. 
+
+SQ-F2 
+
+(answer “Deadpool 3”) s0 [E] next Deadpool movie release | s1 [E] next Deadpool movie release date | s2 [E] Deadpool 3 movie release date | a [R] Deadpool 3. 
+
+SQ-F3 
+
+(answer “AM”) s0 [E] short wave broadcast service | s1 [E] short wave broadcast service am 
+
+| s2 [E] short wave broadcast service mode | a [R] AM. 
+
+SQ-F4 
+
+(answer “February and June”) s0 [E] south west wind blows across Nigeria | s1 [E] south west wind blows across Nigeria between | s2 [E] south west wind blows across Nigeria between Februar. . . | a [R] February and June. 
+
+SQ-F5 
+
+(answer “John Peters Humphrey”) s0 [E] who wrote the first declaration of human rights |
+
+s1 [E] who wrote the first declaration of human rights decl. . . | s2 [R | judge E] who wrote the declaration of independence | a [R] John Peters Humphrey. 
+
+SQ-F6 
+
+(answer “April 19, 2018”) s0 [E] “Scandal” TV show | s1 [E] Scandal next episode | s2 [R] Scandal next episode (verbatim repeat of s1) | a [R] April 19, 2018. 
+
+SQ-F7 
+
+(answer “2018”) s0 [E] Philadelphia last Super Bowl win | s1 [E] Philadelphia Eagles last Super Bowl win | a [R] 2018. 
+
+SQ-F8 
+
+(answer “Rajvanshi Devi”) s0 [E] first lady nominated member of the rajya sabha | s1 [R] first lady nominated member of the rajya sabha (repeat) | s2 [R] first lady nominated member of the rajya sabha (repeat) | a [R] Rajvanshi Devi. 
+
+Success trajectories. SQ-S1 
+
+(answer “Pyotr Ilyich Tchaikovsky”) s0 [E] “Swan Lake the Sleeping Beauty and the Nutcracker fa. . . | s1 [E] Swan Lake the Sleeping Beauty and the Nutcracker fam. . . | a [D] Pyotr Ilyich Tchaikovsky. 24 SQ-S2 
+
+(answer “291”) s0 [E] Dragon Ball Z episodes | s1 [E] Dragon Ball Z episodes 291 | a [D] 291. 
+
+SQ-S3 
+
+(answer “Raymond Unwin”) s0 [E] garden city of new earswick | s1 [E] who designed the model village of new earswick | s2 [E] Raymond Unwin designed the garden city of new earswi. . . | a [D] Raymond Unwin. 
+
+SQ-S4 
+
+(answer “Oak Island”) s0 [E] “The Curse of Oak Island filmed” | s1 [E] where is the tv show the curse of oak island filmed | a [D] Oak Island. 25

@@ -1,0 +1,1267 @@
+Title: ECHO: Learning Epistemically Adaptive Language Agents with Turn-Level Credit
+
+URL Source: https://arxiv.org/pdf/2606.29745v1
+
+Published Time: Tue, 30 Jun 2026 01:40:02 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# ECHO: Learning Epistemically Adaptive Language Agents with Turn-Level Credit 
+
+Abhijnan Nath ∗ Nikhil Krishnaswamy 
+
+Situated Grounding and Natural Language (SIGNAL) Lab Department of Computer Science, Colorado State University Fort Collins, CO 80523 USA 
+
+{abhijnan.nath,nkrishna}@colostate.edu 
+
+Abstract 
+
+What does it mean for a language agent to be adaptive? Effective multi-turn agents must decide what information to seek, how to use new evidence, and when they are certain enough to act. We introduce Epistemic Decision Processes (EDPs), a belief-state formulation of multi-turn information seeking in which actions produce external observations that update the agent’s posterior over a latent task variable. EDPs make epistemic adaptivity explicit: good policies choose actions that are useful under the current belief, not merely those that correlate with eventual success. We prove that belief-agnostic policies can suffer errors that compound exponentially over the horizon, and that aggregate trajectory returns can fail to identify the per-turn Bayesian advantage needed for epistemic credit. We then introduce ECHO ( Epistemic Credit for History-Conditioned Optimization), a practical clipped policy-gradient objective that assigns turn-level credit using posterior-sensitive rewards. In the Clue Selector Game , a novel controlled evidence-seeking benchmark, we show that ECHO substantially improves resolution, information gain, and efficiency over trajectory-level GRPO, and matches or exceeds frontier baselines on epistemic metrics such as grounding, recovery, and calibration while producing almost no visible reasoning text. Code and data: https://github. com/csu-signal/echo-edp 
+
+1 Introduction 
+
+In multi-step problem solving, including medical diagnoses, technical troubleshooting, scientific inquiry, and search, effective agents must decide what evidence to gather next; they do not merely act upon incomplete information [ 23 , 47 , 48 , 56 ]. This skill is central to human learning and question asking [ 12 , 19 , 41 , 50 ], and increasingly so to LLM agents that search the web [ 13 , 67 , 75 ], call tools [ 53 ], inspect documents [ 71 ], and revise actions as observations arrive [ 18 , 68 ]. In such settings, the value of an information-seeking question depends on the current belief state: what is already known, what uncertainty remains, and whether the answer would change future action [ 30 ]. Thus, adaptivity is fundamentally epistemic [ 41 , 50 ]—good agents choose actions that reduce not just global uncertainty, but the uncertainty that matters most in the current context. In multi-turn tasks, final success may only be known at the end of the trajectory. Intermediate rewards are often unavailable, learned approximately through process reward models [ 11 , 24 , 35 ], or disconnected from whether a query actually changed the agent’s belief (e.g., when rewarding only task outcomes). The agent’s uncertainty is often organized around a hidden variable of interest, such as a goal or sub-goal, that must be inferred through interaction rather than revealed directly [ 1, 40 , 72 , 73 ]. While the agent may observe the full history of its own queries and the resulting feedback, the value of the next action still depends on how that history changes its belief. This creates a credit-assignment 
+
+problem that existing methods do not fully address [8, 34, 46]. 
+
+> ∗Work done while at Colorado State University.
+> arXiv:2606.29745v1 [cs.MA] 29 Jun 2026
+
+Figure 1: Results on multi-turn information seeking in the Clue Selector Game (CSG) . A 1.5B ECHO-trained Qwen 2.5 policy reaches frontier-level task resolution, by asking questions that more reliably update the candidate belief state. Compared with GRPO and prompting baselines, ECHO produces fewer zero-elimination turns and learns substantially faster , illustrating the central idea of epistemic credit: useful actions should be rewarded when they reduce uncertainty under the current belief state, not only when the final trajectory succeeds. We argue that information-seeking agents need more than temporal credit assignment for optimal behavior: they need epistemic credit assignment, which reflects the usefulness of evidence elicited by an action given the agent’s current belief, not merely that it appears in a trajectory that eventually succeeds. We formalize this through Epistemic Decision Processes (EDPs), a belief-state view 2 of multi-turn information seeking in which actions produce external observations that update a posterior over a latent task variable. Our theory shows why this distinction matters: there exist long-horizon information-seeking tasks where belief-sensitive policies are necessary for strong performance, while trajectory-level returns can be too coarse to identify which turns actually reduced uncertainty. We then introduce ECHO, a clipped policy-gradient objective that assigns turn-level credit using posterior-sensitive rewards. ECHO trains agents to ask questions that are useful under the current belief state, not merely questions that correlate with eventual success. We instantiate this setting in the Clue Selector Game (CSG), a deduction task where the hypothesis space, candidate posterior, and belief updates are exactly measurable. Inspired by prior work in step-level epistemic competence [ 58 ], CSG evaluates both final resolution and process-level epistemic behavior, using diagnostics such as groundedness, zero-information turns, recovery after low-information actions, and late-stage calibration. Empirically, ECHO trains a 1.5B policy to reach frontier-level task resolution, reduce zero-elimination turns, and learn substantially faster than standard RL methods, while producing almost no visible reasoning text. This reveals a form of “silent exploration”: adaptive information seeking expressed through belief-conditioned actions rather than long chains of thought. Our novel contributions are as follows: 1. We introduce Epistemic Decision Processes (EDPs), a belief-state formulation of multi-turn information-seeking language agents, and define epistemic adaptivity as posterior-sensitive action selection. 2. We prove that belief-sensitive policies are necessary for strong performance in EDPs, with an exponential gap over belief-agnostic policies, and that aggregate trajectory return is generally insufficient for recovering per-turn Bayesian advantage. 3. We introduce ECHO, a clipped policy-gradient objective for epistemic credit assignment over posterior-sensitive turn rewards, and evaluate it in the Clue Selector Game, a controlled EDP benchmark with explicit beliefs and measurable posterior contraction. ECHO out-performs trajectory-level GRPO and prompting baselines in resolution, information gain, and sample efficiency, while showing strong grounding, recovery, and calibration with little visible reasoning. 
+
+2 Related Work 
+
+Temporal credit assignment and in-context learning Standard temporal credit assignment [ 6, 55 ,59 , 64 ] can propagate delayed rewards to earlier turns in a task, but unless the state or reward explicitly represents belief change, it does not identify whether an action reduced uncertainty under the belief   
+
+> 2EDPs are a task-level specialization of belief-state decision processes: unlike BAMDPs [ 15 ,39 ], which typically model uncertainty over transition/reward parameters or latent MDP identities, EDPs focus on uncertainty over a hidden task variable under a fixed interaction interface; see Sec. 3 and Appendix A for details.
+
+2state at that moment. LLM agents’ full query–observation history can be placed in-context [ 9, 43 ]; the model could, in principle, update its belief in-context and ask the next informative question. However, recent work suggests that in-context updating is sensitive to attention biases, context-length, and implicit priors shaped by pretraining [ 33 , 37 , 17 ]. Bayesian methods such as BED-LLM compute informative queries at inference time using expected information gain over the variable of interest [ 10 , 16 , 24 , 40 , 72 ]. However, these methods also highlight why belief-sensitive learning is difficult in realistic language tasks: the hypothesis space’s pretraining and implicit priors make the agent’s posterior difficult to inspect or credit at each step. Moreover, inference-time strategies [ 27 , 68 ]must recompute query utility at every turn; they do not bake in adaptive querying to the policy. 
+
+Bayesian learning and belief-conditioned policies Epistemic adaptivity builds on belief-conditioned decision making: agents represent uncertainty, update it from evidence, and act to make future decisions better informed. Bayes-Adaptive MDPs formalize this by augmenting state with a posterior over environment parameters or latent MDP identities [ 7, 15 , 20 ], with deep RL extensions using approximate inference [ 77 ]. Language-based information seeking also requires cred-iting actions for changing belief; otherwise, outcome-based RL can lock agents into low-information interaction patterns [ 78 ]. Training-time Bayes-adaptive methods such as BARL encourage reflective exploration within generated reasoning traces [ 70 ], but recent work cautions that visible reasoning traces are not necessarily faithful evidence of reasoning competence [ 45 , 51 ]. ECHO via EDPs instead studies “silent exploration” across external query–observation turns in a multiturn setup, where adaptivity is expressed through belief-informative actions rather than verbalized rationales. 
+
+Controlled environments for information-seeking agents Common question-asking settings— including entity deduction, 20-questions-style tasks, active task disambiguation, and preference elicitation—study how agents infer hidden targets through interaction [ 3 , 32 , 36 , 72 , 76 ]. However, non-uniform LLM priors affect question selection and evaluation [ 40 ]; intermediate progress is usually tracked via hand-crafted knowledge-bases [ 74 ] or approximated through learned reward networks, process reward models, or inference-time information-gain estimates [ 10 , 11 , 24 , 35 ]. Final accuracy can miss process-level failures such as information self-locking, poor grounding, or failure to recognize knowledge gaps [ 58 , 78 ]. Web-search, tool-use, and embodied environments expose richer interactions [ 5 , 25 , 28 , 49 , 61 ], but their complexity can obscure which action improved the agent’s knowledge state. Our Clue Selector Game (CSG) is a controlled complement: it preserves a language-mediated multi-turn loop—action, response, belief update, and subsequent action—while making the hypothesis space explicit, the posterior exactly measurable, and process-level metrics such as grounding, redundancy, zero-information behavior, recovery, and calibration directly computable. 
+
+3 Epistemic Decision Processes Epistemic Decision Processes  
+
+> belief space
+
+Figure 2: EDP intuition. Two histories can share the same belief-independent task context                 
+
+> s(ht) = s(h′
+> t)while inducing different beliefs
+> bt̸=b′
+> tover the latent task variable. An epistemi-cally adaptive policy conditions on the belief state at each turn tto choose different useful actions, so a⋆(bt)̸=a⋆(b′
+> t). A belief-agnostic policy that depends only on s(ht)and t, but not bt, cannot make this distinction.
+
+We now formalize multi-turn information seeking as a decision problem over beliefs. An agent acts under uncertainty about a latent task variable z⋆, chooses actions that elicit external observations, and updates its belief from those observations before choosing the next action. The key EDP property is that the main dense reward is posterior-sensitive : the same question can be useful under one candidate set and uninformative under another. This differs from single-response reasoning settings, where adaptation occurs primarily within a generated trace before feedback is received [ 70 ]. In an EDP, the policy interacts with an external environment over multiple turns: each action produces an observation, the observation changes the posterior, and the next action should be chosen under the updated belief [ 1]. Intuitively, optimal policies in this setting are epis-temically adaptive : they choose actions because they are useful under the current belief, not merely because they are plausible given the observable surface history. We formalize this as an Epistemic Decision Process (EDP), a finite-horizon interaction defined by: 
+
+E = ( Z, ρ 0, A, Ω, O, u, T ) .
+
+3Here, z⋆ ∈ Z denotes the latent task variable sampled from prior ρ0—for example, a target hypothesis, user intent, diagnosis, or answer state—while A, Ω, O, u, and T denote the action space, observation space, observation kernel, evidential utility, and horizon. At turn t, the interaction history ht =(a0, o 0, . . . , a t−1, o t−1) induces a posterior belief bt(z) := P(z⋆ = z | ht).3 The agent samples an action at ∼ πθ (· | ht), receives an external observation ot ∼ O(· | z⋆, h t, a t), and updates its posterior via a Bayesian belief-update operator bt+1 = τ (bt, h t, a t, o t), where τ is induced by O.Fig. 2 shows a conceptualization of the EDP. 
+
+LLM Instantiation The policy πθ is an autoregressive LLM that gets a serialized history ht,including the task instruction, current state summary, and previous action–observation pairs. The model generates a structured output that is parsed as the action at, such as a query or information-seeking move. The observation ot from the environment is used to update the environment state by filtering the hypotheses still consistent with the evidence. Thus, the transition is not merely deterministic text concatenation [ 52 ]: although the next prompt appends (at, o t), the observation itself is produced by an external kernel ot ∼ O(· | z⋆, h t, a t). Each turn is therefore a genuine environment interaction, and the decision-relevant state is the posterior uncertainty induced by the history, i.e., the augmented epistemic state (s(ht), b t, t ), rather than only the visible text or turn index. 
+
+Bayesian Value and Advantage To train an epistemically adaptive policy (Fig. 2), we need a credit signal that evaluates actions under the agent’s current posterior belief, rather than only under the final episode outcome. For a fixed latent task z, let Qπz (ht, a t) = Eπ,O [PT −1 
+
+> s=t
+
+u(bs, a s, o s) + 
+
+RT (hT , z ) | ht, a t, z ⋆ = z] denote the value of taking action at after history ht, where RT is any terminal task reward. Since the agent does not observe z⋆, the relevant value is posterior-weighted: Qπ
+
+> B
+
+(ht, a t) = Ez∼bt [Qπz (ht, a t)] . The corresponding Bayesian advantage is Aπ
+
+> B
+
+(ht, a t) = 
+
+Qπ
+
+> B
+
+(ht, a t) − Ea′∼π(·| ht)[Qπ
+
+> B
+
+(ht, a ′)] . Since bt = b(ht), the dependence on the current belief is implicit in the history argument; equivalently, Aπ
+
+> B
+
+(ht, a t) evaluates the action under the posterior induced by ht. Intuitively, this asks whether at is better than alternative actions available under the same posterior belief. At first glance, estimating this quantity exactly would require branching multiple actions from the same history ht, which is expensive in multi-turn interactive environments for LLMs [ 1, 22 , 31 , 70 ]. This raises two crucial questions: what policy class is this Bayesian advantage meant to favor, and how can we approximate its credit signal without exhaustive same-history branching? We first answer the policy question by distinguishing belief-agnostic policies from epistemically adaptive ones; we then introduce a tractable Monte Carlo policy-gradient estimator that uses turn-level epistemic rewards as a practical surrogate for the belief-conditioned advantage. 
+
+3.1 Distinguishing Epistemically Adaptive from Belief-Agnostic Policies 
+
+An epistemically adaptive policy uses the belief induced by the interaction history, not just the history itself. Let s(ht) denote the belief-independent task context, as shown in Fig. 2. These variables constrain what the agent can do at turn t, but do not themselves encode the posterior over z⋆. A policy is belief-agnostic if its dependence on history factors only through this interface state, i.e., there exists a decision rule g such that π(at | ht) = g(at | s(ht)) . In contrast, a policy is epistemically adaptive if its action distribution can also depend on the posterior belief induced by the history, i.e., there exists a decision rule f such that π(at | ht) = f (at | s(ht), b t). We say the policy is strictly 
+
+epistemically adaptive if there exist histories ht, h ′ 
+
+> t
+
+with the same interface state s(ht) = s(h′
+
+> t
+
+) but different beliefs bt̸ = b′
+
+> t
+
+, such that π(· | ht)̸ = π(· | h′
+
+> t
+
+).
+
+Silent exploration. When the policy adapts to the posterior without emitting an explicit natural-language rationale, we call this behavior silent exploration . A silently exploratory policy changes what it does in response to evidence, even if its output is only a compact structured action. This matters because visible reasoning is neither necessary nor sufficient for epistemic adaptivity: as our experimental results suggest (Sec. 5), a model may produce long explanations without acting on the current belief, while another may output no rationale and still act adaptively. 
+
+Proposition 3.1 (Belief-state sufficiency) . Assume the observation kernel and utility function depend on ht only through the surface state s(ht) and belief bt. Then there exists an optimal policy π⋆ for the EDP that is Markovian in the augmented epistemic state (s(ht), b t, t ). Full proof is in Appendix A.  
+
+> 3In LLM implementations, the serialized prompt may include a textual state summary, such as remaining hypotheses. We treat this as an encoding of the epistemic component bt.
+
+4Remark on Proposition 3.1 Once the belief bt is part of the state, optimal behavior can be written as a Markov policy over (s(ht), b t, t ). The important question is therefore not whether a Markov policy exists, but whether the training signal can teach the policy to use the belief as uncertainty is resolved [ 70 ]. In long-horizon information-seeking tasks, this is a depth-wise credit-assignment problem: at each turn, the useful action depends on the current posterior, and failing to adapt even once can derail the remaining trajectory. The first part of Theorem 3.2 makes this sharp: there are EDPs where an adaptive policy succeeds with probability 1, while any belief-agnostic policy succeeds with probability at most 21−d, decaying exponentially with horizon. The second part of Theorem 3.2 then shows why sparse trajectory-level returns are a poor learning signal for this behavior: they reveal final success, but not the belief-conditioned credit of each intermediate action. Together, these results motivate turn-level epistemic credit rather than trajectory-level credit. 
+
+Theorem 3.2 (Adaptive policies require epistemic credit) . Let E be an Epistemic Decision Process. 1. (Performance gap.) For every depth d ≥ 1, there exists an EDP Ed with horizon 
+
+d in which an epistemically adaptive policy achieves P(success) = 1 , while every belief-agnostic policy satisfies P(success) ≤ 21−d. Thus, the cost of ignoring belief compounds exponentially with the decision horizon. 2. (Estimator insufficiency.) Let G = PT −1 
+
+> s=0
+
+rs be the total episode return and fix any turn t. For any trajectory-level advantage estimator bAtraj  
+
+> t
+
+= ϕ(G),
+
+inf  
+
+> ϕ
+
+E
+
+h ϕ(G) − Aπ
+
+> B
+
+(ht, a t)2i
+
+= E[Var( Aπ
+
+> B
+
+(ht, a t) | G)] > 0
+
+whenever the same total return can arise from belief-distinct decisions with different Bayesian advantages. Together, (i) and (ii) show that, for a family of EDPs where a useful next action depends on the current posterior, epistemic adaptivity is necessary for strong long-horizon performance, and aggregate trajectory return is too coarse to recover the per-turn Bayesian advantage. It is not that full-return policy gradients are invalid for optimizing expected return; rather, total return alone aliases belief-distinct decisions that require different local credit. Full proofs are in Appendix A. 
+
+4 Depth-wise Epistemic Credit Optimization (ECHO) 
+
+Theorem 3.2 shows that aggregate trajectory return can alias belief-distinct decisions. More generally, two trajectories can have the same final reward while containing very different intermediate evidence-gathering behavior, so total return alone cannot identify which actions reduced uncertainty. This leads to our core insight— actions should receive credit based on whether they were useful under the belief state in which they were chosen, not only based on whether the entire episode eventually succeeded .We therefore introduce ECHO ( Epistemic Credit for History-Conditioned Optimization), a practical turn-level surrogate for Bayesian advantage in multi-turn EDPs. Like GRPO [ 59 ], ECHO uses group-normalized advantages and a clipped policy-gradient objective [ 55 ]; unlike trajectory-level GRPO, it normalizes posterior-sensitive turn rewards rather than full episode returns. As such, ECHO keeps the practical group-relative clipped optimization form of GRPO, but shifts the credit signal from trajectory-level success to turn-level “epistemic” progress. Specifically, for each training instance, we sample G parallel rollouts from the old policy. At turn 
+
+t, rollout g has history h(g) 
+
+> t
+
+, belief b(g) 
+
+> t
+
+= P(z⋆ | h(g) 
+
+> t
+
+), sampled action a(g) 
+
+> t
+
+∼ πθold (· | h(g) 
+
+> t
+
+), and external observation o(g) 
+
+> t
+
+. We assign a posterior-sensitive turn reward: 
+
+r(g) 
+
+> t
+
+= u
+
+
+
+b(g) 
+
+> t
+
+, a (g) 
+
+> t
+
+, o (g)
+
+> t
+
+
+
+,
+
+which measures local epistemic progress, such as information gain, reduction in posterior uncertainty, or elimination of inconsistent hypotheses. Sec. 5.1 shows how this reward design fits into an EDP environment. At each decision depth t, we normalize these rewards across the active rollouts: 
+
+bA(g),ECHO  
+
+> t
+
+= r(g) 
+
+> t
+
+− 1
+
+> |G t|
+
+P 
+
+> j∈G t
+
+r(j)
+
+> t
+
+std j∈G t (r(j) 
+
+> t
+
+) + ϵ (1) 5Figure 3: Clue Selector Game overview and example trajectory from real evaluation data: ECHO contracts the belief state, while episodic-return GRPO stalls with zero-elimination queries. Unlike trajectory-level GRPO, which broadcasts a single full-episode advantage across all actions in a rollout, ECHO—as shown in Eq. 1—computes group-normalized advantages at each decision depth. This gives each structured turn action credit according to the epistemic progress it produced under the current posterior [ 29 , 42 , 52 ]. We note that our approach is not an exact belief-local advantage after rollouts diverge, since different rollouts may reach different histories and beliefs at the same turn—given the exponential state-action spaces in language based RL using LLMs [ 14 , 62 , 76 ]. The key point that each reward is evaluated relative to its rollout’s own posterior, so the update preserves belief-dependent variation in action quality while avoiding exhaustive same-history branching. Let 
+
+ρ(g) 
+
+> t
+
+(θ) = πθ (a(g) 
+
+> t
+
+| h(g) 
+
+> t
+
+)
+
+πθold (a(g) 
+
+> t
+
+| h(g) 
+
+> t
+
+) ,
+
+where for LLM agents πθ (a(g) 
+
+> t
+
+| h(g) 
+
+> t
+
+) is the product of token probabilities for the structured action. ECHO optimizes the clipped objective: 
+
+JECHO (θ) = E
+
+ 1
+
+P 
+
+> t
+
+|G t| 
+
+> T−1
+
+X
+
+> t=0
+
+X
+
+> g∈G t
+
+min 
+
+
+
+ρ(g) 
+
+> t
+
+bA(g) 
+
+> t
+
+, clip 
+
+
+
+ρ(g) 
+
+> t
+
+, 1 − η, 1 + η
+
+ bA(g)
+
+> t
+
+ (2) 
+
+Remark. ECHO retains the group-relative clipped trust-region form of standard policy gradient methods [ 54 , 63 , 65 ], but replaces trajectory-level success with turn-level epistemic progress as the credit signal. 
+
+5 Experiments 
+
+5.1 Clue Selector Game Environment as an EDP 
+
+We instantiate EDPs through the Clue Selector Game (CSG), a controlled multi-turn information-seeking task inspired by prior work in multiturn RL [ 1]. In the CSG, the agent must identify a hidden secret number by sequentially querying a clue-holder oracle that knows the secret but is not allowed to reveal it directly. Instead, the oracle can only answer property-based questions about the secret. To make the action space structured 4, the agent acts through an arm–question interface : at each turn it routes a natural-language property question through one of several clue-holder arms, where each arm “owns” certain domains of information. This setup lets us test whether a policy can do more than ask plausible questions in isolation: under the current candidate set, a successful agent identifies 
+
+what information is most useful to seek (the arm), avoids repeatedly asking for information already obtained, and adapts its query strategy as its belief over the secret changes. The arms therefore provide a lightweight yet explicit scaffolding to examine the adaptivity of the query strategy. Figs. 3 and 6 show a high-level overview of the CSG environment and the prompts used, respectively. 
+
+> 4The action space is still diverse due to the query component, which admits open-ended question generation.
+
+6Game dynamics A secret integer n⋆ ∈ { 1, . . . , N } is sampled uniformly at random; we use 
+
+N = 100 for training, while evaluation can include secrets up to N = 200 to test generalization. At each turn, the agent poses a natural-language property question to a fixed oracle that answers truthfully without revealing the secret. The action space pairs each question with a categorical arm label that groups questions by property family (e.g., parity, divisibility, range); this provides lightweight structure over the action space (see above) but does not affect the oracle’s response. The dominant reward is posterior-sensitive candidate elimination; a small shaping bonus for arm–question consistency is included but is not the focus of our analysis. 
+
+CSG’s explicit EDP interpretation The latent task variable is the secret number z⋆ = n⋆. The history ht consists of the previous arm selections, questions, and oracle observations. The belief state bt is the posterior over the secret number induced by this history. Because the secret is sampled uniformly and oracle observations only eliminate inconsistent candidates, the posterior is uniform over the remaining candidate set: 
+
+bt(n) = 
+
+1/|C t|, n ∈ C t,
+
+0, n / ∈ C t.
+
+For example, if the initial candidates are {1, . . . , 10 } and the agent asks whether the number is even, a truthful “yes” response updates the candidate set to {2, 4, 6, 8, 10 }, making the posterior uniform over those five numbers. Thus, in CSG, the candidate set is not merely a textual state variable; it is a direct representation of the agent’s epistemic state. Turn-level utility measures epistemic progress. The dominant reward term is fractional candidate elimination, rinfo = ( |C t| − |C t+1 |)/|C t|, which measures how much the action contracts the current posterior. Training also includes small shaping terms for valid arm–question matching and query diversity, a redundancy penalty for repetition, and sparse bonuses for resolving the task efficiently. The action value is therefore belief-dependent: two histories may share the same belief-independent task context—for example, the same turn index, action schema, and remaining budget—while inducing different posteriors over z⋆, and therefore requiring different useful actions. The posterior-sensitive reward signal is used by ECHO and other RL baselines for training; it assigns credit based on the epistemic progress made at the turn where the action was chosen, rather than broadcasting only the final episode outcome. CSG is therefore a clean testbed for our theory. 
+
+Evaluation Strategy Our metrics test whether a policy uses accumulated evidence to choose useful actions throughout the trajectory, rather than merely succeeding at the end or producing more reasoning text. In CSG, optimal information seeking is not determined by turn number alone, but by the structure of the current posterior over candidates, i.e., the specific composition of the surviving candidate set Ct. An epistemically adaptive agent should therefore ask questions that reduce uncertainty under the current Ct, avoid redundant queries, recover after low-information observations, and not ask broad questions if the belief state is narrow. Accordingly, we evaluate not only final task resolution , but also process-level epistemic quality [58 ] as a proxy for epistemic adaptability (see Sec. 6). We report Zero , the rate of non-redundant turns that eliminate no candidates; Qual. , the candidate-elimination quality normalized by an ideal split; and Ground , the rate of turns that are both non-redundant and informative under the current candidate set. To measure robustness after local epistemic failures, we also report GRecover , the rate at which the next turn after a zero-elimination action is grounded as defined above, and ResAfterZero , the fraction of episodes that still resolve after at least one zero-elimination event. Finally, Reason% measures explicit reasoning text outside the required action format. Further details on evaluation metrics are provided in Appendix C.1. Empirically, these metrics are strongly tied to task success: across evaluation episodes, resolution correlates positively with elimination quality and groundedness, and negatively with zero-elimination and low-information behavior, supporting their use as indicators of epistemically adaptive behavior. 
+
+Baselines Frontier or proprietary models include Claude Sonnet 4.6, OpenAI’s o3-mini, GPT-4o, GPT-4.1-mini, GPT-4.1-nano, and GPT-4o-mini, evaluated zero-shot with the standard task prompt. These models represent strong off-the-shelf performance without task-specific training. Prompting variants evaluate Qwen2.5-1.5B Instruct with explicit reasoning prompts: chain-of-thought (CoT), full ReAct [ 68 ] using a complete Thought/Action/Observation loop with growing history context, and a simple version of ReAct using a Thought/Action format in the system prompt. These baselines test whether eliciting explicit reasoning can substitute for RL training on the same base model. We also include GPT-4o w/ full ReAct , which tests whether a structured reasoning loop improves a capable frontier model. RL baselines are trained on Qwen2.5-1.5B Instruct using the same environment 7Model Resolve ↑ Zero ↓ Qual. ↑ Ground ↑ GRecover ↑ ResAfterZero ↑ Reason% 
+
+Frontier baselines 
+
+Claude Sonnet 4.6 43.1 ±1.2 25.4 ±0.4 0.701 ±0.005 0.738 ±0.005 0.185 ±0.018 0.168 ±0.012 52.3 ±0.5
+
+o3-mini 27.1 ±4.9 29.8 ±1.9 0.610 ±0.078 0.636 ±0.082 0.248 ±0.009 0.151 ±0.027 0.3 ±0.3
+
+GPT-4.1-mini 31.6 ±2.4 28.7 ±0.6 0.615 ±0.002 0.640 ±0.003 0.285 ±0.003 0.159 ±0.012 0.0 ±0.0
+
+GPT-4o 25.8 ±2.7 29.8 ±1.2 0.625 ±0.009 0.662 ±0.007 0.286 ±0.006 0.156 ±0.017 0.0 ±0.0
+
+GPT-4o + Full ReAct 25.3 ±1.3 28.3 ±0.9 0.618 ±0.002 0.625 ±0.001 0.231 ±0.014 0.087 ±0.010 100.0 ±0.0
+
+GPT-4o-mini 22.7 ±1.5 30.2 ±0.4 0.563 ±0.006 0.588 ±0.006 0.352 ±0.025 0.128 ±0.010 0.0 ±0.0
+
+GPT-4.1-nano 10.2 ±1.8 35.6 ±0.6 0.496 ±0.005 0.528 ±0.010 0.327 ±0.017 0.083 ±0.014 0.0 ±0.0
+
+Base and prompting baselines 
+
+Qwen2.5-14B 22.7 ±2.0 27.3 ±0.7 0.535 ±0.007 0.537 ±0.008 0.290 ±0.014 0.125 ±0.011 1.8 ±0.2
+
+Qwen2.5-7B 20.9 ±0.9 34.0 ±0.5 0.502 ±0.002 0.509 ±0.003 0.200 ±0.010 0.105 ±0.024 2.2 ±0.6
+
+Qwen2.5-3B 8.4 ±1.2 36.0 ±1.0 0.454 ±0.006 0.454 ±0.007 0.280 ±0.008 0.072 ±0.017 0.8 ±0.1
+
+Qwen2.5-1.5B 8.0 ±0.0 38.6 ±1.0 0.352 ±0.002 0.340 ±0.005 0.229 ±0.025 0.064 ±0.004 1.1 ±0.2
+
+Qwen2.5-1.5B + CoT 6.7 ±1.3 38.4 ±0.6 0.362 ±0.005 0.351 ±0.007 0.223 ±0.017 0.058 ±0.012 1.0 ±0.1
+
+Qwen2.5-1.5B + ReAct 6.2 ±1.2 40.7 ±0.9 0.348 ±0.007 0.339 ±0.004 0.243 ±0.020 0.058 ±0.009 14.8 ±0.7
+
+Qwen2.5-1.5B + Full ReAct 4.4 ±1.2 49.2 ±1.1 0.312 ±0.003 0.316 ±0.002 0.205 ±0.008 0.036 ±0.012 100.0 ±0.0
+
+Qwen2.5-0.5B 3.6 ±0.4 50.2 ±2.1 0.281 ±0.013 0.268 ±0.014 0.189 ±0.008 0.027 ±0.008 1.5 ±0.3
+
+RL-trained Qwen2.5-1.5B baselines 
+
+Episodic Return (GRPO) 14.7 ±1.5 39.2 ±0.8 0.445 ±0.008 0.446 ±0.008 0.339 ±0.004 0.093 ±0.021 16.0 ±1.5
+
+RLOO per-turn 13.8 ±1.6 40.2 ±0.3 0.446 ±0.006 0.445 ±0.007 0.297 ±0.007 0.126 ±0.016 1.2 ±0.1
+
+Offline SFT+RL 13.3 ±1.3 41.2 ±0.8 0.392 ±0.003 0.372 ±0.005 0.206 ±0.012 0.089 ±0.012 1.0 ±0.1
+
+ECHO (Ours) 45.3 ±1.5 18.6 ±1.0 0.670 ±0.008 0.718 ±0.006 0.406 ±0.006 0.318 ±0.018 0.9 ±0.0
+
+Greedy oracle (reference) 86.2 ±0.4 29.6 ±0.6 0.700 ±0.006 0.704 ±0.006 0.031 ±0.001 0.088 ±0.003 0.0 ±0.0
+
+Table 1: Main CSG results . Values are mean with SEM shown in subscript across 3 independent runs on the evaluation set. Resolve, Zero, and Reason% are reported in percentage points; all other metrics are rates or normalized scores. Bold marks the best learned/model result by metric direction, and underlining marks the worst learned/model result. and reward function as ECHO, differing only in the advantage estimator. The main RL baseline is 
+
+episode-return RL , which broadcasts the total episode reward uniformly to all turns (and thereby, to tokens) consistent with the standard GRPO formulation when extended to multi-turn settings; we also include RLOO [ 2 ] per-turn to isolate the effect of per-turn relative credit. Offline SFT+RL is a single-turn offline baseline trained from pre-collected trajectories, representing training on fixed demonstrations rather than online interaction. Base Qwen 2.5 at sizes from 0.5B–14B provide a scaling reference without task-specific prompting or RL. Finally, a greedy oracle reference policy with access to the secret during action selection, that chooses the arm-question pair with maximal candidate elimination, serves as an “upper-bound” [66] diagnostic. 
+
+6 Results 
+
+ECHO improves both resolution and epistemic behavior. Table 1 shows that ECHO achieves the strongest learned-policy performance in CSG. Its resolve rate of 45 .3% exceeds the best frontier baseline, Claude Sonnet 4.6 ( 43 .1% ), and substantially outperforms episodic-return GRPO ( 14 .7% ), RLOO per-turn ( 13 .8% ), and all base/prompting baselines. More importantly, the improvement is reflected in process-level epistemic behavior: ECHO has the lowest zero-elimination rate ( 18 .6% ), indicating that its questions most often update the agent belief state. While Claude attains slightly higher per-turn quality and groundedness, ECHO combines high elimination quality ( 0.670 ) and groundedness ( 0.718 ) with much stronger trajectory-level robustness: after zero-elimination events, it has the highest grounded recovery ( 0.406 ) and resolution-after-zero rate ( 0.318 ). This suggests that ECHO’s advantage is not merely asking strong individual questions, but that the ECHO -trained policy learns more robust information-gathering behavior across the trajectory : it asks well-grounded questions, avoids zero-elimination actions, and recovers when a local epistemic failure occurs. ECHO also achieves these gains with almost no explicit reasoning text ( 0.9% ) exposing its silently exploratory nature, whereas ReAct variants reason on every turn but do not improve resolution, indicating that explicit reasoning traces alone do not substitute for epistemically adaptive training. Arm-level diagnostics further show that ECHO’s arm–question choices remain informative even under same-arm reuse, suggesting belief-conditioned routing rather than superficial arm switching (full results in Table 5 in Appendix C). Additional results are reported in Appendix B and C. 820 30 40 50               
+
+> Zero-elimination rate (%)
+> 10
+> 20
+> 30
+> 40
+> Resolve rate (%)
+> Qwen-1.5B
+> Qwen ReAct
+> Claude
+> GPT-4o
+> ECHO
+> Episodic GRPO
+> (a) Zero-elim predicts failure
+> 0.3 0.4 0.5 0.6 0.7
+> Elimination quality
+> 10
+> 20
+> 30
+> 40
+> Resolve rate (%)
+> Qwen-1.5B
+> Qwen ReAct
+> Claude
+> GPT-4o
+> ECHO
+> Episodic GRPO
+> (b) Resolution tracks quality
+> 0.0 2.5 5.0 7.5 10.0
+> Turn
+> 0
+> 50
+> 100
+> Mean candidates remaining
+> (c) Candidate-set contraction
+> ECHO
+> Episodic GRPO
+> Claude
+> GPT-4o
+> Qwen-1.5B
+> Qwen ReAct
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Rate
+> (d) Recovery after zero-elim
+> GRecover
+> Res-after-zero
+> ECHO Episodic GRPO Claude GPT-4o Qwen-1.5B Qwen ReAct Oracle
+
+Figure 4: Behavioral diagnostics in CSG . ECHO succeeds by reducing zero-elimination turns, maintaining high-quality belief contraction, shrinking the candidate set faster, and recovering more robustly after epistemic failures. Results on question type are shown in Table 3 in Appendix C. 0 200 400 600           
+
+> Training Step
+> 0.2
+> 0.4
+> 0.6 0.613
+> 0.331
+> Reward Mean
+> ECHO
+> GRPO 0250 500
+> Training Step
+> 0%
+> 25%
+> 50%
+> 75% 70.1%
+> 15.9%
+> Episode Resolve Rate
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 10
+> 12
+> 13.043
+> 10.325
+> Mean Eliminated
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 0%
+> 5%
+> 10%
+> 15%
+> 0.2%
+> 2.5%
+> Redundancy Rate
+> ECHO
+> GRPO
+
+Figure 5: Performance and behavioral trends during RL training in the Clue Selector Game (CSG) environment. Plots show metrics SEM across 3 independent training runs. Additional training dynamics are shown in Fig. 7 in Appendix B. 
+
+Behavioral diagnostics reveal why ECHO succeeds. To understand whether ECHO’s gains come from genuine belief-state adaptation, we analyze process-level diagnostics across policies in Fig. 4. Results show that resolution is tightly linked to posterior contraction: models with fewer zero-elimination turns and higher elimination quality achieve higher solve rates, with ECHO occupying the favorable region of high resolution and low wasted updates. Fig. 4(c) further shows that ECHO continues shrinking the candidate set across turns, whereas episodic-return GRPO and prompting baselines flatten earlier, indicating stalled information acquisition. Fig. 4(d) shows that ECHO is more robust after local epistemic failures: following zero-elimination events, it produces more grounded recoveries and is substantially more likely to still resolve the episode. Together, these diagnostics support the central mechanism behind ECHO: it learns to ask questions that remain informative under the evolving belief state, rather than being merely plausible. 
+
+What epistemically adaptive behavior looks like. The qualitative trajectory in Fig. 3 illustrates the same mechanism at the episode level. For the same secret, ECHO asks questions that remain useful under the changing candidate set, progressively contracting the belief state until only the target remains, while episodic-return GRPO asks questions that are initially plausible, but then non-informative, producing several zero-elimination turns. Thus, the failure mode is stale information seeking : otherwise reasonable questions that are no longer informative after earlier observations. 
+
+Explicit reasoning does not substitute for epistemic training. Explicit reasoning traces alone do not produce epistemic adaptability in long-horizon EDPs. Full ReAct forces models to reason on nearly every turn, yet GPT-4o + Full ReAct resolves only 25 .3% of episodes. Qwen2.5-1.5B + Full ReAct resolves only 4.4% . By contrast, ECHO resolves 45 .3% of episodes and produces explicit reasoning text on only 0.9% of turns. This suggests that the central bottleneck for epistemic adaptivity is not verbalizing intermediate reasoning, but learning a policy conditioned on the evolving belief state. This is “silent exploration” (Sec. 3) manifest: adaptive information seeking expressed through query choices and posterior-sensitive feedback rather than long test-time reasoning traces. ECHO trains adaptable models using belief-sensitive reward structures and provides strong performance with higher token cost-efficiency—a trend consistent with prior works [38] in LLM reasoning. 
+
+Training dynamics support turn-level epistemic credit assignment. Fig. 5 shows that ECHO’s gains emerge as a turn-level epistemic learning effect rather than as a generic reward increase. By the end of training, ECHO reaches much higher episode resolution than trajectory-level GRPO (70 .1% vs. 15 .9% ), eliminates more candidates per turn ( 13 .04 vs. 10 .33 ), and reduces redundancy almost completely ( 0.2% vs. 2.5% ). It also resolves more often at the turn level ( 9.3% vs. 1.8% )and shortens average episodes ( 7.67 vs. 9.29 turns). These trends match our theoretical analysis of EDPs (Sec. 3): when credit is assigned at the decision depth where an action changes the posterior, the policy learns to ask questions that contract the current candidate set rather than merely optimize a sparse final outcome in a multiturn task. The optimization diagnostics suggest specialization 9rather than mode collapse [ 26 , 69 ]: ECHO’s entropy decreases while query diversity remains near saturation, indicating that the policy becomes more selective without repeating the same questions. In contrast, GRPO maintains higher entropy but achieves lower information gain and far lower resolution, consistent with trajectory-level credit failing to identify which intermediate actions were useful under the current belief. Overall, these results indicate that aggregate trajectory returns can fail to identify the per-turn Bayesian advantage needed for epistemic credit. 
+
+7 Conclusion 
+
+We introduced Epistemic Decision Processes (EDPs), a belief-state formulation of multi-turn infor-mation seeking, and showed theoretically why trajectory-level success is insufficient for epistemic credit assignment: policies must receive credit at the decision points where actions change the posterior. Building on this view, we proposed ECHO, a turn-level optimization framework that rewards posterior-sensitive information gain and trains policies to be epistemically adaptive . In the Clue Selector Game, ECHO trains a 1.5B policy that exceeds strong proprietary frontier baselines such as Claude Sonnet 4.6 and reasoning-observation focused baselines like ReAct on final task resolution, while also reducing zero-elimination turns, maintaining high-quality belief contraction, and recovering more robustly after local epistemic failures. These gains do not come from longer visible reasoning traces: ECHO exhibits “silent exploration,” learning adaptive information seeking through belief-conditioned actions rather than explicit rationales at inference time. Overall, our results suggest that adaptive language agents in information-seeking long-horizon tasks should be trained and evaluated not only by whether they eventually succeed, but by how they gather evidence, update beliefs, and recover from uncertainty over time. Extending EDP-style credit assignment to richer tool-use, search, and multi-agent settings is a natural next step for future work. 
+
+Limitations CSG provides exact Bayesian posteriors by construction (Lemma A.6), but real information-seeking tasks—medical diagnosis, web search, preference elicitation—involve implicit, high-dimensional hypothesis spaces where the belief state must be approximated [ 10 , 11 , 35 ], and where information sources may be noisy or adversarial. In such settings, the posterior-sensitive turn reward that drives ECHO could be challenging to compute analytically. Our experiments demonstrate ECHO at the 1.5B scale; whether epistemic credit remains necessary at larger scales where models may have stronger in-context belief tracking [ 33 ], or provides complementary gains, is an open question. Similarly, CSG operates over a relatively short horizon (e.g., 10 total turns) with a structured arm–question action space; scaling epistemic credit assignment to longer horizons with relatively open-ended actions including general-purpose tool calls and richer observation spaces [ 1, 28 ] like the web is unexplored. Extending EDPs to settings with approximate beliefs, unreliable information sources, and compositional latent structure is a natural direction for future work. 
+
+References 
+
+[1] Marwa Abdulhai, Isadora White, Charlie Victor Snell, Charles Sun, Joey Hong, Yuexiang Zhai, Kelvin Xu, and Sergey Levine. LMRL Gym: Benchmarks for Multi-Turn Reinforcement Learning with Language Models. In Forty-second International Conference on Machine Learning , 2023. [2] Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Üstün, and Sara Hooker. Back to basics: Revisiting REINFORCE-style optimization for learning from human feedback in LLMs. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 12248–12267, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.acl-long.662. URL https://aclanthology.org/2024.acl-long.662/ .[3] Chinmaya Andukuri, Jan-Philipp Fränken, Tobias Gerstenberg, and Noah Goodman. STaR-GATE: Teaching Language Models to Ask Clarifying Questions. In First Conference on Language Modeling , 2024. [4] Karl Johan Åström. Optimal control of markov processes with incomplete state information i. 
+
+Journal of mathematical analysis and applications , 10:174–205, 1965. 10 [5] Seohui Bae, Jeonghye Kim, Youngchul Sung, and Woohyung Lim. Align while search: Belief-guided exploratory inference for world-grounded embodied agents, 2025. URL https:// arxiv.org/abs/2512.24461 .[6] Andrew G Barto and Sridhar Mahadevan. Recent advances in hierarchical reinforcement learning. Discrete event dynamic systems , 13(1-2):41–77, 2003. [7] Richard Bellman. A problem in the sequential design of experiments. Sankhy ¯a: The Indian Journal of Statistics (1933-1960) , 16(3/4):221–229, 1956. [8] Leonardo Bertolazzi, Davide Mazzaccara, Filippo Merlo, and Raffaella Bernardi. Chatgpt’s information seeking strategy: Insights from the 20-questions game. In Proceedings of the 16th International Natural Language Generation Conference , pages 153–162, 2023. [9] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhari-wal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agar-wal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler, Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Ma-teusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are few-shot learners. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Advances in Neural Information Processing Systems , volume 33, pages 1877–1901. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/paper/2020/file/ 1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf .[10] Deepro Choudhury, Sinead Williamson, Adam Goli´ nski, Ning Miao, Freddie Bickford Smith, Michael Kirchhof, Yizhe Zhang, and Tom Rainforth. Bed-llm: Intelligent information gathering with llms and bayesian experimental design. arXiv preprint arXiv:2508.21184 , 2025. [11] Sanjiban Choudhury. Process reward models for llm agents: Practical framework and directions, 2025. URL https://arxiv.org/abs/2502.10325 .[12] Michelle M Chouinard, Paul L Harris, and Michael P Maratsos. Children’s questions: A mecha-nism for cognitive development. Monographs of the society for research in child development ,pages i–129, 2007. [13] Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Sam Stevens, Boshi Wang, Huan Sun, and Yu Su. Mind2web: Towards a generalist agent for the web. Advances in Neural Information Processing Systems , 36:28091–28114, 2023. [14] Hanze Dong, Wei Xiong, Bo Pang, Haoxiang Wang, Han Zhao, Yingbo Zhou, Nan Jiang, Doyen Sahoo, Caiming Xiong, and Tong Zhang. Rlhf workflow: From reward modeling to online rlhf. 
+
+arXiv preprint arXiv:2405.07863 , 2024. [15] Michael O’Gordon Duff. Optimal Learning: Computational procedures for Bayes-adaptive Markov decision processes . University of Massachusetts Amherst, 2002. [16] Aymen Echarghaoui, Dongxia Wu, and Emily B Fox. Balar: A bayesian agentic loop for active reasoning. arXiv preprint arXiv:2605.05386 , 2026. [17] Fabian Falck, Ziyu Wang, and Christopher C Holmes. Is in-context learning in large language models bayesian? a martingale perspective. In International Conference on Machine Learning ,pages 12784–12805. PMLR, 2024. [18] Mohamed Amine Ferrag, Norbert Tihanyi, and Merouane Debbah. From llm reasoning to autonomous ai agents: A comprehensive review. arXiv preprint arXiv:2504.19678 , 2025. [19] Mor Geva, Daniel Khashabi, Elad Segal, Tushar Khot, Dan Roth, and Jonathan Berant. Did aristotle use a laptop? a question answering benchmark with implicit reasoning strategies, 2021. URL https://arxiv.org/abs/2101.02235 .[20] Mohammad Ghavamzadeh, Shie Mannor, Joelle Pineau, and Aviv Tamar. Bayesian rein-forcement learning: A survey. Foundations and Trends® in Machine Learning , 8(5-6): 359–483, November 2015. ISSN 1935-8245. doi: 10.1561/2200000049. URL http: //dx.doi.org/10.1561/2200000049 .11 [21] Evan Greensmith, Peter L Bartlett, and Jonathan Baxter. Variance reduction techniques for gradient estimates in reinforcement learning. Journal of Machine Learning Research , 5(Nov): 1471–1530, 2004. [22] Yiran Guo, Lijie Xu, Jie Liu, Dan Ye, and Shuang Qiu. Segment policy optimization: Ef-fective segment-level credit assignment in rl for large language models. arXiv preprint arXiv:2505.23564 , 2025. [23] Ronald A Howard. Information value theory. IEEE Transactions on systems science and cybernetics , 2(1):22–26, 1966. [24] Huang Hu, Xianchao Wu, Bingfeng Luo, Chongyang Tao, Can Xu, Wei Wu, and Zhan Chen. Playing 20 question game with policy-based reinforcement learning, 2026. URL https: //arxiv.org/abs/1808.07645 .[25] Xingyuan Hua, Sheng Yue, and Ju Ren. Learning to explore: Scaling agentic reasoning via exploration-aware policy optimization, 2026. URL https://arxiv.org/abs/2605.08978 .[26] janus. Mysteries of mode collapse. https://www.lesswrong.com/posts/ t9svvNPNmFf5Qa3TA/mysteries-of-mode-collapse , November 2022. LessWrong post. Accessed: 2026-05-12. [27] Jihwan Jeong, Xiaoyu Wang, Jingmin Wang, Scott Sanner, and Pascal Poupart. Reflect-then-plan: Offline model-based planning through a doubly bayesian lens. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/ forum?id=pQYEMwHd6c .[28] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan O Arik, Dong Wang, Hamed Zamani, and Jiawei Han. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. In Second Conference on Language Modeling .[29] Hongbo Jin, Rongpeng Zhu, Zhongjing Du, Xu Jiang, Jingqi Tian, Qiaoman Zhang, and Jiayu Ding. Dgpo: Distribution guided policy optimization for fine grained credit assignment. arXiv preprint arXiv:2605.03327 , 2026. [30] Leslie Pack Kaelbling, Michael L Littman, and Anthony R Cassandra. Planning and acting in partially observable stochastic domains. Artificial intelligence , 101(1-2):99–134, 1998. [31] Amirhossein Kazemnejad, Milad Aghajohari, Eva Portelance, Alessandro Sordoni, Siva Reddy, Aaron Courville, and Nicolas Le Roux. Vineppo: Refining credit assignment in rl training of llms, 2025. URL https://arxiv.org/abs/2410.01679 .[32] Katarzyna Kobalczyk, Nicolas Astorga, Tennison Liu, and Mihaela van der Schaar. Active task disambiguation with llms, 2025. URL https://arxiv.org/abs/2502.04485 .[33] Jannik Kossen, Yarin Gal, and Tom Rainforth. In-context learning learns label relationships but is not conventional learning. In The Twelfth International Conference on Learning Representations ,2024. URL https://openreview.net/forum?id=YPIA7bgd5y .[34] Philippe Laban, Hiroaki Hayashi, Yingbo Zhou, and Jennifer Neville. LLMs get lost in multi-turn conversation. In The Fourteenth International Conference on Learning Representations ,2026. URL https://openreview.net/forum?id=VKGTGGcwl6 .[35] Jaewoo Lee, Archiki Prasad, Justin Chih-Yao Chen, Zaid Khan, Elias Stengel-Eskin, and Mohit Bansal. Prints: Reward modeling for long-horizon information seeking. arXiv preprint arXiv:2511.19314 , 2025. [36] Shuyue Stella Li, Jimin Mun, Faeze Brahman, Pedram Hosseini, Bryceton G Thomas, Jessica M Sin, Bing Ren, Jonathan S Ilgen, Yulia Tsvetkov, and Maarten Sap. Alfa: Aligning llms to ask good questions a case study in clinical reasoning. In Second Conference on Language Modeling .[37] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. doi: 10.1162/tacl_a_00638. URL https://aclanthology.org/2024.tacl-1.9/ .12 [38] Wenjie Ma, Jingxuan He, Charlie Snell, Tyler Griggs, Sewon Min, and Matei Zaharia. Reason-ing models can be effective without thinking, 2025. URL https://arxiv.org/abs/2504. 09858 .[39] James John Martin. Bayesian decision problems and markov chains. (No Title) , 1967. [40] Davide Mazzaccara, Alberto Testoni, and Raffaella Bernardi. Learning to ask informative questions: Enhancing LLMs with preference optimization and expected information gain. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen, editors, Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 5064–5074, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.findings-emnlp.291. URL https://aclanthology.org/2024.findings-emnlp.291/ .[41] Björn Meder, Jonathan D Nelson, Matt Jones, and Azzurra Ruggeri. Stepwise versus globally optimal search in children and adults. Cognition , 191:103965, 2019. [42] Abhijnan Nath, Alireza Bagheri Garakani, Tianchen Zhou, Fan Yang, and Nikhil Krishnaswamy. Owen-shapley policy optimization (ospo): A principled rl algorithm for generative search llms. 
+
+arXiv preprint arXiv:2601.08403 , 2026. [43] Catherine Olsson, Nelson Elhage, Neel Nanda, Nicholas Joseph, Nova DasSarma, Tom Henighan, Ben Mann, Amanda Askell, Yuntao Bai, Anna Chen, et al. In-context learning and induction heads. arXiv preprint arXiv:2209.11895 , 2022. [44] Alan V Oppenheim. Discrete-time signal processing . Pearson Education India, 1999. [45] Vardhan Palod, Karthik Valmeekam, Kaya Stechly, and Subbarao Kambhampati. Performative thinking? the brittle correlation between cot length and problem complexity. In NeurIPS 2025 Workshop on Efficient Reasoning .[46] Shishir G Patil, Huanzhi Mao, Fanjia Yan, Charlie Cheng-Jie Ji, Vishnu Suresh, Ion Stoica, and Joseph E Gonzalez. The berkeley function calling leaderboard (bfcl): From tool use to agentic evaluation of large language models. In Forty-second International Conference on Machine Learning , 2025. [47] Stephen G Pauker and Jerome P Kassirer. The threshold approach to clinical decision making. 
+
+New England Journal of Medicine , 302(20):1109–1117, 1980. [48] Peter Pirolli and Stuart Card. Information foraging. Psychological review , 106(4):643, 1999. [49] Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and approximate inference in deep generative models. In International conference on machine learning , pages 1278–1286. PMLR, 2014. [50] Anselm Rothe, Brenden M Lake, and Todd M Gureckis. Do people ask good questions? 
+
+Computational Brain & Behavior , 1(1):69–89, 2018. [51] Soumya Rani Samineni, Durgesh Kalwar, Vardaan Gangal, Siddhant Bhambri, and Subbarao Kambhampati. Local coherence or global validity? investigating rlvr traces in math domains, 2025. URL https://arxiv.org/abs/2510.18176 .[52] Soumya Rani Samineni, Durgesh Kalwar, Karthik Valmeekam, Kaya Stechly, and Subbarao Kambhampati. Rl in name only? analyzing the structural assumptions in rl post-training for llms, 2026. URL https://arxiv.org/abs/2505.13697 .[53] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. Advances in Neural Information Processing Systems , 36: 68539–68551, 2023. [54] John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region policy optimization. In International conference on machine learning , pages 1889–1897. PMLR, 2015. 13 [55] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms, 2017. URL https://arxiv.org/abs/1707.06347 .[56] Burr Settles. Active learning literature survey. 2009. [57] Claude E Shannon. Communication in the presence of noise. Proceedings of the IRE , 37(1): 10–21, 2006. [58] Jiaqi Shao, Yuxiang Lin, Munish Prasad Lohani, Yufeng Miao, and Bing Luo. Do llm agents know how to ground, recover, and assess? a benchmark for epistemic competence in information-seeking agents. arXiv preprint arXiv:2509.22391 , 2025. [59] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Y Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [60] Richard D Smallwood and Edward J Sondik. The optimal control of partially observable markov processes over a finite horizon. Operations research , 21(5):1071–1088, 1973. [61] Peiyang Song, Pengrui Han, and Noah Goodman. Large language model reasoning failures. 
+
+arXiv preprint arXiv:2602.06176 , 2026. [62] Megha Srivastava, Cédric Colas, Dorsa Sadigh, and Jacob Andreas. Policy learning with a language bottleneck. arXiv preprint arXiv:2405.04118 , 2024. [63] Richard S Sutton and Andrew G Barto. Reinforcement learning: An introduction . MIT press, 2018. [64] Richard Stuart Sutton. Temporal credit assignment in reinforcement learning . University of Massachusetts Amherst, 1984. [65] Ronald J. Williams. Simple statistical gradient-following algorithms for connectionist re-inforcement learning. Mach. Learn. , 8(3–4):229–256, may 1992. ISSN 0885-6125. doi: 10.1007/BF00992696. URL https://doi.org/10.1007/BF00992696 .[66] Jin Xu, Xu Tan, Kaitao Song, Renqian Luo, Yichong Leng, Tao Qin, Tie-Yan Liu, and Jian Li. Analyzing and mitigating interference in neural architecture search, 2021. [67] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems , 35:20744–20757, 2022. [68] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In The eleventh international conference on learning representations , 2022. [69] Jiayi Zhang, Simon Yu, Derek Chong, Anthony Sicilia, Michael R Tomz, Christopher D Manning, and Weiyan Shi. Verbalized sampling: How to mitigate mode collapse and unlock llm diversity. arXiv preprint arXiv:2510.01171 , 2025. [70] Shenao Zhang, Yaqing Wang, Yinxiao Liu, Tianqi Liu, Peter Grabowski, Eugene Ie, Zhaoran Wang, and Yunxuan Li. Beyond markovian: Reflective exploration via bayes-adaptive rl for llm reasoning, 2025. URL https://arxiv.org/abs/2505.20561 .[71] Taolin Zhang, Dongyang Li, Qizhou Chen, Chengyu Wang, and Xiaofeng He. BELLE: A bi-level multi-agent reasoning framework for multi-hop question answering. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 4184–4202, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long.211. URL https: //aclanthology.org/2025.acl-long.211/ .14 [72] Yizhe Zhang, Jiarui Lu, and Navdeep Jaitly. Probing the multi-turn planning capabili-ties of LLMs via 20 question games. In Lun-Wei Ku, Andre Martins, and Vivek Sriku-mar, editors, Proceedings of the 62nd Annual Meeting of the Association for Computa-tional Linguistics (Volume 1: Long Papers) , pages 1495–1516, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.acl-long.82. URL 
+
+https://aclanthology.org/2024.acl-long.82/ .[73] Yizhe Zhang, Jiarui Lu, and Navdeep Jaitly. The entity-deduction arena: A playground for probing the conversational reasoning and planning capabilities of LLMs, 2024. URL 
+
+https://openreview.net/forum?id=PfrpYGKGPL .[74] Tiancheng Zhao and Maxine Eskenazi. Towards end-to-end learning for dialog state tracking and management using deep reinforcement learning. In Proceedings of the 17th Annual Meeting of the Special Interest Group on Discourse and Dialogue , pages 1–10, 2016. [75] Shuyan Zhou, Frank F Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou, Yonatan Bisk, Daniel Fried, et al. WebArena: A Realistic Web Environment for Building Autonomous Agents. In The Twelfth International Conference on Learning Representations , 2023. [76] Yifei Zhou, Andrea Zanette, Jiayi Pan, Sergey Levine, and Aviral Kumar. ArCHer: Training Language Model Agents via Hierarchical Multi-Turn RL. In International Conference on Machine Learning , pages 62178–62209. PMLR, 2024. [77] Luisa Zintgraf, Kyriacos Shiarlis, Maximilian Igl, Sebastian Schulze, Yarin Gal, Katja Hofmann, and Shimon Whiteson. Varibad: A very good method for bayes-adaptive deep rl via meta-learning. In International Conference on Learning Representations , 2020. URL https: //openreview.net/forum?id=Hkl9JlBYvr .[78] Deyu Zou, Yongqiang Chen, Fan Feng, Mufei Li, Pan Li, Yu Gong, and James Cheng. On information self-locking in reinforcement learning for active reasoning of llm agents, 2026. URL https://arxiv.org/abs/2603.12109 .
+
+A Theory and Proofs 
+
+In this section, we provide our main theoretical results and proofs. 
+
+Proposition A.1 (Belief-state sufficiency) . Let E = ( Z, ρ 0, A, Ω, O, u, T ) be an Epistemic Decision Process. Let ht = ( a0, o 0, . . . , a t−1, o t−1) denote the interaction history, and let bt(z) = P(z⋆ =
+
+z | ht) be the posterior belief over the latent task variable. Suppose there exists a surface-state map 
+
+s : H → S such that the following hold: 1. Observation sufficiency: the observation kernel depends on the history only through the latent variable, surface state, and action: 
+
+O(ot | z⋆, h t, a t) = O(ot | z⋆, s (ht), a t).
+
+2. Surface-state update sufficiency: there exists a transition map F : S × A × Ω → S such that 
+
+s(ht+1 ) = F (s(ht), a t, o t).
+
+3. Utility sufficiency: the per-turn utility can be written as a measurable function of the surface state, belief, action, and observation: 
+
+ut = u(s(ht), b t, a t, o t).
+
+The terminal reward can likewise be written as RT = RT (s(hT ), b T ), or equivalently as the posterior expectation of a latent terminal reward. Then there exists an optimal policy π⋆ for the EDP that depends on the history ht only through the augmented epistemic state (s(ht), b t, t ).Proof. We prove the result by reducing the EDP to a belief-state MDP [4, 60]. 15 Step 1: The augmented epistemic state determines future observation distributions. Fix any history ht, action at, surface state st = s(ht), and belief bt. Since bt(z) = P(z⋆ = z | ht), the predictive distribution over the next observation is 
+
+P(ot | ht, a t) = 
+
+Z
+
+> Z
+
+O(ot | z, s t, a t)bt(z) dz. 
+
+Thus, by the observation sufficiency assumption, the distribution of ot depends on the full history ht
+
+only through (st, b t) and the chosen action at.
+
+Step 2: The belief update is determined by the augmented epistemic state. After observing ot,the posterior is updated by Bayes’ rule: 
+
+bt+1 (z) = τ (bt, a t, o t)( z) = O(ot | z, s t, a t)bt(z)
+
+R 
+
+> Z
+
+O(ot | z′, s t, a t)bt(z′) dz ′ .
+
+Therefore, bt+1 is fully determined by (st, b t, a t, o t). By the surface-state update assumption, 
+
+st+1 = s(ht+1 ) = F (st, a t, o t). Hence the next augmented epistemic state (st+1 , b t+1 , t + 1) 
+
+depends on the history only through (st, b t, t ), the action at, and the observation ot.
+
+Step 3: The reward is determined by the augmented epistemic state. By the utility sufficiency assumption, the per-turn utility is u(st, b t, a t, o t). Thus the distribution of both the next augmented state and the immediate utility is determined by (st, b t, t ) and at. No additional information from the raw history ht is needed for predicting future rewards. 
+
+Step 4: Bellman recursion on the belief-state MDP. Define the optimal value function on the augmented epistemic state by backward induction [63]. At the terminal step, 
+
+V ⋆T (s, b ) = RT (s, b ).
+
+For t < T , define 
+
+V ⋆t (s, b ) = max  
+
+> a∈A
+
+Ez∼bEo∼O(·| z,s,a )
+
+u(s, b, a, o ) + V ⋆t+1 (F (s, a, o ), τ (b, a, o ))  .
+
+This Bellman recursion is well-defined because the predictive observation distribution, the belief update, the surface-state update, and the utility all depend only on (s, b, t ) and a.
+
+Step 5: Constructing an optimal policy. For any history ht, let st = s(ht) and bt = P(z⋆ | ht).Define a greedy policy 
+
+π⋆(ht) ∈ arg max  
+
+> a∈A
+
+Ez∼bt Eo∼O(·| z,s t,a )
+
+u(st, b t, a, o ) + V ⋆t+1 (F (st, a, o ), τ (bt, a, o ))  .
+
+By construction, π⋆(ht) depends on ht only through (s(ht), b t, t ). Moreover, by the Bellman recursion [ 63 ], this policy attains V ⋆t (s(ht), b t) for every history ht. Therefore, π⋆ is optimal, and an optimal policy exists that is Markovian [70] in the augmented epistemic state (s(ht), b t, t ).
+
+Significance. Proposition A.1 justifies the EDP formulation. Although the agent observes a growing text history ht, the full history is not the fundamental decision state. What matters for optimal action selection is the visible surface state together with the posterior belief induced by the history. This separates ordinary text-state conditioning from epistemic adaptivity: a policy that ignores bt may condition on the prompt and turn index, but it cannot in general choose actions based on what the agent has learned from external observations. The result is the EDP analogue of the standard belief-MDP reduction in Bayesian RL and POMDPs, but applied to multi-turn LLM agents whose observations come from an external environment rather than from internal chain-of-thought continuation. 
+
+Connection to Bayesian RL for LLM reasoning. This proposition parallels the belief-sufficiency argument used in Bayesian RL accounts of LLM reasoning. In BARL [ 70 ], the hidden uncertainty is over candidate MDPs or reasoning hypotheses, and the belief is updated over those hypotheses inside a generated reasoning trace. In our EDP setting, the hidden uncertainty is over an external latent task variable z⋆, and the belief bt(z) = P(z⋆ = z | ht) is updated through external observations. Thus, the proof technique is the same belief-MDP reduction, but our setting is explicitly multi-turn: the agent acts, receives evidence from the environment, updates its posterior, and then chooses the next action. 16 Theorem A.2 (Adaptive policies can strictly outperform belief-agnostic policies) . For every depth 
+
+d ≥ 1, there exists an Epistemic Decision Process Ed with horizon d such that: 1. there exists an epistemically adaptive policy π⋆ with P(success | π⋆) = 1 ;2. every belief-agnostic policy μ satisfies P(success | μ) ≤ 21−d.Proof. We construct a family of EDPs in which success requires using evidence revealed in previous turns. The construction separates policies that condition on the epistemic state from policies that do not. 
+
+Step 1: Construction of Ed. Let the latent task variable be a binary string z⋆ = ( z⋆ 
+
+> 1
+
+, . . . , z ⋆d ) ∈Z = {0, 1}d, sampled uniformly from ρ0. The action space is A = {0, 1}, and the observation space is Ω = {0, 1, ⊥} . The surface state is only the turn index, s(ht) = t, so a belief-agnostic policy may know the depth but not the posterior induced by observed evidence. At turn t = 0 , action a0 = 0 always reveals the first latent bit: o0 = z⋆ 
+
+> 1
+
+. Action a0 = 1 returns 
+
+o0 = ⊥. For turns t ≥ 1, the environment reveals the next latent bit if and only if the agent chooses the previously revealed bit: 
+
+ot =
+
+z⋆t+1 , if at = z⋆t ,
+
+⊥, otherwise. The terminal reward is RT = 1 if the agent has observed all d latent bits by the end of the episode, and RT = 0 otherwise. Since at most one bit is revealed per turn, any ⊥ observation prevents success. The key design principle is that the correct action at turn t is determined by the observation ot−1 = z⋆t
+
+received at the previous turn. This observation is part of the history ht and therefore encoded in the belief bt, but it is not a function of the surface state s(ht) = t alone. 
+
+Step 2: An epistemically adaptive policy succeeds with probability one. Define π⋆ as follows. At t = 0 , choose a0 = 0 , which reveals z⋆ 
+
+> 1
+
+. At each later turn t ≥ 1, choose at = z⋆t , the bit revealed as observation ot−1 at the previous turn. This action is accessible to π⋆: the value z⋆t = ot−1 is contained in the history ht =(a0, o 0, . . . , a t−1, o t−1) and hence in the posterior belief bt. An epistemically adaptive policy can therefore compute at = z⋆t from bt.By induction, after turn t, the agent has observed z⋆ 
+
+> 1
+
+, . . . , z ⋆t+1 . After d − 1 turns of this form, the agent has observed the full latent string z⋆, so P(success | π⋆) = 1 .
+
+Step 3: Belief-agnostic policies cannot use the revealed bit. Let μ be any belief-agnostic policy. Since s(ht) = t, the policy conditions only on the turn index: μ(at | ht) = μt(at) for some distribution μt ∈ ∆( {0, 1}), independent of the observations received. At t = 0 , the best belief-agnostic policy chooses a0 = 0 , so we upper bound its probability of passing the first turn by 1.For any later turn t ≥ 1, success requires at = z⋆t . The value z⋆t was revealed as observation ot−1,but μ does not condition on ot−1. Conditional on success at all previous turns—which is required for 
+
+z⋆t to have been revealed—the revealed bit z⋆t is uniformly distributed on {0, 1} by symmetry of the prior. Therefore, for any fixed action distribution μt:
+
+P(at = z⋆t | success up to t − 1, μ ) = X
+
+> a∈{ 0,1}
+
+μt(a) P(z⋆t = a) = μt(0) + μt(1) 2 = 12 .
+
+The equality holds regardless of the mixing weights μt(0) , μ t(1) because the bit z⋆t is symmetric. 
+
+Step 4: Chaining the per-turn bounds. For the terminal reward RT = 1 , the agent must choose the correct action at every turn t = 1 , . . . , d − 1 (turn t = 0 succeeds with probability 1 under the best belief-agnostic policy). The events {at = z⋆t } are conditionally independent across turns given the latent string z⋆, because μt is a fixed distribution and z⋆ 
+
+> 1
+
+, . . . , z ⋆d are independent bits. Therefore: 
+
+P(success | μ) ≤ 1 ·
+
+> d−1
+
+Y
+
+> t=1
+
+12 = 2 1−d.
+
+17 Combined with Part 1, this gives P(success | π⋆) = 1 versus P(success | μ) ≤ 21−d for any belief-agnostic μ, establishing the claimed separation. 
+
+Remark. This construction is related to the binary tree construction in [ 70 ] (Theorem 4.3), where an epistemically adaptive policy succeeds with probability 1 in a depth-d tree while any Markovian policy succeeds with probability 1/2d−1. The key difference is the proof technique: their argument uses a visit-frequency induction on tree nodes under Markovian policies, while our argument uses the direct symmetry of the per-turn bit under belief-agnostic action selection. Both constructions achieve an exponential gap of 2Ω( d), but ours is more direct for the EDP setting because it does not require the full tree structure—only a sequential bit-reveal chain. 
+
+Theorem A.3 (Spectral aliasing of trajectory-level credit) . Fix a policy π in an EDP and a turn t.Let ω denote a full sampled trajectory, let G(ω) = PT −1 
+
+> s=0
+
+rs(ω) be its total return, and let 
+
+A(ω) = Aπ
+
+> B
+
+(ht(ω), a t(ω)) 
+
+be the Bayesian advantage of the action taken at turn t. Consider the class of trajectory-level estimators bAtraj  
+
+> t
+
+= ϕ(G), where ϕ is any measurable function of the total return. Let H = L2(Ω , Pπ ) and let HG = {ϕ(G) : ϕ ∈ L2} be the closed subspace of return-measurable functions. Let ΠG : H → H G be the orthogonal projection onto this subspace, i.e. ΠGA = E[A | G].Then 
+
+inf  
+
+> ϕ
+
+E
+
+h
+
+(ϕ(G) − A)2i
+
+= ∥(I − ΠG)A∥22 = E [Var( A | G)] .
+
+Consequently, if Aπ
+
+> B
+
+(ht, a t) is not measurable with respect to the total return G, then any trajectory-level estimator has strictly positive irreducible statewise error. Proof. We view advantage estimation as an approximation problem in the Hilbert space H =
+
+L2(Ω , Pπ ), equipped with inner product ⟨f, g ⟩ = E[f g ]. The class of trajectory-level estimators 
+
+ϕ(G) is exactly the subspace HG of functions measurable with respect to the sigma-algebra generated by G.The conditional expectation ΠGA = E[A | G] is the orthogonal projection of A onto HG. Therefore, for any ϕ(G) ∈ H G, we have the orthogonal decomposition 
+
+ϕ(G) − A = ϕ(G) − ΠGA
+
+| {z }
+
+> ∈H G
+
+− (I − ΠG)A
+
+| {z }
+
+> ⊥H G
+
+.
+
+By Pythagoras, 
+
+∥ϕ(G) − A∥22 = ∥ϕ(G) − ΠGA∥22 + ∥(I − ΠG)A∥22.
+
+The first term is minimized by choosing ϕ⋆(G) = Π GA = E[A | G], leaving the irreducible residual 
+
+∥(I − ΠG)A∥22. Since conditional expectation gives the best L2 predictor, this residual is 
+
+∥(I − ΠG)A∥22 = E
+
+h
+
+(A − E[A | G]) 2i
+
+= E [Var( A | G)] .
+
+If A is not measurable with respect to G, then A̸ = Π GA on a set of positive probability, so 
+
+∥(I − ΠG)A∥22 > 0. This proves the claim. 
+
+Corollary A.4 (Finite-dimensional view of trajectory-level aliasing) . Assume the trajectory space is finite, Ω = {ω1, . . . , ω n}, with probabilities pi = Pπ (ωi) > 0. Let Ai = A(ωi), where A(ω) = 
+
+Aπ
+
+> B
+
+(ht(ω), a t(ω)) , and let Gi = G(ωi) be the total return of trajectory ωi. Let ΠG denote the orthogonal projection onto the subspace of functions measurable with respect to G, under the weighted inner product ⟨f, g ⟩ = Pni=1 pifigi. Then 
+
+(Π GA)i = E[A | G = Gi],
+
+i.e., ΠG replaces each trajectory-level advantage by the average Bayesian advantage among trajec-tories with the same total return. Moreover, ΠG is self-adjoint and idempotent, so its spectrum is contained in {0, 1}. The eigenspace with eigenvalue 1 consists of functions that are constant on each return level set, while the eigenspace with eigenvalue 0 consists of within-level-set contrasts whose conditional mean given G is zero. 
+
+18 Consequently, the irreducible error of any trajectory-level estimator ϕ(G) is exactly the squared norm of the component of A lying outside the return-measurable subspace: 
+
+inf  
+
+> ϕ
+
+∥ϕ(G) − A∥22 = ∥(I − ΠG)A∥22 = X
+
+> g
+
+P(G = g) Var( A | G = g).
+
+Thus, if two positive-probability trajectories have the same total return but require different Bayesian credit at turn t, then trajectory-level estimators cannot recover that within-return difference. Proof. Since ΠG is the conditional expectation operator E[· | G], it maps each value Ai to the average of A over all trajectories with the same total return Gi. Thus (Π GA)i = E[A | G = Gi].The operator ΠG is an orthogonal projection in L2(Ω , Pπ ), so Π∗ 
+
+> G
+
+= Π G and Π2 
+
+> G
+
+= Π G. Therefore every eigenvalue λ satisfies λ2 = λ, implying λ ∈ { 0, 1}. The 1-eigenspace is the range of ΠG,namely the set of functions measurable with respect to G, which are exactly the functions that are constant on each return level set. The 0-eigenspace is the nullspace of ΠG, namely functions f
+
+satisfying E[f | G] = 0 , which are precisely within-level-set contrasts. By Theorem A.3, the best trajectory-level estimator is ΠGA = E[A | G], and its residual is (I−ΠG)A.Therefore 
+
+inf  
+
+> ϕ
+
+∥ϕ(G) − A∥22 = ∥(I − ΠG)A∥22 = E[Var( A | G)] .
+
+In the finite case, this conditional variance expands as 
+
+E[Var( A | G)] = X
+
+> g
+
+P(G = g) Var( A | G = g).
+
+If A varies among trajectories in the same return level set, then at least one conditional variance term is positive, so the residual is strictly positive. 
+
+Remark A.5 . Why this matters for epistemic credit. Corollary A.4 makes the limitation of trajectory-level credit explicit. Total return partitions trajectories into return level sets, and any estimator ϕ(G) can only assign credit that is constant within each level set. However, in an EDP, two trajectories can have the same final return while requiring different credit for an intermediate action because the action was taken under a different belief state. This within-return variation is exactly the component (I − ΠG)A, which lies outside the return-measurable subspace and is therefore invisible to any trajectory-level estimator. The failure is not finite-sample noise or poor optimization; it is an aliasing 5 problem caused by projecting belief-dependent credit onto a coarser signal. 
+
+Connection to policy-gradient baselines. This result is complementary to classical policy-gradient variance-reduction analyses such as Greensmith et al. [ 21 ]. Those analyses study how baselines reduce variance when they condition on useful state information. Our result identifies the opposite obstruction in EDPs: if the estimator conditions only on aggregate return, then the projection subspace is too small to recover belief-dependent advantage components. In other words, the issue is not merely choosing a better scalar baseline; the estimator must expose information about the epistemic state. 
+
+Lemma A.6 (Exact posterior in CSG) . Let z⋆ be drawn uniformly from {1, . . . , N } and let C0 =
+
+{1, . . . , N }. Suppose the oracle responds truthfully at every turn, i.e., p(ot | z⋆ = z, a t) = 1[z ∈Ct+1 ], where Ct+1 ⊆ C t is the set of candidates consistent with observation ot. Then for all t ≥ 0,the posterior is exactly uniform over the remaining candidate set: 
+
+bt(z) = P(z⋆ = z | ht) = 1[z ∈ C t]
+
+|C t| .
+
+Proof. We prove this by induction. Notice that the base case holds by construction: b0(z) = 1 /N =1/|C 0| for all z.  
+
+> 5We use the term “aliasing” by analogy to signal processing, where distinct high-frequency components can become indistinguishable under a coarse sampling operator [ 44 ,57 ]. In our setting, the coarse observation is the aggregate return G:trajectories with different belief-conditioned advantages can collapse to the same return level set.
+
+19 For the inductive step, assume bt(z) = 1[z ∈ C t]/|C t|. After action at and observation ot, Bayes’ rule gives 
+
+bt+1 (z) = bt(z) p(ot | z, a t)
+
+P 
+
+> z′
+
+bt(z′) p(ot | z′, a t) .
+
+Substituting the inductive hypothesis and the binary likelihood: 
+
+bt+1 (z) =  
+
+> 1[z∈C t]
+> |C t|
+
+· 1[z ∈ C t+1 ]
+
+P 
+
+> z′∈C t
+> 1
+> |C t|
+
+· 1[z′ ∈ C t+1 ] = 1[z ∈ C t+1 ]
+
+|C t+1 | ,
+
+where the numerator uses Ct+1 ⊆ C t, so 1[z ∈ C t] · 1[z ∈ C t+1 ] = 1[z ∈ C t+1 ], and the denominator sums to |C t+1 |/|C t|, which cancels |C t|.
+
+Remark. The oracle in CGS is implemented via GPT-4o mini, so the observation kernel O(ot |
+
+z⋆, h t, a t) is stochastic 6 rather than deterministic—even at temperature set to zero. However, the candidate-set update removes inconsistent candidates given the realized observation, so bt is exact conditional on ot; the stochasticity enters through the EDP environment dynamics (Section 3), not through belief-approximation error. This makes the turn reward rt = ( |C t| − |C t+1 |)/|C t| a direct measure of posterior contraction, computable in closed form without learned reward models or Monte Carlo EIG estimation [10]. 
+
+Connection to BAMDPs and epistemic planning. EDPs are best viewed as a task-level special-ization of belief-state decision processes, rather than as a representationally separate alternative to POMDPs or BAMDPs. The distinction is one of modeling focus, but one that leverages the expressivity of LLMs that naturally operate in exponentially complex language-based state-action spaces. BAMDPs typically maintain beliefs over unknown transition or reward parameters, or over latent MDP identities that are computationally expensive to track with LLMs, and use interaction to improve control under environment uncertainty. Epistemic planning methods such as Reflect-then-Plan similarly reason over model uncertainty to improve offline-to-online planning [ 27 ]. In contrast, EDPs target information-seeking language agents operating through a fixed interaction interface: the environment need not be unknown in its dynamics, but the current task variable z⋆ is hidden (See ?? ). The relevant belief is therefore a posterior over task hypotheses, p(z⋆ | ht), and the central question is whether an action acquires evidence that changes this posterior. Prior work [ 70 ] is closest in spirit, using Bayes-adaptive RL to induce uncertainty-adaptive reflection over reasoning chains or MDP hypotheses [ 70 ]; EDPs instead focus on external 7 query actions and observable belief updates across 
+
+interaction turns. Thus, the contribution of EDPs is not a new belief-state formalism in the abstract, but a lens that makes the credit signal for information-seeking actions explicit. 
+
+B ECHO Training Dynamics 
+
+Agent Prompts Figure 6 (A) shows prompts used for training of LLM agents in CSG environment as well as evaluation. Figure 6 (B) shows the prompt used to instantiate the clue (or hint) provider model with GPT-4o-mini with near-deterministic inference with temperature ( T = 0 ). The CSG uses two prompts with distinct roles. The selector prompt presents the agent with its current belief state — the remaining candidate list Ct and the full arm query history — and requires structured JSON output specifying an arm index and a property question. No chain-of-thought or reasoning scaffold is provided; the agent must select informative actions directly from the belief state encoding. The oracle prompt is given to a fixed gpt-4o-mini clue holder at temperature zero, which receives the secret number and the agent’s question and returns a single deterministic sentence answering only the queried property. The oracle is explicitly instructed not to volunteer information beyond what was asked and to deflect vague questions, enforcing strict information separation across the 
+
+K=5 arms. Repeat questions to the same arm incur a penalty of rt = −0.1 rather than an oracle call, discouraging redundant queries. This design ensures that all information gain flows exclusively through the structured arm–question interface, making the per-turn reward signal a clean measure of epistemic progress. 
+
+> 6https://community.openai.com/t/why-does-openai-api-behave-randomly-with-temperature-0-and-top-p-0/ 934104
+> 7In contrast to [ 70 ], where adaptivity emerges “in-context” aka in reasoning chains within a turn, our focus in on adaptivity in an external sense i.e., across interaction turns.
+
+20 (A) Clue Selector Agent Prompt ( build_llm_prompt )                  
+
+> [SYSTEM] You are a helpful assistant. Follow instructions exactly. [USER] You are solving a number guessing game. A secret number has been chosen from the current candidate universe. You have Kclue-holder arms. Choose one arm and ask one property question. Turn t+1 of T
+> Remaining candidates ( |C t|): [c1, c 2, . . . , c k]Arm histories: Arm 0 (queried n×): Q: Is the number odd or even? A: The number is odd. Arm 1: not yet queried Arm 2: not yet queried Arm 3: not yet queried Arm 4: not yet queried Good questions ask about specific properties that split the candidates: parity, primality, divisibility, digit sum, last digit, range, perfect square. Do NOT repeat a question already asked to any arm. Select an arm–question pair that is most informative for the current candidates. Respond with JSON only: {"arm": 〈0to K−1〉, "question": "〈precise property question 〉"}
+
+(B) Clue Oracle Prompt ( call_clue_holder , gpt-4o-mini , T =0 )  
+
+> [SYSTEM] You are a clue holder in a number guessing game. Return one sentence only. [USER] You know the secret number is {secret}. A player has asked you: “{question}” Rules: – Answer ONLY the specific property asked about. – Do NOT volunteer extra information. – If the question is vague, say: “Please ask about a specific property like parity, divisibility, or range.” – Do not reveal the number directly. One sentence only.
+
+Figure 6: Prompts used in the Clue Selector Game (CSG). (A) The selector prompt shown to the information-seeking agent at each turn t. The current candidate set Ct, remaining turn budget, and arm-specific query histories encode the agent’s observable belief state. The agent must return JSON specifying an arm index and a property question, without a chain-of-thought scaffold. (B) The oracle agent prompt used by a fixed 
+
+gpt-4o-mini clue holder at temperature T =0 . The oracle knows the secret but may answer only the specific queried property and must not reveal additional information and does not get the conversation history as input, motivated by prior work [ 72 ]. The information reward is computed from the resulting candidate-set contraction, 
+
+rinfo  
+
+> t
+
+= ( |C t| − |C t+1 |)/|C t|. The prompt format is held fixed across training and evaluation, with the candidate universe parameterized by the task setting. 
+
+Training dynamics and mechanism analysis. Figure 7 along with main metrics in Figure 5 (Section 6) decomposes training into outcome, mechanism, and optimization-health metrics . The main pattern is that ECHO improves not only final task success, but also the intermediate epistemic behavior predicted by the EDP analysis. Episode resolve rate rises sharply, while mean eliminated candidates per turn increases, indicating that the policy learns to ask questions that contract the current candidate set more effectively. At the same time, redundancy falls to near zero, showing that the policy is not simply repeating high-probability questions, but is using the evolving history to avoid already-exhausted information. This supports the central motivation for turn-level epistemic credit : when the reward signal is assigned at the decision depth where an action changes the posterior, the policy receives direct supervision about which questions are useful under the current belief state. 21 0 200 400 600                         
+
+> Training Step
+> 0.2
+> 0.3
+> 0.4 0.424
+> 0.257
+> Normalized Reward
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 0.3
+> 0.4
+> 0.5
+> 0.453
+> 0.337
+> Reward Std
+> ECHO
+> GRPO 0250 500
+> Training Step
+> 0%
+> 50%
+> 100% 99.4%
+> 92.8%
+> Diversity Rate
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 0%
+> 5%
+> 10% 9.3%
+> 1.8%
+> Turn Resolve Rate
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 8
+> 9
+> 10
+> 7.666
+> 9.285
+> Mean Episode Length
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 10
+> 12
+> 13.043
+> 10.325
+> Mean Eliminated
+> ECHO
+> GRPO 0250 500
+> Training Step
+> 0.00
+> 0.02
+> 0.04 0.034
+> 0.006
+> Efficiency Bonus
+> ECHO
+> GRPO 0200 400 600
+> Training Step
+> 0.0
+> 0.2
+> 0.4 0.339
+> 0.056
+> Turns Saved
+> ECHO
+> GRPO
+
+0 250 500 
+
+> Training Step
+
+0.1 
+
+0.0 
+
+0.1 
+
+> -0.097
+> 0.107
+
+Policy Loss 
+
+> ECHO
+> GRPO
+
+0 250 500 
+
+> Training Step
+
+0.15 
+
+0.20 
+
+0.25 
+
+0.30 
+
+> 0.244
+> 0.179
+
+Grad Norm 
+
+> ECHO
+> GRPO
+
+0 200 400 600 
+
+> Training Step
+
+0.2 
+
+0.4 
+
+0.6 
+
+> 0.167
+> 0.659
+
+Entropy 
+
+> ECHO
+> GRPO
+
+Figure 7: Additional learning dynamics of RL baselines and diagnostic metrics across training steps in the Clue Selector Game (CSG) environment. 
+
+Metric ECHO GRPO ∆ Paired t-test p
+
+Reward mean 0.598 0.342 +0.257 7.55 ×10 −4
+
+Normalized reward 0.419 0.264 +0.155 8.43 ×10 −4
+
+Episode resolve rate 66.1% 17.1% +48.9 pts 2.42 ×10 −4
+
+Mean eliminated candidates 12.924 10.539 +2.385 1.29 ×10 −3
+
+Redundancy rate ↓ 0.26% 2.31% −2.04 pts 1.55 ×10 −2
+
+Mean episode length ↓ 7.724 9.136 −1.412 9.88 ×10 −4
+
+Turn resolve rate 8.66% 1.94% +6.72 pts 3.69 ×10 −4
+
+Turns saved 0.304 0.066 +0.238 4.08 ×10 −4
+
+Entropy ↓ 0.171 0.663 −0.492 2.44 ×10 −3
+
+Table 2: Final-window comparison between ECHO and episodic return baseline (GRPO). Values are seed-level means over the last 100 training steps, averaged across three seeds. p-values are from paired seed-level t-tests. Lower is better for redundancy rate, mean episode length, and entropy. 
+
+Specialization without collapse. The diagnostic metrics further suggest that ECHO’s gains reflect healthy specialization rather than mode collapse. Entropy decreases during training, showing that the policy becomes more decisive, but diversity remains near saturation, indicating that it does not collapse onto a small set of repeated questions. Mechanistically, the policy appears to learn strong 
+
+within-step information gathering before fully mastering higher-level arm selection: candidate elimination and efficiency improve substantially, while arm-match remains comparatively weaker. This is consistent with the task structure, where the policy must learn a joint action consisting of both an arm choice and a natural-language question. In EDP terms, ECHO first improves posterior-sensitive local action quality—asking useful questions for the current candidate set—while leaving additional headroom for learning better long-horizon coordination over which information source to query. 
+
+Seed-level significance. We compute final-window means over the last 100 training steps for each seed and compare ECHO against episodic GRPO using paired seed-level tests. Table 2 shows the results. Across all three seeds, ECHO improves the primary outcome and mechanism metrics: episode resolve rate increases from 17 .1% to 66 .1% , mean eliminated candidates rises from 10 .54 to 
+
+12 .92 , turn resolve rate increases from 1.94% to 8.66% , and mean episode length decreases from 9.14 
+
+to 7.72 . Paired t-tests are significant for these metrics despite the small number of seeds, reflecting 22 consistent improvements across runs. Since n = 3 , we interpret these results primarily through effect size and cross-seed consistency rather than relying solely on significance tests. 
+
+C Additional Results 
+
+C.1 Main Evaluation Metric Definitions 
+
+We compute task-level and process-level metrics from CSG episode logs over 10 maximum turns. Unless otherwise stated, turn-level metrics are averaged over turns within a run, and model-level values report mean and standard error across runs. Additional metrics that we consider and those that CSG RL training environment provides are noted in Table 10 (for training-related metrics) and Table 4 (for arm-routing specific metrics). • Resolve measures final task success: the fraction of episodes in which the agent identifies the secret within the turn budget. • Zero measures zero-elimination behavior: the fraction of non-redundant turns that eliminate no candidates from the current candidate set. Redundant turns are excluded so that Zero captures new but uninformative questions. • Qual. measures candidate-elimination quality relative to the current belief state. It normal-izes the number of eliminated candidates by an ideal binary split of the current candidate set and caps the value at 1. Thus, high Qual. indicates questions that efficiently partition the remaining candidate set. • Ground measures grounded information seeking: the fraction of turns that are both non-redundant and sufficiently informative under the current candidate set. In our implementation, a turn is grounded when its elimination quality is at least 0.5.• LateCalib measures late-stage redundancy in narrow belief states. It is computed on turns with small remaining candidate sets late in the episode and records whether the action was redundant. Lower values indicate fewer wasted turns after the belief state has already narrowed. • Reason% measures visible reasoning text outside the required structured action format. It is used only as a diagnostic for whether a policy relies on explicit natural-language rationales rather than direct action selection. • ZeroEvents counts zero-elimination non-redundant turns that have a following turn, and serves as the event denominator for recovery metrics. • Rec1 measures weak immediate recovery after a Zero event: the fraction of Zero events after which the next turn is non-redundant and eliminates at least one candidate. It captures whether the agent resumes gaining any information at all. • GRecover measures grounded immediate recovery after a Zero event: the fraction of Zero events after which the next turn is grounded, meaning non-redundant and sufficiently informative under the current candidate set. This is stricter than Rec1 because the next turn must not merely eliminate something; it must pass the groundedness threshold. • RecQ measures the elimination quality of the immediate next turn after a Zero event. • NextZero measures whether a Zero event is followed by another zero-elimination non-redundant turn. Lower is better. • NextBad measures whether a Zero event is followed by either another Zero event or a redundant turn. Lower is better. • TTR measures the number of turns until the next grounded turn after a Zero event, averaged over cases where grounded recovery occurs. Lower is better. • TTRsucc measures whether a grounded recovery occurs at any later turn after a Zero event before the episode ends. • ResAfterZero measures episode-level robustness after local failure: among episodes con-taining at least one Zero event, it reports the fraction that still resolve. 23 C.2 From Credit Signal to Strategy: The Emergence of Binary Search Oracle response distributions reveal emergent strategy. To characterize policy behavior beyond resolve rate, we analyze the distribution of oracle hint types received across evaluation episodes in CSG. This is shown in Table 3. For each turn, we classify the oracle response into coarse categories such as range, parity, divisibility, primality, square, digit properties, between, uninformative, and redundant, using keyword matching against the hint string. We also report the zero-elimination rate : the fraction of non-redundant turns where the selected question eliminated no candidates. This captures cases where the agent asked a valid question, but the question was unhelpful under the current belief state. Table 3 shows that ECHO has the lowest zero-elimination rate among evaluated policies ( 18 .6% ), substantially below trajectory-level GRPO (Episodic Return) ( 39 .8% ), RLOO per-turn ( 40 .2% ), and prompting baselines such as Qwen2.5-1.5B + CoT ( 38 .4% ) and full ReAct (49 .2% ). Its hint distribution is also highly concentrated on range-based clues ( 60 .7% ), with low redundancy ( 0.6% ) and little reliance on digit-property or miscellaneous hints. This suggests that ECHO does not merely improve final resolution; it changes the mechanism of interaction toward consistently informative, belief-sensitive queries. 
+
+Bisection as a special case of the EDP objective. The emergence of binary search in ECHO is a consequence of the CSG environment, not a universal property of epistemically adaptive policies. In CSG, the initial prior is uniform, ρ0 = Unif( {1, . . . , N }), and deterministic oracle filtering preserves a uniform posterior over the remaining candidates, bt = Unif( Ct). For a binary question that partitions Ct into fractions p and 1 − p, the expected fractional elimination is 
+
+Ez⋆∼bt [u(bt, a t, o t)] = 2 p(1 − p),
+
+which is maximized at p = 1 /2. Thus, under uniform beliefs, deterministic binary observations, and equal action costs, the EDP objective recovers bisection as the information-theoretically optimal strategy. In general EDPs, these conditions need not hold. If the belief is non-uniform, as in diagnosis or retrieval settings, the optimal query should account for posterior mass rather than split the hypothesis set evenly. If observations are graded, noisy, or multi-valued, the optimal action depends on the task-specific observation model and belief geometry. The Bayesian value Qπ
+
+> B
+
+(ht, a t) = 
+
+Ez⋆∼bt [Qπ (ht, a t | z⋆)] remains the relevant object, but its maximizer is not necessarily a bisection question. Thus, bisection is a special solution for the uniform-prior, deterministic-observation regime of CSGG, while the EDP framework and ECHO’s posterior-sensitive turn-level credit are more general. 
+
+Binary-search-like strategy in CSG In our experiments in CSG, the hint distribution clearly explains why ECHO converges toward a binary-search-like strategy rather than the digit-property-heavy strategy used by the greedy oracle. In the CSG instantiation of the EDP (Section 5), the dominant evidential utility is fractional candidate elimination, u(bt, a t, o t) = |C t \ C t+1 |/|C t|, which measures posterior contraction relative to the current belief size. Since the secret is sampled uniformly and oracle observations only eliminate inconsistent candidates, bt = Unif( Ct). For a binary question whose “yes” set occupies fraction p of the current candidate set, the expected fractional elimination under this uniform belief is 2p(1 −p), maximized at p = 1 /2. Range-bisection questions can therefore achieve near-maximal expected utility by splitting Ct roughly in half. By contrast, digit-property questions such as last digit or digit sum can be highly discriminative for some secrets, but often correspond to imbalanced predicates under the uniform posterior, giving lower expected utility on average. Thus, ECHO learns the policy that is optimal for an agent uncertain over z⋆: ask questions that maximize expected posterior collapse. The greedy oracle baseline, in contrast, effectively conditions on the true latent variable and can exploit digit properties with high realized elimination for that specific secret, explaining its 50 .7% combined use of last-digit and digit-sum hints versus ECHO’s 60 .7% use of range clues. 
+
+Arm routing versus belief-conditioned information seeking. Table 5 tests whether ECHO’s gains are explained by raw arm exploration, static arm matching, or belief-conditioned information gain. The results rule out a simple exploration account: ECHO has lower arm entropy than several weaker baselines such as GRPO, RLOO, and Qwen2.5-1.5B base model, yet achieves substantially higher re-solve rate. Instead, ECHO exhibits the strongest learned-policy combination of low zero-elimination rate, high elimination quality, high groundedness, and high semantic compatibility between selected 24 Model Turns ZeroElim Range Divis. Parity Other Redund. Uninf. Prime Square Between LastDigit DigitSum 
+
+Frontier baselines 
+
+Claude Sonnet 4.6 2005 509 (25.4) 969 (48.3) 417 (20.8) 230 (11.5) 286 (14.3) 14 (0.7) 16 (0.8) 35 (1.7) 19 (0.9) 3 (0.1) 12 (0.6) 4 (0.2) o3-mini 2098 626 (29.8) 503 (24.0) 747 (35.6) 452 (21.5) 114 (5.4) 135 (6.4) – 68 (3.2) 21 (1.0) 1 (0.0) 20 (1.0) 37 (1.8) GPT-4.1-mini 2051 588 (28.7) 590 (28.8) 1069 (52.1) 218 (10.6) 58 (2.8) 11 (0.5) 7 (0.3) 77 (3.8) 4 (0.2) 4 (0.2) 13 (0.6) –GPT-4o 6354 1873 (29.5) 1873 (29.5) 2737 (43.1) 686 (10.8) 350 (5.5) 19 (0.3) 51 (0.8) 262 (4.1) 187 (2.9) 6 (0.1) 111 (1.7) 72 (1.1) GPT-4o-mini 2146 649 (30.2) 519 (24.2) 1180 (55.0) 224 (10.4) 20 (0.9) 5 (0.2) – 151 (7.0) 44 (2.1) 1 (0.0) 2 (0.1) –GPT-4.1-nano 2205 785 (35.6) 468 (21.2) 1187 (53.8) 200 (9.1) 113 (5.1) 96 (4.4) 1 (0.0) 85 (3.9) 14 (0.6) 23 (1.0) 17 (0.8) 1 (0.0) GPT-4o + ReAct 2082 590 (28.3) 607 (29.2) 779 (37.4) 242 (11.6) 185 (8.9) 2 (0.1) 22 (1.1) 48 (2.3) 68 (3.3) 1 (0.0) 71 (3.4) 57 (2.7) 
+
+RL-trained baselines 
+
+Episodic Return (GRPO) 4333 1723 (39.8) 1001 (23.1) 1532 (35.4) 812 (18.7) 583 (13.5) 118 (2.7) 12 (0.3) 152 (3.5) 106 (2.4) 10 (0.2) 6 (0.1) 1 (0.0) RLOO per-turn 2177 875 (40.2) 654 (30.0) 721 (33.1) 343 (15.8) 300 (13.8) 16 (0.7) 7 (0.3) 86 (4.0) 38 (1.7) 10 (0.5) 1 (0.0) 1 (0.0) Offline SFT+RL 2152 887 (41.2) 34 (1.6) 1689 (78.5) 235 (10.9) 104 (4.8) 52 (2.4) 3 (0.1) 28 (1.3) 4 (0.2) – 3 (0.1) –
+
+Base and prompting baselines 
+
+Qwen2.5-0.5B 2219 1115 (50.2) 397 (17.9) 878 (39.6) 385 (17.4) 185 (8.3) 222 (10.0) 41 (1.8) 47 (2.1) 14 (0.6) 3 (0.1) 42 (1.9) 5 (0.2) Qwen2.5-1.5B 8856 3698 (41.8) 1125 (12.7) 2878 (32.5) 1556 (17.6) 1308 (14.8) 983 (11.1) 216 (2.4) 379 (4.3) 186 (2.1) 88 (1.0) 97 (1.1) 40 (0.5) Qwen2.5-3B 2204 794 (36.0) 133 (6.0) 1559 (70.7) 242 (11.0) 96 (4.4) 133 (6.0) – 20 (0.9) 21 (1.0) – – –Qwen2.5-7B 2108 716 (34.0) 213 (10.1) 1419 (67.3) 228 (10.8) 125 (5.9) 38 (1.8) 14 (0.7) 54 (2.6) 16 (0.8) – – 1 (0.0) Qwen2.5-14B 2110 576 (27.3) 85 (4.0) 1648 (78.1) 232 (11.0) 39 (1.8) 36 (1.7) 2 (0.1) 59 (2.8) 7 (0.3) – 2 (0.1) –Qwen2.5-1.5B + CoT 2209 849 (38.4) 293 (13.3) 795 (36.0) 410 (18.6) 312 (14.1) 243 (11.0) 10 (0.5) 81 (3.7) 62 (2.8) 2 (0.1) 1 (0.0) –Qwen2.5-1.5B + ReAct 4448 2000 (45.0) 591 (13.3) 1289 (29.0) 727 (16.3) 683 (15.4) 480 (10.8) 191 (4.3) 206 (4.6) 61 (1.4) 86 (1.9) 95 (2.1) 39 (0.9) Qwen2.5-1.5B + ReAct † 2224 1095 (49.2) 302 (13.6) 544 (24.5) 316 (14.2) 383 (17.2) 213 (9.6) 132 (5.9) 110 (4.9) 7 (0.3) 85 (3.8) 95 (4.3) 37 (1.7) 
+
+Ours 
+
+ECHO 1998 371 (18.6) 1213 (60.7) 440 (22.0) 252 (12.6) 37 (1.9) 11 (0.6) – 16 (0.8) 2 (0.1) 27 (1.4) – –
+
+Oracle 
+
+Greedy oracle 763 226 (29.6) 64 (8.4) 134 (17.6) 43 (5.6) – – – 43 (5.6) 40 (5.2) 52 (6.8) 168 (22.0) 219 (28.7) 
+
+Table 3: Hint-type distribution from the Oracle (GPT-4o-mini) across all evaluated policies in the Clue Selector Game evaluation set. Each cell reports the number of turns assigned to a hint category, with the percentage of total turns for that policy in parentheses. ZeroElim denotes non-redundant turns that eliminated no candidates. ECHO is highlighted and shows the lowest zero-elimination rate among learned policies while relying more strongly on range-based clues. 
+
+Metric Meaning ArmEnt Normalized entropy of arm choices, measuring how evenly the policy distributes actions across the available arms. 
+
+DomArm Dominant-arm share: the fraction of turns assigned to the policy’s most frequently selected arm. 
+
+StaticComp Static arm compatibility: whether the question type is semantically compatible with the fixed property family assigned to the selected arm. 
+
+ArmMatch Logged arm-match rate: agreement between the selected arm and the environment’s target arm label. 
+
+SameArm Fraction of turns in which the policy selects the same arm as in the previous turn. 
+
+ZeroSame Zero-elimination rate conditioned on selecting the same arm as in the previous turn. 
+
+ZeroSwitch Zero-elimination rate conditioned on switching to a different arm from the previous turn. 
+
+QualSame Mean elimination quality conditioned on selecting the same arm as in the previous turn. 
+
+QualSwitch Mean elimination quality conditioned on switching to a different arm from the previous turn. 
+
+Table 4: Definitions of arm-routing and belief-state diagnostic metrics. arms and question types. Raw ArmMatch alone is not sufficient to explain performance: ECHO’s ArmMatch is modest, but its selected arm-question pairs eliminate candidates much more reliably than GRPO or base-model baselines. The same-arm diagnostics further show that arm repetition is not inherently harmful. While frontier models often suffer when reusing an arm, ECHO’s same-arm turns remain highly informative, with lower zero-elimination and higher elimination quality than its switched-arm turns. This suggests that ECHO learns to reuse and route arms in a belief-conditioned manner rather than merely maximizing static arm labels. 
+
+C.3 RL Results CSG Reward Composition The reward rt is computed as follows. See Section 5 for motivation on why this reward design is appropriate for our theoretical and experimental setup. Specifically, if the policy has already asked the same question to the selected arm earlier in the episode, the turn returns immediately with the redundancy penalty rt = −0.1 and the oracle is not consulted. Otherwise the oracle returns a hint, the candidate set is filtered, and rt is the sum of up to five components: the fractional information gain rinfo = ( candidates_before − candidates_after )/candidates_before ,which lies in [0 , 1] and dominates the dense per-turn signal; an arm-match bonus of +0 .05 when the question matches a property the selected arm covers (keyword match against ARM_PROPERTIES ); a diversity bonus of +0 .05 when the question has not been asked to any arm earlier in the episode; a sparse resolution bonus of +1 .0 when the post-oracle candidate set equals {secret }; and an efficiency bonus of 0.1 · (Tmax − t) on resolution, with Tmax = 10 turns. 25 Model Res. ↑ Zero ↓ Qual. ↑ Ground ↑ ArmEnt DomArm StaticComp ↑ ArmMatch ↑ SameArm ZeroSame ↓ ZeroSwitch ↓ QualSame ↑ QualSwitch ↑                                                                                                        
+
+> Greedy oracle (reference) 0.862 0.296 0.700 0.704 0.839 0.507 1.000 1.000 0.468 0.393 0.423 0.603 0.570
+> ECHO (Ours) 0.453 0.186 0.670 0.718 0.770 0.536 0.581 0.183 0.565 0.172 0.257 0.670 0.582
+> Frontier baselines
+> Claude Sonnet 4.6 0.431 0.254 0.701 0.738 0.976 0.309 0.345 0.146 0.112 0.645 0.239 0.313 0.721 GPT-4o 0.258 0.298 0.625 0.662 0.996 0.230 0.391 0.172 0.215 0.596 0.261 0.318 0.654
+> RL-trained Qwen2.5-1.5B baselines
+> RLOO per-turn 0.138 0.402 0.446 0.445 0.960 0.276 0.311 0.135 0.319 0.406 0.458 0.421 0.390 Episodic Return (GRPO) 0.118 0.398 0.423 0.419 0.944 0.292 0.288 0.141 0.378 0.393 0.469 0.409 0.354
+> Base and prompting baselines
+> Qwen2.5-1.5B 0.080 0.386 0.352 0.340 0.944 0.319 0.238 0.138 0.391 0.401 0.446 0.300 0.287 Qwen2.5-1.5B + ReAct 0.044 0.492 0.312 0.316 0.826 0.537 0.313 0.189 0.552 0.525 0.564 0.237 0.265
+
+Table 5: Arm-routing and belief-state diagnostics in the Clue Selector Game . See Table 4 for of arm-routing and belief-state diagnostic metrics in CSG. 
+
+Model Resolve N Rec1 ↑ GRec1 ↑ RecQ ↑ Gain ↑ TTR ↓ TTRsucc ↑ Sust2 ↑ NextRed ↓ EpRes ↑
+
+Frontier baselines 
+
+Claude Sonnet 4.6 43.1% 509 0.145 0.145 0.139 0.078 2.23 0.303 0.102 0.240 0.169 o3-mini 32.0% 384 0.198 0.190 0.179 0.096 1.34 0.258 0.202 0.255 0.171 GPT-4.1-mini 31.6% 588 0.223 0.219 0.201 0.109 1.32 0.298 0.154 0.243 0.156 GPT-4o 25.8% 634 0.229 0.219 0.195 0.107 1.38 0.314 0.226 0.249 0.157 GPT-4o + ReAct 25.3% 590 0.193 0.173 0.166 0.097 1.50 0.276 0.122 0.254 0.087 GPT-4o-mini 22.7% 649 0.337 0.284 0.269 0.145 1.45 0.413 0.162 0.203 0.126 GPT-4.1-nano 10.2% 785 0.317 0.271 0.258 0.146 1.60 0.469 0.122 0.242 0.082 
+
+Base and prompting baselines 
+
+Qwen2.5-14B-Instruct 22.7% 576 0.311 0.227 0.217 0.124 1.41 0.339 0.132 0.248 0.121 Qwen2.5-7B-Instruct 20.9% 716 0.189 0.159 0.152 0.085 1.59 0.254 0.051 0.236 0.106 Qwen2.5-3B-Instruct 8.4% 794 0.316 0.234 0.239 0.136 1.64 0.390 0.162 0.243 0.072 Qwen2.5-1.5B-Instruct 8.0% 849 0.329 0.200 0.212 0.127 2.16 0.476 0.064 0.269 0.064 Qwen2.5-1.5B + CoT 6.7% 849 0.304 0.194 0.203 0.122 2.09 0.429 0.068 0.254 0.058 Qwen2.5-1.5B + ReAct 6.2% 905 0.326 0.213 0.224 0.134 2.22 0.492 0.068 0.261 0.058 Qwen2.5-1.5B + ReAct † 4.4% 1095 0.256 0.181 0.179 0.111 2.27 0.453 0.051 0.215 0.036 Qwen2.5-0.5B-Instruct 3.6% 1115 0.274 0.167 0.182 0.106 2.37 0.421 0.034 0.225 0.027 
+
+RL-trained Qwen2.5-1.5B baselines 
+
+RLOO per-turn 13.8% 875 0.342 0.249 0.247 0.145 1.85 0.487 0.086 0.169 0.126 PBRS learned + RLOO turn 13.3% 845 0.324 0.241 0.233 0.137 1.73 0.424 0.115 0.188 0.114 PBRS learned 12.4% 835 0.328 0.232 0.228 0.128 1.79 0.423 0.088 0.182 0.101 Episodic Return (GRPO) 11.8% 2014 0.364 0.259 0.259 0.153 1.82 0.488 0.096 0.202 0.089 Offline SFT+RL 13.3% 887 0.262 0.170 0.182 0.116 1.95 0.363 0.042 0.200 0.089 
+
+ECHO (Ours) 45.3% 371 0.342 0.313 0.284 0.151 1.37 0.437 0.261 0.243 0.305 
+
+Table 6: Recovery metrics conditioned on zero-information events in the Clue Selector Game. Metrics summarize whether a model recovers after an uninformative step, how quickly it recovers, whether recovery is sustained, and whether the episode ultimately resolves. Arrows indicate preferred direction; best values are bolded. 
+
+Training Hyperparameters The KL coefficient is set to βKL = 0 to remove the reference-model anchor and permit policy drift during the continuation phase; gradients are clipped at ∥∇∥ ≤ 0.5; the PPO clip range uses the TRL default. The information-gain term dominates over most of training (range [0 , 1] per turn vs. ≤ 0.1 for the shaping bonuses), making per-turn elimination the primary gradient signal. The resolution bonus is sparse but large at +1 .0 once per resolved episode, supplying the long-horizon reward needed to escape the local optimum of asking individually informative questions that fail to fully resolve. The redundancy penalty acts as a hard early-return: in the pre-fix regime the policy frequently selected duplicate (arm, question) pairs, triggering the penalty on a large fraction of turns and short-circuiting all other reward components, so the gradient saw −0.1 rather than the information-gain landscape underneath. Setting βKL = 0 removes the reference-model anchor, trading trajectory-drift risk for faster specialization during the continuation phase. 
+
+D CSG Episode Dataset and Statistics 
+
+26 Model Resolve N Rec1 ↑ GRec1 ↑ RecQ ↑ Gain ↑ TTR ↓ TTRsucc ↑ Sust2 ↑ NextRed ↓ EpRes ↑
+
+Frontier baselines 
+
+Claude Sonnet 4.6 43.1% 742 0.193 0.193 0.188 0.019 1.86 0.311 0.075 0.282 0.369 o3-mini 32.0% 524 0.208 0.202 0.193 0.024 1.32 0.263 0.150 0.267 0.297 GPT-4.1-mini 31.6% 867 0.300 0.254 0.241 0.062 1.40 0.363 0.140 0.234 0.267 GPT-4o 25.8% 880 0.266 0.257 0.232 0.054 1.31 0.340 0.220 0.247 0.244 GPT-4o + ReAct 25.3% 797 0.237 0.212 0.205 0.051 1.46 0.320 0.124 0.240 0.200 GPT-4o-mini 22.7% 942 0.394 0.311 0.300 0.116 1.50 0.461 0.185 0.206 0.220 GPT-4.1-nano 10.2% 1024 0.302 0.250 0.240 0.110 1.59 0.422 0.114 0.275 0.094 
+
+Base and prompting baselines 
+
+Qwen2.5-14B-Instruct 22.7% 963 0.415 0.255 0.256 0.096 1.63 0.437 0.116 0.227 0.205 Qwen2.5-7B-Instruct 20.9% 965 0.230 0.184 0.177 0.058 1.57 0.289 0.058 0.244 0.195 Qwen2.5-3B-Instruct 8.4% 1088 0.310 0.222 0.224 0.106 1.63 0.369 0.142 0.276 0.072 Qwen2.5-1.5B-Instruct 8.0% 1257 0.317 0.202 0.212 0.113 2.12 0.457 0.068 0.294 0.076 Qwen2.5-1.5B + CoT 6.7% 1244 0.295 0.184 0.193 0.100 2.04 0.391 0.063 0.295 0.062 Qwen2.5-1.5B + ReAct 6.2% 1315 0.313 0.208 0.215 0.115 2.20 0.479 0.060 0.287 0.062 Qwen2.5-1.5B + ReAct † 4.4% 1418 0.261 0.183 0.183 0.107 2.21 0.437 0.054 0.243 0.036 Qwen2.5-0.5B-Instruct 3.6% 1422 0.259 0.160 0.171 0.093 2.32 0.398 0.036 0.245 0.031 
+
+RL-trained Qwen2.5-1.5B baselines 
+
+RLOO per-turn 13.8% 1033 0.336 0.244 0.242 0.123 1.84 0.478 0.079 0.186 0.134 PBRS learned + RLOO turn 13.3% 1037 0.330 0.248 0.238 0.105 1.70 0.428 0.113 0.183 0.126 PBRS learned 12.4% 1026 0.323 0.229 0.225 0.097 1.83 0.427 0.088 0.186 0.109 Episodic Return (GRPO) 11.8% 2520 0.357 0.252 0.252 0.125 1.81 0.474 0.096 0.200 0.097 Offline SFT+RL 13.3% 1110 0.280 0.183 0.191 0.097 1.93 0.380 0.048 0.200 0.106 
+
+ECHO (Ours) 45.3% 621 0.337 0.304 0.277 0.072 1.39 0.432 0.239 0.298 0.422 
+
+Table 7: Recovery metrics conditioned on bad events in the Clue Selector Game. Metrics evaluate how models respond after poor intermediate choices, including immediate recovery, grounded recovery, recovery quality, speed of recovery, sustained improvement, redundancy avoidance, and final episode resolution. Arrows indicate preferred direction; best values are bolded. 
+
+Model Resolve N Rec1 ↑ GRec1 ↑ RecQ ↑ Gain ↑ TTR ↓ TTRsucc ↑ Sust2 ↑ NextRed ↓ EpRes ↑
+
+Frontier baselines 
+
+Claude Sonnet 4.6 43.1% 728 0.196 0.196 0.192 0.019 1.86 0.317 0.075 0.268 0.369 o3-mini 32.0% 524 0.208 0.202 0.193 0.024 1.32 0.263 0.150 0.267 0.297 GPT-4.1-mini 31.6% 856 0.303 0.256 0.243 0.062 1.40 0.367 0.141 0.225 0.267 GPT-4o 25.8% 868 0.270 0.260 0.236 0.055 1.31 0.344 0.220 0.240 0.244 GPT-4o + ReAct 25.3% 795 0.238 0.213 0.205 0.051 1.46 0.321 0.125 0.239 0.200 GPT-4o-mini 22.7% 937 0.395 0.313 0.301 0.116 1.50 0.463 0.186 0.204 0.220 GPT-4.1-nano 10.2% 928 0.321 0.267 0.256 0.117 1.61 0.457 0.115 0.234 0.094 
+
+Base and prompting baselines 
+
+Qwen2.5-14B-Instruct 22.7% 927 0.428 0.262 0.263 0.098 1.64 0.451 0.118 0.206 0.205 Qwen2.5-7B-Instruct 20.9% 927 0.239 0.192 0.184 0.060 1.57 0.300 0.059 0.227 0.195 Qwen2.5-3B-Instruct 8.4% 955 0.323 0.228 0.231 0.107 1.63 0.380 0.144 0.245 0.072 Qwen2.5-1.5B-Instruct 8.0% 997 0.333 0.213 0.223 0.117 2.12 0.484 0.067 0.267 0.076 Qwen2.5-1.5B + CoT 6.7% 1001 0.303 0.195 0.204 0.103 2.07 0.418 0.070 0.257 0.062 Qwen2.5-1.5B + ReAct 6.2% 1048 0.320 0.211 0.220 0.116 2.24 0.489 0.063 0.263 0.058 Qwen2.5-1.5B + ReAct † 4.4% 1205 0.271 0.190 0.188 0.108 2.25 0.465 0.055 0.206 0.036 Qwen2.5-0.5B-Instruct 3.6% 1200 0.268 0.165 0.178 0.096 2.36 0.415 0.036 0.228 0.031 
+
+RL-trained Qwen2.5-1.5B baselines 
+
+RLOO per-turn 13.8% 1017 0.336 0.245 0.243 0.123 1.85 0.477 0.081 0.184 0.134 PBRS learned + RLOO turn 13.3% 1017 0.330 0.248 0.238 0.105 1.70 0.426 0.114 0.184 0.126 PBRS learned 12.4% 1013 0.323 0.229 0.225 0.096 1.83 0.427 0.087 0.185 0.109 Episodic Return (GRPO) 11.8% 2374 0.356 0.254 0.253 0.124 1.82 0.477 0.098 0.200 0.096 Offline SFT+RL 13.3% 1058 0.276 0.181 0.190 0.095 1.93 0.375 0.049 0.194 0.101 
+
+ECHO (Ours) 45.3% 610 0.336 0.305 0.277 0.071 1.39 0.433 0.234 0.293 0.422 
+
+Table 8: Recovery metrics conditioned on low-quality events in the Clue Selector Game. Metrics summarize immediate recovery, grounded recovery, recovery quality, recovery latency, sustained improvement, redundancy after failure, and final episode resolution. Arrows indicate preferred direction; best values are bolded. 27 Model Resolve N Rec1 ↑ GRec1 ↑ RecQ ↑ Gain ↑ TTR ↓ TTRsucc ↑ Sust2 ↑ NextRed ↓ EpRes ↑
+
+Frontier baselines 
+
+Claude Sonnet 4.6 43.1% 665 0.191 0.191 0.187 0.009 1.29 0.250 0.064 0.314 0.369 o3-mini 32.0% 498 0.175 0.171 0.161 0.002 1.34 0.225 0.091 0.281 0.292 GPT-4.1-mini 31.6% 780 0.231 0.214 0.200 0.036 1.34 0.292 0.089 0.260 0.263 GPT-4o 25.8% 809 0.214 0.205 0.187 0.024 1.34 0.282 0.140 0.268 0.234 GPT-4o + ReAct 25.3% 747 0.213 0.189 0.181 0.033 1.41 0.277 0.092 0.256 0.200 GPT-4o-mini 22.7% 810 0.320 0.259 0.247 0.084 1.51 0.390 0.132 0.240 0.198 GPT-4.1-nano 10.2% 876 0.231 0.192 0.183 0.075 1.60 0.332 0.059 0.322 0.090 
+
+Base and prompting baselines 
+
+Qwen2.5-14B-Instruct 22.7% 862 0.349 0.233 0.231 0.075 1.52 0.381 0.105 0.254 0.191 Qwen2.5-7B-Instruct 20.9% 918 0.193 0.158 0.151 0.043 1.56 0.255 0.046 0.256 0.191 Qwen2.5-3B-Instruct 8.4% 919 0.232 0.155 0.154 0.064 1.67 0.287 0.065 0.319 0.068 Qwen2.5-1.5B-Instruct 8.0% 917 0.231 0.158 0.162 0.081 1.88 0.322 0.033 0.361 0.063 Qwen2.5-1.5B + CoT 6.7% 966 0.211 0.134 0.138 0.064 1.82 0.275 0.035 0.351 0.062 Qwen2.5-1.5B + ReAct 6.2% 949 0.229 0.158 0.161 0.079 1.97 0.334 0.042 0.349 0.062 Qwen2.5-1.5B + ReAct † 4.4% 960 0.164 0.123 0.121 0.071 1.93 0.253 0.021 0.329 0.032 Qwen2.5-0.5B-Instruct 3.6% 960 0.167 0.095 0.104 0.054 1.93 0.210 0.019 0.330 0.027 
+
+RL-trained Qwen2.5-1.5B baselines 
+
+RLOO per-turn 13.8% 857 0.247 0.194 0.184 0.085 1.74 0.376 0.045 0.223 0.122 PBRS learned + RLOO turn 13.3% 893 0.262 0.203 0.193 0.073 1.64 0.349 0.083 0.213 0.110 PBRS learned 12.4% 889 0.256 0.196 0.185 0.072 1.74 0.354 0.059 0.215 0.096 Episodic Return (GRPO) 11.8% 2009 0.268 0.191 0.190 0.083 1.76 0.358 0.054 0.243 0.090 Offline SFT+RL 13.3% 978 0.217 0.154 0.155 0.068 1.90 0.322 0.030 0.224 0.089 
+
+ECHO (Ours) 45.3% 593 0.312 0.285 0.261 0.060 1.39 0.405 0.192 0.312 0.421 
+
+Table 9: Recovery metrics conditioned on late bad events in the Clue Selector Game. Metrics evaluate whether models can recover from harmful or low-quality decisions occurring later in an episode, where fewer turns remain for correction. Arrows indicate preferred direction; best values are bolded. 28 Metric Definition Diagnostic Role in Clue Selector Training 
+
+Outcome metrics — did the policy solve the task? 
+
+Episode Resolve Rate Fraction of episodes (capped at 10 turns) where the policy identifies the secret number. Primary outcome. The only metric that directly answers whether the policy solves the task; bounded above by 1, so the trajectory bends as performance approaches the ceiling. Turn Resolve Rate Fraction of individual turns that reduce the can-didate set to a single element. Per-turn analogue of episode resolve. Distinguishes “the policy resolved this episode” from “the policy re-solved on this specific turn,” surfacing whether res-olution comes from a single decisive action or from gradual narrowing. Reward Mean scalar reward across all turns in the batch; primary GRPO signal. Coarse summary of all reward components. Useful as a sanity check but conflates information gain, resolution bonus, and efficiency bonus; should always be read alongside the component metrics. Normalized Reward Reward divided by the maximum achievable per episode. Scale-free measure of proximity to optimal play. Lets cross-configuration comparisons abstract away changes in reward weighting. 
+
+Mechanism metrics — how is the policy solving (or failing to solve) the task? 
+
+Eliminated Mean Average number of candidates removed per turn after applying the oracle’s response. Direct measure of information gain per question. With candidate sets near 25–30, an information-maximizing question eliminates roughly half; values approaching this threshold indicate the policy has discovered near-optimal binary partitioning at the question level. Candidates Before / After Average candidate set size at the start of a turn / after applying the oracle’s response. Pre- and post-action uncertainty. The gap is per-turn information gain; the ratio is the fractional reduction. A falling Candidates Before across the episode indicates earlier turns are doing useful work that compresses later turns’ starting state. Arm Match Rate Fraction of turns where the selected arm matches the oracle’s preferred arm. Strategic alignment metric, distinct from question qual-ity. With K arms, the random baseline is 1/K . Values near baseline while Episode Resolve Rate climbs indi-cate the policy is winning through within-arm question quality rather than informed arm selection — a decom-position that flags untapped headroom in higher-order strategy. Mean Turn Average turn index at which resolution occurs, conditioned on successful episodes. Efficiency on solved episodes. Low values indicate the policy resolves early in the budget; the gap between this and Mean Episode Length reflects the cost of unre-solved episodes running to the cap. Mean Episode Length Average total turns per episode, including unre-solved runs. Aggregate efficiency. Drops toward Mean Turn as 
+
+Episode Resolve Rate climbs, because fewer episodes are exhausting the turn cap without resolving. Turns Saved Average turns saved relative to a baseline episode length on resolved episodes. Efficiency expressed in turn units. Couples resolution with promptness; nonzero values indicate the policy is not just resolving but resolving faster than the baseline expects. Efficiency Bonus Additional reward for resolving episodes earlier than baseline. Reward-side counterpart to Turns Saved . Grows non-linearly with both arm match rate and resolve rate, since both must improve for early resolution to become routine. 
+
+Environment-correctness metrics — is the policy seeing the reward signal we intended? 
+
+Redundancy Rate Fraction of turns where the oracle’s response eliminates zero candidates. Diagnostic of the filter rather than the policy. High val-ues indicate that questions intended to be informative are being scored as wasted, gating the reward signal upstream of any learning. Near-zero values are a pre-condition for the mechanism metrics above to behave as designed. Diversity Rate Fraction of turns where the question was not asked previously in the same episode. Guards against trivial repetition. Once near 1, it func-tions as a passive monitor: a drop is the first sign of mode collapse onto a small set of high-reward ques-tions. 
+
+Table 10: Metrics used to analyze policy performance during training, training dynamics over turns, and environment correctness in the Clue selector task. Metrics are grouped by diagnostic role: outcome metrics report task success; mechanism metrics decompose how success is achieved (information gain per question vs. strategic arm selection vs. efficiency); environment-correctness metrics confirm the reward signal is reaching the policy as intended 29 CSG Episode Data 
+
+contains trajectories and metrics 
+
+model_summary 
+
+one row per model mean ± SEM over runs 
+
+→ overall comparison 
+
+model_key , group , n_runs resolve_rate , zero_rate quality , grounded grounded_recover res_after_zero 
+
+runs 
+
+one row per model × generic run 
+
+run1 , run2 , run3 
+
+→ run-level stability 
+
+resolve_rate , zero_rate quality_mean , grounded_rate late_calib , reason_pct grounded_recover_rate 
+
+episodes 
+
+one row per model × run × episode 
+
+→ trajectory-level success/failure 
+
+episode_id , secret resolved , turns_taken final_candidates zero_rate , grounded_rate resolved_after_zero 
+
+turns 
+
+one row per model × run × episode × turn 
+
+→ most granular belief update 
+
+action 
+
+arm , question , question_type raw_response , completion 
+
+observation 
+
+hint , answer 
+
+belief transition 
+
+candidates_before eliminated candidates_after 
+
+turn metrics 
+
+zero_nonred , elim_quality grounded , late_narrow reasoning_presence 
+
+recovery diagnostics 
+
+prev_zero_nonred grounded_recover recovery_quality next_bad_after_this_zero 
+
+Figure 8: CSG dataset structure. The dataset is organized from model-level summaries to run-level aggregates, episode-level trajectories, and turn-level belief-state transitions. File paths and raw run filenames are removed; run identities are exposed as generic identifiers. 30

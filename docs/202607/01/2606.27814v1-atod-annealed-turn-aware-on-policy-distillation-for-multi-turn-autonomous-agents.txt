@@ -1,0 +1,1039 @@
+Title: ATOD: Annealed Turn-aware On-policy Distillation for Multi-turn Autonomous Agents
+
+URL Source: https://arxiv.org/pdf/2606.27814v1
+
+Published Time: Mon, 29 Jun 2026 00:35:36 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# ATOD: Annealed Turn-aware On-policy Distillation for Multi-turn Autonomous Agents 
+
+Qitai Tan 1,2 Zefang Zong 1 Yang Li 1 Peng Chen 11Tencent Inc. 2Tsinghua University 
+
+tqt24@mails.tsinghua.edu.cn 
+
+{willzong,thomasyngli }@tencent.com 
+
+Abstract 
+
+Training small language-model agents for long-horizon interactive tasks requires both fast imita-tion and reward-driven improvement. On-policy distillation (OPD) provides dense teacher guidance and typically improves rapidly in the early stage, but its gains saturate once the student approaches the teacher, limiting the final performance ceiling. Reinforcement learning (RL) directly optimizes environment rewards and encourages exploratory improvement toward a higher reward-defined ceil-ing, but sparse and delayed feedback makes early-stage learning much less efficient than OPD. In this paper, we propose ATOD (Annealed Turn-aware On-policy Distillation), a hybrid online distillation algorithm that explicitly exploits this complementarity. (1) ATOD uses an annealed OPD–RL schedule : OPD dominates early training to approach teacher-level behavior, while RL is gradually strengthened to drive reward-based exploration. (2) ATOD introduces Turn-level Disagreement-Uncertainty Reweighting (T-DUR ), which softly amplifies high-utility turns and improves dense supervision in long trajectories. Experiments on ALFWorld, WebShop, and Search-QA show that ATOD consistently outperforms competing post-training baselines: across the three student sizes, ATOD improves average success rate by 3.03 points over OPD and 23.62 points over GRPO, while surpassing the corresponding teacher models by 2.16 points. Vanilla 
+
+> GRPO
+> SDAR
+> OPD
+> SOD
+> TCOD
+> ATOD
+> Teacher
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success Rate (%)
+
+ALFWorld    
+
+> 10.2
+> 31.2
+> 39.8
+> 72.7 75.8 71.9
+> 80.5 76.6
+> Vanilla
+> GRPO
+> SDAR
+> OPD
+> SOD
+> TCOD
+> ATOD
+> Teacher
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+
+Search-QA       
+
+> 31.1
+> 42.0 42.2 44.7 44.4 45.0 45.2 48.2
+> Vanilla
+> GRPO
+> SDAR
+> OPD
+> SOD
+> TCOD
+> ATOD
+> Teacher
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+
+WebShop    
+
+> 5.5
+> 47.7 43.8
+> 77.3 76.6 81.2
+> 89.1
+> 82.0
+
+Figure 1: Aggregate Qwen3-1.7B performance across ALFWorld, Search-QA, and WebShop. 
+
+## 1 Introduction 
+
+Language agents extend large language models from static text generation to interactive decision making, where models must observe states, choose actions, call tools, and revise plans over multiple turns [ 1, 2 ]. Such capabilities make LLMs applicable to embodied instruction following, web shopping, search-augmented question answering, code execution, and other real-world tasks [ 3– 5]. However, strong agentic behavior is usually concentrated in large models, whose inference cost and deployment overhead are undesirable in latency-, privacy-, and resource-sensitive settings. A practical goal is therefore to transfer multi-turn agentic competence from a stronger teacher to a smaller student, while still enabling the student to seek reward-driven improvements beyond pure teacher imitation. 1     
+
+> arXiv:2606.27814v1 [cs.AI] 26 Jun 2026 040 80 120 160
+> Training Step
+> 10%
+> 30%
+> 50%
+> 70%
+> 80%
+> Success Rate
+> Teacher-guided
+> Bootstrap Reward-driven
+> Self-exploration
+> OPD Annealing
+> OPD
+> ATOD (ours)
+> GRPO
+> Limited Late-stage Gains
+> Slow Growth
+
+(a) Training dynamics of ATOD, OPD, and GRPO. 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4      
+
+> Teacher-Student Divergence
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> Student Entropy
+> ROUTINE (27%)
+> low div, low ent
+> both signals: skip
+> UNSURE (23%)
+> low div, HIGH ent
+> divergence-only MISSES
+> CONFIDENTLY WRONG (23%)
+> HIGH div, low ent
+> entropy-only MISSES
+> CRITICAL (27%)
+> HIGH div, HIGH ent
+> both: up-weight
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Turn Importance Weight
+
+(b) T-DUR turn-utility weighting. 
+
+Figure 2: Motivation for ATOD. (a) Compared with OPD and GRPO, ATOD preserves OPD’s fast bootstrap while avoiding its plateau and GRPO’s slow sparse-reward learning. (b) T-DUR uses teacher– student divergence and student entropy to assign larger weights to high-utility turns. Reinforcement learning (RL) has been widely used for post-training language agents. It optimizes the policy with environment-defined rewards, typically through PPO- or GRPO-style policy optimiza-tion [ 6– 9], with recent agent-oriented variants adapting this idea to long-horizon interaction [ 10 –13 ]. More recently, on-policy distillation (OPD) has emerged as another promising paradigm: it trains the student on its own sampled trajectories while using a stronger teacher’s token-level distribution as dense supervision [14–19]. However, RL and OPD exhibit complementary trade-offs in multi-turn agent training. RL directly pursues environment rewards and can improve beyond imitation, but sparse delayed feedback makes early exploration inefficient for small students. OPD provides dense token-level guidance and bootstraps learning quickly, but strong imitation can plateau near the teacher and suppress reward-improving deviations. This motivates an annealed OPD–RL schedule: OPD dominates early training to approach teacher-level behavior, while RL is gradually strengthened to drive reward-based exploration. The validation dynamics in figure 2a illustrate this complementarity: OPD improves quickly but saturates, GRPO grows slowly under sparse rewards, and the annealed hybrid preserves the fast start while reaching a higher ceiling. A second challenge concerns where dense teacher supervision should be applied within long agent trajectories. In multi-turn agent tasks, different turns can have very different learning value: prior agentic OPD studies show that inter-turn error compounding can push later states outside the teacher’s reliable support, making uniform trajectory-level supervision unstable, and that distillation strength should be adapted at the step level [ 20 , 21 ]. Meanwhile, token-importance studies in OPD suggest that student uncertainty and teacher–student disagreement identify informative distillation positions [ 16 , 22 ]. We therefore lift this idea from tokens to turns, because a turn is the natural decision unit of an agent trajectory. As visualized in figure 2b, entropy and disagreement vary substantially across turns; T-DUR estimates these signals from the log-probabilities of sampled tokens, avoiding full-vocabulary teacher sampling while efficiently assigning larger OPD weights to high-utility decision turns. We propose ATOD, short for Annealed Turn-aware On-policy Distillation , to address these two challenges with an annealed OPD–RL schedule and Turn-level Disagreement-Uncertainty Reweighting (T-DUR ), as illustrated in figure 3. Together, these components improve early convergence, stabilize dense supervision, and raise the reward-driven performance ceiling. Our contributions are three-fold: • We introduce an annealed OPD–RL training objective for multi-turn agent training. By letting OPD dominate early and RL dominate later, ATOD addresses the cold-start inefficiency of sparse-reward RL while preserving reward-driven improvement beyond pure teacher imitation. • We propose Turn-level Disagreement-Uncertainty Reweighting ( T-DUR ), a soft distillation weighting 2Figure 3: Overview of ATOD. (a) Annealed guidance shifts from teacher-guided bootstrapping to reward-driven exploration. (b) T-DUR uses disagreement and uncertainty to upweight key turns, leaving rewards unchanged. mechanism for agentic OPD. T-DUR estimates turn-level distillation utility from student uncertainty and teacher–student disagreement, reducing wasted supervision on routine turns and emphasizing high-value decision points. • We validate ATOD on ALFWorld, WebShop, and Search-QA across multiple student sizes. ATOD consistently outperforms competing post-training baselines, improves over both OPD and GRPO, and can surpass the corresponding teacher models. 
+
+## 2 Related Work 
+
+Language agents and tool-integrated reasoning. Language agents combine reasoning with action, enabling LLMs to interact with tools, environments, and external feedback [ 1 , 2 ]. Benchmarks such as ALFWorld, WebShop, and search-augmented QA require multi-step decision making under partial observations and delayed rewards [ 3– 5]. These settings differ from single-turn text generation because errors can propagate across turns and because many actions are routine while a few are decisive. 
+
+Reinforcement learning for language models. Policy optimization methods, including PPO and GRPO, have been widely used to improve language-model reasoning and alignment [ 6– 9]. Agent-specific RL methods further address long-horizon interaction through hierarchical multi-turn optimization, online curricula, group-in-group credit assignment, and adaptive exploration [ 10 –13 ]. GRPO is attractive because it estimates relative advantages within sampled groups without requiring a separate value model. However, in long-horizon agent tasks, sparse terminal rewards and high-variance exploration can make pure RL inefficient, especially for small models. 
+
+On-policy distillation. OPD trains the student on its own generated trajectories while using a teacher distribution as dense supervision [ 14 , 15 ]. This reduces the train–test mismatch of offline supervised distillation and improves sample efficiency. Recent OPD variants improve stability, context transfer, entropy handling, or teacher-ceiling behavior [ 16 –19 ]. For tool-using or multi-turn agents, recent work 3has explored step-wise, temporal, self-distilled, skill-conditioned, or importance-aware distillation to mitigate unreliable or redundant teacher signals [ 20 – 25 ]. ATOD is complementary: it combines OPD with reward-driven GRPO through a dynamic schedule and uses T-DUR to softly gate only the distillation component. 
+
+## 3 Preliminaries 
+
+3.1 Multi-Turn Agent Trajectories 
+
+We consider post-training a small language-model agent for multi-turn interactive tasks. Given an input 
+
+x, the student policy πθ interacts with external feedback over K steps. At step k, the model generates a response ak, which may contain reasoning, an environment action or tool invocation, or a final answer. If an external action is taken, an observation ok is appended to the context and conditions subsequent generations. A trajectory is defined as 
+
+τ = ( x, a1, o1, . . . , aK , oK , aK+1), (1) where aK+1 denotes the final response. The policy generates only model tokens, while observations are provided by the environment. Let at denote a generated token and st its prefix context, which may include both previous model outputs and environment observations. 
+
+3.2 Group Relative Policy Optimization 
+
+Group Relative Policy Optimization (GRPO) is a reinforcement learning algorithm that updates the policy using relative rewards within a group of sampled trajectories [ 7 ]. We assume access to an outcome-level reward function R(τ) defined on complete trajectories. For each input x, a group of trajectories {τi}Gi=1
+
+is sampled from the old policy πθold , each receiving reward ri = R(τi). The group-relative advantage is computed as ˆAGRPO  
+
+> i
+
+= ri − mean ({r j}Gj=1)
+
+std ({r j}Gj=1) + εA
+
+. (2) Let 
+
+ηi,t (θ ) = πθθ (ai,t | si,t )
+
+πθold (ai,t | si,t ) (3) denote the token-level importance ratio. The GRPO objective is 
+
+LGRPO (θ ) = −Ex
+
+"
+
+1
+
+G
+
+> G
+
+# ∑
+
+> i=1
+
+1
+
+|Ti| ∑
+
+> t∈Ti
+
+min  ηi,t (θ ) ˆAGRPO  
+
+> i
+
+, clip (ηi,t (θ ), 1 − ε, 1 + ε) ˆAGRPO 
+
+> i
+
+#
+
+, (4) where Ti denotes the model-generated token positions in trajectory τi. Equivalently, each generated token in τi receives AGRPO  
+
+> t
+
+= ˆAGRPO  
+
+> i
+
+. This objective provides an on-policy learning signal based on relative trajectory performance, but it relies on sparse outcome-level rewards. 
+
+3.3 On-Policy Distillation 
+
+On-policy distillation (OPD) is a post-training paradigm that provides dense token-level supervision on student-generated trajectories by aligning the student policy with a frozen teacher distribution [ 14 , 15 ]. Given trajectories {τi}Gi=1 sampled from the old student policy, the OPD objective can be written as 
+
+LOPD (θ ) = Ex
+
+"
+
+1
+
+G
+
+> G
+
+# ∑
+
+> i=1
+
+1
+
+|Ti| ∑
+
+> t∈Ti
+
+ηi,t (θ )
+
+
+
+log πθθ (ai,t | si,t ) − log πT(ai,t | si,t )
+
+#
+
+, (5) 4where Ti denotes the model-generated token positions in trajectory τi, and ηi,t (θ ) is the same importance ratio as in equation (3). This objective is a sampled estimator of the reverse KL divergence from the student policy to the teacher policy on student-visited states. Equivalently, for a generated token at , OPD provides the token-level distillation signal 
+
+∆ log pt = log πT(at | st ) − log πθ (at | st ), (6) which is positive when the teacher assigns higher probability to the sampled token than the student. In advantage form, pure OPD uses 
+
+AOPD  
+
+> t
+
+= ∆ log pt . (7) 
+
+## 4 Method 
+
+4.1 Overview 
+
+ATOD combines two complementary learning signals. The teacher provides dense token-level guidance through OPD, which is especially useful when the student is still weak. The environment reward provides the task-defining signal through GRPO, which is essential for correcting teacher bias and improving beyond imitation. Instead of choosing one signal, ATOD uses both in a single token-level advantage: 
+
+At = κ(s) AOPD  
+
+> t
+
++ ρ(s) AGRPO  
+
+> t
+
+, (8) where 
+
+AOPD  
+
+> t
+
+= ∆ log pt wk(t) = ( log πT(at | st ) − log πθ (at | st )) wk(t). (9) Here s is the global training step, and k(t) maps token position t to the turn that contains it. The coefficient 
+
+κ(s) controls how much the update follows the teacher, while ρ(s) controls how much it follows the environment reward. The scalar wk(t) is the T-DUR weight of token t’s turn. It only reweights the OPD term, so it changes where teacher supervision is applied without weakening the reward signal. The actor is then optimized with the same clipped surrogate as GRPO in equation (4), using At as the advantage. We do not add an explicit KL penalty; the teacher effect is already included through AOPD  
+
+> t
+
+.
+
+4.2 Dynamic OPD/RL Coefficient Annealing 
+
+A fixed OPD/RL mixture is suboptimal because the two signals are useful at different stages. Early in training, rewards are sparse and noisy, while teacher guidance quickly teaches the student valid actions and interaction patterns. Later, pure imitation becomes limiting: the student may inherit teacher mistakes and cannot easily exceed the teacher. Therefore, ATOD gradually shifts the update from teacher-guided learning to reward-guided learning. We use a simple progress variable 
+
+p(s) = min 
+
+ sT , 1
+
+
+
+, T = coef anneal steps , (10) which increases from 0 to 1 during the annealing window. The OPD coefficient is decreased as training progresses: 
+
+κ(s) = max (κmin , κinit − (κinit − κmin )p(s)) , (11) and the RL coefficient is increased at the same time: 
+
+ρ(s) = ρinit + ( ρmax − ρinit )p(s). (12) Intuitively, early updates keep κ(s) high, so the teacher provides a strong learning signal when reward feedback is still sparse. Late updates reduce the teacher weight and increase ρ(s), so task reward becomes dominant. The floor κmin > 0 keeps a weak teacher anchor to reduce severe drift or reward hacking, but does not prevent reward-driven improvement. 54.3 Turn-level Disagreement-Uncertainty Reweighting 
+
+For each turn k, T-DUR computes two sampled-token statistics over response tokens. 
+
+Disagreement proxy. 
+
+dk = 1
+
+NkNk
+
+# ∑
+
+> t=1
+
+log πθ (a(k) 
+
+> t
+
+| s(k) 
+
+> t
+
+) − log πT(a(k) 
+
+> t
+
+| s(k) 
+
+> t
+
+) . (13) A high dk indicates strong student–teacher disagreement on the turn. 
+
+Uncertainty proxy. 
+
+hk = 1
+
+NkNk
+
+# ∑
+
+> t=1
+
+
+
+− log πθ (a(k) 
+
+> t
+
+| s(k) 
+
+> t
+
+)
+
+
+
+. (14) This sampled-token negative log-probability estimates the student’s uncertainty over the turn. 
+
+Per-trajectory normalization. For turns within the same trajectory τ, we normalize ˜dk = dk − min j∈τ d j
+
+max j∈τ d j − min j∈τ d j
+
+, ˜hk = hk − min j∈τ h j
+
+max j∈τ h j − min j∈τ h j
+
+. (15) If the denominator is below 10 −8, the normalized value is set to 0.5 . Per-trajectory normalization avoids mixing scales across tasks, trajectory lengths, and environment states. 
+
+Soft-OR fusion. The final T-DUR turn weight is denoted by wk:
+
+wk = 1 − (1 − ˜dk)( 1 − ˜hk), wk ∈ [0, 1]. (16) This continuous weight becomes large when either student–teacher disagreement or student uncertainty is high. Thus, it emphasizes both uncertain turns and low-uncertainty high-disagreement turns, the latter corresponding to cases where the student is confident but disagrees with the teacher. The detailed training procedure for ATOD is provided in algorithm 1 in Appendix A.1. 
+
+## 5 Experiments 
+
+5.1 Experimental Setup 
+
+Datasets & Benchmarks. We evaluate ATOD on three long-horizon agent benchmarks: ALFWorld, WebShop, and Search-QA. ALFWorld tests embodied instruction following in text-based household environments, WebShop evaluates goal-conditioned web navigation and product selection, and Search-QA measures search-augmented question answering over open-domain and multi-hop tasks [ 3 – 5]. Following common Search-R1-style protocols, the Search-QA suite covers Natural Questions, TriviaQA, PopQA, HotpotQA, 2WikiMultiHopQA, MuSiQue, and Bamboogle [ 26 –30 ]. Together, these benchmarks cover embodied interaction, web interaction, and tool-assisted knowledge reasoning. 
+
+Evaluation Setups. We use Qwen3-0.6B, Qwen3-1.7B, and Qwen3-4B as student models. The 0.6B and 1.7B students use a Qwen3-4B model trained with GRPO as the teacher, while the 4B student uses a Qwen3-30B-A3B GRPO teacher (150-step checkpoint). Unless otherwise specified, each prompt is sampled on policy with group size G so that GRPO-style group-relative advantages can be computed from environment feedback. We report maximum validation success rate (%) and the corresponding average trajectory length on ALFWorld, Search-QA, and WebShop. The main comparison uses a 150-step training window for all student sizes. 6Baselines. We compare ATOD against post-training baselines of different supervision types: the untrained Vanilla model, the RL method GRPO, the self-distillation + RL method SDAR [ 25 ], standard on-policy distillation (OPD) [ 14 , 15 ], and the agentic on-policy distillation methods SOD [ 21 ] and TCOD [20]. All methods use the same student and teacher families where applicable, and are evaluated under the same benchmark metrics. For ATOD, the teacher provides token-level log-probabilities on student-sampled trajectories, while the actor update remains the standard clipped GRPO surrogate with the hybrid advantage defined in equation (8). Baseline descriptions are provided in Appendix B.1. 
+
+5.2 Main Results 
+
+Table 1: Performance on ALFWorld, Search-QA, and WebShop. We report success rate (SR, %) and average trajectory length (Len.). Avg. SR is the mean success rate over the three datasets. Vanilla denotes the untrained base model. Methods marked with † do not use a teacher model.                                                                                                                                                                              
+
+> Method ALFWorld Search-QA WebShop Avg. SR SR Len. SR Len. SR Len.
+> Qwen3-4B GRPO (Teacher) 76.56 18.95 48.19 2.51 82.03 6.21 68.93
+> Qwen3-0.6B Student (teacher: Qwen3-4B GRPO) Vanilla †0.78 50.00 14.50 1.57 4.69 9.59 6.66 GRPO †30.47 44.13 39.36 2.69 29.69 9.73 33.17 SDAR †28.12 45.27 39.60 2.43 8.59 10.27 25.44 OPD 76.56 18.48 41.46 2.77 85.16 6.23 67.73 SOD 76.56 22.90 40.19 2.81 80.47 5.95 65.74 TCOD 74.22 20.15 42.04 2.67 84.38 5.94 66.88
+> ATOD 82.81 15.84 42.33 2.77 86.72 7.48 70.62
+> Qwen3-1.7B Student (teacher: Qwen3-4B GRPO) Vanilla †10.16 47.91 31.15 2.09 5.47 8.43 15.59 GRPO †31.25 40.38 41.99 2.64 47.66 10.01 40.30 SDAR †39.84 37.56 42.24 2.67 43.75 8.90 41.94 OPD 72.66 16.41 44.73 2.66 77.34 6.15 64.91 SOD 75.78 27.95 44.43 2.69 76.56 5.59 65.59 TCOD 71.88 18.88 45.02 2.74 81.25 6.10 66.05
+> ATOD 80.47 22.69 45.21 2.64 89.06 6.20 71.58
+> Qwen3-30B-A3B GRPO (Teacher) 80.47 23.53 50.49 2.65 75.78 8.02 68.91
+> Qwen3-4B Student (teacher: Qwen3-30B-A3B GRPO) Vanilla †24.22 42.43 32.71 1.77 0.78 13.99 19.24 GRPO †76.56 18.95 48.19 2.51 82.03 6.21 68.93 SDAR †77.34 20.85 47.80 2.59 67.97 7.91 64.37 OPD 80.47 21.12 48.93 2.69 75.00 8.53 68.13 SOD 79.69 19.02 48.58 2.61 76.56 6.68 68.28 TCOD 76.56 23.45 48.39 2.57 75.78 9.21 66.91
+> ATOD 85.16 16.75 49.12 2.62 78.91 8.29 71.06
+
+The performance comparison across ALFWorld, Search-QA, and WebShop is summarized in table 1, from which we draw the following key observations: • Obs 1: ATOD consistently outperforms all baselines and even surpasses the corresponding teacher models. Across all three student sizes (0.6B, 1.7B, and 4B), ATOD achieves the highest average success rate among all student methods, with margins of 3.89% (0.6B), 5.07% (1.7B), and 2.13% (4B) over the second-best baseline. Notably, ATOD surpasses its teacher on ALFWorld and WebShop for all student sizes, and achieves competitive Search-QA performance within 1% of the teacher. • Obs 2: ATOD delivers dramatic improvements for smaller models with weak initial performance. 
+
+For the 0.6B student, which starts with near-zero success on ALFWorld (0.78%) and WebShop (4.69%), ATOD lifts performance to 82.81% and 86.72% respectively—a relative improvement of over 100 ×
+
+on ALFWorld compared to the vanilla model. In contrast, GRPO achieves only 30.47% on ALFWorld, 7ATOD Token-level          
+
+> reweighting
+> w/o
+> T-DUR
+> w/o
+> Annealing
+> 70%
+> 75%
+> 80%
+> 85%
+> Success rate
+> Qwen3-0.6B
+> 82.8%
+> 78.9% 78.9%
+> 75.8%
+> ATOD Token-level
+> reweighting
+> w/o
+> T-DUR
+> w/o
+> Annealing
+> Qwen3-1.7B
+> 80.5% 79.7%
+> 75.8%
+> 73.4%
+> ATOD Token-level
+> reweighting
+> w/o
+> T-DUR
+> w/o
+> Annealing
+> Qwen3-4B
+> 85.2%
+> 83.6% 84.4% 83.6%
+> ATOD Token-level reweighting w/o T-DUR w/o Annealing
+
+Figure 4: ALFWorld ablation results for Qwen3-0.6B, Qwen3-1.7B, and Qwen3-4B students. ATOD achieves the best success rate, while removing turn-level T-DUR or annealing generally reduces perfor-mance. highlighting ATOD’s superior efficiency in the early training stage when sparse rewards make pure RL ineffective. 
+
+5.3 Ablation Study 
+
+To evaluate the contribution of each component in ATOD, we conduct three ablation studies on ALFWorld across all student sizes (0.6B, 1.7B, and 4B): (1) applying the disagreement-uncertainty reweighting at the token level instead of the turn level ( Token-level reweighting ); (2) removing the T-DUR reweighting entirely and using uniform turn weights ( w/o T-DUR ); and (3) disabling the annealing schedule by fixing 
+
+κ(s) and ρ(s) to constant values ( w/o Annealing ). The results are shown in figure 4, from which we draw the following observations: • Obs 1: The annealing schedule is crucial for combining imitation and reward optimization. 
+
+Removing the annealing mechanism leads to the most pronounced degradation across all student sizes, with the largest drop on relatively weaker students (e.g., 0.6B drops from 82.8% to 75.8%). This confirms that a fixed OPD/RL mixture fails to balance the two signals effectively: early training requires strong teacher guidance for bootstrapping, while later training needs reward-driven pressure to push beyond the teacher ceiling. • Obs 2: Turn-level T-DUR weighting outperforms both token-level reweighting and uniform weighting. Compared with ATOD, both applying reweighting at the token level and removing T-DUR (i.e., uniform turn weights) lower the success rate across all model sizes, with the gap being particularly notable on the 1.7B student. This suggests that operating at the turn level provides a more stable and semantically meaningful reweighting unit: agent interactions are inherently turn-structured, and aggregating disagreement and uncertainty over complete response turns better captures the utility of each decision step. In contrast, token-level reweighting introduces instability from per-token fluctuations, while uniform weighting squanders supervision on routine turns. 
+
+5.4 Training Dynamics and Diagnostic Metrics 
+
+figure 5 provides a step-wise view of the optimization process behind the aggregate results in table 1. Pure GRPO starts from a substantially lower success rate and improves slowly, reflecting the difficulty of exploration under sparse trajectory-level rewards. OPD and SOD obtain a much faster warm start because teacher supervision supplies dense token-level guidance, but their validation curves flatten after the early stage. In contrast, ATOD follows the rapid early growth of distillation-based methods while continuing to improve in the later stage, reaching the highest validation success rate by the end of training. The reward curve shows a consistent pattern: ATOD maintains a higher mean critic reward than the baselines for most of training, indicating that the annealed schedule does not merely imitate the teacher but gradually shifts 80 25 50 75 100 125 150                
+
+> Training Step
+> 0
+> 2
+> 4
+> 6
+> 8
+> Critic Reward (mean)
+> (a) Training reward
+> 025 50 75 100 125 150
+> Training Step
+> 10%
+> 30%
+> 50%
+> 70%
+> 90%
+> Success Rate
+> (b) Validation success rate
+> 025 50 75 100 125 150
+> Training Step
+> 10
+> 20
+> 30
+> 40
+> 50
+> Average Turns
+> (c) Average trajectory turns
+> ATOD (ours) GRPO OPD SOD
+
+Figure 5: Training dynamics on ALFWorld. (a) Training reward: ATOD maintains higher critic rewards. (b) Validation success rate: ATOD converges quickly and reaches the best final performance. (c) Average trajectory turns: ATOD learns more efficient trajectories than GRPO. 0 25 50 75 100 125 150             
+
+> Training Step
+> 0.0
+> 0.4
+> 0.8
+> 1.2
+> 1.6
+> Mean Absolute Magnitude
+> (a) OPD/RL signal magnitude
+> OPD signal
+> RL signal
+> 025 50 75 100 125 150
+> Training Step
+> 0.56
+> 0.58
+> 0.60
+> 0.62
+> 0.64
+> 0.66
+> Mean Turn Weight
+> (b) Mean turn weight
+> Turn weight
+> 025 50 75 100 125 150
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Mean Absolute Gap
+> (c) Teacher-student gap
+> ATOD (ours)
+> SOD
+> OPD
+
+Figure 6: Internal diagnostic metrics during ATOD training. (a) OPD/RL signal magnitude: OPD decays while RL remains strong. (b) Mean turn weight: T-DUR keeps reallocating supervision across turns. (c) Teacher–student gap: ATOD steadily narrows the gap during training. toward reward-improving behaviors. The average-turn curve further suggests that ATOD learns more efficient interaction policies: while GRPO keeps producing longer trajectories, ATOD quickly reduces the number of turns and remains close to the more stable distillation-based baselines. The diagnostic metrics in figure 6 further explain why the hybrid schedule is effective. The OPD signal is large at the beginning, when the student disagrees strongly with the teacher and dense supervision is most informative, but it quickly decreases as the student becomes aligned on common trajectory turns. This decay prevents teacher imitation from dominating indefinitely. Meanwhile, the RL signal increases early and remains high throughout training, providing persistent task-level pressure after the distillation signal weakens. The mean turn weight remains in a moderate range rather than collapsing, indicating that T-DUR continues to redistribute distillation strength across informative turns. The teacher–student gap also steadily shrinks for ATOD, confirming that the student absorbs useful teacher behavior while the persistent RL signal supplies the later reward-driven updates needed to exceed the ceiling of pure imitation. 
+
+## 6 Conclusion 
+
+We presented ATOD, an annealed turn-aware on-policy distillation algorithm for language agents. ATOD addresses the cold-start inefficiency of pure RL, the teacher-ceiling problem of pure OPD, and the signal dilution caused by uniform turn weighting. By encoding OPD and GRPO into a single hybrid advantage, annealing their coefficients over training, and applying T-DUR only to teacher supervision, the method provides a simple and implementation-friendly path toward training small agents that first imitate and then improve through environment reward. 9References 
+
+[1] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In International Conference on Learning Representations , 2023. [2] Timo Schick, Jane Dwivedi-Yu, Roberto Dess `ı, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. In Advances in Neural Information Processing Systems , 2023. [3] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Cˆ ot´ e, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representations , 2021. [4] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Systems , 2022. [5] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 , 2025. [6] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [7] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 ,2024. [8] DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. 
+
+Nature , 645:633–638, 2025. [9] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 , 2025. [10] Yifei Zhou, Andrea Zanette, Jiayi Pan, Sergey Levine, and Aviral Kumar. Archer: Training language model agents via hierarchical multi-turn rl. In Proceedings of the 41st International Conference on Machine Learning , pages 62178–62209, 2024. [11] Zehan Qi, Xiao Liu, Iat Long Iong, Hanyu Lai, Xueqiao Sun, Wenyi Zhao, Yu Yang, Xinyue Yang, Jiadai Sun, Shuntian Yao, Tianjie Zhang, Wei Xu, Jie Tang, and Yuxiao Dong. Webrl: Training llm web agents via self-evolving online curriculum reinforcement learning. In International Conference on Learning Representations , 2025. [12] Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 , 2025. [13] Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Jiazhen Du, Huiyang Wang, Fuzheng Zhang, Guorui Zhou, Yutao Zhu, Ji-Rong Wen, and Zhicheng Dou. Agentic reinforced policy optimization. arXiv preprint arXiv:2507.19849 , 2025. 10 [14] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In International Conference on Learning Representations , 2024. [15] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large language models. In International Conference on Learning Representations , 2024. [16] Woogyeol Jin, Taywon Min, Yongjin Yang, Swanand Ravindra Kadhe, Yi Zhou, Dennis Wei, Nathalie Baracaldo, and Kimin Lee. Entropy-aware on-policy distillation of language models. arXiv preprint arXiv:2603.07079 , 2026. [17] Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and Furu Wei. On-policy context distillation for language models. arXiv preprint arXiv:2602.12275 , 2026. [18] Ijun Jang, Jewon Yeom, Juan Yeo, Hyunggu Lim, and Taesup Kim. Stable on-policy distillation through adaptive target reformulation. arXiv preprint arXiv:2601.07155 , 2026. [19] Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin. Learning beyond teacher: Generalized on-policy distillation with reward extrapolation. arXiv preprint arXiv:2602.12125 , 2026. [20] Jiaqi Wang, Wenhao Zhang, Weijie Shi, Yaliang Li, and James Cheng. Tcod: Exploring temporal cur-riculum in on-policy distillation for multi-turn autonomous agents. arXiv preprint arXiv:2604.24005 ,2026. [21] Qiyong Zhong, Mao Zheng, Mingyang Song, Xin Lin, Jie Sun, Houcheng Jiang, Xiang Wang, and Junfeng Fang. Sod: Step-wise on-policy distillation for small language model agents. arXiv preprint arXiv:2605.07725 , 2026. [22] Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. Tip: Token importance in on-policy distillation. arXiv preprint arXiv:2604.14084 , 2026. [23] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 , 2026. [24] Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin Chen, and Honggang Qi. Skill-sd: Skill-conditioned self-distillation for multi-turn llm agents. arXiv preprint arXiv:2604.10674 , 2026. [25] Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. Self-distilled agentic reinforcement learning. arXiv preprint arXiv:2605.15155 , 2026. [26] Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Kenton Lee, Kristina Toutanova, Llion Jones, Matthew Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob Uszkoreit, Quoc Le, and Slav Petrov. Natural questions: A benchmark for question answering research. Transactions of the Association for Computational Linguistics , 7:452–466, 2019. [27] Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension. In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics , pages 1601–1611, 2017. [28] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan Salakhutdinov, and Christopher D. Manning. Hotpotqa: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , pages 2369–2380, 2018. 11 [29] Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. Musique: Multihop questions via single-hop question composition. Transactions of the Association for Computational Linguistics , 10:539–554, 2022. [30] Ofir Press, Muru Zhang, Sewon Min, Ludwig Schmidt, Noah A. Smith, and Mike Lewis. Measuring and narrowing the compositionality gap in language models. In Findings of the Association for Computational Linguistics: EMNLP 2023 , 2023. 12 Appendix 
+
+## Contents 
+
+A Method and Algorithmic Details 14 
+
+A.1 Complete Training Algorithm . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14 A.2 Gradient Interpretation of the OPD Component . . . . . . . . . . . . . . . . . . . . . 14 A.3 Entropy Proxy as a Martingale-Difference Estimator . . . . . . . . . . . . . . . . . . 15 A.4 Properties of Soft-OR and Annealing . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.5 Naming Rationale . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 
+
+B Experimental Setup Details 15 
+
+B.1 Baselines . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 B.2 Training Hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 B.3 Metric Interpretation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 B.4 Environment Prompt Templates . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 
+
+C Qualitative Examples and Diagnostic Analyses 17 
+
+C.1 Qualitative ALFWorld Example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 C.2 Turn-level Case Studies . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 C.3 T-DUR Diagnostic Metrics on ALFWorld . . . . . . . . . . . . . . . . . . . . . . . . 22 C.4 Additional Training Diagnostics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 13 A Method and Algorithmic Details 
+
+This section collects the implementation-level and analytical details of ATOD that complement the main method section. 
+
+A.1 Complete Training Algorithm 
+
+The complete ATOD training procedure is detailed below. 
+
+Algorithm 1 ATOD: Annealed Turn-aware On-policy Distillation 
+
+Input: Student policy πθ , teacher policy πT, environment E , prompt set X , group size G, annealing schedule (κ, ρ), clipping range ε.
+
+Output: Trained student policy πθ .
+
+Stage I: On-policy rollout and reward advantage  
+
+> 1:
+
+for each prompt x ∈ X do  
+
+> 2:
+
+Sample G trajectories {τi}Gi=1 with the old student policy πθold in E . 
+
+> 3:
+
+Evaluate each trajectory with the task reward R(τi). 
+
+> 4:
+
+Compute group-relative GRPO advantages AGRPO using equation (2).  
+
+> 5:
+
+end for Stage II: Turn-aware distillation reweighting  
+
+> 6:
+
+for each trajectory τ do  
+
+> 7:
+
+Partition model-generated tokens into turns {Ik}Kk=1. 
+
+> 8:
+
+Compute turn-level disagreement dk and uncertainty hk using equations (13) and (14).  
+
+> 9:
+
+Fuse the normalized signals into T-DUR weights {wk} using equations (15) and (16).  
+
+> 10:
+
+Form the turn-weighted OPD advantage AOPD  
+
+> t
+
+= ∆ log pt wk(t) using equation (9).  
+
+> 11:
+
+end for Stage III: Annealed hybrid optimization  
+
+> 12:
+
+Compute κ(s) and ρ(s) using equations (11) and (12).  
+
+> 13:
+
+Form the hybrid advantage: 
+
+At = κ(s)AOPD  
+
+> t
+
++ ρ(s)AGRPO  
+
+> t
+
+. 
+
+> 14:
+
+Update πθ by minimizing the clipped surrogate: 
+
+Lactor (θ ) = −Et [min (ηt (θ )At , clip (ηt (θ ), 1 − ε, 1 + ε)At )] . 
+
+> 15:
+
+Synchronize the old policy: πθold ← πθ .
+
+A.2 Gradient Interpretation of the OPD Component 
+
+Inside the unclipped region where ηt (θ ) ≈ 1, the distillation part of the actor loss is approximately 
+
+LOPD (θ ) ≈ − Et
+
+ηt (θ )κ(s)∆ log pt wk(t)
+
+ . (17) Treating ∆ log pt and the turn weight wk(t) as detached advantages, the gradient is 
+
+∇θ LOPD ≈ − Et
+
+h
+
+κ(s)∆ log pt wk(t)∇θ log πθθ (at | st )
+
+i
+
+. (18) Thus ATOD performs advantage-weighted likelihood ascent on student-sampled tokens, where the OPD advantage is high when the teacher assigns higher probability than the old student and T-DUR assigns a large disagreement-uncertainty weight to the turn. 14 A.3 Entropy Proxy as a Martingale-Difference Estimator 
+
+Claim 1. For a turn k , hk = 1 
+
+> Nk
+
+∑t − log πθ (a(k) 
+
+> t
+
+| s(k) 
+
+> t
+
+) is an unbiased estimator of the average token entropy ¯Hk = 1 
+
+> Nk
+
+∑t H(πθ (· | s(k) 
+
+> t
+
+)) . Its estimation variance decreases at rate O (1/Nk).
+
+Proof sketch. Let Xt = − log πθ (at | st ) and let Ft−1 be the filtration generated by previous tokens. Since at ∼ πθ (· | st ), we have E[Xt | Ft−1] = H(πθ (· | st )) . Therefore Dt = Xt − Ht is a martingale difference. For i < j, E[DiD j] = E[DiE[D j | F j−1]] = 0 . Hence the variance of the turn average is 
+
+N−2 
+
+> k
+
+∑t E[D2 
+
+> t
+
+] = O(1/Nk).
+
+A.4 Properties of Soft-OR and Annealing 
+
+The function f (d, h) = 1 − (1 − d)( 1 − h) is monotone in both arguments, symmetric, satisfies f (d, 0) = d
+
+and f (0, h) = h, and is at least as large as each individual signal. It is the standard probabilistic OR t-conorm, making it appropriate when either uncertainty or disagreement should mark a turn as important. The annealing functions in equations (11) and (12) are Lipschitz in the training step with constants 
+
+|κinit − κmin |/T and |ρmax − ρinit |/T . This avoids abrupt changes in advantage scale and makes the transition between imitation and reward optimization smooth. 
+
+A.5 Naming Rationale 
+
+We use ATOD as the primary method name to align with the naming convention of recent OPD-family methods such as SOD and TCOD. The name emphasizes the two main algorithmic ingredients: annealed OPD–GRPO training and turn-aware distillation weighting. The turn weighting module is named Turn-level Disagreement-Uncertainty Reweighting ( T-DUR ) to emphasize that its soft weight is estimated from sampled-token student–teacher disagreement and student uncertainty, rather than from a hard token-selection rule. 
+
+## B Experimental Setup Details 
+
+This section collects the experimental details needed to reproduce and interpret the reported results: baseline definitions, training configuration, metric diagnostics, and environment prompts. 
+
+B.1 Baselines 
+
+We compare ATOD with a diverse set of baselines spanning no additional training, reinforcement learning, self-distillation, and teacher-based on-policy distillation. These baselines are chosen to reflect different supervision sources (environment rewards, self-generated targets, and external teacher distributions) and different signal granularities (trajectory-level rewards, token-level distillation, and temporally structured agent feedback). • Initial. The base student model without any additional task-specific post-training. This baseline measures the zero-shot or instruction-tuned agentic capability of the underlying Qwen3 student before reinforcement learning or distillation. • GRPO (Group Relative Policy Optimization). A reinforcement learning baseline that optimizes the student directly with environment rewards [ 7]. For each input, GRPO samples a group of candidate trajectories, assigns each trajectory a scalar task reward, and normalizes rewards within the group to estimate relative advantages. It avoids training a separate value model, making it efficient for LLM post-training, but the reward is usually sparse and trajectory-level in multi-turn agent tasks, so all tokens in a trajectory receive relatively coarse credit. 15 • SDAR (Self-Distilled Agentic Reinforcement Learning). SDAR keeps RL as the primary optimization backbone and adds a gated self-distillation objective as an auxiliary signal [ 25 ]. Instead of relying on an external teacher, it uses the agent’s own high-quality behaviors or self-generated targets to provide additional token-level guidance. This can improve credit assignment when the self-distilled signal is reliable, but its effectiveness depends on whether the student can already generate sufficiently useful agent trajectories. • OPD (On-Policy Distillation). OPD trains the student on trajectories sampled from the student itself while using an external teacher distribution to provide dense token-level supervision [ 14 , 15 ]. Compared with offline supervised imitation, OPD reduces train–test mismatch because supervision is applied on the student’s own rollout states. However, pure OPD mainly imitates the teacher and does not directly optimize environment rewards, so it may saturate once the student approaches teacher-like behavior. • SOD (Step-wise On-policy Distillation). SOD is an agent-oriented OPD method that adaptively adjusts distillation strength at different interaction steps [ 21 ]. It is designed for long-horizon tool-use or agent trajectories, where different steps may have different levels of reliability and learning value. By assigning step-wise distillation weights, SOD provides more structured teacher guidance than uniform OPD, but it still relies primarily on teacher-driven supervision. • TCOD (Temporal Curriculum On-Policy Distillation). TCOD introduces a temporal curriculum for multi-turn OPD [ 20 ]. Rather than exposing the student to the full trajectory difficulty uniformly, it controls the trajectory depth or temporal range used for distillation so that the student learns agent behavior in a progressively structured manner. This curriculum can stabilize multi-turn distillation, but its performance depends on the chosen temporal schedule. The 4B GRPO model is reported as a teacher reference in the main table. All teacher-based distillation baselines use the same teacher checkpoint where applicable, so differences among OPD, SOD, TCOD, and ATOD mainly come from how teacher supervision is weighted and combined with reward optimization. 
+
+B.2 Training Hyperparameters 
+
+We conduct training across three text-based interactive environments: ALFWorld, Search-QA, and WebShop. The training and core ATOD hyperparameters are summarized in table 2, while task-specific configurations are provided in table 3. 16 Table 2: Training and core ATOD hyperparameters.                                     
+
+> Hyperparameter Value
+> Training Setup
+> Actor learning rate 1×10 −6
+> Actor KL loss Off ( use kl loss=False )Group size (rollouts per prompt) 8Max response length 512 Rollout engine vLLM GPU count 8 (single node) Training steps 150 Sampling temperature 1.0 Val temperature 0.4 Enable thinking Off
+> Annealing Core Configuration
+> KL coefficient initial βkl (0)1.0 RL coefficient initial βrl (0)1.0 Coefficient annealing On Annealing steps T80 KL coefficient minimum βmin kl 0.1 RL coefficient maximum βmax rl 2.0 Annealing schedule Linear: βkl decays 1 .0→0.1, βrl grows 1 .0→2.0, clamped after T
+
+Table 3: Task-specific hyperparameters for ALFWorld, Search-QA, and WebShop.                
+
+> Hyperparameter ALFWorld Search-QA WebShop
+> Train batch size 16 128 16 Val batch size 128 512 128 Max prompt length 2048 4096 4096 Environment max steps 50 415
+
+B.3 Metric Interpretation 
+
+Healthy training should show monotonically decreasing hybrid/kl coef , monotonically increasing 
+
+hybrid/rl coef , early OPD/RL ratio above one and late ratio below one, stable actor entropy without abrupt collapse, and increasing task reward. T-DUR active ratio should be high in early and middle training and may decrease later as the student approaches the teacher on more trajectories. 
+
+B.4 Environment Prompt Templates 
+
+Figures 7–9 present the full prompt templates used by ATOD for the three evaluation environments. 
+
+## C Qualitative Examples and Diagnostic Analyses 
+
+This section provides concrete rollouts and diagnostic visualizations that explain where T-DUR allocates teacher supervision in long trajectories. 
+
+C.1 Qualitative ALFWorld Example 
+
+figure 10 shows a complete successful trajectory produced by the ATOD-trained 1.7B student on an ALFWorld task. 17 Prompt of ATOD on ALFWorld 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: 
+
+{task description }.Prior to this step, you have already taken {step count } step(s). Below are the most recent 
+
+{history length } observations and the corresponding actions you took: {action history }
+
+You are now at step {current step } and your current observation is: {current observation }
+
+Your admissible actions of the current situation are: [[ {admissible actions }]] .Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think > < /think > tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action ></action > tags. 
+
+Figure 7: Prompt template used by ATOD for the ALFWorld task environment. 
+
+Prompt of ATOD on Search-based QA 
+
+You are an expert agent tasked with answering the given question step-by-step. Your question: {task description }.Prior to this step, you have already taken {step count } step(s). Below is the interaction history where 
+
+<search > < /search > wrapped your past search queries and <information > < /information >
+
+wrapped the corresponding search results returned by the external search engine. History: 
+
+{memory context }
+
+Now it’s your turn to respond for the current step. You should first conduct a reasoning process. This process MUST be enclosed within <think > < /think > tags. After completing your reasoning, choose only one of the following actions (do not perform both): 1. If you find you lack some knowledge, you MUST call a search engine to get more external information using format: <search > your query </search >.2. If you have enough knowledge to answer the question confidently, provide your final answer within 
+
+<answer > < /answer > tags, without detailed illustrations. For example, 
+
+<answer >Beijing </answer >.
+
+Figure 8: Prompt template used by ATOD for the Search-based QA task environment. 
+
+Prompt of ATOD on WebShop 
+
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to: {task description }.Prior to this step, you have already taken {step count } step(s). Below are the most recent 
+
+{history length } observations and the corresponding actions you took: {action history }
+
+You are now at step {current step } and your current observation is: {current observation }.Your admissible actions of the current situation are: [{available actions }].Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think > < /think > tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action ></action > tags. 
+
+Figure 9: Prompt template used by ATOD for the WebShop task environment. 18 Model Output by ATOD-trained Student (1.7B) Benchmark. ALFWorld valid seen                               
+
+> Task. put some remotecontrol on sofa.
+> Model. ATOD-trained 1.7B student Outcome. success, reward 10 .0, 5 /5 admissible actions.
+> Step 1
+> <observation >The agent starts in a living room with armchairs, coffee tables, shelves, a sofa, and a TV stand. </observation >
+> Model output: I need to put a remote control on the sofa. I should first check whether I already carry one; otherwise I will search likely surfaces.
+> <action >inventory </action >
+> Step 2
+> <observation >You are not carrying anything. </observation >
+> Model output: I need to find a remote control. Coffee tables are likely locations, so I will inspect one first.
+> <action >go to coffeetable 1 </action >
+> Step 3
+> <observation >The agent arrives at coffeetable 1 and sees a houseplant, a keychain, remotecontrol 4, and remotecontrol 3.
+> </observation >
+> Model output: A remote control is visible; I should take one, then move to the sofa.
+> <action >take remotecontrol 3 from coffeetable 1 </action >
+> Step 4
+> <observation >You pick up the remotecontrol 3 from coffeetable 1. </observation >
+> Model output: I now have the remote control; the next step is to go to sofa 1.
+> <action >go to sofa 1 </action >
+> Step 5
+> <observation >The agent arrives at sofa 1; it contains a box, a creditcard, and a pillow. </observation >
+> Model output: The sofa is the target location, so I should place the remote control there.
+> <action >move remotecontrol 3 to sofa 1 </action ><observation >Task completed. </observation >
+
+Figure 10: Qualitative ALFWorld trajectory from the ATOD-trained 1.7B student. The example is compressed from the raw rollout in example task8 remotecontrol on sofa.json : routine prompts and long admissible-action lists are omitted, while the key environment observations, model outputs, and executed actions are preserved. 
+
+C.2 Turn-level Case Studies 
+
+We include two compact case studies in figures 11 and 12 to visualize how T-DUR assigns turn-level distillation weights. In each panel, dk and hk are the raw, pre-normalization proxies for teacher–student disagreement and sampled-token student uncertainty, respectively, while wk is the final Soft-OR turn weight after per-trajectory normalization. The ALFWorld trace is from a trained student; the WebShop trace uses a pre-distillation student so that the reasoning-rich error-and-recovery pattern remains visible, with metrics computed against the same teacher. The layout follows the qualitative diagnostic style in which the task context appears above a step-wise trace, and the most important weight column is highlighted. 
+
+Case-study Takeaway 
+
+Across both domains, T-DUR reallocates dense teacher supervision toward pivotal decision points rather than routine environment mechanics. In ALFWorld, entropy highlights open-ended search and route planning, while disagreement rescues a confident goal-completion turn. In WebShop, the combination of uncertainty and disagreement flags error-and-recovery behavior around size/color selection and purchase commitment. This supports the design choice of using a Soft-OR fusion rather than relying on either signal alone. 19 Case A: ALFWorld — T-DUR Highlights Planning, Route Choice, and Goal Completion Task: clean some lettuce and put it in fridge. Outcome: success, 7 turns. 
+
+Reading guide: dk is raw teacher–student disagreement, hk is raw sampled-token student uncer-tainty, and wk is the final Soft-OR weight after normalizing dk and hk within the trajectory. 
+
+Step Student reasoning trace (abbreviated) dk hk wk
+
+s0 Obs. The room contains countertops, cabinets, a fridge, and a sinkbasin. Student. “I first need to find the lettuce; I will start by checking countertops.” Action: go to countertop 1 . Open-ended planning has the trajectory’s highest uncertainty. 
+
+0.101 0.037 1.00 
+
+s1 Obs. Countertop 1 contains lettuce 1 . Student. “I should take the lettuce first; after cleaning, I can put it in the fridge.” Action: take lettuce 1 from countertop 1 .0.120 0.013 0.60 
+
+s2 Obs. The lettuce is now in inventory. Student. “The next logical step is to clean it at sinkbasin 1.” Action: go to sinkbasin 1 . This route-choice turn has the largest disagreement signal. 
+
+0.228 0.025 1.00 
+
+s3 Obs. At sinkbasin 1; admissible actions include cleaning the lettuce. Student. “The next step is to clean the lettuce using the sinkbasin.” Action: clean lettuce 1 with sinkbasin 1 . A mastered mechanical step. 
+
+0.022 0.010 0.15 
+
+s4 Obs. The lettuce has been cleaned. Student. “Now I need to put it in the fridge; go to fridge 1.” Action: go to fridge 1 .0.054 0.022 0.60 
+
+s5 Obs. At fridge 1; the fridge is closed. Student. “I need to open the fridge.” Action: 
+
+open fridge 1 . Lowest on both signals, so distillation can skip it. 
+
+0.019 0.006 0.00 
+
+s6 Obs. The fridge is open. Student. “Place the cleaned lettuce into the fridge.” Action: 
+
+move lettuce 1 to fridge 1 . The goal-completing action is recovered by disagreement despite low entropy. 
+
+0.138 0.008 0.60 
+
+Figure 11: ALFWorld appendix case study. T-DUR does not simply emphasize long or late turns: it up-weights the initial search plan, the route decision toward cleaning, and the final placement, while assigning near-zero weight to routine environment mechanics such as opening the fridge. 20 Case B: WebShop — T-DUR Flags Error-and-Recovery Turns in Product Selection Task: find a machine-wash men’s dress shirt with cotton spandex, classic fit, short sleeve, ship-wreck burgundy, size 2x, and price lower than $60. 
+
+Reading guide: dk is raw teacher–student disagreement, hk is raw sampled-token student uncer-tainty, and wk is the final Soft-OR weight after normalizing dk and hk within the trajectory. 
+
+Step Student reasoning trace (abbreviated) dk hk wk
+
+s0 Obs. The page is at search. Student. “Search for the exact shirt constraints: cotton spandex, classic fit, short sleeve, shipwreck burgundy, size 2x, under $60.” Action: 
+
+search[... size 2x, under $60] .0.796 0.063 0.23 
+
+s1 Obs. Search results show many candidate products. Student. The model opens a seemingly relevant item for inspection. Action: click[b07hrfsnl4] . Candidate selection raises uncertainty. 
+
+0.705 0.132 0.48 
+
+s2 Obs. The item page exposes size and color options. Student. The model tries to adjust size but clicks the wrong option. Action: click[x-small] . Both uncertainty and disagreement fire on the error turn. 
+
+0.913 0.195 0.92 
+
+s3 Obs. Same item page with the wrong size active. Student. “The correct size is 2x; click 2x.” Action: click[2x] . A high-value recovery turn. 
+
+0.876 0.158 0.76 
+
+s4 Obs. Same item page. Student. The model re-clicks the already intended size. 
+
+Action: click[2x] . A consolidation step with lower utility. 
+
+0.668 0.101 0.25 
+
+s5 Obs. Color options are available. Student. “Select the required shipwreck burgundy color.” Action: click[shipwreck burgundy] .0.696 0.132 0.47 
+
+s6 Obs. The filters are not visibly narrowing the result. Student. The model keeps adjusting size/color constraints. Action: click[2x] . This is the trajectory peak for both disagreement and uncertainty. 
+
+1.214 0.219 1.00 
+
+s7 Obs. The item page has buy now . Student. “The selected size and color satisfy the request; proceed with purchase.” Action: click[buy now] . The commit step remains important. 
+
+0.744 0.158 0.67 
+
+Figure 12: WebShop appendix case study. Unlike the ALFWorld example, WebShop contains free-text search and many clickable attributes, so disagreement remains high even when the student appears decisive. The Soft-OR weight therefore captures both hesitant turns and confidently different turns such as the wrong-size click and the final purchase commitment. 21 C.3 T-DUR Diagnostic Metrics on ALFWorld 0 10 20 30 40 50           
+
+> Turn (Step Index Within Trajectory)
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> Divergence (Mean|  logp|)
+> (a) Teacher-Student Gap
+> 010 20 30 40 50
+> Turn (Step Index Within Trajectory)
+> 0.025
+> 0.050
+> 0.075
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> 0.200
+> Entropy Proxy (Mean(-logp_student))
+> (b) Entropy Proxy
+> 010 20 30 40 50
+> Turn (Step Index Within Trajectory)
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> Turn Importance Weight
+> (c) Turn Importance Weight
+> 025 50 75 100 125 150 175
+> Sample Size (n)
+> 025 50 75 100 125 150 175
+> Sample Size (n)
+> 025 50 75 100 125 150 175
+> Sample Size (n)
+> Untrained: mean ± 95% CI Trained: mean ± 95% CI Untrained: sample size (n) Trained: sample size (n)
+
+Figure 13: T-DUR diagnostic metrics for the 1.7B student model on the ALFWorld validation set, comparing pre-trained and post-trained indicators. In all panels, the dashed line shows the number of valid evaluation trajectories (sample count) at each training step. Panel (a): Teacher–student gap (disagreement proxy dk) over steps, showing how the divergence between teacher and student distributions shrinks as training progresses. Panel (b): Entropy proxy ( hk) distribution across training steps, reflecting the student’s per-turn uncertainty before and after ATOD training. Panel (c): Turn-level T-DUR weight (wk) as a function of training step, illustrating how the Soft-OR fusion dynamically reallocates distillation supervision across turns. Together, these diagnostics confirm that T-DUR progressively concentrates teacher supervision on high-utility turns while the overall disagreement and entropy decrease with training. As shown in figure 13, the dashed line in each panel indicates the number of evaluation trajectories available at each training step. We compare the diagnostic curves of the untrained (pre-training) and trained (post-training) 1.7B student to illustrate how T-DUR allocates supervision. 
+
+Untrained model. Before training, the model achieves very low accuracy and exhibits an average trajectory length of 47.91 turns, which approaches the experimental maximum of 50 steps. This indicates that most samples produce long yet incorrect trajectories that exhaust the step budget. Panel (a) reveals a large teacher–student disagreement gap in the first few turns, where the teacher provides strong corrective signals against the student’s erroneous actions. However, the gap progressively decays at later turns: as earlier mistakes accumulate into a long erroneous prefix, the teacher’s distribution becomes less informative for distinguishing corrective actions, causing the disagreement to weaken. Panel (b) shows that the entropy proxy remains around 0.1 with little variation throughout the trajectory, reflecting that the untrained student stays in a persistently uncertain and error-prone regime across all turns. Consequently, Panel (c) shows that T-DUR assigns higher weights to earlier turns and progressively lower weights to later turns. This pattern is well-motivated: when the prompt prefix gradually drifts due to accumulated errors, the learning value of later turns diminishes, and distillation effort should instead concentrate on the earlier turning points and steps where mistakes first arise. 
+
+Trained model. After ATOD training, the teacher–student disagreement gap drops substantially compared to the untrained case (Panel a), confirming effective knowledge transfer. The entropy proxy (Panel b) exhibits a clear two-phase pattern: entropy remains at a low value during the first approximately 20 steps, then rises beyond step 20. This aligns with the observation that the trained model achieves markedly higher accuracy, with most successful trajectories completing within 25 turns; on these suc-cessful trajectories the student is confident and entropy is low. For trajectories that extend beyond 20 steps, early deviations or errors have likely already occurred, causing the student’s uncertainty to increase at later positions. Correspondingly, Panel (c) shows that T-DUR assigns small weights to the earlier, more confident and correct turns, while up-weighting the later turns where the student exhibits higher confusion and requires stronger teacher correction. This asymmetric weighting strategy enables T-DUR 22 to focus distillation capacity on problematic decision points rather than wasting supervision on routine turns the student has already mastered. 
+
+C.4 Additional Training Diagnostics 0 25 50 75 100 125 150 
+
+Training Step 
+
+0
+
+2
+
+4
+
+6
+
+8
+
+> Critic Reward
+
+(a) Training reward 
+
+0 25 50 75 100 125 150 
+
+Training Step 
+
+0.10 
+
+0.16 
+
+0.22 
+
+0.28 
+
+0.34 
+
+> Entropy
+
+(b) Entropy 
+
+0 25 50 75 100 125 150 
+
+Training Step 
+
+105 
+
+115 
+
+125 
+
+135 
+
+145 
+
+> Response Length
+
+(c) Response length 
+
+0 25 50 75 100 125 150 
+
+Training Step 
+
+10% 
+
+30% 
+
+50% 
+
+70% 
+
+80% 
+
+> Success Rate
+
+(d) Validation success rate 
+
+0 25 50 75 100 125 150 
+
+Training Step 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+> Mean Absolute Gap
+
+(e) Absolute teacher-student gap 
+
+0 25 50 75 100 125 150 
+
+Training Step 
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+> Episode Length
+
+(f) Episode length 
+
+Figure 14: Additional training diagnostic metrics for the 1.7B model on the ALFWorld dataset. 23

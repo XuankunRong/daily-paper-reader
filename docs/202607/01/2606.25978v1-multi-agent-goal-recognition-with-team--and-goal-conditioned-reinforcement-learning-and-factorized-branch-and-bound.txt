@@ -1,0 +1,415 @@
+Title: Multi-Agent Goal Recognition with Team- and Goal-Conditioned Reinforcement Learning and Factorized Branch-and-Bound
+
+URL Source: https://arxiv.org/pdf/2606.25978v1
+
+Published Time: Thu, 25 Jun 2026 01:11:45 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Multi-Agent Goal Recognition with Team- and Goal-Conditioned Reinforcement Learning and Factorized Branch-and-Bound 
+
+Thiago Thomas 
+
+Pontifícia Universidade Católica do Rio Grande do Sul (PUCRS) 
+
+Gabriel de Oliveira Ramos 
+
+Universidade do Vale do Rio dos Sinos (Unisinos) 
+
+Felipe Meneguzzi 
+
+University of Aberdeen 
+
+## Abstract 
+
+Multi-agent goal recognition asks an observer to jointly infer which agents act together and what each team is trying to achieve, so the hypothesis space grows combinatorially with the number of team partitions and goals per team. Real applications such as drone surveillance and collaborative robotics expose only the agents’ trajectory, which forces the observer to rank team-goal hypotheses from behavior alone. Multi-Agent Goal Recognition with Branch-and-Bound ( MAGR-BB ) addresses this setting with a shared team- and goal-conditioned policy used as the scoring model inside a factorized branch-and-bound search. On a controlled multi-agent Blocksworld benchmark, MAGR-BB returns the same top-ranked hypothesis as exhaustive search throughout the trajectory while cutting hypothe-sis materialization by orders of magnitude and reducing cumulative recognition runtime substantially. 
+
+## 1 Introduction 
+
+Goal recognition infers hidden intent from observed behavior and supports assistive robotics, security, and human-AI teaming [Kautz and Allen, 1986, Demiris, 2007, Sukthankar et al., 2014, Mirsky et al., 2021, Meneguzzi and Fraga Pereira, 2021]. In multi-agent settings, intent is shared across actors: an observer sees several agents moving simultaneously and must infer both which agents coordinate and what goal each resulting team pursues. This distinction matters for drone-attack recognition [Ab-delkader et al., 2021], cybersecurity [Mirsky et al., 2019], human intent recognition [Singh et al., 2020], autonomous driving [Albrecht et al., 2021], and multi-robot coordination [Farinelli et al., 2004]. For example, two drones flying toward adjacent buildings may be surveying the area together, pursuing two separate goals, or coordinating an attack. Most goal recognizers still target a single actor. Planning-based recognizers [Ramírez and Geffner, 2009, Ramírez and Geffner, 2010, Pereira et al., 2020] and the single-agent model-free line, including GRAQL [Amado et al., 2022], the deep-RL recognizer of Fang et al. [2023], and GRNet [Chiari et al., 2023], all infer one actor’s hidden goal at a time. The multi-agent recognizers closest to our setting use explicit plan libraries, action models, or BDI intention structures [Banerjee et al., 2010, Zhuo et al., 2012, Argenta and Doyle, 2016, 2017, Zhuo, 2019, Dann et al., 2023]. To the best of our knowledge, recognition with learned behavior policies therefore lacks a method that recognizes hidden teams and team goals together. The problem is combinatorial. An observer must jointly infer who coordinates with whom and what each team is trying to achieve. Banerjee et al. [2010] show that multi-agent plan recognition is NP-complete when the number of agents is variable. Let P be the candidate partitions of agents into 
+
+> Preprint.
+> arXiv:2606.25978v1 [cs.MA] 24 Jun 2026
+
+K labeled team slots, and let Gk be the candidate-goal library for slot k. An exhaustive baseline then enumerates P 
+
+> P∈P
+
+QKk=1 |G k| complete partition-goal hypotheses at each observed step. In our benchmark, this count is 7,154 ,784 at each observed step. In this paper, we introduce MAGR-BB, a model-free recognizer for jointly inferring hidden team partitions and team goals from a fully observed joint trajectory. MAGR-BB combines the single-agent learned-policy scoring of GRAQL [Amado et al., 2022] with partition-level bounds inspired by coalition-structure search [Rahwan et al., 2007] under a non-competitive score: each team-goal score depends only on its own team and goal, independent of the goals assigned to other teams in the partition. Because team scores add to the score of a complete hypothesis, the recognizer caches local team-goal scores, prunes partitions whose best total cannot beat the lowest score in the current top-k
+
+list, and preserves the exhaustive top-k ranking without constructing every complete hypothesis. 
+
+Contributions: 
+
+1. We formalize multi-agent goal recognition as inferring which agents form teams and which goal each team pursues from a fully observed joint trajectory (Section 3.1). 2. We train a single Transformer policy [Vaswani et al., 2017] conditioned on a candidate goal and candidate team to score any candidate team-goal pair (Section 3.2), extending the per-goal model in GRAQL [Amado et al., 2022] to a single shared network across all hypotheses. 3. We derive MAGR-BB, a branch-and-bound recognizer whose team-level bounds over partitions and goal assignments preserve the complete-hypothesis ranking under the non-competitive scoring condition (Section 3.4). 4. We empirically show on a controlled multi-agent Blocksworld benchmark [Slaney and Thiébaux, 2001] that MAGR-BB returns the same top-ranked hypothesis at every observed step and the same final top-10 list as the exhaustive baseline, builds only 10 complete hypotheses rather than 7.15 M at the final observed step, and cuts cumulative runtime by a factor of 2.43 –2.91 (Section 4). 
+
+## 2 Preliminaries 
+
+2.1 Multi-Agent Decision Processes 
+
+We use the standard cooperative multi-agent MDP tuple ⟨S , {A i}Ni=1 , T , r, γ ⟩, where S is the state space, Ai is agent i’s action space, T is the transition function, r is the shared team reward, and γ is the discount factor. A joint action a = ( a1, . . . , a N ) drives the shared environment [Albrecht et al., 2024]. We train under centralized training with decentralized execution (CTDE), where the critic observes the joint state during learning while each actor uses only its local observation at execution time [Lowe et al., 2017, Albrecht et al., 2024]. At recognition time, the observer receives fully observed joint state-action pairs; we leave partial observability for future work. 
+
+2.2 Goal-Conditioned Reinforcement Learning 
+
+We train a goal-conditioned policy [Schaul et al., 2015, Liu et al., 2022] with PPO [Schulman et al., 2017], which optimizes policy-gradient updates through a clipped surrogate objective. The candidate goal enters the policy input, and we train under a length-based curriculum [Bengio et al., 2009] that gradually increases goal length and difficulty. 
+
+2.3 Plan and Goal Recognition 
+
+A classical planning problem consists of a state space, action schemas with preconditions and effects, an initial state, and a goal condition [Nau et al., 2004, Geffner and Bonet, 2013]. Plan and goal recognition invert plan generation by mapping observed behavior back to a likely plan or goal [Kautz and Allen, 1986, Sukthankar et al., 2014, Mirsky et al., 2021, Meneguzzi and Fraga Pereira, 2021]. Given a domain model D, candidate goals G, and observations O1: t, a recognizer produces a ranking over G. Existing families include plan-library-based methods [Geib and Goldman, 2009], planning-based methods [Ramírez and Geffner, 2009, Ramírez and Geffner, 2010, Pereira et al., 2020], and 2model-free methods that replace the domain model with learned value functions, policies, or neural predictors [Amado et al., 2022, Fang et al., 2023, Chiari et al., 2023, Amado et al., 2024]. 
+
+2.4 Branch-and-Bound 
+
+Branch-and-bound is a combinatorial search framework that alternates between branching over subproblems and pruning any whose admissible bound cannot beat the current incumbent [Lawler and Wood, 1966]. Every pruned subtree has an upper bound no larger than the best retained solution, so the procedure returns the same top-ranked solutions as exhaustive search. 
+
+## 3 MAGR-BB Method 
+
+This section first formalizes the recognition problem. It then defines the learned policy, the scoring rule, and the branch-and-bound recognizer. 
+
+3.1 Problem Formulation 
+
+Let A = {1, . . . , N } be the set of agents. Let P = {T1, . . . , T K } be a hidden indexed partition of those agents into K teams, with the index k acting as a team-slot label that distinguishes otherwise equivalent partitions. The teams are disjoint and satisfy S 
+
+> k
+
+Tk = A. For each labeled team slot k, Gk
+
+is a finite set of candidate goal specifications that the policy can condition on. The hidden team goal 
+
+gk for team Tk is one element of Gk. A complete recognition hypothesis is therefore 
+
+h = ( P, g 1, . . . , g K ).
+
+We assume full observability of the recorded trajectory: at each step, the observer sees the world state and the executed joint action. After the first t joint steps, the observer has the partial trajectory 
+
+O1: t = {(sτ , a τ )}tτ =1 ,
+
+where sτ is the world snapshot at step τ and aτ = ( a1 
+
+> τ
+
+, . . . , a Nτ ) is the executed joint action. The online input from the environment is only this sequence. The recognizer also has access to the learned policy πθ trained offline by MAGR-BB and uses it as a learned scoring model for candidate hypotheses. We do not assume access to the agents’ true private policies; πθ is the learned scoring model described in Section 3.2. The recognition task is to maintain the top-ranked hypotheses that best explain O1: t as more steps are observed, ranked by a learned-policy score defined in Section 3.3. 
+
+3.2 Goal- and Team-Conditioned Multi-Agent Policy 
+
+The conditioning enters through an observation builder for candidate teams and goals. The builder concatenates four fixed-dimensional feature blocks: domain-state features, self-identity features, team-membership features, and goal features. Given a world snapshot, an acting agent i, a candidate team T , and a candidate team goal g, it constructs 
+
+oit(T, g ) = ϕstate (st) , e self (i) , e team (T ) , ϕ goal (g) .
+
+The first term summarizes the current world snapshot; the next two identify the acting agent and the candidate team via a binary team mask; the last encodes the candidate goal. We call oit(T, g ) a
+
+counterfactual observation because it keeps the world snapshot fixed while substituting candidate team and goal features. Section 4.1 reports the concrete Blocksworld instantiation. The teammate-action context cit records the actions already chosen by earlier teammates at the same joint step. We use a single shared policy parameterized by θ,
+
+πθ (ait | oit(T, g ) , c it),
+
+where T ⊆ A is a candidate team containing agent i, and g is a candidate goal for that team. Here 
+
+ait is agent i’s executed action from the recorded joint action, not an observer decision or a full joint action. The policy is goal-conditioned because the candidate goal g enters the network input, and team-conditioned because an explicit team-membership mask for T also enters that input. A single shared network therefore covers all candidate (T, g ) pairs, and recognition scores hypotheses by reusing that same policy for each required action-probability query. This design differs from 3GRAQL [Amado et al., 2022], which learns a separate policy or value function for each candidate goal in the single-agent case. Training and recognition use the same builder. Training fills in the true team and goal sampled by the environment, while recognition fills in hypothesized teams and goals. We implement the shared policy with a Transformer encoder [Vaswani et al., 2017] that maps the counterfactual observation to a distribution over the domain action space. Architectural choices, token layout, and hyperparameters are domain-specific and reported in Section 4.1. We model within-team coordination with team-autoregressive decoding . At each joint step, teammates act in a fixed within-team order (ascending agent index within each team). When predicting agent i’s action, the policy receives cit. This turns a team’s same-step joint action into an ordered product of conditional action probabilities and lets recognition score each observed action while conditioning on earlier teammate actions. We train the actor with PPO [Schulman et al., 2017] under CTDE: during training only, the critic receives centralized information, while recognition later queries the learned actor as the scoring model. The curriculum is stage-based: each stage fixes a goal-length range and an initial-state scrambling level, and later stages use longer goals and harder scrambles to handle sparse reward in the longer-goal regime. Section 4.1 reports the exact schedule. 
+
+3.3 Counterfactual Scoring 
+
+Counterfactual scoring evaluates how well a candidate team-goal hypothesis explains the recorded actions. For a recorded state-action pair (sτ , a τ ), recognition keeps the observed world state and executed joint action unchanged and varies only the hypothesized team and goal used to build the policy input. A concrete example illustrates the operation. In the multi-agent Blocksworld benchmark of Section 4, suppose agents 1 and 2 both move at the same joint step, with agent 1 clearing block b and agent 2
+
+holding block a. To score the hypothesis “agents 1 and 2 form one team building the stack a on b”for agent 2, we set agent 2’s team mask to mark both agents 1 and 2 as members of the candidate team, insert agent 1’s observed action into the teammate-action context because agent 1 is earlier in the within-team order, and encode a-on-b in the goal features. We then query πθ for the probability of the action that agent 2 actually executed. A different hypothesis, for example “agents 2 and 3
+
+form a team building a on b”, changes only the policy input used for scoring: the team mask, the teammate-action context, and the goal encoding. The observed world state and the executed actions stay fixed. For a given hypothesis h, let oiτ (h) denote the policy input built by keeping the recorded state sτ fixed and inserting the team and goal features specified by h for agent i. Let ciτ (h) denote the same-step teammate-action context formed by selecting, from the recorded joint action aτ , the actions of agents that h places in the same team as i and earlier in the fixed within-team order. Thus h changes which recorded actions enter the context, but it does not change the recorded actions themselves. Some candidate hypotheses make the recorded action infeasible in the recorded state. In Blocksworld, for example, a hypothesis can assign agent i to a goal whose block subset does not contain the block used by the recorded action. For feasible recorded actions, we score the action by the clipped log-likelihood under the policy: 
+
+St(h) = 
+
+> t
+
+X 
+
+> τ=1
+> N
+
+X
+
+> i=1
+
+log max 
+
+
+
+πθ
+
+ aiτ | oiτ (h) , c iτ (h), ε score 
+
+
+
+, (1) where εscore > 0 is a small constant that prevents undefined logarithms when the policy assigns zero probability to the executed action. We call St(h) in Eq. 1 the hypothesis score of h at time t, and use this single name throughout the paper. If the executed action is infeasible under a candidate hypothesis’s action constraints, the corresponding term contributes log εscore rather than −∞ , and the hypothesis is heavily but finitely penalized. The likelihood terms score how well a hypothesis explains the observed actions. 
+
+Definition 1 (Non-competitive score) . For a fixed observed trajectory and partition P , a learned-policy score is non-competitive if each agent-level term for i ∈ Tk and any terminal penalty depend on Tk and gk, but not on other teams’ candidate goals. This is a score condition, not a requirement that the physical domain use disjoint workspaces. 
+
+4The observer still ranks complete hypotheses that assign every agent to a team and one goal per team; the condition only requires that each team’s likelihood contribution be scored without reading the candidate goals of the other teams. At the final observed state, we also apply a finite terminal-consistency penalty: if the trajectory terminates without truncation and a candidate team goal is not satisfied, we subtract λterm > 0 once from that team’s local score. This penalty does not replace the action likelihood; it adds a finite correction against hypotheses whose predicted goal was never achieved. The values of εscore and λterm are reported in Section 4.1. The next subsection groups these likelihood terms into the table entries that branch-and-bound reuses and prunes. 
+
+3.4 Factorized Branch-and-Bound Recognition 
+
+At recognition time, we do not rescore every complete partition-goal hypothesis from scratch after each new observation. Instead, we maintain cumulative scores for local team-goal pairs and reuse them across all complete hypotheses that contain that pair. For a partition P = {T1, . . . , T K }, a team index k ∈ { 1, . . . , K }, and a candidate goal g ∈ G k for team Tk, we define the local team-goal score as 
+
+St(Tk, g ) = 
+
+> t
+
+X 
+
+> τ=1
+
+X
+
+> i∈Tk
+
+log max 
+
+
+
+πθ
+
+ aiτ | oiτ (Tk, g ) , c iτ (Tk, g ), ε score 
+
+
+
+. (2) The inner sum ranges over the agents assigned to team Tk, and the context term ciτ (Tk, g ) uses the same within-team order as the policy. If the trajectory has terminated without truncation and goal g is unsatisfied in the final state, we subtract λterm once from this local score. Under Definition 1, every term in Eq. 1 that contains agent i ∈ Tk depends only on Tk and gk, so grouping the terms by team yields the additive decomposition 
+
+St(P, g 1, . . . , g K ) = 
+
+> K
+
+X
+
+> k=1
+
+St(Tk, g k) . (3) Eq. 3 is the central property: the cumulative score of a complete partition-goal hypothesis equals the sum of its team-goal local scores. For a fixed partition, the recognizer stores one local score for each team slot and candidate goal. When a new observation arrives, a scoring-stage bound can skip an entire partition. For each partition that survives this test, the recognizer refreshes all local team-goal rows for that partition before computing its current bound. Thus the method still scores local team-goal pairs for surviving partitions; it avoids constructing the Cartesian product of all team-goal choices unless those complete hypotheses can still enter the top-k ranking. At each observed step, the online procedure rebuilds a global min-heap of the current top-k complete hypotheses from the current local-score table. Once that heap is full, its smallest retained score is the floor that admissible bounds compete against. For any partition P whose local rows are available at step t, the partition upper bound is 
+
+Ut(P ) = 
+
+> K
+
+X
+
+> k=1
+
+max 
+
+> g∈G k
+
+St(Tk, g ) , (4) which selects, for each team slot, the largest refreshed local score under that partition. Because each per-slot maximum dominates any specific choice of gk, the value Ut(P ) upper-bounds every complete hypothesis consistent with P , by Eq. 3. Inside one surviving partition, we still need to search combinations that choose one goal per team. We sort each team’s candidate goals by local score in descending order, paying a per-partition sorting cost over the refreshed local rows. These sorted lists do not enumerate complete hypotheses; each is a per-team list used to generate complete hypotheses in best-first order. The goal at index jk = 1 in team k is the team’s currently best candidate. An index tuple (j1, . . . , j K ) then denotes the complete hypothesis that uses the jkth goal in team k’s sorted list, and its score is the sum of the selected local scores. Increasing any coordinate jk moves down team k’s sorted list, so the local score of that team can only stay the same or decrease, and so can the sum. A best-first max-heap over index tuples therefore admissibly searches the goal-combination grid: the heap top is always the best unexplored complete hypothesis, and each emitted tuple creates only its one-coordinate successors. Once the heap top falls at or below the current floor, no remaining tuple in this partition can enter the ranking. 5Algorithm 1 MAGR-BB online recognition (Full B&B variant). 
+
+Require: Candidate partitions P, candidate goal libraries {G k }, top-k size k, observed trajectory arriving step by step.  
+
+> 1:
+
+Initialize S0(T, g ) = 0 and set stale bounds by Eq. 4.  
+
+> 2:
+
+for each new joint step (st, a t) do  
+
+> 3:
+
+Initialize empty min-heap H and set F ← −∞ for this step.  
+
+> 4:
+
+Sort partitions in P by stale upper bound eUt(P ) in descending order.  
+
+> 5:
+
+for each partition P in sorted order do  
+
+> 6:
+
+if H is not full or eUt(P ) > F then  
+
+> 7:
+
+Refresh all St(Tk , g ) for this partition using Eq. 2.  
+
+> 8:
+
+Compute Ut(P ) = P 
+
+> k
+
+max g St(Tk , g ). 
+
+> 9:
+
+if H is not full or Ut(P ) > F then  
+
+> 10:
+
+Sort each team’s goals by local score, initialize Qgoal with (1 , . . . , 1) , and initialize seen ←{(1 , . . . , 1) } (local to this partition iteration).  
+
+> 11:
+
+emitted ← 0. 
+
+> 12:
+
+while Qgoal is non-empty, emitted < k , and either H is not full or the best tuple bound in Qgoal 
+
+exceeds F do  
+
+> 13:
+
+Pop the best tuple, emit its complete hypothesis, and insert it into H if it belongs in the current top-k set.  
+
+> 14:
+
+For each one-coordinate successor σ of the popped tuple with σ / ∈ seen , add σ to seen and push σ onto Qgoal . 
+
+> 15:
+
+Increment emitted . 
+
+> 16:
+
+If H is full, update F to the current smallest score in H. 
+
+> 17:
+
+Store each refreshed Ut(P ) as that partition’s stale bound for later observed steps.  
+
+> 18:
+
+Output H as the ranking for step t. 
+
+> 19:
+
+return the latest ranking. 
+
+Algorithm 1 summarizes the online procedure: a scoring-stage prune skips refresh when the stale partition bound cannot beat the floor, a partition-level prune drops dominated partitions after refresh, and a local-level prune halts best-first tuple expansion once the heap top falls at or below the floor. We say that the recognizer emits a candidate whenever it constructs one complete partition-goal hypothesis to compare against the heap. Stale bounds come from the current local table (zero before any observation), are replaced after refresh, and remain valid because refresh only decreases local scores. 
+
+Proposition 1 (Additive score and admissible pruning) . Under Definition 1, Eq. 3 holds for every complete hypothesis. The scoring-stage, partition-level, and local-level pruning tests in Algorithm 1 cannot discard a complete hypothesis whose score exceeds the current top-k floor. Proof. Definition 1 lets us group Eq. 1 by the disjoint teams, giving Eq. 3. For any partition, each 
+
+max g∈G k St(Tk, g ) dominates any chosen gk, so Eq. 4 upper-bounds all complete hypotheses under that partition. Zero-table bounds are valid, and refreshes append only terms ≤ 0, so stale bounds remain upper bounds. Within a partition, sorted goal lists are non-increasing; once the best unexplored tuple is at or below the floor, no remaining tuple can enter the top-k set. Since the score function and the local team-goal scores are the same in the exhaustive baseline and in every pruned variant, the pruned variants discard only hypotheses whose bound cannot exceed the current floor. For steps with a strict score gap at the top-k boundary, they return the same top-k
+
+ranking as exhaustive search under the same score; if multiple hypotheses tie at that boundary, they return a score-equivalent ranking up to those tied hypotheses. The factorized recognizer therefore spends its work on local team-goal tables and the admissible bounds that certify the same answer (Section 4.4). 64 Experiments 
+
+4.1 Experimental Setup 
+
+At step t, the recognizer has consumed the first t joint state-action pairs of the recorded trajectory. We ask two questions. First, whether the learned policy is accurate enough to serve as a behavior model for recognition. If the policy assigns very low probability to the true actions even under the true team-goal hypothesis, every hypothesis sits near the same low-probability floor and the recognizer becomes uninterpretable. Second, how much computation our pruning removes while preserving the reported top-ranked hypothesis and final top-10 list. We measure recognition quality with final top-1
+
+team accuracy, goal accuracy, joint accuracy, and identification latency. We measure computation with cumulative runtime, score-table refreshes, partition visits, and goal-tuple emissions. 
+
+Domain. Blocksworld is a classical planning domain consisting of blocks stacked into towers on a table; the planning problem is to transform an initial configuration into a target configuration by moving one block at a time [Slaney and Thiébaux, 2001]. The benchmark is a multi-agent Blocksworld environment instantiated with two hidden teams of size two. Each team acts in its own seven-block workspace. We use disjoint workspaces as a controlled instantiation of Definition 1: they make the additive score factorization transparent and remove resource-conflict confounds, but they are not part of the MAGR-BB definition. Goals are ordered stacks of length 2–4: a stack of length ℓ is a sequence of ℓ blocks that must end up placed one on another in the specified order. The 
+
+ℓ − 1 adjacent on-relations define the visible tower. The benchmark also stores each candidate as a full-state support assignment over all seven workspace blocks, so the unsatisfied-relation count checks that the bottom tower block and every block outside the tower remain on the table. With seven blocks per workspace and stacks of length up to four, each team-slot goal library contains 
+
+|G k| = P4 
+
+> ℓ=2
+
+7! /(7 − ℓ)! = 42 + 210 + 840 = 1092 candidate goals. With six indexed partitions, exhaustive ranking considers 6×1092 2 = 7 ,154 ,784 complete partition-goal hypotheses per observed step. 
+
+Observation and action space. Each agent observation has dimension 166 and concatenates domain-state features (on-relations, clear predicates, holding status), agent-identity features, a team-membership mask, and the goal feature that encodes the candidate stack as pairwise on-relations. The discrete action space contains 99 actions covering noop , pickup , putdown , stack , and unstack 
+
+primitives over seven blocks. The two team slots are labeled by workspace, so the three unordered pairings of four agents into two pairs yield six indexed partition hypotheses. 
+
+Policy architecture and training. The shared policy is a Transformer encoder over seven block tokens, four agent tokens, and one learned [CLS] token, with two attention layers, four heads, and hidden size 256 . The actor predicts the operation type from [CLS] and the block arguments from the block tokens, then assembles the two factors into logits over the 99 actions. We train with PPO under CTDE (clip 0.2, learning rate 10 −5, batch size 256 , four epochs per rollout, γ = 0 .99 )using eight parallel environments and team-autoregressive decoding, under a six-stage length-and-difficulty curriculum with mastery gates. The saved configuration uses CPU execution for training and recognition; the reported recognition ablations use no GPU. 
+
+Recognition protocol. Recognition uses the score St(h) defined in Eq. 1 and retains the top-10 
+
+hypotheses after every observed step. The score uses εscore = 10 −10 for the log-likelihood clip and 
+
+λterm = 2 .0 for the terminal inconsistency penalty. We replay trajectories under five rollout seeds and four action-noise levels {0.0, 0.05 , 0.1, 0.2}. At each joint step, a Bernoulli draw with probability 
+
+p decides whether to perturb the step; if perturbed, each agent’s action is sampled independently from that agent’s current valid-action mask. All reported recognition numbers average over the five trajectories at each noise level. 
+
+Compared variants. We compare six variants of the same factorized recognizer. Factorized Exhaustive performs no pruning. Scoring Prune , Partition B&B , and Local B&B enable one pruning stage at a time. Ranking B&B combines partition and local ranking bounds, and Full B&B enables all three mechanisms (Algorithm 1). Every variant uses the same local team-goal scores and the same complete-hypothesis score, so the comparison isolates computational savings under a fixed recognition objective. We sum per-step runtime and search counters (score-table refreshes, partition visits, and goal-tuple emissions) over each trajectory before averaging over seeds, and we report the 7work at the final observed step separately. Five trajectories per noise level is a small sample, so we treat these results as in-domain evidence rather than as a broad benchmark claim. 
+
+4.2 Policy Performance 
+
+The final checkpoint achieves 98 .44% episode success rate (both teams complete their goals) and 
+
+99 .22% per-team success rate, with success at or above 97 .62% across stack lengths 2–4 and an average of 0.023 unsatisfied goal relations per episode. The true team-goal hypothesis therefore separates cleanly from wrong hypotheses, which lets the bounds in Section 3.4 prune effectively. 
+
+4.3 Recognition Results 
+
+All six variants agree on the top-1 hypothesis at every observed step and on the final top-10 list across all trajectories and noise levels, recovering the correct team partition and joint team-goal assignment in every condition (Table 1). Team identity resolves after 1.6 observed steps on average; full joint team-goal identification occurs after 6.4–7.2 steps depending on noise.                                    
+
+> Noise Team acc. Goal acc. Joint acc. Team lat. Goal lat. Joint lat. Mean steps 0.00 1.00 1.00 1.00 1.6 6.4 6.4 7.0 0.05 1.00 1.00 1.00 1.6 6.4 6.4 7.0 0.10 1.00 1.00 1.00 1.6 6.8 6.8 7.4 0.20 1.00 1.00 1.00 1.6 7.2 7.2 8.4
+
+Table 1: Final top-1 accuracy and identification latency, identical across variants (one row per noise level). “Lat.” is the first observed step at which the top-ranked hypothesis becomes perfectly correct for the indicated target. “Mean steps” is the mean replayed trajectory length. All six variants follow the same per-step top-1 accuracy curve because their serialized assignments match at every observed step: branch-and-bound changes computation, not the top-ranked hypothesis. 
+
+4.4 Search Burden and Ablations 
+
+Because the top-1 accuracy curves are identical across variants, the empirical question is where the computation goes. We therefore focus on wall-clock runtime and cumulative workload patterns. Figure 1 reports cumulative runtime and workload across noise levels. The ordering is stable across noise levels: Full B&B is always best, and Scoring Prune captures most of the savings. Ranking B&B (partition plus local pruning, no scoring skip) is much weaker than Full B&B; combining ranking pruning with scoring-stage skips is what produces the full gain. Partition B&B reduces the number of visited partitions but leaves score updates unchanged because it acts only after scoring has already refreshed a partition. Local B&B mostly reduces goal-tuple emission rather than score-table work. Scoring Prune and Full B&B are the only variants that materially reduce cumulative scoring evaluations, which explains most of the runtime gain. Table 2 isolates Full B&B against the exhaustive baseline. We report two regimes rather than four rows because noise 0.0, 0.05 , and 0.10 match at the level of abstraction reported here, while noise 
+
+0.20 separates from that regime. At the final observed step, Full B&B visits one candidate partition rather than all six and emits 10 complete goal tuples rather than 7.15 M. Over the full replay, relative to Factorized Exhaustive, it cuts cumulative score updates by about half at low noise and by 39% at the highest tested noise level. Cumulative tuple emission falls from 50 .1M– 52 .9M to 85 –89 for noise 
+
+≤ 0.10 , and from 60 .1M to 99 at noise 0.20 .Noise mainly weakens the scoring-stage prune: at noise 0.2, the floor separates later, so the recognizer must refresh more local tables before it can certify that a partition is dominated, which is why cumulative score updates rise for the pruning variants at the highest tested noise level. Even so, Full B&B emits at most 99 cumulative goal tuples and remains the fastest variant at every tested noise level, supporting the central claim that online recognition reduces to maintaining local score tables and applying admissible bounds rather than constructing millions of complete hypotheses. 80.00 0.05 0.10 0.15 0.20                
+
+> Noise probability
+> 100
+> 200
+> 300
+> 400
+> Mean runtime per episode (s)
+> (a) Runtime vs noise
+> 246810 12 14
+> Observed steps
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Work relative to exhaustive  (b) Normalized total workload
+> 2468
+> Observed steps
+> 10 4
+> 10 5
+> Mean cumulative operations  (c) Scoring evaluations
+> 2468
+> Observed steps
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> (d) Candidate partitions
+> 2468
+> Observed steps
+> 10 2
+> 10 4
+> 10 6
+> 10 8
+> (e) Goal tuples emitted
+> Recognizer runtime and workload (kl_divergence, stage panels at noise=0.100)
+> Exhaustive
+> Scoring prune
+> Partition B&B
+> Local B&B
+> Ranking B&B
+> Full B&B
+
+Figure 1: Runtime and workload across the six variants. Top row: cumulative runtime versus action noise and normalized total work relative to Factorized Exhaustive. Bottom row: cumulative work at action-noise 0.1 split into score-table refreshes, partition visits, and goal-tuple emission. Means over five trajectories; bands show standard errors. 
+
+Noise Final partition visits Final tuple emissions Cumulative tuple emissions Cumulative score updates Runtime speedup 
+
+≤ 0.10 6 → 1 7.15 M → 10 50 .1–52 .9M → 85 –89 91 .7–97 .0k → 46 .7–50 .2k 2.91 ×
+
+0.20 6 → 1 7.15 M → 10 60 .1M → 99 110 .1k → 67 .3k 2.43 ×
+
+Table 2: Full B&B versus Factorized Exhaustive at the final observed step and over the full replay; arrows point Exhaustive → Full B&B, averaged over five trajectories. “Final partition visits” counts candidate partitions in the last ranking step. “Runtime speedup” is the ratio of Exhaustive to Full B&B cumulative runtime. 
+
+## 5 Related Work 
+
+Single-agent model-free recognizers rank candidate goals by behavior-model fit: GRAQL [Amado et al., 2022] learns one policy or value function per goal, Fang et al. [2023]’s deep-RL recognizer extends this idea to continuous domains, and GRNet [Chiari et al., 2023] is a neural goal recognizer. These methods target one observed actor, whereas MAGR-BB trains one shared policy conditioned on candidate team and goal, so one network scores every candidate team-goal pair. The multi-agent recognizers closest to our setting rely on explicit plan, action, or intention structures. Banerjee et al. [2010] formalize multi-agent plan recognition, prove that the variable-agent search is NP-complete, and solve it with Knuth’s Algorithm X over symbolic plan hypotheses. Zhuo et al. [2012], Zhuo [2019] recognize multi-agent plans from a hand-authored action model. Argenta and Doyle [2016, 2017] extend recognition-as-planning to jointly recover teams, goals, and plans. Dann et al. [2023] combine online goal recognition with MCTS-based intention progression. Together, these approaches use plan libraries, hand-authored action models, recognition-as-planning encodings, or BDI intention structures; MAGR-BB instead scores team-goal hypotheses with a learned multi-agent policy. Coalition-structure generation [Rahwan et al., 2007] inspires our partition layer, but it optimizes coalition utilities rather than goal hypotheses; our bounds come from additive learned-policy scores. Planning-based recognizers filter candidate goals with costs [Ramírez and Geffner, 2009, Ramírez and Geffner, 2010] or landmarks [Pereira et al., 2020]; MAGR-BB instead reuses local team-goal scores across prefixes. 96 Conclusion 
+
+We introduced MAGR-BB, a model-free recognizer for joint team and goal inference. MAGR-BB scores local team-goal pairs with one conditioned Transformer and combines those scores with admissible B&B under the non-competitive score condition. On the controlled disjoint-workspace Blocksworld benchmark, it matches exhaustive top-1 decisions at every observed step and the final top-10 list while reducing online runtime by 2.43 –2.91 . The disjoint-workspace benchmark is a proof-of-concept instantiation of the score condition, not a requirement built into MAGR-BB. Future work should test shared resources, partial observations, structured noise, and larger teams and goals. 
+
+## References 
+
+Mohamed Abdelkader, Samet Güler, Hassan Jaleel, and Jeff S. Shamma. Aerial swarms: Recent applications and challenges. Current Robotics Reports , 2(3):309–320, 2021. ISSN 2662-4087. doi: 10.1007/s43154-021-00063-4. URL https://doi.org/10.1007/s43154-021-00063-4 .Stefano V. Albrecht, Cillian Brewitt, John Wilhelm, Balint Gyevnar, Francisco Eiras, Mihai Dobre, and Subramanian Ramamoorthy. Interpretable goal-based prediction and planning for autonomous driving. In 2021 IEEE International Conference on Robotics and Automation (ICRA) , pages 1043–1049. IEEE, May 2021. doi: 10.1109/icra48506.2021.9560849. Stefano V. Albrecht, Filippos Christianos, and Lukas Schäfer. Multi-Agent Reinforcement Learning: Foundations and Modern Approaches . MIT Press, 2024. URL https://www.marl-book.com .Leonardo Amado, Reuth Mirsky, and Felipe Meneguzzi. Goal recognition as reinforcement learning. 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , 36(9):9644–9651, Jun. 2022. doi: 10.1609/aaai.v36i9.21198. URL https://ojs.aaai.org/index.php/AAAI/article/view/ 21198 .Leonardo Amado, Sveta Paster Shainkopf, Ramon Fraga Pereira, Reuth Mirsky, and Felipe Meneguzzi. A survey on model-free goal recognition. In Kate Larson, editor, Proceedings of the Thirty-Third International Joint Conference on Artificial Intelligence, IJCAI-24 , pages 7923–7931. International Joint Conferences on Artificial Intelligence Organization, 8 2024. doi: 10.24963/ijcai.2024/877. URL https://doi.org/10.24963/ijcai.2024/877 . Survey Track. Chris Argenta and Jon Doyle. Multi-agent plan recognition as planning (maprap). In Pro-ceedings of the 8th International Conference on Agents and Artificial Intelligence - Volume 2: ICAART, , pages 141–148. INSTICC, SciTePress, 2016. ISBN 978-989-758-172-4. doi: 10.5220/0005707701410148. Chris Argenta and Jon Doyle. Probabilistic multi-agent plan recognition as planning (p-maprap): Recognizing teams, goals, and plans from action sequences. In Proceedings of the 9th International Conference on Agents and Artificial Intelligence - Volume 2: ICAART, , pages 575–582. INSTICC, SciTePress, 2017. ISBN 978-989-758-220-2. doi: 10.5220/0006197505750582. Bikramjit Banerjee, Landon Kraemer, and Jeremy Lyle. Multi-agent plan recognition: Formalization and algorithms. Proceedings of the AAAI Conference on Artificial Intelligence , 24(1):1059–1064, Jul. 2010. doi: 10.1609/aaai.v24i1.7746. URL https://ojs.aaai.org/index.php/AAAI/ article/view/7746 .Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston. Curriculum learning. In 
+
+Proceedings of the 26th Annual International Conference on Machine Learning , pages 41–48. ACM, 2009. doi: 10.1145/1553374.1553380. Mattia Chiari, Alfonso Emilio Gerevini, Francesco Percassi, Luca Putelli, Ivan Serina, and Matteo Olivato. Goal recognition as a deep learning task: The grnet approach. Proceedings of the International Conference on Automated Planning and Scheduling , 33(1):560–568, July 2023. ISSN 2334-0835. doi: 10.1609/icaps.v33i1.27237. Michael Dann, Yuan Yao, Natasha Alechina, Brian Logan, Felipe Meneguzzi, and John Thangarajah. Multi-agent intention recognition and progression. In Edith Elkind, editor, Proceedings of the Thirty-Second International Joint Conference on Artificial Intelligence, IJCAI-23 , pages 91–99. 10 International Joint Conferences on Artificial Intelligence Organization, 8 2023. doi: 10.24963/ ijcai.2023/11. URL https://doi.org/10.24963/ijcai.2023/11 . Main Track. Yiannis Demiris. Prediction of intent in robotics and multi-agent systems. Cognitive Processing , 8 (3):151–158, May 2007. ISSN 1612-4790. doi: 10.1007/s10339-007-0168-9. Zihao Fang, Dejun Chen, Yunxiu Zeng, Tao Wang, and Kai Xu. Real-time online goal recognition in continuous domains via deep reinforcement learning. Entropy , 25(10):1415, October 2023. ISSN 1099-4300. doi: 10.3390/e25101415. A. Farinelli, L. Iocchi, and D. Nardi. Multirobot systems: A classification focused on coordination. 
+
+IEEE Transactions on Systems, Man, and Cybernetics, Part B (Cybernetics) , 34(5):2015–2028, 2004. doi: 10.1109/TSMCB.2004.832155. Hector Geffner and Blai Bonet. A Concise Introduction to Models and Methods for Automated Planning: Synthesis Lectures on Artificial Intelligence and Machine Learning . Morgan & Claypool Publishers, 1st edition, 2013. ISBN 1608459691. Christopher W. Geib and Robert P. Goldman. A probabilistic plan recognition algorithm based on plan tree grammars. Artificial Intelligence , 173(11):1101–1132, 2009. ISSN 0004-3702. doi: https://doi.org/10.1016/j.artint.2009.01.003. URL https://www.sciencedirect.com/ science/article/pii/S0004370209000459 .Henry A. Kautz and James F. Allen. Generalized plan recognition. In Proceedings of the Fifth AAAI National Conference on Artificial Intelligence , AAAI’86, pages 32–37. AAAI Press, 1986. E. L. Lawler and D. E. Wood. Branch-and-bound methods: A survey. Operations Research ,14(4):699–719, 1966. ISSN 0030364X, 15265463. doi: 10.1287/opre.14.4.699. URL http: //www.jstor.org/stable/168733 .Minghuan Liu, Menghui Zhu, and Weinan Zhang. Goal-conditioned reinforcement learning: Prob-lems and solutions. In Proceedings of the Thirty-First International Joint Conference on Artificial Intelligence , IJCAI-2022, pages 5502–5511. International Joint Conferences on Artificial Intelli-gence Organization, July 2022. doi: 10.24963/ijcai.2022/770. Ryan Lowe, Yi Wu, Aviv Tamar, Jean Harb, Pieter Abbeel, and Igor Mordatch. Multi-agent actor-critic for mixed cooperative-competitive environments. In I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 30, pages 6379–6390. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ 68a9750337a418a86fe06c1991a1d64c-Paper.pdf .Felipe Meneguzzi and Ramon Fraga Pereira. A survey on goal recognition as planning. In Zhi-Hua Zhou, editor, Proceedings of the Thirtieth International Joint Conference on Artificial Intelligence, IJCAI-21 , pages 4524–4532. International Joint Conferences on Artificial Intelligence Organization, 8 2021. doi: 10.24963/ijcai.2021/616. URL https://doi.org/10.24963/ijcai.2021/616 .Survey Track. Reuth Mirsky, Ya’ar Shalom, Ahmad Majadly, Kobi Gal, Rami Puzis, and Ariel Felner. New Goal Recognition Algorithms Using Attack Graphs , pages 260–278. Springer International Publishing, 2019. ISBN 9783030209513. doi: 10.1007/978-3-030-20951-3_23. Reuth Mirsky, Sarah Keren, and Christopher W. Geib. Introduction to Symbolic Plan and Goal Recognition . Synthesis Lectures on Artificial Intelligence and Machine Learning. Morgan & Claypool Publishers, 2021. doi: 10.2200/S01062ED1V01Y202012AIM047. URL https://doi. org/10.2200/S01062ED1V01Y202012AIM047 .Dana Nau, Malik Ghallab, and Paolo Traverso. Automated Planning: Theory & Practice . Morgan Kaufmann Publishers Inc., San Francisco, CA, USA, 2004. ISBN 1558608567. Ramon Fraga Pereira, Nir Oren, and Felipe Meneguzzi. Landmark-based approaches for goal recognition as planning. Artificial Intelligence , 279:103217, February 2020. ISSN 0004-3702. doi: 10.1016/j.artint.2019.103217. 11 Talal Rahwan, Sarvapali D. Ramchurn, Viet Dung Dang, and Nicholas R. Jennings. Near-optimal anytime coalition structure generation. In Proceedings of the 20th International Joint Conference on Artificial Intelligence , IJCAI’07, pages 2365–2371, San Francisco, CA, USA, 2007. Morgan Kaufmann Publishers Inc. Miguel Ramírez and Hector Geffner. Probabilistic plan recognition using off-the-shelf classical plan-ners. Proceedings of the AAAI Conference on Artificial Intelligence , 24(1):1121–1126, Jul. 2010. doi: 10.1609/aaai.v24i1.7745. URL https://ojs.aaai.org/index.php/AAAI/article/ view/7745 .Miquel Ramírez and Hector Geffner. Plan recognition as planning. In Proceedings of the 21st Inter-national Joint Conference on Artificial Intelligence , IJCAI’09, pages 1778–1783, San Francisco, CA, USA, 2009. Morgan Kaufmann Publishers Inc. Tom Schaul, Dan Horgan, Karol Gregor, and David Silver. Universal value function approximators. In Francis Bach and David Blei, editors, Proceedings of the 32nd International Conference on Machine Learning , volume 37 of Proceedings of Machine Learning Research , pages 1312–1320. PMLR, 2015. URL https://proceedings.mlr.press/v37/schaul15.html .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms, 2017. Ronal Singh, Tim Miller, Joshua Newn, Eduardo Velloso, Frank Vetere, and Liz Sonenberg. Com-bining gaze and ai planning for online human intention recognition. Artificial Intelligence ,284:103275, 2020. ISSN 0004-3702. doi: https://doi.org/10.1016/j.artint.2020.103275. URL 
+
+https://www.sciencedirect.com/science/article/pii/S0004370218307628 .John Slaney and Sylvie Thiébaux. Blocks World revisited. Artificial Intelligence , 125(1–2):119–153, 2001. ISSN 0004-3702. doi: 10.1016/S0004-3702(00)00079-5. Gita Sukthankar, Christopher Geib, Hung Hai Bui, David Pynadath, and Robert P. Goldman. Plan, Activity, and Intent Recognition: Theory and Practice . Morgan Kaufmann Publishers Inc., San Francisco, CA, USA, 1st edition, 2014. ISBN 0123985323. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, editors, Advances in Neural Information Processing Systems , volume 30, pages 5998–6008. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/file/ 3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf .Hankz Zhuo, Qiang Yang, and Subbarao Kambhampati. Action-model based multi-agent plan recognition. In F. Pereira, C.J. Burges, L. Bottou, and K.Q. Weinberger, edi-tors, Advances in Neural Information Processing Systems , volume 25. Curran Associates, Inc., 2012. URL https://proceedings.neurips.cc/paper_files/paper/2012/file/ a597e50502f5ff68e3e25b9114205d4a-Paper.pdf .Hankz Hankui Zhuo. Recognizing multi-agent plans when action models and team plans are both incomplete. ACM Trans. Intell. Syst. Technol. , 10(3), may 2019. ISSN 2157-6904. doi: 10.1145/3319403. URL https://doi.org/10.1145/3319403 .12
