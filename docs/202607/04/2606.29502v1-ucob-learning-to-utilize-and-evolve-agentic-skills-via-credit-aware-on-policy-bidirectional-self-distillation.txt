@@ -1,0 +1,1378 @@
+Title: UCOB: Learning to Utilize and Evolve Agentic Skills via Credit-Aware On-Policy Bidirectional Self-Distillation
+
+URL Source: https://arxiv.org/pdf/2606.29502v1
+
+Published Time: Tue, 30 Jun 2026 01:21:12 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+Preprint 
+
+# UCOB : L EARNING TO UTILIZE AND EVOLVE 
+
+# AGENTIC SKILLS VIA CREDIT -A WARE ON-P OLICY 
+
+# BIDIRECTIONAL SELF -D ISTILLATION 
+
+Songjun Tu ♠, Chengdong Xu ♣, Qichao Zhang ♠ , Yiwen Ma ♠, Yaocheng Zhang ♠,Linjing Li ♠, Dong Li ♢, Xiangyuan Lan ♣, Dongbin Zhao ♠
+
+♠ Institute of Automation, Chinese Academy of Sciences 
+
+♣ Pengcheng Laboratory ♢ Memorax AI 
+
+{tusongjun2023,zhangqichao2014 }@ia.ac.cn 
+
+June 28, 2026. 
+
+ABSTRACT 
+
+Skill memories can improve agentic reinforcement learning by reusing past expe-rience as textual guidance, but retrieved skills are not oracular: they may help in one state while misleading the same policy in another. This makes the common privileged-teacher assumption fragile, namely that a skill-conditioned prompt can be treated as a fixed teacher for the no-skill prompt. We introduce UCOB, a framework for learning to utilize and evolve agentic skills via credit-aware on-policy bidirectional self-distillation. UCOB treats skill-conditioned and no-skill prompts as two on-policy context views of the same model, compares their return-to-go within the same task and anchor state, and uses the higher-return view as the local teacher. This local credit signal internalizes useful skill-conditioned be-havior, corrects misleading skill usage, and guides task/state skill memory up-dates, utility-aware retrieval, and reflection self-training. Experiments on agentic tasks, including ALFW ORLD , W EB SHOP , and S EARCH -QA, show that UCOB outperforms skill-free RL, skill-memory baselines, and self-distillation methods across model scales, with up to 23.5 and 18.0 point gains over SOTA baselines on ALFW ORLD and W EB SHOP . Ablations and analyses further validate its core mechanisms and efficiency. Code is available at https://github.com/TU2021/UCOB .
+
+1 INTRODUCTION 
+
+Agentic reinforcement learning (RL) has become a central paradigm for improving language agents in long-horizon interactive tasks. Unlike single-turn reasoning, these environments require agents to act under partial observations, recover from local mistakes, and assign sparse outcome rewards to many intermediate decisions. A natural way to reduce this difficulty is to reuse past experience: agents can reflect on trajectories, store reusable textual skills, retrieve relevant skills in later states, and condition future actions on this external memory (Shinn et al., 2023; Wang et al., 2023). Recent skill-augmented agent methods show that such memory can improve exploration and sample effi-ciency (Tu et al., 2026; Shi et al., 2026). When these retrieved skills are further used for training, however, a stronger assumption often enters implicitly: the skill-conditioned behavior is treated as a better source of supervision. Can skill-conditioned context be safely treated as a privileged teacher during agent training? 
+
+This assumption is appealing but fragile. Retrieved skills may be irrelevant, stale, overly generic, or locally mismatched to the current state, and the agent may fail to ground even useful skills in the present observation. Consequently, a skill-conditioned prompt can help in one state but mislead the same policy in another. Prior methods improve skill construction, curation, or skill-conditioned self-distillation (Ouyang et al., 2026; Wang et al., 2026; Lu et al., 2026a), but the supervision direction 1
+
+> arXiv:2606.29502v1 [cs.AI] 28 Jun 2026
+
+Preprint UI state 
+
+User Unstruction                                     
+
+> Agent Env SkillBank
+> reward
+> action
+> Skill Retrieval
+> Skill
+> Management
+> Dual -Granularity Skills
+> observation Task q i
+> Credit -Aware Bidirectional Self -Distillation
+> ALFWorld WebShop Search -QA
+> Qwen 2.5 -7B-
+> Instruct
+> Qwen 2.5 -3B-
+> Instruct
+> Qwen 3-1.7 BQwen 2.5 -7B-
+> Instruct
+> Qwen 2.5 -3B-
+> Instruct
+> Qwen 3-1.7 BQwen 2.5 -7B-
+> Instruct
+> Qwen2.5 -3B -
+> Instruct
+> Qwen 3-1.7 B
+> 93.0 92.2 89.1 85.9
+> 78.1 79.7
+> 48.2 43.6 42.1
+> Compare local return
+> Does the skill help here? Skill View
+> with retrieved skill
+> No -Skill View
+> plain self attempt
+> Skill helps
+> Skill hurts
+> Teach the no -skill view
+> Reject misleading skill
+> Skill =local teacher
+> No -skill =local teacher
+
+(a) Overall framework of UCOB.  (b) Training performance on three agentic benchmarks. 
+
+(c) Performance comparison with the  latest  state -of -the -art baselines. 
+
+Figure 1: Overview and empirical summary of UCOB. often remains fixed from the skill-conditioned view to the no-skill view. Our diagnostics in Section 2 challenge this fixed-teacher view: the skill-conditioned branch is not consistently better than the no-skill branch, and making skill-conditioned rollouts on-policy does not remove this ambiguity. When skill and no-skill views disagree at the same state, which view should teach the other? 
+
+To address this, we propose UCOB (learning to Utilize and evolve agentic skills via Credit-aware 
+
+On-policy Bidirectional self-distillation), which treats the skill-conditioned prompt and the no-skill prompt as two on-policy context views of the same online model, rather than as a teacher and a student fixed in advance. During training, UCOB samples mixed skill/no-skill rollouts, groups records by task and anchor state, and compares return-to-go within each local group. The higher-return view becomes the local teacher for the opposite view: useful skill-conditioned behavior is distilled into the no-skill context, while misleading skill-induced behavior is corrected by the no-skill view. The same local return gap is further reused to update task-level and state-level skill memories, guide utility-aware retrieval, and train the reflection-based skill writer, closing the loop between policy learning and skill evolution. Figure 1 summarizes the resulting framework and its empirical behavior across training and evaluation. Experiments on agentic tasks, including ALFW ORLD , W EB SHOP , and S EARCH -QA, show that UCOB improves over skill-free RL, skill-memory baselines, and self-distillation methods across model scales. Ablations verify the contribution of each module and design choice, while further analyses examine teacher routing, memory evolution, and training cost. The main contributions of this work are as follows: 1. We present observations showing that skill-conditioned teachers are not reliably better than the no-skill view, even when skill-conditioned rollouts are made on-policy. 2. We introduce Credit-Aware Bidirectional Self-Distillation (CBSD) , which selects on-policy teacher directions from same-task, same-anchor-state returns. 3. We develop UCOB , a unified framework for utilizing and evolving agentic skills through CBSD, task/state skill memory, utility-aware retrieval, and reflection self-training. 4. We validate UCOB across model scales, outperforming SOTA baselines such as SDAR and Skill1 by up to 23.5 and 18.0 points on ALFW ORLD and W EB SHOP ; analysis further confirms its module and design effectiveness. 2Preprint Skill Bank          
+
+> Policy 𝛑 𝐤 Act
+> Env
+> Reward
+> State +Skills State
+> Skills
+> Retrieve
+> {( State + Skills , Action, Reward)}
+> Self -Teacher
+> Policy 𝛑 𝐤 Act
+> Env
+> Reward
+> State
+> {( State , Action, Reward)}
+> Self -Student
+> Policy 𝛑 𝐤
+> Skills
+> Self -Teacher
+> Student Rollout
+> OPSD Loss
+
+RL Loss  𝝀  * OPSD Loss + RL Loss 
+
+(a) Fixed-direction skill/no-skill protocol Skill Bank     
+
+> Policy 𝛑 𝐤 Act
+> Reward
+> …
+> Retrieve
+> Skills
+> Anchor
+> State
+> 𝐆 𝐬𝐤𝐢𝐥𝐥
+> Anchor -State Two -View Comparison
+> Reflection
+> 𝐆 𝐧𝐨 _𝐬𝐤𝐢𝐥𝐥 Policy 𝛑 𝐤
+> Act
+> Reward
+> …
+
+(b) Anchor-state return-gap diagnostic 
+
+Figure 2: Unified schematic of the observation-study protocols. (a) Fixed-direction skill/no-skill protocol for the no-skill-only and dual-rollout settings. (b) Anchor-state return-gap diagnostic. De-tailed settings and rollout details are given in Appendix A. 
+
+2 OBSERVATIONS 
+
+We examine whether skill-conditioned context can be safely treated as a privileged teacher for multi-turn agent training through three diagnostics: (i) whether a skill-conditioned teacher is reliably better than a no-skill view, (ii) whether making the skill-conditioned view on-policy resolves this issue, and 
+
+(iii) what local evidence should determine the distillation direction when the two views disagree. 0%        
+
+> 20%
+> 40%
+> 60%
+> Success Rate
+> SDAR on ALFWorld
+> 025 50 75 100 125 150
+> Training Step
+> 0%
+> 20%
+> 40%
+> 60%
+> Success Rate
+> SDAR on WebShop
+> eval w/ skills eval w/o skills
+
+Figure 3: SDAR Evaluation w/ and w/o skills during training on Qwen3-1.7B. 
+
+Skill-conditioned teachers are unreliable and not self-correcting. We first revisit SDAR (Lu et al., 2026a), an asymmetric self-distillation setup where rollouts use the 
+
+no-skill prompt while a skill-conditioned prompt serves as the privileged teacher. This design assumes that, for states induced by the no-skill rollout, the skill-conditioned view provides a more reliable distillation target than the corre-sponding no-skill view. Figure 3 challenges this assump-tion on ALFW ORLD and W EB SHOP : the with-skill eval-uation does not consistently dominate the no-skill evalu-ation, and on W EB SHOP , it remains weaker throughout training. Thus, adding a skill context does not auto-matically yield a reliable teacher . Since the privileged view is not directly corrected by return feedback under its own context distribution, a weak teacher is also not self-correcting ; distillation may continue to transfer su-pervision from unverified conditioned behavior. 0.0     
+
+> 0.2
+> 0.4
+> 0.6
+> Eval Success Rate
+> SDAR best w/ skills
+> SDAR best w/o skills
+> Dual-Rollout SDAR on WebShop
+> 050 100 150
+> Training Step
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> Train Reward
+> SDAR train tail mean
+> w/ skills w/o skills
+
+Figure 4: Dual-rollout SDAR evalua-tion and training on W EB SHOP .
+
+Rollouts with skills mitigate exposure mismatch but not teacher ambiguity. A natural remedy is to place skills into the rollout itself, so the skill-conditioned view is optimized through environment interaction rather than only serving as a teacher outside the rollout path. We therefore test a dual-rollout fixed-direction variant: each training batch samples half of the trajectories with skills and half without skills, following the training design of Skill-SD (Wang et al., 2026), while keeping the SDAR-style skill-to-no-skill distillation direction. Both context views therefore receive on-policy RL updates, reducing exposure mismatch. This dual-rollout setting is summa-rized in Figure 2(a). However, distillation remains one-way: only the no-skill branch receives the extra distilla-tion loss, while the skill-conditioned branch is updated by RL alone. Figure 4 shows that this stronger baseline nar-3Preprint rows the gap between views, but still does not make the skill-conditioned view consistently better. On W EB SHOP , skill-conditioned training rollouts also have lower average reward than no-skill roll-outs. Thus, making the skill-conditioned view on-policy does not make it universally authoritative .The question becomes whether current skill-induced behavior should be trusted and internalized when useful, or corrected by the no-skill view when misleading .-5                     
+
+> 0
+> 5
+> Value Gap  Δ( s) ALFWorld
+> skill higher no-skill higher
+> 510 15 20
+> State Rank by Count
+> -6
+> 0
+> 6
+> Value Gap  Δ( s) WebShop
+> (a) State-Group Estimated Value Gap 0246810 12 14 16
+> 2
+> 4
+> 6
+> 8
+> Estimated Value  ALFWorld
+> skill value no-skill value
+> 01234567
+> Trajectory Step
+> 3
+> 4
+> 5
+> 6
+> Estimated Value  WebShop
+> (b) Trajectory-Step Estimated Value
+
+Figure 5: State-group and trajectory-step diagnostics for two-view rollouts. 
+
+Teacher direction is locally value-dependent. To de-cide whether skill-induced behavior should be trusted at a state, we compare skill-conditioned and no-skill views within the same task and anchor state. Follow-ing GiGPO (Feng et al., 2025), we group rollouts by anchor state and estimate each view by average return-to-go. For a rollout record reaching state st, we use 
+
+G(st) = P 
+
+> ℓ≥0
+
+γℓrt+ℓ, average it within each task-anchor group, and define the same-state value gap as 
+
+∆(˜ s) = ¯G+(˜ s) − ¯G0(˜ s), where + and 0 denote the two views. A positive gap indicates useful skill context to in-ternalize, whereas a negative gap marks skill-conditioned behavior that is locally less reliable and should be cor-rected by the no-skill view. Figure 2(b) illustrates this anchor-state comparison. Using a Qwen3-1.7B check-point trained with dual-rollout SDAR, Figure 5(a) ranks frequent state groups and plots the skill-minus-no-skill value gap. The gaps are mixed-sign in both environments, showing that teacher quality is not one-sided ; teacher di-rection should depend on the local value gap within each state group. Figure 5(b) further shows that the better branch can switch across decision steps within a sampled trajectory. Thus, even when a trajectory is good overall, not every step provides reliable supervision; a trajectory-level teacher may give the right global direction but the wrong local update. This makes trajectory summaries too coarse for deciding each update .
+
+From observations to UCOB. The above observations turn state grouping into credit-aware cross-context super-vision. For each task and anchor state, matched skill/no-skill rollouts form a credited pair: the higher-value branch gives behavior to distill into the opposite context, while the lower-value branch reveals which con-text should not be trusted as teacher. The same credited pairs also provide a more reliable source of state skills than trajectory-level summarization, unlike prior dual-granularity methods such as D2Skill (Tu et al., 2026), which summarize state skills from trajectories or trajectory fragments rather than anchor-state value comparisons . Therefore, we introduce UCOB , a unified framework that operationalizes credited state comparisons for skill learning: it generates and retrieves both task- and state-level skills, uses local value gaps to utilize skills through credit-aware bidirectional self-distillation , and evolves both the answer policy and the skill generator. These observations also identify missing axes in prior skill-conditioned agent methods; Table 1 positions UCOB against representative skill-augmented agentic RL and self-distillation methods. 
+
+3 PROBLEM SETUP AND PRELIMINARIES 
+
+Problem setup. We consider reinforcement learning for multi-turn language agents with retrieved skills. Each task instance is indexed by u. At turn t, the agent observes a state st containing the task description, current observation, and interaction history. The policy πθ generates a textual response 
+
+yt = ( yt, 1, . . . , y t,L t ), from which an executable action is parsed and sent to the environment. Let γ ∈ [0 , 1) denote the discount factor, and write ˜s = anchor( s) for the canonical anchor-state abstraction used in local comparisons. The environment returns reward rt and the next state; we denote the return-to-go by Gt = P 
+
+> ℓ≥0
+
+γℓrt+ℓ. A skill-conditioned agent retrieves textual skills 4Preprint Table 1: Comparison of representative skill-conditioned agent methods. Task-level skills are as-sumed throughout this family and are therefore omitted; the skill column indicates whether a method additionally maintains state-level skills. The blue triangle for SDAR denotes partial credit-aware supervision: it performs self-distillation with a token-level gate, but does not explicitly suppress harmful teachers by redirecting supervision to the no-skill branch.                                                              
+
+> Method Date (YY.M) State-Level Skills Credit-Aware Supervision Skill-Free Inference Evolving Skill Bank Evolving Skill Policy
+> SkillRL (Xia et al., 2026) 26.2 ×××✓×
+> D2Skill (Tu et al., 2026) 26.3 ✓××✓×
+> RetroAgent (Zhang et al., 2026a) 26.3 ×××✓✓
+> Skill-SD (Wang et al., 2026) 26.4 ××✓××
+> Skill1 (Shi et al., 2026) 26.5 ×××✓✓
+> SDAR (Lu et al., 2026a) 26.5 ×△✓××
+> StepOPSD (Zhang et al., 2026b) 26.5 ××✓××
+> SkillC (Lin et al., 2026) 26.5 ×✓✓✓×
+> SAPO (Zhang et al., 2026e) 26.6 ×××✓✓
+> UCOB (O URS )26.6 ✓✓✓✓✓
+
+M (st) and forms a skill-conditioned prompt P+(st) = Prompt( st, M (st)) , while the no-skill prompt is P0(st) = Prompt( st, ∅). These prompts induce two context views of the same policy, 
+
+π+(· | st) = πθ (· | P+(st)) and π0(· | st) = πθ (· | P0(st)) .
+
+Skill-conditioned OPSD. On-policy self-distillation (OPSD) trains on student-sampled rollouts and minimizes a per-token divergence between teacher and student distributions along these on-policy prefixes (Zhao et al., 2026a). For a sampled response y, teacher prompt Ptea , and student prompt Pstu , we write a generic OPSD loss as 
+
+LOPSD = 1
+
+ZOPSD 
+
+X
+
+> j
+
+mj DKL (sg[ πθ (· | Ptea , y <j )] ∥ πθ (· | Pstu , y <j )) , (1) where mj masks valid response tokens, ZOPSD = P 
+
+> j
+
+mj normalizes over valid positions, and sg[ ·]
+
+denotes stop-gradient on the teacher distribution. Skill-conditioned variants such as Skill-SD and SDAR typically set the skill-conditioned view as the teacher, i.e., Ptea = P+ and Pstu = P0 (Wang et al., 2026; Lu et al., 2026a). This fixed direction provides dense supervision but does not verify whether the skill-conditioned view is locally better. 
+
+On-policy agentic RL and credit assignment. Our online RL backbone follows GiGPO (Feng et al., 2025), which extends group-based RL with step-level credit for multi-turn agents. For the rollout group of task u, let τi = {(si,t , y i,t , r i,t )}Ti 
+
+> t=1
+
+be a rollout from πθold , Ri = P 
+
+> t
+
+ri,t its episode return, and Gi,t the return-to-go at turn t. GiGPO combines episode-level credit with anchor-state credit: 
+
+AEi = Ri − μEu
+
+F Eu
+
+, ASi,t = Gi,t − μSu, ˜s
+
+F Su, ˜s
+
+, Ai,t = AEi + ωA Si,t , ˜s = anchor( si,t ). (2) Here μ and F are the mean and normalizer within the corresponding episode or anchor-state group, and ω weights step-level credit. Broadcasting Ai,t to valid response tokens yields the clipped on-policy loss 
+
+LRL = − 1
+
+ZRL 
+
+X
+
+> i,t,j
+
+mi,t,j min( ϱi,t,j Ai,t , clip( ϱi,t,j , 1 − ϵclip , 1 + ϵclip )Ai,t ) , (3) where mi,t,j is the valid-token mask and ZRL = P 
+
+> i,t,j
+
+mi,t,j . Let ci,t ∈ { +, 0} denote whether the response was sampled under the skill-conditioned or no-skill prompt. The token-level context is hi,t,j = ( Pci,t (si,t ), y i,t,<j ), and the importance ratio is ϱi,t,j = πθ (yi,t,j | hi,t,j )/π θold (yi,t,j |
+
+hi,t,j ). Here ϵclip is the PPO-style clipping range. We additionally use the reference-policy regular-izer LKL = E[DKL (πθ ∥πref )] . Later, UCOB reuses the same anchor-state groups as local credited records for cross-context comparisons; the exact record construction is defined in Section 4.2. 5Preprint Env 
+
+Env 
+
+Observation 
+
+Agent 
+
+Action 
+
+Agent  Loop 
+
+Task -level skills  State -level skills 
+
+𝑚 1
+
+> 𝑇
+
+𝑚 2 
+
+> 𝑇
+
+𝑚 𝑛 
+
+> 𝑇
+
+…
+
+𝑚 1
+
+> 𝑆
+
+𝑚 2 
+
+> 𝑆
+
+𝑚 𝑛 
+
+> 𝑆
+
+…
+
+Skill bank 
+
+Retrieval query from 
+
+current state  𝑠 𝑡 
+
+UCB -based ranking 
+
+Top -K retrieved skills 
+
+𝑚 1
+
+> 𝑇
+
+𝑚 2 
+
+> 𝑇
+
+𝑚 𝑛 
+
+> 𝑇
+
+… 𝑚 1
+
+> 𝑆
+
+𝑚 2 
+
+> 𝑆
+
+𝑚 𝑛 
+
+> 𝑆
+
+…
+
+Build prompt Skill prompt 
+
+No -skill prompt 
+
+1.  Dual -Level Skill Memory & 
+
+UCB Retrieval 
+
+Task group  𝒖  (a sampled task) 
+
+2. Mixed Skill / No -Skill Rollouts 
+
+Skill -conditioned rollouts （𝑷 +(𝒔 𝒕 )）
+
+> Retrieval
+
+Traj . 1 
+
+Traj . 2 
+
+Traj .
+
+N/2      
+
+> 𝑠 0
+> (1)𝑎 0
+> (1)𝑠 1
+> (1)𝑎 1
+> (1)𝑇 (1)
+
+𝐺         
+
+> 𝑠 0
+> (2)𝑎 0
+> (2)𝑠 1
+> (2)𝑎 1
+> (2)𝑇 (2)
+> 𝑠 0
+> (𝑁 ∗)𝑎 0
+> (𝑁 ∗)𝑠 1
+> (𝑁 ∗)𝑎 1
+> (𝑁 ∗)𝑇 (𝑁 ∗)
+
+𝐺 
+
+𝐺 
+
+…
+
+…
+
+…
+
+…
+
+No -skill rollouts （𝑷 𝟎 (𝒔 𝒕 )）
+
+Traj . 1 
+
+Traj . 2 
+
+Traj .
+
+N/2      
+
+> 𝑠 0
+> (1)𝑎 0
+> (1)𝑠 1
+> (1)𝑎 1
+> (1)𝑇 (1)
+
+𝐺         
+
+> 𝑠 0
+> (2)𝑎 0
+> (2)𝑠 1
+> (2)𝑎 1
+> (2)𝑇 (2)
+> 𝑠 0
+> (𝑁 ∗)𝑎 0
+> (𝑁 ∗)𝑠 1
+> (𝑁 ∗)𝑎 1
+> (𝑁 ∗)𝑇 (𝑁 ∗)
+
+𝐺 
+
+𝐺 
+
+…
+
+…
+
+…
+
+…
+
+Anchor -state grouping 
+
+…     
+
+> Group the same anchor state across rollouts
+> : same -task, same -state records
+> Skill branch ( 𝑃 +)No -Skill branch ( 𝑃 0)
+
+3. Credit -Aware Bidirectional 
+
+Self -Distillation (CBSD) 
+
+Example anchor -state set 
+
+… … …
+
+Credited reference                     
+
+> 𝜌 2,𝑠 𝑚 :(+,𝑃 +,𝑠 𝑚 ,𝑃 0,𝑠 𝑚 ,𝑠 2,𝑠 𝑚 ,𝑦 2,𝑠 𝑚 ,𝐺 2,𝑠 𝑚 =2.71 )
+> 𝒄 ∗=+；𝒄 𝝆 𝒐𝒑𝒑 =0𝑦 ∗=𝑦 2,𝑠 𝑚 Winner is “+”
+
+Shared prefix 
+
+𝒚 <𝑗 
+
+> ∗
+
+Top -K token support KL 
+
+> 𝜌 ∗
+
+…       
+
+> Reference view
+> (from 𝜌 ∗)
+> Target view (from
+> opposite branch)
+> 𝒚 𝑗 −1
+> ∗𝒚 𝑗
+> ∗𝒚 𝑇
+> ∗𝒚 𝑗 −1
+> ∗𝒚 𝑗
+> ∗𝒚 𝑇
+> ∗
+
+…
+
+Confidence gate 
+
+𝒈 𝒆 ,𝒋 
+
+Gap weight 
+
+𝒘 𝒆 
+
+Distillation loss at token j:  
+
+> Skill -> no -skill
+> When skill wins
+
+4. Skill Memory Evolution & 
+
+Joint Training  Utility update (per skill m) Skill writer self -training 
+
+(Reflection loss) 
+
+Credited evidence 
+
+from CBSD 
+
+Joint objective loss function 
+
+（a）Write/refine task -level skills 
+
+(from rollout reflections) 
+
+（b）Write/refine state -level skills 
+
+(from same -state high -vs -low 
+
+return contrasts) 
+
+∗∗ ∗∗
+
+…
+
+∗∗ … ∗∗
+
+No -skill 
+
+(𝑃 0)
+
+records  …
+
+Skill 
+
+（𝑃 +）
+
+records 
+
+Figure 6: Overview of UCOB: dual-level skill retrieval, mixed skill/no-skill rollouts, credit-aware bidirectional self-distillation, and online skill-memory evolution. 
+
+4 METHOD : UCOB 
+
+4.1 OVERVIEW 
+
+UCOB treats retrieved skills as candidate context rather than privileged labels. Figure 6 summarizes the full pipeline. It retrieves task- and state-level skills into a skill-conditioned prompt, runs mixed skill/no-skill rollouts under the online policy, and uses Credit-Aware Bidirectional Self-Distillation 
+
+(CBSD) to distill the higher-return view to the opposite context within each anchor-state group. The resulting credited evidence updates skill utilities and trains the reflection-based skill-writing behavior, closing the loop between policy optimization and skill-memory evolution. 4.2 DUAL -L EVEL SKILL MEMORY AND MIXED ROLLOUTS 
+
+UCOB first constructs comparable context views by retrieving from the skill pools, collecting mixed skill/no-skill rollouts, and grouping repeated anchor states. 
+
+Utility-aware UCB skill retrieval. UCOB maintains task-level and state-level skill pools and expands them online from rollout reflections. Task-level skills capture reusable episode-level strate-gies, while state-level skills capture local decision rules grounded in credited same-state contrasts; the writing rule is detailed in Section 4.4. Each skill item m contains a textual principle, an appli-cability condition, a retrieval key km, a utility score U (m), and a usage count nm. For each pool 
+
+p ∈ { task , state }, UCOB ranks candidate skills with an Upper Confidence Bound (UCB) score: 
+
+Rp(m; st) = α sim( qp(st), k m) + (1 − α)
+
+U (m) + η
+
+s
+
+log( Np + 1) 
+
+nm + 1 
+
+ , (4) 6Preprint where qp(st) is the task- or state-level retrieval query, Np is the total usage count of pool p, and η
+
+controls UCB exploration. The retrieved memory sets are 
+
+Mp(st) = TopK Kmem  
+
+> p
+> m∈M p
+
+Rp(m; st), p ∈ { task , state }. (5) Here Kmem  
+
+> p
+
+is the skill retrieval budget for pool p. The union Mtask (st) ∪ Mstate (st) is inserted into the skill-conditioned prompt P+(st), while the no-skill prompt P0(st) receives the same state information without retrieved skills. 
+
+Mixed skill/no-skill rollouts. For each task group, UCOB samples mixed rollouts from the cur-rent policy under the two prompt views. Half of the trajectories act with the skill-conditioned prompt 
+
+P+(st), and the remaining trajectories act with the no-skill prompt P0(st). Both branches interact with the environment and are optimized by the online RL loss. This differs from fixed privileged-teacher setups (Lu et al., 2026a), where the skill-conditioned view may be used only outside the rollout path. No branch is fixed as the teacher during rollout; teacher selection is deferred to same-anchor-state return comparisons. 
+
+Anchor-state grouping. Following the anchor-state grouping mechanism of GiGPO (Feng et al., 2025), UCOB retroactively groups repeated states inside each task group. Let Au =
+
+{anchor( si,t )}i,t be the set of distinct anchor states visited by rollouts of task group u. For each anchor ˜s ∈ A u, we construct 
+
+C(u, ˜s) = {ρi,t | ρi,t is from task u, anchor( si,t ) = ˜ s}. (6) Each record is represented as 
+
+ρi,t =  si,t , c i,t , P ci,t (si,t ), P ¯ci,t (si,t ), y i,t , G i,t 
+
+, (7) where ci,t ∈ { +, 0} is the rollout branch, ¯ci,t denotes the opposite branch, Pci,t is the acting prompt, 
+
+P¯ci,t is the opposite prompt, yi,t is the sampled response, and Gi,t is the return-to-go. The opposite prompt is not used to generate the action; it allows a response sampled under one context view to supervise the other view in Section 4.3. Thus, CBSD operates on same-task, same-anchor-state comparison sets. 4.3 CREDIT -A WARE BIDIRECTIONAL SELF -D ISTILLATION 
+
+CBSD distills the response distribution of the highest-return record within each anchor-state group to the opposite context view. 
+
+Credited direction selection. For each anchor-state set C(u, ˜s), UCOB first selects the highest-return record as the credited reference: 
+
+ρ⋆ = arg max  
+
+> ρ∈C (u, ˜s)
+
+Gρ, c⋆ = cρ⋆ , y⋆ = yρ⋆ . (8) Here ρ⋆ is the local winner, c⋆ is its prompt branch, and y⋆ is the response to be distilled. For every record ρopp from the opposite branch, i.e., cρopp = ¯ c⋆, we form a candidate pair e = ( ρ⋆, ρ opp ) with return gap ∆e = Gρ⋆ − Gρopp . We keep the pair in PCBSD only if ∆e > ϵ CBSD . For each accepted pair, P ref  
+
+> e
+
+is the acting prompt stored in ρ⋆, and P tgt  
+
+> e
+
+is a target prompt from the opposite context view within the same anchor-state set. If c⋆ = + , the skill-conditioned view teaches the no-skill view; if c⋆ = 0 , the no-skill view teaches the skill-conditioned view. Thus, the teacher direction is selected by same-task, same-anchor-state return evidence rather than by the presence of retrieved skills. 
+
+Top-K token-support matching. For each accepted pair, UCOB applies response-level token top-K OPD, inspired by teacher top-K local support matching (Fu et al., 2026). At response position 
+
+j, both views are evaluated on the same credited prefix y⋆<j , but under different prompts: 
+
+href  
+
+> e,j
+
+= ( P ref  
+
+> e
+
+, y ⋆<j ), htgt  
+
+> e,j
+
+= ( P tgt  
+
+> e
+
+, y ⋆<j ).
+
+The credited reference view defines the local token support to be matched: 
+
+Se,j = TopK Ktok  πθ (· | href  
+
+> e,j
+
+) . (9) 7Preprint Here Ktok is the token-support size, distinct from the memory retrieval budget Kmem  
+
+> p
+
+. On Se,j , we renormalize the reference and target distributions: 
+
+qe,j (v) = sg 
+
+" πθ (v | href  
+
+> e,j
+
+)
+
+P 
+
+> z∈Se,j
+
+πθ (z | href  
+
+> e,j
+
+)
+
+#
+
+, pe,j (v) = πθ (v | htgt  
+
+> e,j
+
+)
+
+P 
+
+> z∈Se,j
+
+πθ (z | htgt  
+
+> e,j
+
+) , v ∈ Se,j . (10) The token-level matching term is Dtop Ke,j = KL( qe,j ∥pe,j ). Compared with sampled-token supervi-sion, this transfers the reference view’s local distributional preference to the target view. 
+
+CBSD objective. Following the token-level gating idea in SDAR (Lu et al., 2026a), we use a confidence gate to suppress positions where the credited reference is not more reliable than the target: 
+
+ge,j = σ βgate 
+
+log πθ (y⋆j | href  
+
+> e,j
+
+) − log πθ (y⋆j | htgt  
+
+> e,j
+
+) . (11) Here σ(·) is the sigmoid function and βgate controls the sharpness of the gate. The reference branch can be either skill-conditioned or no-skill. The resulting credit-aware bidirectional self-distillation objective is 
+
+LCBSD = 1
+
+ZCBSD 
+
+X
+
+> e∈P CBSD
+
+X
+
+> j
+
+χe,j Dtop Ke,j , (12) where χe,j = me,j wege,j , we = clip(∆ e/τ CBSD , 0, w max ), and ZCBSD = P 
+
+> e,j
+
+me,j . Here me,j 
+
+masks valid response tokens, we scales supervision by the same-task, same-anchor-state return gap, and ge,j applies the confidence gate. In practice, LCBSD provides auxiliary cross-context supervision alongside the online RL loss. Section 5 gives a local policy-improvement interpretation of this credited direction selection, with detailed proofs in Appendix C. 4.4 SKILL MEMORY EVOLUTION AND TRAINING OBJECTIVE 
+
+UCOB closes the loop by writing skills, updating their utilities, and training the reflection-based skill writer to improve future skill generation. 
+
+Skill writing and utility update. The rollout records used for CBSD also provide evidence for writing and scoring skills. UCOB writes task-level skills by reflecting on rollout groups, and writes state-level skills by contrasting higher- and lower-return records within the same anchor-state set 
+
+C(u, ˜s). A state-level skill records when the state occurs, which behavior worked better, and which behavior should be avoided; hence it is grounded in a local value contrast rather than a trajectory-level summary. To score a used skill m, let bu be the mean no-skill success of task group u, and let δm be the success improvement of rollouts using m over bu. We compute this credit separately for task- and state-level skill pools. UCOB updates the skill utility by an exponential moving average (EMA) with rate βU :
+
+U (m) ← (1 − βU )U (m) + βU δm. (13) The updated utilities feed back into the UCB retrieval score in Section 4.2, so skills that repeatedly help under on-policy rollouts become easier to retrieve later. 
+
+Skill-writer self-training. UCOB further improves the skill writer by replaying its own reflec-tion prompt-response pairs with utility-derived advantages. For a stored skill m, we compute a pool-normalized reflection advantage Arefl  
+
+> m
+
+= ( U (m) − μpool )/ max( σpool , ϵ refl ), with statistics computed separately for task-level and state-level pools. Here μpool and σpool are the mean and standard deviation of utilities in the corresponding pool, and ϵrefl is a small numerical floor. Given the reflection prompt xm and response zm, we optimize a clipped policy-gradient loss: 
+
+Lrefl = 1
+
+Zrefl 
+
+X
+
+> m,j
+
+ℓrefl  
+
+> m,j
+
+max  −ϱrefl  
+
+> m,j
+
+Arefl  
+
+> m
+
+, − clip( ϱrefl  
+
+> m,j
+
+, 1 − ϵclip , 1 + ϵclip )Arefl 
+
+> m
+
+ , (14) where ℓrefl  
+
+> m,j
+
+masks valid reflection-response tokens, ϱrefl  
+
+> m,j
+
+= πθ (zm,j | xm, z m,<j )/π θold (zm,j |
+
+xm, z m,<j ), and Zrefl = P 
+
+> m,j
+
+ℓrefl  
+
+> m,j
+
+. Thus, high-utility memories increase the likelihood of their reflection responses, while low-utility memories are downweighted or suppressed. 8Preprint 
+
+Overall objective. UCOB minimizes the combined training loss: 
+
+L = LRL + λCBSD LCBSD + λrefl Lrefl + βKL LKL . (15) Here λCBSD , λrefl , and βKL balance the distillation, reflection, and KL regularization terms. The base losses LRL and LKL are defined in Section 3, while LCBSD and Lrefl are introduced above. This objective couples online policy improvement with credited cross-context distillation and utility-guided skill evolution. 
+
+5 THEORETICAL PERSPECTIVE 
+
+We give a local, one-update interpretation of CBSD, not a global convergence claim for the full nonstationary UCOB system; full proofs and a conditional contraction result are in Appendix C. Fix an old policy π, one task-anchor context x = ( u, ˜s), and the old-policy continuation after a response 
+
+y. For branch c ∈ { +, 0}, let pc(y | x) denote the response distribution of the skill-conditioned or no-skill view under this old policy, and define 
+
+μc(x) = Ey∼pc(·| x)Qπ (x, y ). (16) Because both views are compared at the same anchor state, they share the same state-value baseline: 
+
+∆( x) = μ+(x) − μ0(x) = Ep+ Aπ (x, y ) − Ep0 Aπ (x, y ). (17) Thus, the skill-minus-no-skill gap is a branchwise local advantage difference, not a raw trajectory preference. 
+
+Proposition 1 (First-order local improvement direction of CBSD) . Let h and ℓ be the higher- and lower-value branches at context x, selected by μh(x) > μ ℓ(x), and let δx = μh(x) − μℓ(x) > 0.Consider an idealized small update that moves the lower-value branch toward the higher-value branch, 
+
+pηℓ (· | x) = (1 − η)pℓ(· | x) + ηp h(· | x), η ∈ [0 , 1] . (18) 
+
+Then the local advantage surrogate improves by 
+
+Epηℓ Aπ (x, y ) − Epℓ Aπ (x, y ) = ηδ x. (19) 
+
+If the induced full-policy update πη is trust-region controlled so that state-distribution shift is bounded by Cη 2 for some constant C > 0, the performance-difference view (Kakade & Langford, 2002; Schulman et al., 2015) yields 
+
+J(πη ) − J(π) ≥ dπ (x)1 − γ ηδ x − Cη 2, (20) 
+
+where dπ (x) is the discounted visitation mass of x.
+
+Proposition 1 is a first-order local guarantee: with correctly estimated branch ordering and a small update, lower-to-higher distillation improves the old-policy local advantage surrogate and con-tributes a positive first-order term to the return lower bound. The token-level CBSD loss can be viewed as a KL-proximal stochastic approximation to this interpolation, using a stop-gradient higher-return reference and a nonnegative gap-dependent weight we. For mixed-sign gaps, fixed skill-to-no-skill distillation can be locally harmful when ∆( x) < 0; CBSD flips the teacher direc-tion and keeps the signed local update positive. Appendix C proves the proposition and further shows same-anchor credit, fixed-direction failure, and conditional KL contraction toward a local optimal response. 
+
+6 EXPERIMENTS 
+
+6.1 EXPERIMENTAL SETUP 
+
+Benchmarks and metrics. Following the evaluation protocol of SDAR (Lu et al., 2026a), we eval-uate on ALFW ORLD (Shridhar et al., 2020), W EB SHOP (Yao et al., 2022), and S EARCH -QA (Jin et al., 2025). For ALFW ORLD , we report success rate on six task types: Pick, Look, Clean, Heat, Cool, and Pick2, together with the overall success rate across evaluation episodes. For W EB SHOP ,we report task score and success rate on the 128-task evaluation set. For S EARCH -QA, we report answer accuracy on NQ, TriviaQA, PopQA, HotpotQA, 2Wiki, MuSiQue, and Bamboogle, where the first three are single-hop and the latter four are multi-hop search datasets. 9Preprint Table 2: Main performance on ALFW ORLD , W EB SHOP , and S EARCH -QA. We report success rate (%) for ALFW ORLD , Score/Succ (%) for W EB SHOP , and accuracy (%) for S EARCH -QA. For ALFW ORLD , Succ is the overall success rate rather than an unweighted mean over subtasks, and for S EARCH -QA, Avg is the mean accuracy over the seven datasets. For each backbone, bold and underline mark the best and second-best values in the highlighted primary columns. Entries marked 
+
+† are copied from the original papers, entries marked ∗ are copied from SDAR (Lu et al., 2026a). 
+
+ALFW ORLD WEB SHOP SEARCH -QA Method Pick Look Clean Heat Cool Pick2 Succ Score Succ NQ Triv Pop Hotp 2Wk MuS Bam Avg 
+
+Qwen2.5-7B-Instruct 
+
+GRPO ∗ 91.2 87.5 96.2 81.0 65.0 57.9 81.2 80.9 72.6 45.1 63.7 44.0 43.6 43.2 16.8 37.6 42.0 GiGPO † 97.7 82.7 98.8 83.7 89.3 79.2 90.8 84.4 72.8 46.4 64.7 46.1 41.6 43.6 18.9 68.9 47.2 SkillRL † 97.9 71.4 90.0 90.0 95.5 87.5 89.9 85.2 72.7 45.9 63.3 45.9 43.2 40.3 20.2 73.8 47.5 D2Skill † 93.8 77.8 94.7 95.0 95.5 72.0 87.8 91.1 80.5 48.7 63.4 44.9 47.5 43.7 21.0 67.7 48.1 SkillC † 88.5 78.6 91.2 94.7 100.0 88.9 90.6 85.6 74.0 - - - - - - - -SAPO † 98.7 73.9 98.1 92.6 85.0 89.2 92.2 90.5 78.1 48.4 62.9 46.7 45.0 45.2 18.3 46.4 44.7 RLSD ∗ 100.0 87.5 92.3 58.8 80.0 65.2 82.0 87.4 77.3 46.8 63.0 44.4 45.5 48.9 21.5 73.0 49.0 
+
+Skill-SD ∗ 93.9 93.8 90.9 100.0 69.2 68.4 85.1 86.1 76.5 47.1 64.5 47.8 44.2 42.1 20.2 69.0 47.8 SDAR ∗ 94.7 75.0 100.0 86.7 68.2 78.9 85.9 89.4 82.8 46.3 63.5 48.2 43.8 48.4 19.6 73.0 49.0 
+
+Skill1 100.0 83.3 89.5 100.0 88.5 85.0 92.2 86.2 77.3 46.8 46.3 47.8 43.7 39.3 18.2 70.6 44.7 
+
+UCOB 93.8 90.9 94.1 95.8 92.9 89.5 93.0 91.8 85.9 46.4 65.6 46.7 45.7 42.9 19.2 70.6 48.2 
+
+Qwen2.5-3B-Instruct 
+
+GRPO ∗ 91.2 62.5 96.2 61.9 65.0 47.4 75.0 79.8 63.3 39.3 60.6 41.1 37.4 34.6 15.4 26.4 36.4 GiGPO 94.3 72.7 93.8 100.0 64.3 89.5 85.9 83.8 70.3 43.0 60.5 46.9 36.2 35.5 12.1 64.1 42.6 RLSD ∗ 87.9 75.0 90.9 75.0 73.1 68.4 79.7 84.4 66.4 41.5 58.6 42.3 40.4 40.2 16.8 66.9 43.8 Skill-SD ∗ 88.2 50.0 96.2 52.4 65.0 57.9 73.4 75.9 64.0 44.4 60.4 44.0 39.5 40.4 15.4 64.9 44.1 SDAR ∗ 97.1 62.5 100.0 61.9 75.0 84.2 84.4 85.0 68.0 44.8 58.1 44.3 38.6 36.2 15.7 66.1 43.4 StepOPSD † 97.1 66.7 87.0 79.1 78.9 95.0 83.6 - - 45.0 61.6 46.2 39.5 39.5 14.4 65.3 44.5 
+
+Skill1 96.7 76.9 96.3 93.8 77.3 95.0 90.6 84.1 75.0 44.2 60.3 44.8 39.2 35.9 13.1 64.9 43.2 
+
+UCOB 93.8 93.3 95.8 94.1 91.0 78.9 92.2 84.5 78.1 45.0 61.4 47.0 37.2 35.8 12.5 66.2 43.6 
+
+Qwen3-1.7B 
+
+GRPO ∗ 71.1 41.7 36.4 40.0 31.8 31.6 46.1 67.3 38.3 40.0 58.9 43.5 35.4 30.3 12.0 65.7 40.8 GiGPO 96.7 69.3 88.9 62.5 59.1 85.0 79.7 70.0 45.3 41.1 59.3 45.1 34.1 32.7 10.5 64.5 41.0 RLSD ∗ 50.0 37.5 61.5 19.0 50.0 21.1 42.2 74.0 50.8 38.6 57.3 43.0 34.5 34.1 11.5 65.3 40.6 Skill-SD ∗ 52.9 37.5 69.2 42.9 60.0 36.8 52.3 81.8 53.9 39.1 57.5 45.4 34.8 34.1 10.7 64.1 40.8 SDAR ∗ 73.5 25.0 76.9 33.3 40.0 36.8 53.9 76.8 58.6 39.7 58.9 45.3 35.9 35.5 12.6 65.3 41.9 StepOPSD † 64.7 44.4 56.5 60.9 42.1 55.0 56.3 - - 40.5 59.4 44.4 37.1 32.0 11.6 64.1 41.3 Skill1 71.4 54.5 59.4 72.7 60.0 73.7 65.6 83.2 61.7 42.7 59.8 46.0 35.4 34.8 12.0 65.7 42.3 UCOB 96.2 85.7 95.5 84.2 81.5 88.8 89.1 91.5 79.7 44.1 59.6 45.7 36.8 31.9 12.2 64.5 42.1 
+
+Models and baselines. We use Qwen2.5-7B-Instruct and Qwen2.5-3B-Instruct (Qwen Team, 2024), together with Qwen3-1.7B (Yang et al., 2025), as the main backbones. The compared meth-ods fall into three groups. No-skill RL baselines optimize the policy without retrieved skills, in-cluding GRPO and GiGPO (Feng et al., 2025). Skill-augmented agent methods retrieve, main-tain, or evolve reusable skills during training, including SkillRL (Xia et al., 2026), D2Skill (Tu et al., 2026), SkillC (Lin et al., 2026), SAPO (Zhang et al., 2026e), and Skill1 (Shi et al., 2026). 
+
+Self-distillation methods add auxiliary teacher-student supervision, including GRPO+OPSD (Zhao et al., 2026a), RLSD (Yang et al., 2026), Skill-SD (Wang et al., 2026), SDAR (Lu et al., 2026a), and StepOPSD (Zhang et al., 2026b). Together, these baselines cover the main comparison axes of UCOB: skill-free policy optimization, skill-memory evolution, and self-distillation with fixed or adaptive supervision. Unless otherwise specified, UCOB uses the same task splits, rollout group size, and evaluation budget as the corresponding baselines. We provide the main training hyperpa-rameters and dynamic-memory settings in Appendix B. 6.2 MAIN RESULTS 
+
+Table 2 shows that UCOB consistently improves the primary agentic success metrics across model scales. On ALFW ORLD , it achieves the best overall success rate for all three backbones, reaching 10 Preprint 0 50 100 150                        
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success Rate
+> Success Rate
+> 050 100 150
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Episode Length
+> Episode Length
+> UCOB
+> w/o anchor-state grouping
+> w/o reflection self-training
+> w/o state skills
+> w/o mixed rollouts
+> w/o CBSD
+> 050 100 150
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success Rate
+> Success Rate
+> 050 100 150
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Episode Length
+> Episode Length
+> UCOB
+> with gap-gated distill
+> with force-directed distill
+> w/o top-K support
+> Skill1
+> SDAR
+> 050 100 150
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success Rate
+> Success Rate
+> 050 100 150
+> 0
+> 3
+> 6
+> 9
+> 12
+> 15
+> Episode Length
+> Episode Length
+> UCOB
+> w/o anchor-state grouping
+> w/o reflection self-training
+> w/o state skills
+> w/o mixed rollouts
+> w/o CBSD
+> 050 100 150
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success Rate
+> Success Rate
+> 050 100 150
+> 0
+> 3
+> 6
+> 9
+> 12
+> 15
+> Episode Length
+> Episode Length
+> UCOB
+> with gap-gated distill
+> with force-directed distill
+> w/o top-K support
+> Skill1
+> SDAR
+> ALFWorld: Main Component Ablation ALFWorld: CBSD Internal Ablation
+> WebShop: Main Component Ablation WebShop: CBSD Internal Ablation
+
+Figure 7: Ablation study under the Qwen3-1.7B backbone on ALFW ORLD and W EB SHOP .
+
+93 .0, 92 .2, and 89 .1 on Qwen2.5-7B, Qwen2.5-3B, and Qwen3-1.7B, respectively. On W EB SHOP ,UCOB also gives the best success rate for every backbone ( 85 .9, 78 .1, and 79 .7) and top or near-top scores, indicating gains in both sparse success and graded task reward. The gains are most pronounced on the compact Qwen3-1.7B model: relative to Skill1, UCOB improves ALFW ORLD 
+
+from 65 .6 to 89 .1 and W EB SHOP from 61 .7 to 79 .7, giving +23 .5 and +18 .0 point gains; relative to SDAR, the gains are +35 .2 and +21 .1 points. The trend also holds on larger backbones, where UCOB surpasses the strongest prior result by 0.8/3.1 points on Qwen2.5-7B and 1.6/3.1 points on Qwen2.5-3B for ALFW ORLD /W EB SHOP . On S EARCH -QA, UCOB remains competitive rather than uniformly dominant, staying within 0.8, 0.9, and 0.2 points of the best average accuracy across the three backbones. Overall, credit-aware bidirectional self-distillation is most beneficial in multi-turn agentic environments while preserving strong search-based QA performance. 6.3 ABLATION STUDY 
+
+Main component ablation. Figure 7 (left) ablates the major components of UCOB under the Qwen3-1.7B backbone. We report both success rate and episode length, and interpret length together with success: shorter episodes indicate more efficient behavior only when success is comparable. The “w/o” variants remove one part of the full pipeline at a time: (i) w/o anchor-state grouping uses trajectory-level rather than local anchor-state comparison; (ii) w/o reflection self-training removes utility-weighted skill-writer training; (iii) w/o state skills keeps only the task-level skill pool; (iv) 
+
+w/o mixed rollouts removes the paired skill/no-skill on-policy rollout design; and (v) w/o CBSD 
+
+removes bidirectional distillation while keeping memory retrieval and reflection write-back. The first three variants incur moderate degradation, indicating that anchor-state credit assignment, state-level memory, and skill-writer self-training provide complementary gains rather than redundant capacity. The larger gap appears when the two-view learning signal is removed. w/o mixed rollouts eliminates paired skill/no-skill on-policy evidence, while w/o CBSD retains memory retrieval and reflection write-back but removes the explicit cross-context distillation objective. Their degradation shows that memory-augmented rollouts alone leave skill/no-skill comparison to sparse RL returns, instead of converting local return gaps into dense supervision. Thus, for credit-assignment RL, directly mixing skills into on-policy rollouts is not a substitute for an explicit local distillation signal .
+
+CBSD internal ablation. Figure 7 (right) isolates the design choices inside CBSD. It compares full CBSD with (i) gap-gated distill , which keeps the return-gap gate but restricts distillation to the skill-to-no-skill direction; (ii) force-directed distill , which fixes the teacher direction without local return comparison; and (iii) w/o top-K support , which removes the top-K distributional support used to construct the OPD target. The first two variants test directionality: even with a return-gap gate, one-way or fixed-direction distillation is less robust than allowing the higher-return context view to supervise the other. This supports the central observation that skill-conditioned prompts are useful but not universally authoritative. w/o top-K support preserves credit-aware direction selection but removes distributional support matching, indicating that top-K OPD stabilizes the supervision target rather than replacing local credit assignment. Compared with Skill1 and SDAR, these ab-
+
+11 Preprint 0 20 40 60 80 100                                  
+
+> Training Step
+> 0%
+> 2%
+> 4%
+> 6%
+> 8%
+> Ratio Among Raw Pairs
+> (a) ALFWorld: CBSD Routing
+> Skill →No-Skill
+> No-Skill →Skill
+> 020 40 60 80 100
+> Training Step
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> Bank Size
+> (b) ALFWorld: Memory Growth
+> Task Skills
+> State Skills
+> Success Rate
+> 020 40 60 80 100
+> Training Step
+> −0.05
+> 0.00
+> 0.05
+> Retrieved Utility
+> (c) ALFWorld: Useful Memory
+> Retrieved Utility
+> Reflection |Advantage|
+> Useful-Skill Ratio
+> 020 40 60 80 100
+> Training Step
+> 0%
+> 2%
+> 4%
+> 6%
+> 8%
+> Ratio Among Raw Pairs
+> (a) WebShop: CBSD Routing
+> Skill →No-Skill
+> No-Skill →Skill
+> 020 40 60 80 100
+> Training Step
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> Bank Size
+> (b) WebShop: Memory Growth
+> Task Skills
+> State Skills
+> Success Rate
+> 020 40 60 80 100
+> Training Step
+> −0.05
+> 0.00
+> 0.05
+> Retrieved Utility
+> (c) WebShop: Useful Memory
+> Retrieved Utility
+> Reflection |Advantage|
+> Useful-Skill Ratio
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Training Success
+> 0.0
+> 0.2
+> 0.5
+> 0.8
+> 1.0
+> Ratio / Advantage
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Training Success
+> 0.0
+> 0.2
+> 0.5
+> 0.8
+> 1.0
+> Ratio / Advantage
+
+Figure 8: Mechanism and memory-evolution analysis of UCOB with Q WEN 3-1.7B. 
+
+lated variants remain competitive and often stronger , suggesting that the broader UCOB recipe already provides a strong skill-learning substrate; full CBSD provides the strongest performance stability across environments. Table 3: Additional ablation 
+
+Setting ALFW ORLD WEB SHOP 
+
+CBSD coefficient λCBSD 
+
+0.01 83.6 71.1 0.1 (Ours) 89.1 79.7 
+
+0.5 78.1 68.7 
+
+Reflection backend 
+
+Fixed bank 82.0 70.3 External GPT-5.4 88.3 72.7 Self-trained (Ours) 89.1 79.7 
+
+Additional ablation. Table 3 summarizes two additional ab-lations on key design axes. For CBSD, a smaller λCBSD 
+
+weakens distillation, while a larger one can disrupt the bal-ance between RL and bidirectional self-distillation; the default 
+
+0.1 performs best on both environments. For skill evolution, the fixed bank initialized from SkillRL (Xia et al., 2026) lags behind evolving memories, showing that static external skills cannot replace continual memory updates. External GPT-5.4 remains below self-trained reflection overall, indicating that UCOB’s gains do not rely on a stronger external writer. 6.4 ANALYSIS 0 50 100 150 
+
+Training Step 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> Eval Success Rate  UCOB w/ skills
+> UCOB w/o skills
+> Dual-SDAR w/ skills
+> Dual-SDAR w/o skills
+
+Figure 9: Skill/no-skill eval-view suc-cess with Q WEN 3-1.7B, averaged over ALFW ORLD and W EB SHOP .
+
+CBSD routing and two-view evaluation. Figure 8(a) tracks the teacher direction selected by CBSD during training. In both environments, no-skill-to-skill routing occurs more often than skill-to-no-skill routing. This indicates that reflection skills are not uniformly reli-able local teachers: in many same-anchor-state com-parisons, the no-skill view provides the stronger target and should correct, rather than be overwritten by, the skill-conditioned behavior. Thus, the skill-conditioned view is not a fixed privileged teacher . Figure 9 fur-ther compares the two evaluation views. Under fixed-direction dual-rollout SDAR, the skill-conditioned view is not consistently dominant. In contrast, UCOB im-proves both skill and no-skill views, suggesting that CBSD makes the two views co-evolve through bidirectional distillation: useful skill-induced be-havior is internalized, while misleading skills are corrected by the no-skill view. The resulting policy remains effective whether skills are provided at evaluation or not. Useful memory evolution. Figure 8(b) shows that both task-level and state-level skill banks grow during training, indicating that UCOB maintains an evolving memory rather than a fixed external repository. Figure 8(c) examines whether this expanded memory remains useful after retrieval. Here, 
+
+Retrieved Utility is the average utility score of retrieved skills, Useful-Skill Ratio is the fraction of skills whose utility exceeds the initial value, and Reflection |Advantage | measures the magnitude of 12 Preprint the advantage signal used by the reflection writer. Retrieved utility tends to remain positive in later training, while the useful-skill ratio stays non-trivial and the reflection signal remains active. The memory bank grows while its retrieved subset remains useful. 0 2 4 6 8 10 12         
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Validation Success  ALFWorld
+> 02468
+> Training Time (Hours)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Validation Success  WebShop
+> UCOB
+> SDAR
+> Skill1
+> GiGPO
+> (a) Success Rate vs. Training Time 0100 200 300 400
+> Time (s)
+> ALFWorld
+> WebShop
+> (b) Per-Step Training Time Breakdown
+> policy rollout
+> skill retrieval
+> skill generation
+> old-log-prob
+> reference logits
+> policy update
+> others
+
+Figure 10: Cost analysis for UCOB. 
+
+Localized training cost. Figure 10 evaluates the wall-clock cost effectiveness of UCOB. All methods use the same 8 NVIDIA A800 GPUs and Q WEN 3-1.7B back-bone, and we measure training time only, excluding validation and evaluation overhead. Under this proto-col, UCOB reaches higher validation success within a comparable wall-clock budget on both ALFW ORLD and WEB SHOP . The per-step breakdown further shows that policy rollout remains the dominant cost, while the addi-tional CBSD-related computation is localized mainly to old-policy log-prob computation, reference-logit com-putation, and the policy update. UCOB’s extra train-ing overhead is modest and localized. Case study. Figure 11 shows two ALFW ORLD cases that make the bidirectional behavior concrete. In the cellphone-to-dresser task, the no-skill view drifts to an unrelated search location, while retrieved state skills guide the skill-conditioned view to another plausible ta-ble; UCOB therefore selects the skill view and distills it into the no-skill view. Conversely, in the two-watch-to-sidetable task, the retrieved state skill triggers an unnec-essary attempt to take a watch that is already visible on the sidetable, while the no-skill view proceeds to place it; UCOB selects the no-skill view to correct the mis-leading skill context. These cases show that skills are neither always trusted nor always discarded: 
+
+the teacher direction is decided by local return evidence. 
+
+7 RELATED WORK 
+
+Language agents with memory and skills. Retrieval-augmented generation conditions language models on external information (Lewis et al., 2021), and agent systems extend this idea with reason-ing traces, verbal feedback, long-term memories, and reusable skills (Yao et al., 2023; Shinn et al., 2023; Zhao et al., 2023; Wang et al., 2023; Zhang et al., 2024). Recent agentic RL methods further train agents to build, curate, select, or internalize skill memories, including recursive skill banks, dual-granularity skill pools, learned skill curation, evolving skill repositories, and explicit skill in-ternalization (Xia et al., 2026; Mi et al., 2026; Tu et al., 2026; Ouyang et al., 2026; Zhang et al., 2026a; Shi et al., 2026; Vishe et al., 2026; Lu et al., 2026b; He et al., 2026; Lin et al., 2026; Zhang et al., 2026e). These works differ in whether skills are treated mainly as retrieval-time context, evolving external memory, or behavior to be internalized by the policy. UCOB addresses a comple-mentary question: when retrieved skills are imperfect, training should decide whether to internalize the skill-conditioned behavior or correct it with evidence from the no-skill view, while evolving the skill memory itself. 
+
+Agentic RL and credit assignment. PPO and its variants remain common RL objectives for lan-guage agent training (Schulman et al., 2017). For multiturn environments, sparse terminal rewards make trajectory-level updates inefficient, motivating agentic RL frameworks and credit assignment methods that introduce group-, branch-, or turn-level learning signals (Xia et al., 2025; Feng et al., 2025; Zeng et al., 2025; Zhu et al., 2026; Li et al., 2026a; Zhang et al., 2026b). UCOB uses credit evidence differently: it compares skill-conditioned and no-skill rollouts within the same task and anchor state, and converts the local return gap into a distillation direction between context views. Thus, credit assignment determines not only which action tokens to reinforce, but also which context view should serve as the local teacher. 13 Preprint Task ：find  two cellphones and put them in dresser                    
+
+> Observation w/o State Skills
+> (No -skill view)
+> Action
+> With State Skills (Skill view)
+> Retrieved State Skills Action
+> Compare Local Value
+> You arrive at loc 30.
+> On the sidetable 1,
+> you see a cd 1, and a
+> pen 1. > Go to armchair 1
+> If one likely location is empty, switch to
+> another plausible location instead of
+> drifting to an unrelated search.
+> > Go to sidetable 2
+> Retrieval Task Skill
+> Search likely places
+> for the two cellphones,
+> then place them in
+> the dresser.
+> Action
+> > Go to sidetable 1
+> Skill view wins ->Local teacher: Skill -> no -skill
+> Skill view No -skill view
+> 9.03 0.0
+
+>
+
+Task ：find  two watches and put them in sidetable                  
+
+> Observation w/o State Skills
+> (No -skill view)
+> Action
+> With State Skills (Skill view)
+> Retrieved State Skills Action
+> Compare Local Value
+> You arrive at
+> loc 18.
+> On it, you see
+> watch 2.
+> > Put watch 2 in/on
+> sidetable 1
+> If an object is not visible or not on the
+> table, examine the table first.
+> > Take watch 2 from
+> sidetable 1
+> Retrieval Task Skill
+> Search likely places
+> for the two watches,
+> then place them in
+> the sidetable .
+> Action
+> > Go to sidetable 1
+> No -Skill view wins ->Local teacher: no-skill ->
+> skill
+> Skill view No -skill view
+> 0.0 8.57
+> >
+
+Figure 11: Case study of local teacher selection in UCOB. 
+
+On-policy self-distillation with privileged context. Knowledge distillation and policy distilla-tion transfer behavior from a teacher distribution to a student policy (Hinton et al., 2015; Rusu et al., 2016). On-policy self-distillation adapts this idea to student-generated rollouts, providing dense token-level supervision alongside RL and motivating recent work on signal filtering, reversed teach-ers, and shorter on-policy prefixes (Zhao et al., 2026a; Yang et al., 2026; Song & Zheng, 2026; Fu et al., 2026; Li et al., 2026b; Zhao et al., 2026b; Kim et al., 2026; Zhang et al., 2026c). Privi-leged self-distillation has also been used for multiagent self-play without external data (Zhang et al., 2026d), while Skill-SD and SDAR instantiate a privileged teacher by conditioning on retrieved skills and distilling from the skill-conditioned prompt into the no-skill prompt (Wang et al., 2026; Lu et al., 2026a). However, this fixed-teacher assumption fails when skill retrieval or utilization is locally harmful. UCOB instead treats the skill-conditioned and no-skill prompts as two on-policy views of the same model and selects the teacher direction from same-anchor-state returns. It complements prior OPD-style filtering by making teacher selection itself credit-aware, internalizing useful skills and correcting misleading skill context within one bidirectional objective. 
+
+8 CONCLUSION 
+
+We studied how language agents can learn from reusable but non-oracular skill memories. Our ob-servations show that skill-conditioned prompts are state-dependent teachers rather than universally reliable privileged views, so on-policy skill rollouts still require local credit assignment. We intro-duced UCOB, a unified framework for learning to utilize and evolve agentic skills via credit-aware on-policy bidirectional self-distillation. CBSD compares skill-conditioned and no-skill views under the same task and anchor state, selects the higher-return view as the local teacher, and thereby inter-nalizes useful skill-induced behavior while correcting misleading skill context. Together with task/s-tate skill memory evolution, utility-aware retrieval, and reflection self-training, UCOB achieves consistent gains on ALFW ORLD , W EB SHOP , and S EARCH -QA; analyses further show that both context views improve, retrieved memories remain useful as the bank evolves, and the added cost is localized. Overall, this work frames skill utilization as a credit-assignment problem: agents should learn not only which skills to retrieve, but also when to trust, correct, and internalize them during on-policy training. 14 Preprint 
+
+REFERENCES 
+
+Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 , 2025. URL https://arxiv.org/abs/ 2505.10978 .Yuqian Fu, Haohuan Huang, Kaiwen Jiang, Jiacai Liu, Zhuo Jiang, Yuanheng Zhu, and Dongbin Zhao. Revisiting on-policy distillation: Empirical failure modes and simple fixes. arXiv preprint arXiv:2603.25562 , 2026. URL https://arxiv.org/abs/2603.25562 .Zhongyu He, Yuanfan Li, Fei Huang, Tianyu Chen, Siyuan Chen, Xingyang Li, Meng Hsuan Yu, Xiangrong Liu, Leyi Wei, Lu Pan, Ke Zeng, and Xunliang Cai. Siri: Self-internalizing reinforce-ment learning with intrinsic skills for llm agent training. arXiv preprint arXiv:2606.02355 , 2026. URL https://arxiv.org/abs/2606.02355 .Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 , 2015. URL https://arxiv.org/abs/1503.02531 .Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 , 2025. URL https://arxiv.org/abs/2503. 09516 .Sham M. Kakade and John Langford. Approximately optimal approximate reinforcement learning. In Proceedings of the Nineteenth International Conference on Machine Learning , pp. 267–274, 2002. Jeonghye Kim, Jiwon Jeon, Dongsheng Li, and Yuqing Yang. Rebellious student: Reversing teacher signals for reasoning exploration with self-distilled rlvr. arXiv preprint arXiv:2605.10781 , 2026. URL https://arxiv.org/abs/2605.10781 .Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Kuttler, Mike Lewis, Wen-tau Yih, Tim Rocktaschel, Sebastian Riedel, and Douwe Kiela. Retrieval-augmented generation for knowledge-intensive nlp tasks. arXiv preprint arXiv:2005.11401 , 2021. URL https://arxiv.org/abs/2005.11401 .Xiaozhe Li, Tianyi Lyu, Yang Li, Yichuan Ma, Peiji Li, Linyang Li, Qipeng Guo, Dahua Lin, and Kai Chen. What and when to distill: Selective hindsight distillation for multi-turn agents. arXiv preprint arXiv:2605.19447 , 2026a. URL https://arxiv.org/abs/2605.19447 .Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, and Ning Ding. Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 ,2026b. URL https://arxiv.org/abs/2604.13016 .Hongxiang Lin, Zhirui Kuai, Erpeng Xue, and Lei Wang. Skillc: Learning autonomous skill in-ternalization in llm agents via contrastive credit assignment. arXiv preprint arXiv:2605.27899 ,2026. URL https://arxiv.org/abs/2605.27899 .Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weim-ing Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. Self-distilled agentic reinforcement learning. arXiv preprint arXiv:2605.15155 , 2026a. URL https://arxiv.org/abs/2605. 15155 .Zhengxi Lu, Zhiyuan Yao, Jinyang Wu, Chengcheng Han, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. Skill0: In-context agentic reinforcement learning for skill internalization. arXiv preprint arXiv:2604.02268 , 2026b. URL https://arxiv.org/ abs/2604.02268 .Qirui Mi, Zhijian Ma, Mengyue Yang, Haoxuan Li, Yisen Wang, Haifeng Zhang, and Jun Wang. Skill-pro: Learning reusable skills from experience via non-parametric ppo for llm agents. arXiv preprint arXiv:2602.01869 , 2026. URL https://arxiv.org/abs/2602.01869 .15 Preprint Siru Ouyang, Jun Yan, Yanfei Chen, Rujun Han, Zifeng Wang, Bhavana Dalvi Mishra, Rui Meng, Chun-Liang Li, Yizhu Jiao, Kaiwen Zha, Maohao Shen, Vishy Tirumalashetty, George Lee, Ji-awei Han, Tomas Pfister, and Chen-Yu Lee. Skillos: Learning skill curation for self-evolving agents. arXiv preprint arXiv:2605.06614 , 2026. URL https://arxiv.org/abs/2605. 06614 .Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression: Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177 , 2019. URL https://arxiv.org/abs/1910.00177 .Qwen Team. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2024. URL https: //arxiv.org/abs/2412.15115 .Andrei A. Rusu, Sergio Gomez Colmenarejo, Caglar Gulcehre, Guillaume Desjardins, James Kirk-patrick, Razvan Pascanu, Volodymyr Mnih, Koray Kavukcuoglu, and Raia Hadsell. Policy dis-tillation. arXiv preprint arXiv:1511.06295 , 2016. URL https://arxiv.org/abs/1511. 06295 .John Schulman, Sergey Levine, Philipp Moritz, Michael I. Jordan, and Pieter Abbeel. Trust region policy optimization. arXiv preprint arXiv:1502.05477 , 2015. URL https://arxiv.org/ abs/1502.05477 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. URL https://arxiv. org/abs/1707.06347 .Yaorui Shi, Yuxin Chen, Zhengxi Lu, Yuchun Miao, Shugui Liu, Qi Gu, Xunliang Cai, Xiang Wang, and An Zhang. Skill1: Unified evolution of skill-augmented agents via reinforcement learning. 
+
+arXiv preprint arXiv:2605.06130 , 2026. URL https://arxiv.org/abs/2605.06130 .Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. arXiv preprint arXiv:2303.11366 , 2023. URL https://arxiv.org/abs/2303.11366 .Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Cˆ ot´ e, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 , 2020. URL https://arxiv.org/abs/2010.03768 .Mingyang Song and Mao Zheng. A survey of on-policy distillation for large language models. arXiv preprint arXiv:2604.00626 , 2026. URL https://arxiv.org/abs/2604.00626 .Manan Tomar, Lior Shani, Yonathan Efroni, and Mohammad Ghavamzadeh. Mirror descent policy optimization. In International Conference on Learning Representations , 2022. URL https: //arxiv.org/abs/2005.09814 .Songjun Tu, Chengdong Xu, Qichao Zhang, Yaocheng Zhang, Xiangyuan Lan, Linjing Li, Dong Li, and Dongbin Zhao. Dynamic dual-granularity skill bank for agentic rl. arXiv preprint arXiv:2603.28716 , 2026. URL https://arxiv.org/abs/2603.28716 .Yash Vishe, Rohan Surana, Xunyi Jiang, Zihan Huang, Xintong Li, Nikki Lijing Kuang, Tong Yu, Ryan A. Rossi, Jingbo Shang, Julian McAuley, and Junda Wu. Skill-r1: Agent skill evolution via reinforcement learning. arXiv preprint arXiv:2605.09359 , 2026. URL https://arxiv. org/abs/2605.09359 .Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Voyager: An open-ended embodied agent with large language models. 
+
+arXiv preprint arXiv:2305.16291 , 2023. URL https://arxiv.org/abs/2305.16291 .Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin Chen, and Honggang Qi. Skill-sd: Skill-conditioned self-distillation for multi-turn llm agents. arXiv preprint arXiv:2604.10674 , 2026. URL https://arxiv.org/ abs/2604.10674 .16 Preprint Changyu Xia, Hongru Wang, Ziyang Xie, Haifeng Liu, Hanhao Ye, Yizhe Li, Xuefeng Liu, Tong Zhang, Wei Chen, and Shuai Li. Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning. arXiv preprint arXiv:2504.20073 , 2025. URL https://arxiv. org/abs/2504.20073 .Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xujiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang Xie, and Huaxiu Yao. Skillrl: Evolving agents via recursive skill-augmented reinforcement learning. arXiv preprint arXiv:2602.08234 ,2026. URL https://arxiv.org/abs/2602.08234 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. URL https://arxiv. org/abs/2505.09388 .Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weip-ing Wang, Jiaqi Wang, and Nan Duan. Self-distilled rlvr. arXiv preprint arXiv:2604.03128 , 2026. URL https://arxiv.org/abs/2604.03128 .Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Pro-cessing Systems , 35:20744–20757, 2022. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629 ,2023. URL https://arxiv.org/abs/2210.03629 .Siliang Zeng, Quan Wei, William Brown, Oana Frunza, Yuriy Nevmyvaka, Yang Zhao, and Mingyi Hong. Reinforcing multi-turn reasoning in llm agents via turn-level reward design. arXiv preprint arXiv:2505.11821 , 2025. URL https://arxiv.org/abs/2505.11821 .Xiaoying Zhang, Zichen Liu, Yipeng Zhang, Xia Hu, and Wenqi Shao. Retroagent: From solving to evolving via retrospective dual intrinsic feedback. arXiv preprint arXiv:2603.08561 , 2026a. URL 
+
+https://arxiv.org/abs/2603.08561 .Yanfei Zhang, Xu Lin, and Chenglin Wu. Stepopsd: Step-aware online preference distillation for agent reinforcement learning. arXiv preprint arXiv:2605.27140 , 2026b. URL https: //arxiv.org/abs/2605.27140 .Yaocheng Zhang, Jiajun Chai, Yuqian Fu, Songjun Tu, Xiaohan Wang, Wei Lin, Guojun Yin, Qichao Zhang, Yuanheng Zhu, and Dongbin Zhao. Are full rollouts necessary for on-policy distillation? 
+
+arXiv preprint arXiv:2605.31490 , 2026c. URL https://arxiv.org/abs/2605.31490 .Yaocheng Zhang, Yuanheng Zhu, Wenyue Chong, Songjun Tu, Qichao Zhang, Jiajun Chai, Xiaohan Wang, Wei Lin, Guojun Yin, and Dongbin Zhao. π-play: Multi-agent self-play via privileged self-distillation without external data. arXiv preprint arXiv:2604.14054 , 2026d. URL https: //arxiv.org/abs/2604.14054 .Zeyu Zhang, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Quanyu Dai, Jieming Zhu, Zhenhua Dong, and Ji-Rong Wen. A survey on the memory mechanism of large language model based agents. 
+
+arXiv preprint arXiv:2404.13501 , 2024. URL https://arxiv.org/abs/2404.13501 .Zhiwei Zhang, Yudi Lin, Nikki Lijing Kuang, Linlin Wu, Xiaomin Li, Songtao Liu, and Fenglong Ma. Co-evolving skill generation and policy optimization. arXiv preprint arXiv:2606.08755 ,2026e. URL https://arxiv.org/abs/2606.08755 .17 Preprint Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. Expel: Llm agents are experiential learners. arXiv preprint arXiv:2308.10144 , 2023. URL https: //arxiv.org/abs/2308.10144 .Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 , 2026a. URL https://arxiv.org/abs/2601.18734 .Ziqi Zhao, Xinyu Ma, Liu Yang, Yujie Feng, Daiting Shi, Jingzhou He, Xin Xin, Zhaochun Ren, and Xiao-Ming Wu. Rosd: Reflective on-policy self-distillation for language model reasoning across domains. arXiv preprint arXiv:2605.28014 , 2026b. URL https://arxiv.org/abs/ 2605.28014 .Siyuan Zhu, Chao Yu, Rongxin Yang, Zongkai Liu, Jinjun Hu, Qiwen Chen, and Yibo Zhang. Gagpo: Generalized advantage grouped policy optimization. arXiv preprint arXiv:2605.13217 ,2026. URL https://arxiv.org/abs/2605.13217 .
+
+A DETAILED PROTOCOLS FOR THE OBSERVATION STUDY 
+
+We give the full experimental settings and protocols behind the observation study in Section 2, whose schematic is shown in Figure 2. We use P+ and P0 to denote the skill-conditioned and no-skill prompts, respectively. The first two protocols instantiate fixed-direction on-policy self-distillation (OPSD), where the skill-conditioned view supervises the no-skill view through LOPSD (Lu et al., 2026a; Zhao et al., 2026a). The third protocol is a diagnostic: it does not fix a teacher, but instead groups matched anchor states and compares return-to-go under the two prompt views. Throughout this appendix, LRL denotes the online RL loss used for environment rollouts. 
+
+Fixed teacher without skill rollouts. This protocol matches the SDAR setting analyzed above (Lu et al., 2026a). Only the no-skill prompt P0 is executed in the environment, so rollout records are generated and optimized under LRL from the no-skill view. The skill-conditioned prompt P+ is evaluated only by a teacher forward pass on the same student-generated prefixes, providing the additional λ LOPSD target for P0. Thus, P+ is treated as a privileged self-teacher without receiv-ing rollout-based RL updates under its own context. This setting tests whether a skill-conditioned teacher without skill rollouts can be both reliable and self-correcting, as shown in Figure 3. 
+
+Dual rollouts with fixed-direction OPSD. This protocol follows the dual-rollout training design of Skill-SD (Wang et al., 2026). Each batch executes both prompt views: half of the trajectories act under P+ and half act under P0, so both views receive LRL from environment interaction. However, the distillation direction is still fixed: P+ supervises P0, and only the no-skill branch receives the additional λ LOPSD term. This isolates whether making the skill-conditioned teacher on-policy is sufficient. Figure 4 shows that dual rollouts reduce exposure mismatch, but do not remove teacher ambiguity because the fixed teacher can still be locally weaker than the no-skill view. 
+
+Anchor-state value-gap diagnostic. This protocol removes the fixed teacher direction and serves as the local return-gap diagnostic. Using the anchor-state grouping mechanism of GiGPO (Feng et al., 2025), we group rollout records that share the same task u and anchor state ˜s; each record retains its acting branch ci,t ∈ {+, 0} and return-to-go Gi,t = P 
+
+> ℓ≥0
+
+γℓri,t +ℓ. Within each group, we average return-to-go by branch to obtain G+(˜ s) and G0(˜ s), and use the local value gap 
+
+∆(˜ s) = G+(˜ s) − G0(˜ s) to diagnose which view is more reliable. This comparison is well-posed because both views are scored under the same task and canonical state, isolating the local effect of skill conditioning from trajectory-level differences. Positive gaps indicate states where the skill-conditioned view is the better local teacher, whereas negative gaps indicate states where the no-skill view is more reliable. As shown in Figure 5, these gaps are mixed-sign and can switch across steps, motivating per-state teacher selection rather than a fixed skill-to-no-skill direction. 18 Preprint 
+
+B IMPLEMENTATION DETAILS 
+
+Optimization and rollout. For ALFW ORLD and W EB SHOP , UCOB uses GiGPO-style group advantage estimation with rollout group size 8, training batch size 16 , validation batch size 128 , and discount factor γ = 0 .95 . We train the actor with learning rate 10 −6, PPO mini-batch size 64 , per-GPU micro-batch size 8, low-variance KL coefficient 0.01 , entropy coefficient 0, and invalid-action penalty coefficient 0.1. The prompt and response length limits are 8192 and 512 tokens, respectively. Rollouts are generated with vLLM using top-p = 1 .0 and maximum model length 10240 ; validation uses temperature 0.4 and top-p = 1 .0. The maximum environment horizon is 50 for ALFW ORLD 
+
+and 15 for W EB SHOP . Main runs use 8 GPUs, train for 150 epochs, validate every 5 epochs, and keep at most 5 checkpoints. 
+
+CBSD. CBSD is enabled on mixed skill/no-skill rollouts and uses the opposite context view as the distillation target selected by same-task, same-anchor-state returns. We use turn-level, response-scope top-K OPD with Ktok = 32 , λCBSD = 0 .1, return-gap margin ϵCBSD = 0 .05 , gap tempera-ture τCBSD = 0 .2, maximum gap weight wmax = 2 .0, and at most two accepted teacher-target pairs per anchor-state group. The confidence gate is enabled with coefficient 5.0. CBSD supervision is applied on the action span, with action-token weight 2.0.
+
+Dynamic memory and reflection. The skill memory maintains separate task-level and state-level pools and retrieves from both pools during training and evaluation. For each prompt, we retrieve top-3 task skills and top-3 state skills after top-10 sentence-transformer candidate filtering, using state-aware task/state retrieval queries and UCB scoring with exploration scale 0.1. The relevance threshold is 0.4, the context budget for retrieved memories is 4096 tokens, and skill utilities are updated with the baseline-relative rule using EMA rate βU = 0 .2 for both pools. Reflection writes one task-level item per rollout group and one state-level item per qualifying anchor-state contrast, with minimum local gap 0.05 , maximum reflection response length 2048 , temperature 1.0, and top-
+
+p = 1 .0. Reflection self-training starts after a 30 -step warmup in the Qwen3-1.7B runs, samples at most 16 task-level and 16 state-level memories per step, keeps memories with absolute utility at least 0.02 , computes pool-normalized advantages with clipping range [−2, 2] , and uses loss weight 
+
+λrefl = 1 .0.
+
+SEARCH -QA runs. For S EARCH -QA, the search-agent scripts use rollout group size 8, train-ing batch size 128 , validation batch size 512 , prompt and response limits 4096 /512 , maximum search horizon 4, and history length 4. The actor learning rate is 10 −6 with warmup ratio 0.1, PPO mini-batch size 256 , per-GPU micro-batch size 16 , KL coefficient 0.001 , and invalid-action penalty coefficient 0.01 . Search rollouts call the local retrieval server and are trained for 150 steps on 4
+
+GPUs, with validation at the final training step. 
+
+C LOCAL POLICY -I MPROVEMENT VIEW OF CBSD 
+
+We analyze CBSD as a local policy-improvement operator rather than a global convergence guar-antee. The full UCOB system is nonstationary because the policy, retrieval distribution, and skill memory co-evolve during training. Accordingly, we fix one policy update, one task-anchor group, and the old on-policy continuation, and ask what the CBSD direction means locally. The argu-ment follows the performance-difference and trust-region view of policy improvement (Kakade & Langford, 2002; Schulman et al., 2015), and interprets KL distillation as a small mirror-descent or advantage-weighted supervised step (Tomar et al., 2022; Peng et al., 2019). Let x = ( u, ˜s) denote a same-task, same-anchor-state context. For clarity, write pc(y | x) for the response-level distribution induced by branch c ∈ { +, 0} under the old policy, where + denotes the skill-conditioned view and 0 denotes the no-skill view. After response y is produced, the continua-tion follows the old policy. Define 
+
+Qπ (x, y ) = E[Gt | u, anchor( st) = ˜ s, y t = y] , μc(x) = Ey∼pc(·| x)Qπ (x, y ), (21) and let Aπ (x, y ) = Qπ (x, y ) − V π (x). The branch-level value gap is ∆( x) = μ+(x) − μ0(x).The implemented objective uses sample-level accepted gaps ∆e = Gρ⋆ − Gρopp with weight we =clip(∆ e/τ CBSD , 0, w max ).19 Preprint 
+
+Proof of Proposition 1. 
+
+Proof. First, since both branches are compared at the same context x, the baseline V π (x) is shared: 
+
+μ+(x) − μ0(x) = Ep+ Qπ (x, y ) − Ep0 Qπ (x, y ) (22) 
+
+= Ep+ Aπ (x, y ) − Ep0 Aπ (x, y ). (23) Thus the same-anchor value gap is an advantage-difference signal. Let h and ℓ denote the higher-and lower-value branches, so δx = μh(x) − μℓ(x) > 0. For the idealized interpolation pηℓ =(1 − η)pℓ + ηp h,
+
+Epηℓ Aπ (x, y ) − Epℓ Aπ (x, y ) = η (Eph Aπ (x, y ) − Epℓ Aπ (x, y )) (24) 
+
+= η (μh(x) − μℓ(x)) = ηδ x. (25) The performance-difference lemma writes global improvement as a discounted occupancy-weighted advantage of the updated policy under the old policy. Under the stated trust-region condition, re-placing the new occupancy with the old occupancy contributes at most Cη 2, giving 
+
+J(πη ) − J(π) ≥ dπ (x)1 − γ ηδ x − Cη 2. (26) This proves the main statement in Section 5. The following results unpack the components used in the proof and connect them to the implemented token-level objective. 
+
+Proposition 2 (Same-anchor returns estimate local advantage differences) . For a fixed task-anchor context x = ( u, ˜s) and fixed old-policy continuation, 
+
+∆( x) = Ey∼p+(·| x)Aπ (x, y ) − Ey∼p0(·| x)Aπ (x, y ). (27) 
+
+Thus, within the same anchor state, the skill-minus-no-skill return gap is a local advantage-difference signal rather than a raw trajectory-level preference. Proof. By definition, μc(x) = Ey∼pc(·| x)Qπ (x, y ) for each branch c. Since the two branches are compared at the same x, the baseline V π (x) is shared: 
+
+Ep+ Aπ (x, y ) − Ep0 Aπ (x, y ) =  Ep+ Qπ (x, y ) − V π (x) − (Ep0 Qπ (x, y ) − V π (x)) (28) 
+
+= μ+(x) − μ0(x) = ∆( x). (29) Therefore, grouping by the same anchor state removes the state-value baseline and makes the return gap a local credit signal for choosing the teacher direction. 
+
+Proposition 3 (Local policy-improvement step) . Let h and ℓ be the higher- and lower-value branches in a fixed context x, so that 
+
+δx = μh(x) − μℓ(x) > 0. (30) 
+
+Consider an idealized small CBSD update that moves the lower-value branch toward the higher-value branch, 
+
+pηℓ (· | x) = (1 − η)pℓ(· | x) + ηp h(· | x), η ∈ [0 , 1] . (31) 
+
+Then the local advantage surrogate improves by 
+
+Ey∼pηℓ Aπ (x, y ) − Ey∼pℓ Aπ (x, y ) = ηδ x. (32) 
+
+If the induced full-policy update πη is kept within a small trust region so that state-distribution shift contributes at most Cη 2, then 
+
+J(πη ) − J(π) ≥ dπ (x)1 − γ ηδ x − Cη 2, (33) 
+
+where dπ (x) is the discounted visitation mass of the local context. Consequently, whenever the first-order term dominates, CBSD reduces the value optimality gap J⋆ − J(π).
+
+20 Preprint 
+
+Proof. The local surrogate statement follows from linearity: 
+
+Epηℓ Aπ (x, y ) − Epℓ Aπ (x, y ) = η (Eph Aπ (x, y ) − Epℓ Aπ (x, y )) (34) 
+
+= η (μh(x) − μℓ(x)) = ηδ x, (35) where the second equality again uses the shared baseline in Proposition 2. The performance-difference lemma expresses the global improvement as the discounted visitation-weighted advantage of the new policy under the old policy. For a small trust-region update, replacing the new occupancy with the old occupancy introduces only a second-order error, yielding the stated lower bound. When this lower bound is positive, 
+
+J⋆ − J(πη ) = J⋆ − J(π) − (J(πη ) − J(π)) < J ⋆ − J(π), (36) so the value gap to the optimal policy decreases. The implemented token-level CBSD objective can be viewed as a KL-proximal stochastic approxi-mation to the above interpolation. For an accepted pair e and token position j, the reference distribu-tion qe,j is stop-gradient from the higher-return branch, while pe,j is the target-branch distribution. Ignoring normalization, 
+
+−∇ θ (χe,j KL( qe,j ∥pe,j )) = χe,j Ev∼qe,j [∇θ log pe,j (v)] , χe,j = me,j wege,j ≥ 0. (37) Thus, CBSD applies positive-weight imitation toward the locally higher-return branch, with the weight increasing in the accepted return gap. 
+
+Proposition 4 (Bidirectionality avoids negative fixed-teacher updates) . If a fixed skill-to-no-skill rule is used, then for any context with ∆( x) < 0, the induced local surrogate change on the no-skill branch is negative: 
+
+E(1 −η)p0+ηp + Qπ (x, y ) − Ep0 Qπ (x, y ) = η∆( x) < 0. (38) 
+
+CBSD reverses the direction in this case and instead obtains a positive local change of η(−∆( x)) 
+
+on the skill-conditioned branch. Proof. For a fixed skill-to-no-skill update, the target distribution becomes (1 − η)p0 + ηp +. By linearity of expectation, its local value change relative to p0 is 
+
+η (μ+(x) − μ0(x)) = η∆( x). (39) When ∆( x) < 0, this is a negative-advantage update. CBSD selects the no-skill branch as the teacher and updates the skill-conditioned branch toward p0, giving 
+
+η (μ0(x) − μ+(x)) = η(−∆( x)) > 0. (40) The same argument shows that when ∆( x) > 0, the skill-conditioned branch is the improving teacher. Therefore, bidirectional teacher selection is necessary to turn mixed-sign local gaps into signed policy-improvement directions. 
+
+Corollary 1 (Conditional contraction toward a local optimal policy) . Let π⋆x be a local optimal response distribution at context x, and assume common support. If the CBSD-selected higher-return branch is also closer to π⋆x than the lower-value branch by margin ζx > 0,
+
+DKL (π⋆x∥ph) ≤ DKL (π⋆x∥pℓ) − ζx, (41) 
+
+then the idealized CBSD update satisfies 
+
+DKL (π⋆x∥pηℓ ) ≤ DKL (π⋆x∥pℓ) − ηζ x. (42) 
+
+Proof. The KL divergence DKL (π⋆x∥· ) is convex in its second argument. Thus, 
+
+DKL (π⋆x∥pηℓ ) = DKL (π⋆x∥(1 − η)pℓ + ηp h) (43) 
+
+≤ (1 − η)DKL (π⋆x∥pℓ) + ηD KL (π⋆x∥ph) (44) 
+
+≤ DKL (π⋆x∥pℓ) − ηζ x. (45) This corollary is conditional: return gaps alone do not imply distributional closeness to π⋆x. It formalizes the sense in which CBSD can move the target view closer to a local optimal policy when the higher-return branch is also a better local reference. 21

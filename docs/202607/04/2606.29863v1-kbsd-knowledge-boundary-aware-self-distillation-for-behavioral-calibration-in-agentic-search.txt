@@ -1,0 +1,401 @@
+Title: KbSD: Knowledge Boundary aware Self-Distillation for Behavioral Calibration in Agentic Search
+
+URL Source: https://arxiv.org/pdf/2606.29863v1
+
+Published Time: Tue, 30 Jun 2026 01:48:25 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# KbSD : Knowledge Boundary aware Self-Distillation for Behavioral Calibration in Agentic Search 
+
+# Tao Feng 1* , Xinke Jiang 2* , Chao Wu 1† 
+
+> 1
+
+Zhejiang University, Hangzhou, China 
+
+> 2
+
+Peking University, Beijing, China 
+
+Abstract 
+
+Agentic search equips large language models with dynamic retrieval abilities, but existing reinforcement learning methods remain limited by reward sparsity in knowledge boundary calibration—deciding when to trust parametric memory, when to rely on retrieved evidence, and when to abstain. Binary rewards can penalize undesirable outcomes, but provide little guidance on the reasoning process required to make calibrated decisions across different knowledge states. To address, we propose KbSD (Knowledge boundary Self-Distillation), a framework that addresses this limitation through dense token-level supervision, outcome-level sparse rewards and quadrant-adaptive optimization. KbSD constructs a hint-augmented 
+
+teacher , architecturally identical to the student , that receives explicit knowledge boundary signals—including parametric certainty, retrieval quality, and ground-truth answers—to gen-erate calibrated reasoning demonstrations. This information-asymmetric self-distillation enables dense supervision without requiring a larger external model. To further account for the heterogeneous reasoning distributions across knowledge states, we introduce a quadrant-adaptive distillation objective: re-verse KL for concentrated integration, forward KL for diverse refusal, and Pareto-optimal bidirectional KL for asymmetric quadrants requiring both precision and coverage. Experiments on multiple benchmarks show that KbSD consistently im-proves both task accuracy and hallucination mitigation over strong baselines, with the largest gains appearing in the chal-lenging quadrants where sparse rewards are least informative. Our code is available at this repository. 
+
+# Introduction 
+
+Large Language Models ( LLMs ) augmented with agentic search capabilities have achieved remarkable progress on knowledge-intensive reasoning tasks (Yao et al. 2022; Jin et al. 2025; Nakano et al. 2021; Singh et al. 2025). In this paradigm, models autonomously orchestrate queries, eval-uate retrieved evidence, and iteratively refine their reason-ing strategies through multi-turn interactions with external knowledge sources (Dong et al. 2025b,a; Li et al. 2025). A fundamental question in such agentic search systems is 
+
+knowledge boundary calibration : determining when para-metric memory is reliable, when external retrieval pro-vides trustworthy evidence, and what strategy to adopt 
+
+> *
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 
+
+Figure 1: KbPO vs. KbSD across the four knowledge-boundary quadrants. KbPO supplies only a terminal reward, whereas KbSD adds dense token-level supervision at each reasoning step with quadrant-adaptive KL objectives: reverse KL for Q1, bidirectional KL for Q2/Q4, and forward KL for Q3. 
+
+when these signals conflict or are both absent . Traditional agentic search methods, such as Search-R1 (Jin et al. 2025) and TC-RAG (Jiang et al. 2024), primarily focus on when 
+
+to trigger retrieval —that is, proactively searching when the model recognizes gaps in its own knowledge. However, the more critical question arises after retrieval: does the retrieved evidence align with or contradict the model’s parametric memory, and how should the agent reconcile these poten-tially conflicting knowledge sources? Recent work has begun to formalize this issue through cognitive taxonomies that char-acterize the interplay between internal certainty and retrieval quality. IKEA (Huang et al. 2025), CRaFT (Zhu et al. 2025), and GRAIT (Zhu* et al. 2025) introduce a two-quadrant framework that distinguishes between known and unknown queries, guiding the model to search only when parametric knowledge is insufficient. KbPO (Feng et al. 2026) further refines this into a four-quadrant taxonomy by jointly con-sidering internal knowledge reliability and retrieval quality: the agent should integrate, rely on external knowledge, rely 
+
+> arXiv:2606.29863v1 [cs.CL] 29 Jun 2026
+
+on internal knowledge, or refuse to answer under the four corresponding situations (Figure 1). These frameworks oper-ationalize such taxonomies through quadrant-aware loss or reward during post-training, enabling more targeted calibra-tion of retrieval-augmented behaviors. Despite these advances, existing approaches share a fun-damental bottleneck: reward sparsity at the process level . In knowledge-boundary-aware frameworks, the central objec-tive is to guide the agent toward selecting the most appro-priate behavior during search. Yet the combination of sparse reward signals and the large search space induced by four distinct behavioral modes means that the agent mostly re-ceives negative feedback. A binary reward merely indicates 
+
+what not to do —penalizing a hallucination or a redundant search—without revealing which quadrant strategy should have been adopted or how the agent should have reasoned toward that decision . Consider a Quadrant 3 scenario: the agent must refuse to answer a question about an obscure en-tity when retrieval returns irrelevant results. A sparse reward can penalize hallucination post hoc , but it cannot decompose the cognitive steps that distinguish principled abstention from uninformed guessing , such as assessing retrieval rel-evance, gauging internal uncertainty, and reasoning toward refusal. Addressing this reward sparsity problem raises two fundamental challenges: 
+
+Challenge 1: From Sparse Rewards to Dense Supervision. 
+
+Sparse rewards operate only at action boundaries, providing a scalar judgment on the final outcome while leaving the inter-mediate reasoning trajectory entirely unsupervised. To bridge this gap, the agent requires dense, token-level guidance that demonstrates not only which quadrant strategy to adopt, but also the full cognitive process leading to that decision: how to assess internal certainty, evaluate retrieved evidence, and synthesize these signals into a calibrated conclusion. 
+
+Challenge 2: Quadrant-Heterogeneous Optimization Ge-ometry. Even with dense supervision, a uniform training ob-jective is ill-suited to the four knowledge states, which exhibit fundamentally different distributional characteristics in their reasoning patterns. In Quadrant 1, where both sources are reli-able and mutually consistent, the correct reasoning process is concentrated and relatively unimodal—there is typically one clear way to integrate concordant evidence. In Quadrant 3, by contrast, refusal behavior is inherently diverse: the agent should express uncertainty through varied reasoning paths rather than collapse to a single template. Quadrants 2 and 4 require both precision in source selection and robustness to diverse forms of retrieval noise. One-size-fits-all divergence measure therefore risks over-covering concentrated distribu-tions or under-covering diverse ones, leading to suboptimal calibration. To address, we propose Knowledge Boundary aware Self-
+
+Distillation (KbSD) , a quadrant-adaptive self-distillation framework for knowledge boundary calibration in agentic search. Our approach first quantifies the model’s paramet-ric knowledge boundary by probing data certainty and se-mantic stability, partitioning training queries into distinct knowledge states that define the behavioral norm required for each query. These boundary signals, together with retrieval quality assessments and ground-truth answers, are injected as knowledge boundary hints into a copy model, forming a hint-augmented teacher that shares identical parameters with the hint-free student . This information-asymmetric design provides dense process-level demonstrations: the teacher rea-sons with full boundary awareness, while the student learns to internalize these calibrated reasoning patterns through token-level supervision (Challenge 1). To further address the distributional heterogeneity across quadrants (Challenge 2), we design a quadrant-adaptive KL objective: reverse KL (mode-seeking) for Quadrant 1’s concentrated integration, forward KL (mass-covering) for Quadrant 3’s diverse refusal patterns, and Pareto-optimal bidirectional KL for the compet-ing precision–coverage trade-off in Quadrants 2 and 4. This design is integrated with GRPO-based policy optimization, yielding complementary dense supervision and sparse reward signals. In summary, our contributions are as follows: • We identify reward sparsity as a fundamental bottleneck in knowledge boundary calibration and propose a self-distillation framework that leverages information asym-metry —knowledge boundary hints accessible only to the teacher—to provide dense process-level supervision with-out requiring a larger or separately trained model. • We design a quadrant-adaptive distillation strategy that matches optimization geometry to each knowledge state: reverse KL for Q1, forward KL for Q3, and Pareto-optimal multi-objective optimization over both divergence direc-tions for Q2 and Q4. • Extensive experiments across multiple benchmarks demonstrate that our approach significantly reduces hallu-cination rates and improves calibration quality over strong baselines, with particularly pronounced gains on the chal-lenging quadrants where sparse rewards are least effective. 
+
+# Related Work for Agentic Search 
+
+Retrieval-Augmented Generation (RAG) grounds LLM out-puts in external knowledge, and later extensions improve it with more adaptive retrieval and reasoning strategies (Lewis et al. 2020; Guu et al. 2020; Jiang et al. 2023; Asai et al. 2024; Yan et al. 2024; Trivedi et al. 2023). Agentic search further treats retrieval as a dynamic decision-making pro-cess: ReAct (Yao et al. 2023) interleaves reasoning traces with tool-use actions to enable on-the-fly query formulation, WebGPT (Nakano et al. 2021) trains agents to navigate web search through human feedback, and TC-RAG (Jiang et al. 2024) equips agents with stack memory to maintain coher-ent reasoning across multi-turn retrieval trajectories. Recent work applies reinforcement learning to optimize such search agents—Search-R1 (Jin et al. 2025) leverage GRPO (Shao et al. 2024) to train retrieval strategies via trajectory-level out-come rewards, ARPO (Dong et al. 2025b) and AEPO (Dong et al. 2025a) introduce entropy-based adaptive rollouts to im-prove exploration efficiency, and MEM1 (Zhou et al. 2025) augments agents with explicit memory modules for retaining intermediate findings. Figure 2: Overview of K BSD. We first synthesize boundary-challenging queries, then estimate each query’s knowledge state using parametric certainty, semantic stability, and retrieval quality, and assign it to one of four behavioral quadrants. Based on these signals, a privileged hinted teacher generates calibrated reasoning demonstrations, which are distilled into a hint-free student with quadrant-adaptive objectives jointly optimized with GRPO. In this way, K BSD combines dense process-level supervision with sparse reward optimization. 
+
+Knowledge Boundary Calibration 
+
+These agentic methods optimize for final-answer correctness without explicitly modeling the reliability of the model’s internal knowledge or the quality of retrieved evidence. Re-cent studies therefore begin to explore knowledge boundary calibration for agentic search. IKEA (Huang et al. 2025) models a known-unknown distinction to penalize redundant retrieval for queries the model can already answer, while KbPO (Feng et al. 2026) extends this to a four-quadrant for-mulation that jointly considers internal certainty and retrieval quality, designing quadrant-specific alignment rewards within the GRPO framework to incentivize integration, reliance, re-fusal, or parametric trust as appropriate. However, existing methods still rely on sparse reward or loss signals that specify the desired behavioral mode without supervising the intermediate reasoning process that leads to it—a gap our self-distillation framework directly addresses. 
+
+Knowledge-Distillation 
+
+Knowledge distillation (KD) (Hinton, Vinyals, and Dean 2015) transfers capabilities from a large teacher model into a compact student. Classical off-policy KD trains students on teacher-generated sequences, which introduces exposure bias : at inference the student must condition on its own out-puts rather than the teacher’s ideal prefixes, causing distri-butional mismatch. On-Policy Distillation (OPD) eliminates this mismatch by supervising students on their own rollouts. MiniLLM (Gu et al. 2024) replaces forward KL with reverse KL to achieve mode-seeking behavior on student-sampled sequences; GKD (Agarwal et al. 2024) provides a unified on-policy token-level matching framework for learning from self-generated mistakes; and DistiLLM-2 (Ko et al. 2025) intro-duces a contrastive objective that treats teacher- and student-generated outputs asymmetrically. Recent work removes the separate teacher entirely: Self-Distillation Zero (He et al. 2026) converts sparse binary rewards into dense process-level supervision via self-revision, and Self-Distilled RLVR (Yang et al. 2026a) integrates self-distillation with RL training. Yang et al. (2026b) and Li et al. (2026) further analyze OPD dynamics and propose reward-augmented extensions. How-ever, existing OPD approaches either depend on a sepa-rately trained teacher of larger capacity, or apply a uni-form divergence objective across all training instances— neither accounts for the heterogeneous reasoning distribu-tions that arise from distinct knowledge boundary states. 
+
+# Method 
+
+Figure 2 illustrates the overall pipeline of KBSD, aknowledge-boundary-aware self-distillation framework for agentic retrieval. Existing boundary-aware reinforcement learning methods can indicate which behavior is desirable under different knowledge states—e.g., trust parametric mem-ory, rely on retrieval, integrate both sources, or refuse—but they typically provide only sparse trajectory-level supervi-sion. K BSD addresses this limitation by converting coarse be-havioral prescriptions into dense process-level supervision .Our framework has three stages: ❶ knowledge-boundary-aware construction of challenging multi-hop queries; ❷ re-liability and evidence sufficiency estimation with boundary-quadrant mapping; ❸ hint-guided teacher–student distillation with quadrant-adaptive reinforcement learning. Boundary-Oriented Data Synthesis 
+
+To train the model on queries near or beyond its paramet-ric knowledge boundary, we synthesize challenging long-horizon questions from simple seed QA examples. Following prior work (Feng et al. 2026; Gao et al. 2025), we begin with a seed corpus D0 = {(q, a, F)}, where q denotes a question, 
+
+a is its answer, and F its supporting facts. Each sample is it-eratively transformed for T rounds using two complementary operators named Fact Injection and Information Fuzzing :• Fact Injection. The first operator, Oinj , increases compo-sitional depth by introducing an additional fact hop. Given a question q and a target entity e ∈ q, we retrieve a new fact fnew associated with e and rewrite the question so that solving it requires combining the original evidence with the injected fact: 
+
+(q′, F′) = Oinj (q, F, e ), F′ = F ∪ { fnew }. (1) This operation makes the reasoning chain longer and pushes the query away from direct memorization. • Information Fuzzing. The second operator, Ofuzz , weak-ens explicit constraints by replacing a precise condition c
+
+with an underspecified or indirect description ˜c:
+
+q′ = Ofuzz (q, c → ˜c). (2) This transformation preserves answerability while increas-ing ambiguity and retrieval difficulty. After synthesis, each sample is filtered through multi-stage validation to ensure semantic validity, sufficient difficulty, and answer uniqueness (Gao et al. 2025). The resulting dataset is more reliably expose failure modes in both internal knowledge and retrieval-based reasoning. 
+
+Knowledge Boundary Quantification 
+
+To quantify the knowledge-boundary state of each query, we jointly model two complementary aspects: the reliability of the model’s internal knowledge and the sufficiency of external retrieved evidence. 
+
+Internal Knowledge Quantification. For each query q, we assess internal knowledge reliability using two complemen-tary signals derived from retrieval-free responses: • Parametric Certainty. We first measure whether the model can answer q from internal knowledge alone. Using the frozen base model without retrieval, we sample N inde-pendent responses {yi}Ni=1 and compute the fraction that matches the ground-truth answer via I(·):
+
+μ(q) = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+I[Match( yi, a )] . (3) A high value of μ(q) indicates that the answer is likely contained in the model’s parametric memory. • Semantic Stability. Correctness alone does not reveal whether the model’s internal knowledge is stable or brit-tle. We therefore compute the average pairwise semantic similarity among sampled responses: 
+
+σ(q) = 2
+
+N (N − 1) 
+
+X
+
+> 1≤i<j ≤N
+
+cos(Enc( yi), Enc( yj )) ,
+
+(4) where high σ(q) suggests that the model converges to a consistent latent belief and low σ(q) indicates uncertainty or internal inconsistency. 
+
+External Knowledge Quantification. In addition to inter-nal knowledge, we estimate whether retrieval provides usable support. Let ˆρ(q) denote a retrieval-quality score computed from the evidence returned for q. A higher ˆρ(q) indicates that the retrieved evidence is more likely to support answer generation. 
+
+Boundary-Quadrant Mapping. We next combine the internal and external signals to determine the knowledge-boundary state of each query. Specifically, we binarize inter-nal knowledge reliability and retrieval sufficiency as 
+
+k(q) = I[μ(q) ≥ τμ] , s(q) = I[ˆ ρ(q) ≥ τρ] . (5) These two binary indicators determine the desirable source-allocation behavior for query q: the model should integrate internal knowledge with retrieved evidence when both are reliable, rely on retrieval when internal knowledge is insuffi-cient, trust internal knowledge when retrieval is weak, and abstain when neither source is reliable. Formally, we map the pair (s(q), k (q)) to one of four behavioral quadrants: 
+
+c∗(q) = 
+
+
+
+Integrated , s(q) = 1 , k (q) = 1 ,
+
+External , s(q) = 1 , k (q) = 0 ,
+
+Refusal , s(q) = 0 , k (q) = 0 ,
+
+Internal , s(q) = 0 , k (q) = 1 .
+
+(6) We further use σ(q) as a stability filter in training-set con-struction, rather than incorporating it directly into quadrant assignment. Concretely, we retain high-stability samples in the known region and low-stability samples in the unknown region, yielding a sharper boundary partition. 
+
+Hint-Augmented Self-Distillation 
+
+The central idea of K BSD is to transform boundary annota-tions into dense reasoning supervision. Rather than reward-ing only the final behavioral mode, we construct a privileged teacher that has access to boundary hints during training and use it to generate calibrated reasoning demonstrations. A 
+
+student without such hints is then trained to reproduce these behaviors from the original input alone. Specifically, for each query q, we build a structured hint: 
+
+h(q) =  μ(q), σ (q), ˆρ(q), c ∗(q), (7) which summarizes the model’s internal knowledge state, re-sponse stability, retrieval reliability, and the target behavioral regime. We prepend this hint to the original query to form the teacher input pT (q) = [ h(q); q]. The teacher policy is defined as the same underlying model conditioned on the privileged prompt: 
+
+πT (· | q) = stopgrad  πθ (· | pT (q)) . (8) Thus, the teacher and student share the same architecture and initialization, but only the teacher has access to boundary hints; gradients are not propagated through the teacher branch. This information asymmetry allows the teacher to produce reasoning trajectories that are better calibrated to the query’s knowledge state, while the student must infer the appropriate behavior without privileged signals at test time. The hints are used only during training and are never pro-vided at inference time. Their purpose is not to replace answer supervision, but to make the latent behavioral target explicit. For example, a query in the Refusal quadrant should demon-strate evidence inspection and uncertainty-aware abstention, whereas a query in the Integrated quadrant should demon-strate how internal knowledge and retrieved evidence are reconciled. By conditioning on boundary hints, the teacher turns a sparse mode label into a complete reasoning trajectory that can supervise the student token by token. 
+
+Quadrant-Adaptive Distillation 
+
+Different knowledge-boundary states induce qualitatively dif-ferent target distributions over valid reasoning trajectories. We therefore avoid using a uniform distillation objective for all samples. Instead, we select the distillation direction according to the structure of the target behavior in each quad-rant. Let oT ∼ πT (· | q) denote a teacher-generated trajec-tory and o ∼ πθ (· | q) a student rollout. We consider two token-level distillation objectives. 
+
+Forward Distillation. The first objective imitates teacher trajectories by maximizing their likelihood under the student: 
+
+Lfwd (q) = −EoT ∼πT
+
+ 
+
+> |oT|
+
+X
+
+> t=1
+
+log πθ (oTt | oT<t , q )
+
+ . (9) This objective is mass-covering: it encourages the student to support the full set of teacher behaviors. 
+
+Reverse Distillation. The second objective matches the teacher on student-sampled trajectories: 
+
+Lrev (q) = Eo∼πθ
+
+
+
+> |o|
+
+X
+
+> t=1
+
+log πθ (ot | o<t , q )
+
+πT (ot | o<t , q )
+
+ . (10) This objective is mode-seeking: it suppresses student be-haviors unsupported by the teacher and sharpens the policy around dominant teacher modes. 
+
+Pareto Bidirectional Distillation. For the External and 
+
+Internal quadrants, we combine forward and reverse distil-lation through a Pareto-style adaptive weighting. Let gf =
+
+∇θ Lfwd (q), gr = ∇θ Lrev (q). We seek a common descent direction by solving 
+
+α∗ = arg min  
+
+> α∈[0 ,1]
+
+∥αgf + (1 − α)gr ∥2 , (11) which has the closed-form solution 
+
+α∗ = clip 
+
+ (gr − gf )⊤gr
+
+∥gf − gr ∥2 , 0, 1
+
+
+
+. (12) The resulting objective is 
+
+Lpareto (q) = α∗Lfwd (q) + (1 − α∗)Lrev (q). (13) This adaptive combination removes the need to hand-tune a global trade-off coefficient and automatically balances cover-age and precision according to the local gradient geometry. 
+
+Quadrant-Specific Assignment. We assign these objec-tives according to the expected diversity of valid reasoning in each quadrant: 
+
+Ldistill (q) = 
+
+
+
+Lrev (q), c∗(q) = Integrated ,
+
+Lpareto (q), c∗(q) ∈ { External , Internal },
+
+Lfwd (q), c∗(q) = Refusal .
+
+The intuition is as follows: • In the Integrated quadrant, both internal knowledge and retrieved evidence are reliable, so correct reasoning is typically concentrated around a relatively consistent in-tegration pattern; a mode-seeking objective is therefore preferable. • In the Refusal quadrant, by contrast, there may be mul-tiple acceptable ways to inspect evidence, recognize in-sufficiency, and articulate abstention; a mass-covering objective better preserves this diversity. • The External and Internal quadrants require both precise source selection and robustness to varied noise patterns, making neither pure objective sufficient on its own. 
+
+Joint RL and Distillation Training 
+
+The distillation objective provides dense process-level super-vision, but by itself it does not optimize final task perfor-mance. We therefore combine it with GRPO-based reinforce-ment learning so that the student is trained both to behave appropriately and to solve the task correctly .
+
+Reward Design. Following KbPO, for each rollout oi of length Ti, we define a composite reward at step t as 
+
+ri,t = I[t = Ti] · rout  
+
+> i
+
++ λr proc  
+
+> i,t
+
++ ralign  
+
+> i,t
+
++ rpen  
+
+> i
+
+, (14) where rout  
+
+> i
+
+is the final-answer reward (e.g., F1), rproc  
+
+> i,t
+
+re-wards valid intermediate tool use, and ralign  
+
+> i,t
+
+encourages be-havior consistent with the target quadrant c∗(q). To mitigate over-refusal, we additionally impose a refusal penalty on answerable queries: 
+
+rpen  
+
+> i
+
+=
+
+
+
+−ϕ, if c∗(qi) ∈ { Integrated , External , Internal }
+
+and the model refuses ,
+
+0, otherwise .
+
+Training Objective. For each query q, the student policy generates a group of G rollouts {oi}Gi=1 . We optimize the following joint objective:                
+
+> L(θ) = −Eq∼D
+> "
+> 1
+> G
+> GX
+> i=1
+> min
+> 
+> ρiˆAi,clip( ρi,1−ϵ, 1 + ϵ) ˆAi
+> 
+> −βDKL (πθ∥πref )−γLdistill (q)
+> #
+> ,
+
+where ρi = πθ (oi|q)  
+
+> πθold (oi|q)
+
+, ˆAi = Ri−mean( R)std( R) . Here, πref is the reference policy used for KL regularization, and γ controls the strength of distillation. The two components play comple-mentary roles. The RL term supplies task-level optimization from sparse rewards , while the distillation term provides 
+
+dense, boundary-aware process supervision derived from the hinted teacher. Together, they train a retrieval agent that not only improves final-answer accuracy, but also learns how 
+
+to calibrate trust between internal knowledge and external evidence under different knowledge-boundary states. 
+
+# Experiment 
+
+Experimental Setup 
+
+Datasets. We construct our training set using the data synthesis pipeline (Section ) based on HotpotQA (Yang et al. 2018) and 2WikiMultiHopQA (Ho et al. 2020). For evaluation, we use 9 benchmarks spanning three cat-egories: (1) Multi-hop QA : HotpotQA, 2WikiMultiHopQA, MuSiQue (Trivedi et al. 2022), and Bamboogle (Press et al. 2023); (2) Open-domain QA : NQ (Kwiatkowski et al. 2019), TriviaQA (Joshi et al. 2017), and PopQA (Mallen, Asai et al. 2023); (3) Agentic reasoning : FRAMES (Krishna et al. 2025), GAIA (Mialon et al. 2023). 
+
+Models and Retrieval. We use Qwen2.5 (Yang et al. 2024) at two scales (3B, 7B) as backbone models. For retrieval, we use E5 (Wang et al. 2022) as the dense retriever over the 2018 Wikipedia dump (Karpukhin et al. 2020), retrieving top-3 passages per query. 
+
+Training. We implement KbSD based on the VERL frame-work with GRPO as the optimizer. For each query, the policy generates G=5 rollouts with batch size 128 and 8 rollouts per batch. We train for 300 steps with learning rate 1×10 −6,KL coefficient β=0 .001 , process reward weight λ=0 .2, and distillation weight γ=0 .1. The knowledge boundary thresh-olds are set to τρ=0 .5 and τμ=0 .6. The agent operates in multi-turn mode with a maximum of 2 search iterations per query. 
+
+Baselines. We compare against three categories of meth-ods: (1) Standard RAG : Naive RAG (Lewis et al. 2020), FS-RAG (Trivedi et al. 2023), and FLARE (Jiang et al. 2023); (2) 
+
+Agentic RAG : ReAct (Yao et al. 2023), IRCoT (Trivedi et al. 2023), Self-RAG (Asai et al. 2024), and CRAG (Yan et al. 2024); (3) RL-based Agents : Search-R1 (Jin et al. 2025), ARPO (Dong et al. 2025b), AEPO (Dong et al. 2025a), MEM1 (Zhou et al. 2025), and KbPO (Feng et al. 2026). 
+
+Evaluation Metrics. We assess performance on two di-mensions: (1) Task Utility : F1 scores measuring answer correctness; (2) Unreliability Rate : defined as 1 − (F1 +
+
+Refusal Rate ), quantifying “unsafe” behaviors where the agent neither answers correctly nor refuses faithfully. Lower is better. 
+
+Main Results 
+
+Table 1 presents the Unreliability Rate across all benchmarks and model scales, where lower values indicate better reliabil-ity. We highlight several key findings. 
+
+Overall Performance. KbSD consistently achieves the lowest unreliability rate across all model scales, outperform-ing both knowledge-boundary-agnostic RL methods and the KbPO baseline that relies solely on sparse rewards. The im-provement margin increases with model scale, suggesting that larger models better leverage the dense process-level supervision provided by self-distillation. 
+
+Knowledge Boundary Calibration. The largest gains ap-pear on benchmarks requiring precise calibration. On Triv-iaQA and NQ, KbSD substantially outperforms Search-R1 and AEPO, with improvements stemming from KbSD’s abil-ity to refuse unknown queries rather than hallucinate. Com-pared to KbPO, which shares the same quadrant taxonomy but uses only sparse rewards, KbSD’s dense distillation su-pervision provides clearer guidance on the reasoning process leading to calibrated decisions. 
+
+Out-of-Domain Generalization. Despite training only on HotpotQA and 2WikiMQA, KbSD generalizes well to unseen datasets including FRAMES and GAIA. This transferability suggests that knowledge boundary awareness, reinforced by process-level distillation, is a domain-agnostic skill rather than dataset-specific pattern fitting. 
+
+Comparison with RL-based Methods. KbSD shows con-sistent advantages over AEPO, ARPO, and MEM1. Criti-cally, AEPO and ARPO exhibit instability at larger scales, likely resulting from reward hacking in outcome-only train-ing. KbSD’s quadrant-adaptive distillation loss prevents such exploitation by providing complementary dense supervision. 
+
+Ablation Study 
+
+We conduct ablation studies on Qwen2.5-3B to analyze the contribution of each design component. 
+
+Effect of Distillation Components. Table 2 presents abla-tion results. Removing the distillation loss entirely ( −L distill )degrades performance across all benchmarks, confirming that dense process-level supervision is essential. Replacing the quadrant-adaptive KL with a fixed forward KL (Fixed-FKL) or fixed reverse KL (Fixed-RKL) also hurts perfor-mance, particularly on benchmarks requiring diverse refusal behavior (TriviaQA) or concentrated integration reasoning (2WikiMQA), validating the necessity of adapting the diver-gence objective per knowledge state. 
+
+Effect of Quadrant Rebalancing. Proper calibration be-tween Q1–Q4 reduces unreliability rates substantially, par-ticularly on TriviaQA and NQ. Over-rewarding internal an-swering risks hallucination, while over-rewarding refusal sac-rifices helpfulness. KbSD’s quadrant-adaptive optimization finds the right balance across all knowledge states. 
+
+Analysis 
+
+To further validate KbSD’s reliability, we analyze how its calibration behavior scales with model capacity and varies with task difficulty. 
+
+Effect of Model Scale. KbSD’s reliability gains hold con-sistently across model scales. On Qwen2.5-3B, KbSD lowers the average unreliability rate from 64 .32 (KbPO) to 47 .60 ,and on Qwen2.5-7B from 57 .99 to 41 .18 —an absolute reduc-tion of roughly 17 points in both cases. Notably, the larger Method In-Domain Out-of-Domain Avg Paradigm Approach 2Wiki HotpotQA Bamboogle FRAMES GAIA MusiQue NQ PopQA TriviaQA Avg                                                                                                                                                                                                                                                                                             
+
+> Qwen2.5-3B
+> No RAG Base 76.02 75.92 90.55 91.99 94.30 90.30 85.73 87.89 61.16 83.76 COT 81.10 76.18 79.20 92.84 92.98 89.53 83.47 88.63 60.38 82.70 Naive RAG FS-RAG 84.53 74.15 89.52 89.58 95.70 92.36 80.16 69.59 54.62 81.13 FL-RAG 83.20 73.22 88.95 90.81 98.42 92.71 78.07 66.53 51.50 80.38 Agentic RAG ReACT 74.91 65.63 75.14 89.47 95.22 86.08 72.81 63.53 53.96 75.19 IRCOT 84.11 75.50 74.73 93.21 97.23 87.57 72.14 64.98 50.81 77.81 TCRAG 71.53 78.06 82.41 92.31 94.47 91.01 79.26 82.31 49.54 80.10 ReSearch 72.77 66.04 84.91 90.00 95.52 90.53 65.39 64.03 46.07 75.03 Search-R1 70.10 62.76 70.10 89.24 95.32 86.47 65.27 65.76 44.92 72.22 AEPO 76.99 71.29 77.91 87.74 94.99 88.30 73.24 70.52 52.22 77.02 ARPO 70.45 63.52 72.68 86.51 92.29 86.62 66.71 66.56 46.34 72.41 Mem1 81.94 79.85 94.81 95.01 97.53 95.53 80.82 83.29 66.91 86.19 KbPO 70.50 57.60 68.10 62.60 77.20 61.40 68.50 73.10 39.90 64.32 RL-based Agentic RAG
+> KbSD (Ours) 45.90 41.60 52.20 44.00 58.10 42.10 64.40 45.60 34.80 47.60
+> Qwen2.5-7B
+> No RAG Base 74.59 73.37 82.14 87.48 95.71 87.85 80.28 85.21 50.92 79.73 COT 76.45 70.90 62.44 82.40 93.83 85.65 77.53 84.93 50.67 76.09 Naive RAG FS-RAG 82.29 70.79 83.14 87.48 94.98 89.26 83.18 81.06 64.98 81.91 FL-RAG 80.22 65.58 75.90 87.90 95.40 87.54 80.28 74.72 57.34 78.32 Agentic RAG ReACT 72.49 57.19 72.37 84.71 93.63 80.66 69.99 63.71 45.45 71.13 IRCOT 63.55 73.71 78.10 93.22 94.50 91.61 80.37 65.86 50.57 76.83 TCRAG 70.30 59.17 74.87 83.54 91.79 82.44 70.99 62.83 45.22 71.24 ReSearch 69.97 69.61 69.58 84.39 95.57 87.42 76.31 82.09 51.75 76.30 Search-R1 64.97 61.11 57.96 81.99 89.92 80.92 70.41 72.53 44.09 69.32 AEPO 80.12 86.15 86.76 92.76 97.35 94.15 90.07 90.05 82.47 88.88 ARPO 69.29 74.80 67.06 87.82 91.44 87.29 82.20 86.38 59.84 78.46 Mem1 74.71 70.02 63.50 85.85 93.50 85.87 73.62 74.20 48.96 74.47 KbPO 65.20 51.80 61.50 56.30 71.90 54.70 62.30 67.80 32.60 57.99 RL-based Agentic RAG
+> KbSD (Ours) 44.30 38.80 33.80 41.10 41.70 38.80 59.10 44.10 28.90 41.18
+
+Table 1: Comparison of Unreliability Rate (%) (Lower is Better) across multi-hop and open-domain benchmarks. Score 
+
+= F1 + Refusal Rate; Unreliability Rate = 1 − Score. 
+
+Dataset KbSD −L distill Fixed-FKL Fixed-RKL 
+
+TriviaQA 34.80 39.90 39.70 50.50 2WikiMQA 45.90 70.50 44.00 68.90 HotpotQA 41.60 57.60 45.50 59.90 NQ 64.40 68.50 66.47 72.10 PopQA 45.60 73.10 50.00 70.20 Average 46.46 61.92 49.13 64.32 
+
+Table 2: Ablation on distillation components (Unreliability Rate, %, lower is better). model reaches a substantially lower absolute floor ( 41 .18 
+
+vs. 47 .60 ), indicating that models with stronger parametric priors and reasoning capacity more effectively internalize the dense token-level demonstrations produced by the hinted teacher. This trend supports our central claim: the bottleneck addressed by KbSD is not model capacity but the sparsity 
+
+of process-level supervision, and providing dense, boundary-aware guidance pays off increasingly as the underlying policy becomes more capable. 
+
+Adaptive Refusal Behavior. KbSD exhibits difficulty-adaptive refusal rates that correlate with task complex-ity. On benchmarks where the model has sufficient knowl-edge, refusal rates remain low (2WikiMQA, PopQA, Bam-boogle). On challenging benchmarks requiring complex rea-soning or rare knowledge, refusal rates increase substantially (MuSiQue, FRAMES, GAIA). This adaptive pattern demon-strates that quadrant-based alignment, reinforced by self-distillation, successfully teaches the model to recognize its knowledge boundaries. 
+
+Correlation Between Difficulty and Calibration. We ob-serve a clear negative correlation between F1 scores and refusal rates across benchmarks. This pattern confirms that KbSD has learned calibrated uncertainty: when both para-metric knowledge and retrieval are insufficient, the model appropriately abstains rather than hallucinating. Compared to KbPO, KbSD’s calibration gains are most pronounced in the challenging quadrants (Q3 and Q4), where sparse rewards are least informative—precisely the regime where dense dis-tillation supervision provides the largest benefit. 
+
+Balancing Helpfulness and Reliability. Importantly, high refusal rates on difficult benchmarks do not compromise helpfulness on tractable tasks. On in-domain benchmarks (2WikiMQA, HotpotQA), KbSD maintains competitive F1 scores while keeping refusal rates low. This balance validates that quadrant-adaptive distillation successfully differentiates between scenarios requiring confident answers versus cau-tious abstention. 
+
+Case Study 
+
+We present two representative cases qualitatively illustrating KbSD’s calibration behavior under contrasting knowledge states.                     
+
+> Case 1 Q4: Internal (Low Retrieval +High Prior) Bidi-rectional KL
+> Question: HMAS “Platypus” was a submarine depot ship operated by the Royal Australian Navy (RAN). HMAS “AE1” was an “E”-class submarine of which organization? GT:
+> Royal Australian Navy (RAN)
+> Rollout Summary (10 searches, Outcome 2.00, Retrieval 0.496): The answer is implicitly stated in the question itself, yet the model performed 10 search iterations before converging. Early retrievals returned tangential information (torpedo specifi-cations of AE1); the model eventually inferred through chained reasoning that HMAS AE1 belongs to the Royal Australian Navy.
+> Analysis: This Q4 case (high parametric prior, low retrieval quality) reveals a residual challenge: KbSD still occasionally over-relies on retrieval even when the parametric answer is accessible. The bidirectional KL objective guides the model toward the correct final answer, yet the excess search iterations indicate scope for further calibration of retrieval-efficiency under the Internal quadrant.
+> Case 2 Q3: Refusal (Low Retrieval +Low Prior, Invalid Question) Forward KL
+> Question: Which conductor, famous for leading orchestras using historical instruments, led a Verdi opera with a Moorish protagonist, collaborating with the Mahler Chamber Orchestra in the capital of the country where Frederick, heir to the Danish throne, was born and later married, though not in the same year? GT: Invalid question
+> Rollout Summary (4 searches, Outcome 0.50 IDK reward, Retrieval 0.363): The model issued four targeted searches ad-dressing each constraint in turn (conductor + historical instru-ments; Moorish protagonist; Mahler Chamber Orchestra; Dan-ish royal lineage). Searches returned contradictory and incom-plete evidence. The model initially proposed a candidate but immediately reconsidered, concluding: “Given the incomplete evidence, I do not have enough information to conclusively answer the question.” Final answer: “I don’t know.”
+> Analysis: This Q3 case demonstrates the critical refusal ca-pability reinforced by KbSD’s forward KL objective. The question’s multiple crossing constraints make it unanswer-able; KbSD correctly identifies the evidence gap and abstains, earning the IDK reward (0.50) rather than hallucinating. This behavior—principled abstention in the face of insufficient evi-dence from both parametric memory and retrieval—is precisely the calibration that sparse-reward baselines such as KbPO strug-gle to achieve.
+
+# Conclusion 
+
+We identify process-level reward sparsity as a fundamental bottleneck in knowledge boundary calibration for agentic search: terminal rewards indicate which behavior is correct but leave the intermediate reasoning trajectory unsupervised, which is especially limiting across the four heterogeneous knowledge-boundary quadrants. To address this, we propose 
+
+KbSD , a knowledge-boundary-aware self-distillation frame-work. KbSD constructs a hint-augmented teacher that is archi-tecturally identical to the student but additionally conditioned on privileged boundary signals—parametric certainty, seman-tic stability, retrieval quality, and the target quadrant—and distills its calibrated reasoning into the hint-free student. This information-asymmetric design converts sparse behavioral labels into dense, token-level process supervision without requiring a larger external teacher. To respect the distinct opti-mization geometry of each quadrant, KbSD further employs a quadrant-adaptive objective—reverse KL for concentrated in-tegration, forward KL for diverse refusal, and Pareto-optimal bidirectional KL for the precision–coverage trade-off in the asymmetric quadrants—jointly optimized with GRPO. Experiments on nine benchmarks and two model scales show that KbSD consistently reduces unreliability over strong baselines, cutting the average unreliability rate from 64 .32 to 
+
+47 .60 on Qwen2.5-3B and from 57 .99 to 41 .18 on Qwen2.5-7B, with the largest gains concentrated in the challenging quadrants where sparse rewards are least informative. Abla-tions confirm that both the distillation loss and its quadrant-adaptive form are essential, and our analysis shows that the gains grow with model scale. As the case studies illustrate, a residual challenge remains in calibrating retrieval efficiency under the Internal quadrant, where the agent can still over-search despite an accessible parametric answer. We leave a tighter coupling between knowledge-boundary awareness and retrieval budgeting, as well as extensions to larger models and open-ended agentic settings, to future work. 
+
+# References 
+
+Agarwal, R.; Vieillard, N.; Zhou, Y.; Stanczyk, P.; Ramos Garea, S.; Geist, M.; and Bachem, O. 2024. On-policy distillation of language models: Learning from self-generated mistakes. In International Conference on Learning Representations , volume 2024, 21246–21263. Asai, A.; Wu, Z.; Wang, Y.; Sil, A.; and Hajishirzi, H. 2024. Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection. In The Twelfth International Con-ference on Learning Representations (ICLR) .Dong, G.; Bao, L.; Wang, Z.; Zhao, K.; Li, X.; Jin, J.; Yang, J.; Mao, H.; Zhang, F.; Gai, K.; et al. 2025a. Agen-tic Entropy-Balanced Policy Optimization. arXiv preprint arXiv:2510.14545 .Dong, G.; Mao, H.; Ma, K.; Bao, L.; Chen, Y.; Wang, Z.; Chen, Z.; Du, J.; Wang, H.; Zhang, F.; et al. 2025b. Agentic Reinforced Policy Optimization. arXiv preprint arXiv:2507.19849 .Feng, T.; Jiang, X.; Hu, X.; Zhang, Y.; Tao, Z.; Zhang, W.; Liu, B.; Jiang, W.; and Wu, C. 2026. Trust Within? Seek Be-yond? Knowledge Boundary Aware Policy Optimization for Agentic Search. In Liakata, M.; Moreira, V. P.; Zhang, J.; and Jurgens, D., eds., Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 27664–27682. San Diego, California, United States: Association for Computational Linguistics. ISBN 979-8-89176-390-6. Gao, J.; Fu, W.; Xie, M.; Xu, S.; He, C.; Mei, Z.; Zhu, B.; and Wu, Y. 2025. Beyond ten turns: Unlocking long-horizon agen-tic search with large-scale asynchronous rl. arXiv preprint arXiv:2508.07976 .Gu, Y.; Dong, L.; Wei, F.; and Huang, M. 2024. Minillm: Knowledge distillation of large language models. In Inter-national Conference on Learning Representations , volume 2024, 32694–32717. Guu, K.; Lee, K.; Tung, Z.; Pasupat, P.; and Chang, M. 2020. Retrieval augmented language model pre-training. In Interna-tional conference on machine learning , 3929–3938. PMLR. He, Y.; Kaur, S.; Bhaskar, A.; Yang, Y.; Liu, J.; Ri, N.; Fowl, L.; Panigrahi, A.; Chen, D.; and Arora, S. 2026. Self-distillation zero: Self-revision turns binary rewards into dense supervision. arXiv preprint arXiv:2604.12002 .Hinton, G.; Vinyals, O.; and Dean, J. 2015. Distill-ing the knowledge in a neural network. arXiv preprint arXiv:1503.02531 .Ho, X.; Duong, A.-K.; Nguyen, Q.-H.; and Nguyen, S. 2020. Constructing A Multi-hop QA Dataset for Comprehensive Evaluation of Reasoning Steps. In COLING .Huang, Z.; Yuan, X.; Ju, Y.; Zhao, J.; and Liu, K. 2025. Reinforced Internal-External Knowledge Synergistic Rea-soning for Efficient Adaptive Search Agent. arXiv preprint arXiv:2505.07596 .Jiang, X.; Fang, Y.; Qiu, R.; Zhang, H.; Xu, Y.; Chen, H.; Zhang, W.; Zhang, R.; Fang, Y.; Chu, X.; et al. 2024. TC-RAG: Turing-Complete RAG’s Case study on Medical LLM Systems. arXiv preprint arXiv:2408.09199 .Jiang, Z.; Xu, F. F.; Gao, L.; Sun, Z.; Liu, Q.; Dwyer, J.; and Iyyer, M. 2023. Active Retrieval Augmented Generation. 
+
+EMNLP . (FLARE/FL-RAG). Jin, B.; Zeng, H.; Yue, Z.; Yoon, J.; Arik, S.; Wang, D.; Zamani, H.; and Han, J. 2025. Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning. arXiv preprint arXiv:2503.09516 .Joshi, M.; et al. 2017. TriviaQA: A Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension. In ACL .Karpukhin, V.; Oguz, B.; Min, S.; Lewis, P. S.; Wu, L.; Edunov, S.; Chen, D.; and Yih, W.-t. 2020. Dense Passage Retrieval for Open-Domain Question Answering. In EMNLP (1) , 6769–6781. Ko, J.; Chen, T.; Kim, S.; Ding, T.; Liang, L.; Zharkov, I.; and Yun, S.-Y. 2025. Distillm-2: A contrastive approach boosts the distillation of llms. arXiv preprint arXiv:2503.07067 .Krishna, S.; Krishna, K.; Mohananey, A.; Schwarcz, S.; Stam-bler, A.; Upadhyay, S.; and Faruqui, M. 2025. Fact, fetch, and reason: A unified evaluation of retrieval-augmented genera-tion. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , 4745–4759. Kwiatkowski, T.; et al. 2019. Natural Questions: A Bench-mark for Question Answering Research. TACL .Lewis, P.; Perez, E.; Piktus, A.; Petroni, F.; Karpukhin, V.; Goyal, N.; Küttler, H.; Lewis, M.; Yih, W.-t.; Rocktäschel, T.; et al. 2020. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. In Advances in Neural Information Processing Systems (NeurIPS) , volume 33, 9459–9474. Li, X.; Dong, G.; Jin, J.; Zhang, Y.; Zhou, Y.; Zhu, Y.; Zhang, P.; and Dou, Z. 2025. Search-o1: Agentic Search-Enhanced Large Reasoning Models. arXiv preprint arXiv:2501.05366 .Li, Y.; Zuo, Y.; He, B.; Zhang, J.; Xiao, C.; Qian, C.; Yu, T.; Gao, H.-a.; Yang, W.; Liu, Z.; et al. 2026. Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 .Mallen, A.; Asai, A.; et al. 2023. When Not to Trust Lan-guage Models: Investigating Effectiveness of Parametric and Non-Parametric Memories. In ACL .Mialon, G.; et al. 2023. GAIA: A Benchmark for General AI Assistants. arXiv preprint arXiv:2311.12983 .Nakano, R.; Hilton, J.; Balaji, S.; Wu, J.; Ouyang, L.; Kim, C.; Hesse, C.; Jain, S.; Kosaraju, V.; Saunders, W.; et al. 2021. Webgpt: Browser-assisted question-answering with human feedback. arXiv preprint arXiv:2112.09332 .Press, O.; Zhang, M.; Min, S.; Schmidt, L.; Smith, N. A.; and Lewis, M. 2023. Measuring and Narrowing the Com-positionality Gap in Language Models. arXiv preprint arXiv:2210.03350 .Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y.; Wu, Y.; et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open lan-guage models. arXiv preprint arXiv:2402.03300 .Singh, A.; Ehtesham, A.; Kumar, S.; and Khoei, T. T. 2025. Agentic retrieval-augmented generation: A survey on agentic rag. arXiv preprint arXiv:2501.09136 .Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2022. MusiQue: Multihop Reasoning Dataset with Expla-nation. arXiv preprint arXiv:2108.00573 .Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2023. Interleaving retrieval with chain-of-thought reasoning for knowledge-intensive multi-step questions. In Proceedings of the 61st annual meeting of the association for computa-tional linguistics (volume 1: long papers) , 10014–10037. Wang, L.; Yang, N.; Huang, X.; Jiao, B.; Yang, L.; Jiang, D.; Majumder, R.; and Wei, F. 2022. Text embeddings by weakly-supervised contrastive pre-training. arXiv preprint arXiv:2212.03533 .Yan, S.-Q.; Gu, J.-C.; Zhu, Y.; and Ling, Z.-H. 2024. Cor-rective Retrieval Augmented Generation. arXiv preprint arXiv:2401.15884 .Yang, C.; Qin, C.; Si, Q.; Chen, M.; Gu, N.; Yao, D.; Lin, Z.; Wang, W.; Wang, J.; and Duan, N. 2026a. Self-distilled rlvr. 
+
+arXiv preprint arXiv:2604.03128 .Yang, Q. A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Dong, G.; Wei, H.; Lin, H.; Yang, J.; Tu, J.; Zhang, J.; Yang, J.; Yang, J.; Zhou, J.; Lin, J.; Dang, K.; Lu, K.; Bao, K.; Yang, K.; Yu, L.; Li, M.; Xue, M.; Zhang, P.; Zhu, Q.; Men, R.; Lin, R.; Li, T.; Xia, T.; Ren, X.; Ren, X.; Fan, Y.; Su, Y.; Zhang, Y.-C.; Wan, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; Qiu, Z.; Quan, S.; and Wang, Z. 2024. Qwen2.5 Technical Report. ArXiv , abs/2412.15115. Yang, W.; Liu, W.; Xie, R.; Yang, K.; Yang, S.; and Lin, Y. 2026b. Learning beyond teacher: Generalized on-policy distillation with reward extrapolation. arXiv preprint arXiv:2602.12125 .Yang, Z.; Qi, P.; Zhang, S.; et al. 2018. HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering. In 
+
+EMNLP .Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K. R.; and Cao, Y. 2022. React: Synergizing reasoning and acting in language models. In The eleventh international conference on learning representations .Yao, S.; et al. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In ICLR .Zhou, Z.; Qu, A.; Wu, Z.; Kim, S.; Prakash, A.; Rus, D.; Zhao, J.; Low, B. K. H.; and Liang, P. P. 2025. MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents. arXiv preprint arXiv:2506.15841 .Zhu*, R.; Jiang*, X.; Wu*, J.; Ma, Z.; Song, J.; Bai, F.; Lin, D.; Wu, L.; and He, C. 2025. GRAIT: Gradient-Driven Refusal-Aware Instruction Tuning for Effective Hallucination Mitigation. NAACL 2025 .Zhu, R.; Ma, Z.; Wu, J.; Gao, J.; Wang, J.; Lin, D.; and He, C. 2025. Utilize the flow before stepping into the same river twice: Certainty represented knowledge flow for refusal-aware instruction tuning. In Proceedings of the AAAI Confer-ence on Artificial Intelligence , volume 39, 26157–26165.
